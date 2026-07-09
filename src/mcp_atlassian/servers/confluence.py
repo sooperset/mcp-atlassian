@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import mimetypes
+from pathlib import Path
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
@@ -21,9 +22,47 @@ from mcp_atlassian.utils.media import (
     fetch_and_encode_attachment,
     is_image_attachment,
 )
-from mcp_atlassian.utils.urls import resolve_relative_url
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_page_content(content: str | None, content_file: str | None) -> str:
+    """Resolve page body from either an inline string or a file path.
+
+    Exactly one of ``content`` / ``content_file`` must be supplied. ``content_file``
+    exists so callers (especially MCP clients transporting large bodies over stdio
+    JSON) can hand off content via the filesystem instead of marshalling it as a
+    tool-call argument.
+
+    Args:
+        content: Inline page body (any supported content_format).
+        content_file: Absolute or relative filesystem path to read the body from.
+            Read as UTF-8.
+
+    Returns:
+        The resolved page body as a string.
+
+    Raises:
+        ValueError: If neither or both arguments are supplied, or if the file does
+            not exist / is not a regular file.
+        OSError: If the file exists but cannot be read.
+    """
+    has_content = content is not None
+    has_file = content_file is not None and content_file != ""
+    if has_content and has_file:
+        raise ValueError("Provide either 'content' or 'content_file', not both.")
+    if not has_content and not has_file:
+        raise ValueError("One of 'content' or 'content_file' must be provided.")
+    if has_content:
+        return content
+    if content_file is None or content_file == "":
+        raise ValueError("One of 'content' or 'content_file' must be provided.")
+
+    path = Path(content_file).expanduser()
+    if not path.is_file():
+        msg = f"content_file does not exist or is not a regular file: {path}"
+        raise ValueError(msg)
+    return path.read_text(encoding="utf-8")
 
 
 confluence_mcp = FastMCP(
@@ -530,11 +569,17 @@ async def create_page(
     ],
     title: Annotated[str, Field(description="The title of the page")],
     content: Annotated[
-        str,
+        str | None,
         Field(
-            description="The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, or storage format"
+            description=(
+                "The content of the page. Format depends on content_format "
+                "parameter. Can be Markdown (default), wiki markup, storage "
+                "format, or XHTML storage format. Either 'content' or "
+                "'content_file' must be provided, but not both."
+            ),
+            default=None,
         ),
-    ],
+    ] = None,
     parent_id: Annotated[
         str | None,
         Field(
@@ -546,7 +591,13 @@ async def create_page(
     content_format: Annotated[
         str,
         Field(
-            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            description=(
+                "(Optional) The format of the content parameter. Options: "
+                "'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use "
+                "'xhtml' when providing Confluence XHTML storage format "
+                "(same as 'storage'). Wiki format uses Confluence wiki "
+                "markup syntax"
+            ),
             default="markdown",
         ),
     ] = "markdown",
@@ -571,6 +622,40 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    content_file: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Absolute or relative filesystem path to read the "
+                "page body from (UTF-8). Use this instead of 'content' when "
+                "the body is too large to pass comfortably as a tool "
+                "argument. Mutually exclusive with 'content'."
+            ),
+            default=None,
+        ),
+    ] = None,
+    page_width: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Page layout width. Options: 'full-width', "
+                "'default'. Defaults to null (Confluence default)."
+            ),
+            default=None,
+        ),
+    ] = None,
+    table_layout: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Table width preset applied to all markdown tables. "
+                "Options: 'full-width' (1800 px), 'wide' (960 px), "
+                "'default' (760 px). Only applies when content_format is "
+                "'markdown'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -579,11 +664,18 @@ async def create_page(
         space_key: The key of the space.
         title: The title of the page.
         content: The content of the page (format depends on content_format).
+            Mutually exclusive with content_file; exactly one must be
+            supplied.
+        content_file: Filesystem path to read the page body from (UTF-8).
+            Useful for bodies too large to pass as an inline tool argument.
         parent_id: Optional parent page ID.
-        content_format: The format of the content ('markdown', 'wiki', or 'storage').
+        content_format: The format of the content ('markdown', 'wiki',
+            'storage', or 'xhtml').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
+        page_width: Optional page layout width ('full-width' or 'default').
+        table_layout: Optional table width preset ('full-width', 'wide', 'default').
 
     Returns:
         JSON string representing the created page object.
@@ -594,10 +686,13 @@ async def create_page(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     # Validate content_format
-    if content_format not in ["markdown", "wiki", "storage"]:
+    if content_format not in ["markdown", "wiki", "storage", "xhtml"]:
         raise ValueError(
-            f"Invalid content_format: {content_format}. Must be 'markdown', 'wiki', or 'storage'"
+            f"Invalid content_format: {content_format}. Must be "
+            "'markdown', 'wiki', 'storage', or 'xhtml'"
         )
+
+    resolved_content = _resolve_page_content(content, content_file)
 
     # Determine parameters based on content format
     if content_format == "markdown":
@@ -605,12 +700,15 @@ async def create_page(
         content_representation = None  # Will be converted to storage
     else:
         is_markdown = False
-        content_representation = content_format  # Pass 'wiki' or 'storage' directly
+        # Map 'xhtml' to 'storage' (both use storage format)
+        content_representation = (
+            "storage" if content_format == "xhtml" else content_format
+        )
 
     page = confluence_fetcher.create_page(
         space_key=space_key,
         title=title,
-        body=content,
+        body=resolved_content,
         parent_id=parent_id,
         is_markdown=is_markdown,
         enable_heading_anchors=enable_heading_anchors
@@ -618,6 +716,8 @@ async def create_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        page_width=page_width,
+        table_layout=table_layout if content_format == "markdown" else None,
     )
     result = page.to_simplified_dict()
     if not include_content:
@@ -639,11 +739,17 @@ async def update_page(
     page_id: Annotated[str, Field(description="The ID of the page to update")],
     title: Annotated[str, Field(description="The new title of the page")],
     content: Annotated[
-        str,
+        str | None,
         Field(
-            description="The new content of the page. Format depends on content_format parameter"
+            description=(
+                "The new content of the page. Format depends on "
+                "content_format parameter and may be Markdown (default), wiki "
+                "markup, storage format, or XHTML storage format. Either "
+                "'content' or 'content_file' must be provided, but not both."
+            ),
+            default=None,
         ),
-    ],
+    ] = None,
     is_minor_edit: Annotated[
         bool, Field(description="Whether this is a minor edit", default=False)
     ] = False,
@@ -658,7 +764,13 @@ async def update_page(
     content_format: Annotated[
         str,
         Field(
-            description="(Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', or 'storage'. Wiki format uses Confluence wiki markup syntax",
+            description=(
+                "(Optional) The format of the content parameter. Options: "
+                "'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use "
+                "'xhtml' when providing Confluence XHTML storage format "
+                "(same as 'storage'). Wiki format uses Confluence wiki "
+                "markup syntax"
+            ),
             default="markdown",
         ),
     ] = "markdown",
@@ -683,6 +795,40 @@ async def update_page(
             default=None,
         ),
     ] = None,
+    content_file: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Absolute or relative filesystem path to read the "
+                "new page body from (UTF-8). Use this instead of 'content' "
+                "when the body is too large to pass comfortably as a tool "
+                "argument. Mutually exclusive with 'content'."
+            ),
+            default=None,
+        ),
+    ] = None,
+    page_width: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Page layout width. Options: 'full-width', "
+                "'default'. Defaults to null (preserve existing)."
+            ),
+            default=None,
+        ),
+    ] = None,
+    table_layout: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Table width preset applied to all markdown tables. "
+                "Options: 'full-width' (1800 px), 'wide' (960 px), "
+                "'default' (760 px). Only applies when content_format is "
+                "'markdown'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Update an existing Confluence page.
 
@@ -690,14 +836,22 @@ async def update_page(
         ctx: The FastMCP context.
         page_id: The ID of the page to update.
         title: The new title of the page.
-        content: The new content of the page (format depends on content_format).
+        content: The new content of the page (format depends on
+            content_format). Mutually exclusive with content_file; exactly
+            one must be supplied.
+        content_file: Filesystem path to read the new page body from
+            (UTF-8). Useful for bodies too large to pass as an inline tool
+            argument.
         is_minor_edit: Whether this is a minor edit.
         version_comment: Optional comment for this version.
         parent_id: Optional new parent page ID.
-        content_format: The format of the content ('markdown', 'wiki', or 'storage').
+        content_format: The format of the content ('markdown', 'wiki',
+            'storage', or 'xhtml').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
+        page_width: Optional page layout width ('full-width' or 'default').
+        table_layout: Optional table width preset ('full-width', 'wide', 'default').
 
     Returns:
         JSON string representing the updated page object.
@@ -708,10 +862,13 @@ async def update_page(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     # Validate content_format
-    if content_format not in ["markdown", "wiki", "storage"]:
+    if content_format not in ["markdown", "wiki", "storage", "xhtml"]:
         raise ValueError(
-            f"Invalid content_format: {content_format}. Must be 'markdown', 'wiki', or 'storage'"
+            f"Invalid content_format: {content_format}. Must be "
+            "'markdown', 'wiki', 'storage', or 'xhtml'"
         )
+
+    resolved_content = _resolve_page_content(content, content_file)
 
     # Determine parameters based on content format
     if content_format == "markdown":
@@ -719,12 +876,15 @@ async def update_page(
         content_representation = None  # Will be converted to storage
     else:
         is_markdown = False
-        content_representation = content_format  # Pass 'wiki' or 'storage' directly
+        # Map 'xhtml' to 'storage' (both use storage format)
+        content_representation = (
+            "storage" if content_format == "xhtml" else content_format
+        )
 
     updated_page = confluence_fetcher.update_page(
         page_id=page_id,
         title=title,
-        body=content,
+        body=resolved_content,
         is_minor_edit=is_minor_edit,
         version_comment=version_comment,
         is_markdown=is_markdown,
@@ -734,12 +894,116 @@ async def update_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        page_width=page_width,
+        table_layout=table_layout if content_format == "markdown" else None,
     )
     page_data = updated_page.to_simplified_dict()
     if not include_content:
         page_data.pop("content", None)
     return json.dumps(
         {"message": "Page updated successfully", "page": page_data},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Update Page Section", "destructiveHint": True},
+)
+@check_write_access
+async def update_page_section(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="The ID of the page to update")],
+    heading_text: Annotated[
+        str,
+        Field(
+            description=(
+                "Exact text of the heading that starts the section to replace. "
+                "Matching is case-sensitive. Use confluence_get_page with "
+                "convert_to_markdown=false to inspect exact heading text when unsure."
+            )
+        ),
+    ],
+    new_content: Annotated[
+        str,
+        Field(
+            description=(
+                "Replacement content for the section body. "
+                "Do NOT include the heading itself — only the body beneath it. "
+                "Format is controlled by content_format."
+            )
+        ),
+    ],
+    *,
+    content_format: Annotated[
+        str,
+        Field(
+            description=(
+                "(Optional) Format of new_content. "
+                "Options: 'markdown' (default) or 'storage' "
+                "(raw Confluence storage XML). Use 'storage' to insert "
+                "macros or elements that markdown cannot express."
+            ),
+            default="markdown",
+        ),
+    ] = "markdown",
+    is_minor_edit: Annotated[
+        bool, Field(description="Whether this is a minor edit", default=False)
+    ] = False,
+    version_comment: Annotated[
+        str | None,
+        Field(description="Optional comment for this version", default=None),
+    ] = None,
+) -> str:
+    """Update a single section of a Confluence page without affecting the rest.
+
+    Replaces only the content beneath a named heading, leaving all other
+    sections, macros, layouts, and Confluence-specific elements completely
+    intact. This avoids the data loss that occurs when a full page is
+    downloaded as Markdown, edited, and re-uploaded.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to update.
+        heading_text: Exact heading text identifying the section to replace.
+        new_content: New body content for the section (heading not included).
+        content_format: Format of new_content ('markdown' or 'storage').
+        is_minor_edit: Whether to flag this as a minor edit.
+        version_comment: Optional version comment.
+
+    Returns:
+        JSON string representing the updated page metadata.
+
+    Raises:
+        ValueError: If Confluence client is not configured, heading is not
+            found, or content_format is invalid.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    if content_format not in ("markdown", "storage"):
+        error_msg = (
+            f"Invalid content_format '{content_format}'. Must be "
+            "'markdown' or 'storage'."
+        )
+        raise ValueError(error_msg)
+
+    updated_page = confluence_fetcher.update_page_section(
+        page_id=page_id,
+        heading_text=heading_text,
+        new_content=new_content,
+        content_format=content_format,
+        is_minor_edit=is_minor_edit,
+        version_comment=version_comment or "",
+    )
+
+    page_data = updated_page.to_simplified_dict()
+    page_data.pop("content", None)
+    return json.dumps(
+        {
+            "message": f"Section '{heading_text}' updated successfully",
+            "page": page_data,
+        },
         indent=2,
         ensure_ascii=False,
     )
@@ -967,6 +1231,145 @@ async def reply_to_comment(
         response = {
             "success": False,
             "message": f"Error replying to comment {comment_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_comments"},
+    annotations={"title": "Get Inline Comments", "readOnlyHint": True},
+)
+async def get_inline_comments(
+    ctx: Context,
+    page_id: Annotated[
+        str, Field(description="The ID of the page to get inline comments from")
+    ],
+) -> str:
+    """Get all inline comments for a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to get inline comments from.
+
+    Returns:
+        JSON string with a list of inline comments.
+
+    Raises:
+        ValueError: If Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        comments = confluence_fetcher.get_inline_comments(page_id)
+        response = {
+            "success": True,
+            "page_id": page_id,
+            "count": len(comments),
+            "comments": [c.to_simplified_dict() for c in comments],
+        }
+    except Exception as e:
+        logger.error(
+            f"Error getting inline comments for Confluence page {page_id}: {str(e)}"
+        )
+        response = {
+            "success": False,
+            "message": f"Error getting inline comments for page {page_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_comments"},
+    annotations={"title": "Add Inline Comment", "destructiveHint": True},
+)
+@check_write_access
+async def add_inline_comment(
+    ctx: Context,
+    page_id: Annotated[
+        str, Field(description="The ID of the page to add the inline comment to")
+    ],
+    body: Annotated[str, Field(description="The comment content in Markdown format")],
+    text_selection: Annotated[
+        str,
+        Field(
+            description=(
+                "The exact text on the page to anchor the inline comment to. "
+                "Must match text that exists in the page content."
+            )
+        ),
+    ],
+    text_selection_match_count: Annotated[
+        int,
+        Field(
+            description=(
+                "Total number of times the selected text appears on the page. "
+                "Defaults to 1."
+            ),
+            ge=1,
+        ),
+    ] = 1,
+    text_selection_match_index: Annotated[
+        int,
+        Field(
+            description=(
+                "Zero-based index of which occurrence of the text to anchor to. "
+                "Defaults to 0 (first occurrence)."
+            ),
+            ge=0,
+        ),
+    ] = 0,
+) -> str:
+    """Add an inline comment anchored to a text selection on a page.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to add the inline comment to.
+        body: The comment content in Markdown format.
+        text_selection: The exact text on the page to anchor the comment to.
+        text_selection_match_count: Total occurrences of the selected text on the
+            page.
+        text_selection_match_index: Zero-based index of which occurrence to anchor
+            to.
+
+    Returns:
+        JSON string representing the created inline comment.
+
+    Raises:
+        ValueError: If in read-only mode or Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        comment = confluence_fetcher.add_inline_comment(
+            page_id=page_id,
+            content=body,
+            text_selection=text_selection,
+            text_selection_match_count=text_selection_match_count,
+            text_selection_match_index=text_selection_match_index,
+        )
+        if comment:
+            response = {
+                "success": True,
+                "message": "Inline comment added successfully",
+                "comment": comment.to_simplified_dict(),
+            }
+        else:
+            response = {
+                "success": False,
+                "message": (
+                    f"Unable to add inline comment to page {page_id}. "
+                    "API request completed but comment creation unsuccessful."
+                ),
+            }
+    except Exception as e:
+        logger.error(
+            f"Error adding inline comment to Confluence page {page_id}: {str(e)}"
+        )
+        response = {
+            "success": False,
+            "message": f"Error adding inline comment to page {page_id}",
             "error": str(e),
         }
 
@@ -1626,7 +2029,9 @@ async def download_attachment(
                 ),
             )
 
-        download_url = resolve_relative_url(download_url, confluence_fetcher.config.url)
+        download_url = confluence_fetcher._resolve_attachment_download_url(
+            download_url, attachment_id=attachment_id
+        )
 
         filename = attachment_data.get("title") or attachment_id
         mime_type = (
@@ -1814,8 +2219,10 @@ async def download_content_attachments(
             )
             continue
 
-        download_url = resolve_relative_url(
-            attachment.download_url, confluence_fetcher.config.url
+        download_url = confluence_fetcher._resolve_attachment_download_url(
+            attachment.download_url,
+            attachment_id=attachment.id,
+            content_id=content_id,
         )
 
         encoded, mime_type, fetched_bytes = fetch_and_encode_attachment(
@@ -2028,7 +2435,11 @@ async def get_page_images(
             failed.append({"filename": filename, "error": "No download URL"})
             continue
 
-        download_url = resolve_relative_url(download_url, confluence_fetcher.config.url)
+        download_url = confluence_fetcher._resolve_attachment_download_url(
+            download_url,
+            attachment_id=attachment.id,
+            content_id=content_id,
+        )
 
         encoded, _, fetched_bytes = fetch_and_encode_attachment(
             fetch_fn=confluence_fetcher.fetch_attachment_content,
@@ -2071,3 +2482,179 @@ async def get_page_images(
         ),
     )
     return contents
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Page Restrictions", "readOnlyHint": True},
+)
+async def get_page_restrictions(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="The ID of the page")],
+) -> str:
+    """Get view and edit restrictions for a Confluence page.
+
+    Returns the current restriction lists for the read (view) and update (edit)
+    operations.  An empty list means the page is unrestricted for that operation.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page.
+
+    Returns:
+        JSON string with ``read`` and ``update`` restriction lists, each
+        containing ``users`` (account IDs) and ``groups`` (group names).
+
+    Raises:
+        ValueError: If Confluence client is not configured or available.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    restrictions = confluence_fetcher.get_page_restrictions(page_id=page_id)
+    return json.dumps(restrictions, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Set Page Restrictions", "destructiveHint": True},
+)
+@check_write_access
+async def set_page_restrictions(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="The ID of the page to restrict")],
+    read_users: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "(Optional) Account IDs (Cloud) or usernames (Server/DC) "
+                "allowed to view the page. Empty list = unrestricted."
+            ),
+            default=None,
+        ),
+    ] = None,
+    read_groups: Annotated[
+        list[str] | None,
+        Field(
+            description="(Optional) Group names allowed to view the page.",
+            default=None,
+        ),
+    ] = None,
+    edit_users: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "(Optional) Account IDs (Cloud) or usernames (Server/DC) "
+                "allowed to edit the page."
+            ),
+            default=None,
+        ),
+    ] = None,
+    edit_groups: Annotated[
+        list[str] | None,
+        Field(
+            description="(Optional) Group names allowed to edit the page.",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Set view and edit restrictions on a Confluence page.
+
+    Replaces all existing restrictions with the provided lists.  Omitting all
+    parameters (or passing empty lists) removes all restrictions.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to restrict.
+        read_users: Account IDs / usernames allowed to view the page.
+        read_groups: Group names allowed to view the page.
+        edit_users: Account IDs / usernames allowed to edit the page.
+        edit_groups: Group names allowed to edit the page.
+
+    Returns:
+        JSON string with the updated restriction lists.
+
+    Raises:
+        ValueError: If Confluence client is not configured or available.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    result = confluence_fetcher.set_page_restrictions(
+        page_id=page_id,
+        read_users=read_users,
+        read_groups=read_groups,
+        edit_users=edit_users,
+        edit_groups=edit_groups,
+    )
+    return json.dumps(
+        {"message": "Page restrictions updated successfully", "restrictions": result},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Copy Page", "destructiveHint": True},
+)
+@check_write_access
+async def copy_page(
+    ctx: Context,
+    source_page_id: Annotated[str, Field(description="The ID of the page to copy")],
+    destination_space_key: Annotated[
+        str,
+        Field(description="Space key for the new page (e.g. 'DEV', 'TEAM')"),
+    ],
+    new_title: Annotated[str, Field(description="Title for the new copied page")],
+    destination_parent_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Parent page ID in the destination space. "
+                "When omitted the page is created at the space root."
+            ),
+            default=None,
+        ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
+    ] = None,
+    copy_attachments: Annotated[
+        bool,
+        Field(
+            description=(
+                "(Optional) Whether to copy attachments to the new page. "
+                "Defaults to true. Only supported on Confluence Cloud."
+            ),
+            default=True,
+        ),
+    ] = True,
+) -> str:
+    """Copy a Confluence page to a new location.
+
+    On Confluence Cloud the native copy endpoint is used.  On Server/Data Center
+    the page body is fetched and a new page is created manually (attachments are
+    not copied in the Server/DC path).
+
+    Args:
+        ctx: The FastMCP context.
+        source_page_id: The ID of the page to copy.
+        destination_space_key: Space key for the new page.
+        new_title: Title for the new copied page.
+        destination_parent_id: Optional parent page ID in the destination space.
+        copy_attachments: Whether to copy attachments (Cloud only).
+
+    Returns:
+        JSON string representing the new page.
+
+    Raises:
+        ValueError: If Confluence client is not configured or available.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    page = confluence_fetcher.copy_page(
+        source_page_id=source_page_id,
+        destination_space_key=destination_space_key,
+        new_title=new_title,
+        destination_parent_id=destination_parent_id,
+        copy_attachments=copy_attachments,
+    )
+    return json.dumps(
+        {"message": "Page copied successfully", "page": page.to_simplified_dict()},
+        indent=2,
+        ensure_ascii=False,
+    )

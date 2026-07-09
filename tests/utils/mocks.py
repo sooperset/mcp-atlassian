@@ -244,3 +244,11 @@ class MockConfluenceClient:
             "accountType": "atlassian",
             "accountStatus": "active",
         }
+
+    def get_user_details_by_userkey(self, userkey: str) -> dict[str, str]:
+        """Mock user details by userkey (Server/DC)."""
+        return {
+            "displayName": f"Test User {userkey}",
+            "accountType": "atlassian",
+            "accountStatus": "active",
+        }
