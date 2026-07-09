@@ -130,8 +130,8 @@ class ConfluenceClient:
             client_key_password=self.config.client_key_password,
         )
 
-        # Apply retry/backoff to all mounted adapters (must run after SSL setup
-        # so SSLIgnoreAdapter, if mounted, also picks up the retry policy).
+        # Apply opt-in HTTP hardening after SSL setup so SSLIgnoreAdapter, if
+        # mounted, also picks up the configured behavior.
         configure_retry(self.confluence._session, service="Confluence")
         configure_concurrency(self.confluence._session, service="Confluence")
         configure_rate_limit(self.confluence._session, service="Confluence")

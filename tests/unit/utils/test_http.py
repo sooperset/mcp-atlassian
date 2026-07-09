@@ -43,7 +43,27 @@ def _new_session() -> Session:
     return s
 
 
-def test_configure_retry_applies_to_all_adapters_with_defaults():
+def test_configure_retry_disabled_by_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("ATLASSIAN_RETRY_TOTAL", raising=False)
+
+    session = _new_session()
+    before = {}
+    for prefix, adapter in session.adapters.items():
+        assert isinstance(adapter, HTTPAdapter)
+        before[prefix] = adapter.max_retries
+
+    configure_retry(session, service="Test")
+
+    for prefix, adapter in session.adapters.items():
+        assert isinstance(adapter, HTTPAdapter)
+        assert adapter.max_retries is before[prefix]
+
+
+def test_configure_retry_applies_to_all_adapters_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "5")
+
     session = _new_session()
     configure_retry(session, service="Test")
 
@@ -51,7 +71,7 @@ def test_configure_retry_applies_to_all_adapters_with_defaults():
         assert isinstance(adapter, HTTPAdapter)
         retry = adapter.max_retries
         assert isinstance(retry, Retry)
-        assert retry.total == DEFAULT_RETRY_TOTAL
+        assert retry.total == 5
         assert retry.backoff_factor == DEFAULT_RETRY_BACKOFF
         assert set(retry.status_forcelist or ()) == set(DEFAULT_RETRY_STATUSES)
         assert retry.respect_retry_after_header is True
@@ -103,18 +123,42 @@ def test_configure_retry_invalid_env_falls_back_to_default(
     monkeypatch.setenv("ATLASSIAN_RETRY_BACKOFF", "abc")
 
     session = _new_session()
+    before = {}
+    for prefix, adapter in session.adapters.items():
+        assert isinstance(adapter, HTTPAdapter)
+        before[prefix] = adapter.max_retries
+
+    configure_retry(session, service="Test")
+
+    assert DEFAULT_RETRY_TOTAL == 0
+    for prefix, adapter in session.adapters.items():
+        assert isinstance(adapter, HTTPAdapter)
+        assert adapter.max_retries is before[prefix]
+
+
+def test_configure_retry_invalid_backoff_falls_back_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "5")
+    monkeypatch.setenv("ATLASSIAN_RETRY_BACKOFF", "abc")
+
+    session = _new_session()
     configure_retry(session, service="Test")
 
     adapter = next(iter(session.adapters.values()))
     assert isinstance(adapter, HTTPAdapter)
     retry = adapter.max_retries
     assert isinstance(retry, Retry)
-    assert retry.total == DEFAULT_RETRY_TOTAL
+    assert retry.total == 5
     assert retry.backoff_factor == DEFAULT_RETRY_BACKOFF
 
 
-def test_configure_retry_patches_custom_adapter_in_place():
+def test_configure_retry_patches_custom_adapter_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """Custom adapters mounted before configure_retry should be patched, not replaced."""
+    monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "5")
+
     session = Session()
     custom = HTTPAdapter()
     session.mount("https://example.com", custom)

@@ -160,6 +160,22 @@ This guide covers IDE integration, environment variables, and advanced configura
 
 See [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) for all available options.
 
+### HTTP Hardening
+
+These optional safeguards are useful for protecting self-hosted Server/Data Center
+instances from runaway request loops. They are disabled by default.
+
+| Variable | Description |
+|----------|-------------|
+| `ATLASSIAN_RETRY_TOTAL` | Enable retries for transient `429/502/503/504` responses and connection errors. `0` or unset disables retries. |
+| `ATLASSIAN_RETRY_BACKOFF` | Retry exponential backoff factor in seconds (default: `1.0` when retries are enabled). |
+| `ATLASSIAN_RETRY_INCLUDE_WRITES` | Also retry write methods (`POST`/`PUT`/`PATCH`/`DELETE`). Use only when writes are known to be idempotent. |
+| `ATLASSIAN_MAX_CONCURRENT_REQUESTS` | Process-wide cap for concurrent Jira and Confluence requests. `0` or unset disables the cap. |
+| `ATLASSIAN_REQUESTS_PER_SECOND` | Process-wide outbound request rate limit. `0` or unset disables the limit. |
+| `ATLASSIAN_MAX_PAGINATION_LIMIT` | Clamp user-supplied page sizes for high-fanout list/search calls. `0` or unset disables clamping. |
+| `ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD` | Open a process-wide circuit breaker after this many consecutive `429/503` responses. `0` or unset disables it. |
+| `ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN` | Circuit breaker cooldown in seconds before allowing a probe request (default: `30.0`). |
+
 ## Proxy Configuration
 
 MCP Atlassian supports routing API requests through HTTP/HTTPS/SOCKS proxies.

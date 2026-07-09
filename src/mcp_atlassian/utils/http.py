@@ -6,9 +6,10 @@ both the default HTTPAdapter and any service-specific adapters (e.g.
 SSLIgnoreAdapter mounted by configure_ssl_verification) get the same retry
 behavior. Call AFTER configure_ssl_verification.
 
-The optional concurrency cap and rate limiter wrap adapter.send in place
-(rather than replacing the adapter), so they compose with whatever adapter
-is mounted. Both are disabled by default and gated behind env vars.
+The optional retry policy, concurrency cap, rate limiter, and circuit breaker
+are disabled by default and gated behind env vars. The send wrappers patch
+adapter.send in place (rather than replacing the adapter), so they compose with
+whatever adapter is mounted.
 """
 
 import logging
@@ -23,7 +24,7 @@ from .env import get_float_env, get_int_env, is_env_extended_truthy
 
 logger = logging.getLogger("mcp-atlassian.http")
 
-DEFAULT_RETRY_TOTAL = 5
+DEFAULT_RETRY_TOTAL = 0
 DEFAULT_RETRY_BACKOFF = 1.0
 DEFAULT_RETRY_STATUSES = (429, 502, 503, 504)
 _READ_METHODS = frozenset(["GET", "HEAD", "OPTIONS"])
@@ -134,7 +135,7 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
     """Apply a urllib3 Retry policy to all adapters on the session.
 
     Env knobs:
-      ATLASSIAN_RETRY_TOTAL          (int,   default 5; <=0 disables)
+      ATLASSIAN_RETRY_TOTAL          (int,   default 0; <=0 disables)
       ATLASSIAN_RETRY_BACKOFF        (float, default 1.0 seconds — exponential factor)
       ATLASSIAN_RETRY_INCLUDE_WRITES (bool,  default false; if true also retries
                                      POST/PUT/PATCH/DELETE — only safe when the
@@ -145,7 +146,7 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
     """
     total = get_int_env("ATLASSIAN_RETRY_TOTAL", DEFAULT_RETRY_TOTAL)
     if total <= 0:
-        logger.info("%s: retry disabled (ATLASSIAN_RETRY_TOTAL=%d)", service, total)
+        logger.debug("%s: retry disabled (ATLASSIAN_RETRY_TOTAL=%d)", service, total)
         return
 
     backoff = get_float_env("ATLASSIAN_RETRY_BACKOFF", DEFAULT_RETRY_BACKOFF)
