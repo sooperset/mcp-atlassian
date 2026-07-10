@@ -17,6 +17,7 @@ import time
 import urllib.parse
 import webbrowser
 from dataclasses import dataclass
+from html import escape as html_escape
 
 from ..utils.oauth import OAuthConfig
 
@@ -85,6 +86,10 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-type", "text/html")
         self.end_headers()
 
+        # Escape the message: it can carry attacker-controlled OAuth callback
+        # text (e.g. the error query param), so raw interpolation is reflected XSS.
+        escaped_message = html_escape(message)
+
         html = f"""
         <!DOCTYPE html>
         <html>
@@ -122,7 +127,7 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
         <body>
             <h1>Atlassian OAuth Authorization</h1>
             <div class="message {"success" if status == 200 else "error"}">
-                <p>{message}</p>
+                <p>{escaped_message}</p>
             </div>
             <p>This window will automatically close in <span class="countdown">5</span> seconds...</p>
             <button onclick="window.close()">Close Window Now</button>

@@ -17,6 +17,8 @@ from ..utils.http import (
 from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
+from ..utils.ssrf_adapter import mount_ssrf_pinning
+from ..utils.urls import make_ssrf_redirect_hook
 from ..utils.user_agent import get_default_user_agent
 from .config import ConfluenceConfig
 
@@ -130,8 +132,18 @@ class ConfluenceClient:
             client_key_password=self.config.client_key_password,
         )
 
-        # Apply opt-in HTTP hardening after SSL setup so SSLIgnoreAdapter, if
-        # mounted, also picks up the configured behavior.
+        # Validate redirects for SSRF on every outbound call from this session
+        # (covers direct _session.get() paths and global/stdio fetchers, not just
+        # the per-user HTTP path).
+        self.confluence._session.hooks["response"].append(make_ssrf_redirect_hook())
+        # Pin DNS resolution against rebinding: resolve+validate once and connect
+        # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
+        mount_ssrf_pinning(self.confluence._session)
+
+        # Apply opt-in HTTP hardening after SSL setup and after the pinning
+        # adapter is mounted: these wrappers patch send() in place on whatever
+        # adapters are mounted now, so mounting the pinning adapter later would
+        # silently drop them.
         configure_retry(self.confluence._session, service="Confluence")
         configure_concurrency(self.confluence._session, service="Confluence")
         configure_rate_limit(self.confluence._session, service="Confluence")
