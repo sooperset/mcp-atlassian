@@ -643,6 +643,159 @@ class TestUserTokenMiddleware:
         assert passed_scope["state"]["user_atlassian_token"] == "valid-token"
 
 
+class TestUserTokenMiddlewareServiceHeaderPrecedence:
+    """Regression tests for the service-header vs gateway-Authorization precedence.
+
+    When the request is proxied through an authenticating gateway (e.g. AWS
+    AgentCore Gateway) the gateway injects its own ``Authorization: Bearer
+    <gateway-token>`` for outbound auth to this server. The per-user
+    ``X-Atlassian-Jira-Personal-Token`` / ``X-Atlassian-Jira-Url`` (or the
+    Confluence pair) must take precedence; otherwise the gateway token is
+    mistaken for the user's Atlassian credential and every request 401s.
+    """
+
+    @pytest.fixture
+    def middleware(self):
+        mock_app = AsyncMock()
+        mock_mcp_server = MagicMock()
+        mock_mcp_server.settings.streamable_http_path = "/mcp"
+        mock_mcp_server.get_streamable_http_path.return_value = "/mcp"
+        return UserTokenMiddleware(mock_app, mcp_server_ref=mock_mcp_server)
+
+    @pytest.fixture
+    def mock_scope(self):
+        return {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [],
+            "state": {},
+        }
+
+    @pytest.fixture
+    def mock_receive(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def mock_send(self):
+        return AsyncMock()
+
+    @pytest.mark.anyio
+    async def test_jira_pat_service_header_wins_over_gateway_authorization(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """A complete Jira PAT pair + an inbound Authorization header: prefer the PAT pair.
+
+        The Authorization header must NOT be parsed as the user token when
+        service headers are present, because the inbound Authorization is the
+        gateway's outbound-auth token, not the user's Atlassian credential.
+        """
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer gateway-outbound-token"),
+            (
+                b"x-atlassian-jira-personal-token",
+                b"user-jira-pat-1234",
+            ),
+            (b"x-atlassian-jira-url", b"https://example.atlassian.net"),
+        ]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        # PAT-based service-header path was taken.
+        assert passed_scope["state"]["user_atlassian_auth_type"] == "pat"
+        assert passed_scope["state"]["user_atlassian_email"] is None
+        # The gateway token was NOT stored as the user's Atlassian token.
+        assert passed_scope["state"].get("user_atlassian_token") is None
+        # The service headers were captured and forwarded.
+        assert (
+            passed_scope["state"]["atlassian_service_headers"][
+                "X-Atlassian-Jira-Personal-Token"
+            ]
+            == "user-jira-pat-1234"
+        )
+
+    @pytest.mark.anyio
+    async def test_confluence_pat_service_header_wins_over_gateway_authorization(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Same precedence for the Confluence pair."""
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer gateway-outbound-token"),
+            (
+                b"x-atlassian-confluence-personal-token",
+                b"user-conf-pat-5678",
+            ),
+            (
+                b"x-atlassian-confluence-url",
+                b"https://example.atlassian.net/wiki",
+            ),
+        ]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_auth_type"] == "pat"
+        assert passed_scope["state"].get("user_atlassian_token") is None
+        assert (
+            passed_scope["state"]["atlassian_service_headers"][
+                "X-Atlassian-Confluence-Personal-Token"
+            ]
+            == "user-conf-pat-5678"
+        )
+
+    @pytest.mark.anyio
+    async def test_authorization_header_used_when_no_service_headers_present(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Without service headers, the inbound Authorization header is still parsed.
+
+        Confirms the precedence flip did not break the legacy Authorization
+        path for clients that only send the standard header.
+        """
+        mock_scope["headers"] = [(b"authorization", b"Bearer oauth-access-token")]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_auth_type"] == "oauth"
+        assert passed_scope["state"]["user_atlassian_token"] == "oauth-access-token"
+
+    @pytest.mark.anyio
+    async def test_partial_jira_pair_does_not_trigger_precedence(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """A token without its URL is not a valid PAT pair; fall through to Authorization.
+
+        The old behavior: a half-set of service headers (e.g. just a Jira token
+        without a URL) was ignored, and the Authorization header was used.
+        The new behavior keeps that fallback to avoid the URL missing silently.
+        """
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer oauth-access-token"),
+            (b"x-atlassian-jira-personal-token", b"user-jira-pat-1234"),
+            # x-atlassian-jira-url intentionally absent
+        ]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        # Authorization was used; the lone Jira token was captured into
+        # atlassian_service_headers but did NOT set the auth type.
+        assert passed_scope["state"]["user_atlassian_auth_type"] == "oauth"
+        assert passed_scope["state"]["user_atlassian_token"] == "oauth-access-token"
+        assert (
+            passed_scope["state"]["atlassian_service_headers"][
+                "X-Atlassian-Jira-Personal-Token"
+            ]
+            == "user-jira-pat-1234"
+        )
+
+
 class TestUserTokenMiddlewareSsrfValidation:
     """Regression tests for the SSRF short-circuit in UserTokenMiddleware.
 
