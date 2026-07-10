@@ -108,10 +108,11 @@ class JiraPreprocessor(BasePreprocessor):
     }
 
     # Regex that detects Jira wiki markup markers unambiguous enough to conclude
-    # the input is Jira wiki format rather than Markdown.  Used to skip the
+    # the input is Jira wiki format rather than Markdown. Used to skip the
     # "# heading" → "h1. heading" conversion when the # is a Jira ordered list.
     _JIRA_WIKI_MARKER_RE = re.compile(
-        r"(?:^h[1-6]\.\s|^\{code|^\{noformat|^\{panel)", re.MULTILINE
+        r"^(?:h[1-6]\.\s|\{(?:code|noformat|panel)(?::[^}\n]*)?\})",
+        re.MULTILINE,
     )
 
     def __init__(

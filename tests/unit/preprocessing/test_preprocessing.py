@@ -1031,6 +1031,45 @@ def test_markdown_heading_not_suppressed_by_inline_jira_code_at_line_start(
     assert "h2. Sub-section" in result
 
 
+@pytest.mark.parametrize(
+    "marker",
+    ["{code:python}", "{noformat}", "{panel:title=Details}"],
+)
+def test_jira_macro_marker_preserves_ordered_list(preprocessor_with_jira, marker):
+    """Valid Jira block macros identify Jira wiki input."""
+    jira_wiki = f"{marker}\n# First item"
+
+    result = preprocessor_with_jira.markdown_to_jira(jira_wiki)
+
+    assert result == jira_wiki
+
+
+@pytest.mark.parametrize("lookalike", ["{codebase}", "{noformatting}", "{panelist}"])
+def test_jira_macro_lookalike_does_not_suppress_heading_conversion(
+    preprocessor_with_jira,
+    lookalike,
+):
+    """Words that start like Jira macros remain ordinary Markdown text."""
+    markdown = f"{lookalike}\n# Heading"
+
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    assert result == f"{lookalike}\nh1. Heading"
+
+
+def test_jira_marker_in_fenced_code_does_not_suppress_heading_conversion(
+    preprocessor_with_jira,
+):
+    """Jira examples in Markdown code fences do not change input detection."""
+    markdown = "```\n{panel}\n```\n\n# Heading"
+
+    result = preprocessor_with_jira.markdown_to_jira(markdown)
+
+    assert "{panel}" in result
+    assert "h1. Heading" in result
+    assert "# Heading" not in result
+
+
 # Language mapping tests for code blocks (issue #669)
 
 
