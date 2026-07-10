@@ -91,6 +91,48 @@ class TestJiraCloudEpicOperations:
         resource_tracker.add_jira_issue(epic.key)
         assert epic.key.startswith(cloud_instance.project_key)
 
+    def test_unlink_issue_from_epic(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        """Cloud clears a localized Epic relationship through parent."""
+        uid = uuid.uuid4().hex[:8]
+        try:
+            epic = jira_fetcher.create_issue(
+                project_key=cloud_instance.project_key,
+                summary=f"Cloud E2E Unlink Epic {uid}",
+                issue_type="Epic",
+            )
+        except HTTPError as e:
+            if "issue type" in str(e).lower():
+                pytest.skip(
+                    f"Epic issue type not available in project "
+                    f"{cloud_instance.project_key}"
+                )
+            raise
+        issue = jira_fetcher.create_issue(
+            project_key=cloud_instance.project_key,
+            summary=f"Cloud E2E Unlink Issue {uid}",
+            issue_type="Task",
+        )
+        resource_tracker.add_jira_issue(epic.key)
+        resource_tracker.add_jira_issue(issue.key)
+
+        jira_fetcher.jira.update_issue(
+            issue_key=issue.key,
+            update={"fields": {"parent": {"key": epic.key}}},
+        )
+        linked = jira_fetcher.jira.get_issue(issue.key)
+        assert linked["fields"]["parent"]["key"] == epic.key
+
+        unlinked = jira_fetcher.unlink_issue_from_epic(issue.key)
+
+        assert unlinked.key == issue.key
+        updated = jira_fetcher.jira.get_issue(issue.key)
+        assert updated["fields"].get("parent") is None
+
 
 class TestJiraCloudMoveOperations:
     """Issue move operations on Cloud."""

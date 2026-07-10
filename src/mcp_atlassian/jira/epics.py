@@ -3,6 +3,8 @@
 import logging
 from typing import Any
 
+from requests.exceptions import HTTPError
+
 from ..models.jira import JiraIssue
 from .client import JiraClient
 from .protocols import (
@@ -441,24 +443,80 @@ class EpicsMixin(
             raise TypeError(msg)
 
         fields = issue.get("fields")
+        if field_id == "parent":
+            # Cloud omits the fields object entirely when the only requested
+            # field is an unset parent.
+            if fields is None:
+                return True
+            if not isinstance(fields, dict):
+                return False
+            return fields.get(field_id) is None
+
         if not isinstance(fields, dict):
             return False
-
-        if field_id == "parent":
-            return fields.get(field_id) is None
 
         # Jira can accept an unknown custom field in an update without changing
         # the issue. Require the requested field to be present in the follow-up
         # response so an absent fallback field is not treated as a successful clear.
         return field_id in fields and fields[field_id] is None
 
+    def _get_verified_epic_link_field_id(self) -> str | None:
+        """Return the instance's Epic Link field ID when metadata verifies it."""
+        field_id = self.get_field_ids_to_epic().get("epic_link")
+        if not field_id or not field_id.startswith("customfield_"):
+            return None
+
+        field = self.get_field_by_id(field_id)
+        if not field:
+            return None
+
+        field_name = str(field.get("name", "")).strip().lower()
+        schema = field.get("schema")
+        custom_type = schema.get("custom", "") if isinstance(schema, dict) else ""
+        if (
+            field_name == "epic link"
+            or custom_type == "com.pyxis.greenhopper.jira:gh-epic-link"
+        ):
+            return field_id
+
+        return None
+
+    def _clear_epic_relationship_field(self, issue_key: str, field_id: str) -> None:
+        """Clear an Epic relationship using the edition's native issue endpoint."""
+        if self.config.is_cloud and field_id == "parent":
+            endpoint = f"/rest/api/3/issue/{issue_key}"
+            payload = {"fields": {"parent": None}}
+        else:
+            endpoint = f"/rest/api/2/issue/{issue_key}"
+            payload = {"fields": {field_id: None}}
+        self.jira.put(endpoint, data=payload)
+
+    def _remove_issue_from_epic_agile(self, issue_key: str) -> None:
+        """Remove an issue from a company-managed Epic through Jira Software."""
+        self.jira.post(
+            "/rest/agile/1.0/epic/none/issue",
+            data={"issues": [issue_key]},
+        )
+
+    def _metadata_is_epic_issue_type(self, issue_type: dict[str, Any]) -> bool:
+        """Return whether Jira issue-type metadata represents an Epic."""
+        names = {
+            str(issue_type.get("name", "")).strip().lower(),
+            str(issue_type.get("untranslatedName", "")).strip().lower(),
+        }
+        if "epic" in names:
+            return True
+
+        # Cloud localizes issue-type names, but its hierarchy level is stable:
+        # subtasks=-1, standard issues=0, Epics=1.
+        return self.config.is_cloud and issue_type.get("hierarchyLevel") == 1
+
     def unlink_issue_from_epic(self, issue_key: str) -> JiraIssue:
         """Unlink an issue from its epic.
 
-        Attempts to clear the epic link using multiple strategies,
-        mirroring the fallback approach of ``link_issue_to_epic``:
-        parent field, discovered epic-link custom field, then common
-        custom field IDs.
+        Clears either an Epic parent relationship or a custom Epic Link field.
+        Custom fields are used only when Jira's field metadata identifies their
+        purpose, so unrelated fields are never cleared based on a guessed ID.
 
         Args:
             issue_key: The key of the issue to unlink (e.g. 'PROJ-123')
@@ -467,123 +525,102 @@ class EpicsMixin(
             JiraIssue: The updated issue after unlinking.
 
         Raises:
-            ValueError: If the issue cannot be unlinked from its epic.
-            Exception: If there is an API error fetching the issue.
+            TypeError: If Jira returns an unexpected issue representation.
+            ValueError: If Jira accepts an update but does not clear the link.
+            HTTPError: If Jira rejects an API operation.
         """
-        try:
-            issue = self.jira.get_issue(issue_key)
-            if not isinstance(issue, dict):
-                msg = (
-                    f"Unexpected return value type from `jira.get_issue`: {type(issue)}"
-                )
-                logger.error(msg)
-                raise TypeError(msg)
+        issue = self.jira.get_issue(issue_key)
+        if not isinstance(issue, dict):
+            msg = f"Unexpected return value type from `jira.get_issue`: {type(issue)}"
+            logger.error(msg)
+            raise TypeError(msg)
 
-            issue_fields = issue.get("fields", {})
+        issue_fields = issue.get("fields") or {}
+        if not isinstance(issue_fields, dict):
+            msg = f"Unexpected issue fields type: {type(issue_fields)}"
+            logger.error(msg)
+            raise TypeError(msg)
 
-            # Try clearing the parent field (Cloud team-managed projects).
-            # Only clear if the parent is an Epic to avoid detaching
-            # sub-tasks from their parent Story/Task.
-            parent_data = issue_fields.get("parent")
-            if parent_data and isinstance(parent_data, dict):
-                parent_type = (
-                    parent_data.get("fields", {})
-                    .get("issuetype", {})
-                    .get("name", "")
-                    .lower()
-                )
-                if parent_type == "epic":
-                    try:
-                        self.jira.update_issue(
-                            issue_key=issue_key,
-                            update={"fields": {"parent": None}},
-                        )
-                        if self._is_epic_link_cleared(issue_key, "parent"):
-                            logger.info(
-                                f"Successfully unlinked {issue_key} "
-                                "from epic using parent field"
-                            )
-                            return self.get_issue(issue_key)
-                        logger.info(
-                            "Jira accepted the parent update but the epic link "
-                            "is still set. Trying other methods..."
-                        )
-                    except Exception as e:
-                        logger.info(
-                            f"Couldn't clear parent field: {e}. Trying other methods..."
-                        )
+        parent_error: HTTPError | ValueError | None = None
+        parent_data = issue_fields.get("parent")
+        if isinstance(parent_data, dict):
+            parent_fields = parent_data.get("fields") or {}
+            parent_is_epic = False
+            if isinstance(parent_fields, dict):
+                issue_type = parent_fields.get("issuetype") or {}
+                if isinstance(issue_type, dict):
+                    parent_is_epic = self._metadata_is_epic_issue_type(issue_type)
 
-            # Try the discovered Epic Link custom field.
-            field_ids = self.get_field_ids_to_epic()
-            if "epic_link" in field_ids:
+            # Some Jira responses omit useful type metadata from the nested
+            # parent. Fetch it before deciding whether parent=None is safe; a
+            # non-Epic parent may belong to a sub-task.
+            parent_key = parent_data.get("key")
+            if (
+                not parent_is_epic
+                and self.config.is_cloud
+                and isinstance(parent_key, str)
+                and parent_key
+            ):
+                parent_issue = self.jira.get_issue(parent_key)
+                if not isinstance(parent_issue, dict):
+                    msg = (
+                        "Unexpected return value type from `jira.get_issue`: "
+                        f"{type(parent_issue)}"
+                    )
+                    logger.error(msg)
+                    raise TypeError(msg)
+                fetched_fields = parent_issue.get("fields") or {}
+                if isinstance(fetched_fields, dict):
+                    issue_type = fetched_fields.get("issuetype") or {}
+                    if isinstance(issue_type, dict):
+                        parent_is_epic = self._metadata_is_epic_issue_type(issue_type)
+
+            if parent_is_epic:
                 try:
-                    self.jira.update_issue(
-                        issue_key=issue_key,
-                        update={
-                            "fields": {
-                                field_ids["epic_link"]: None,
-                            }
-                        },
-                    )
-                    epic_link_field = field_ids["epic_link"]
-                    if self._is_epic_link_cleared(issue_key, epic_link_field):
-                        logger.info(
-                            f"Successfully unlinked {issue_key} "
-                            "from epic using discovered "
-                            f"field: {epic_link_field}"
+                    self._clear_epic_relationship_field(issue_key, "parent")
+                    parent_cleared = self._is_epic_link_cleared(issue_key, "parent")
+                    if not parent_cleared and self.config.is_cloud:
+                        self._remove_issue_from_epic_agile(issue_key)
+                        parent_cleared = self._is_epic_link_cleared(issue_key, "parent")
+                    if not parent_cleared:
+                        raise ValueError(
+                            f"Jira did not clear the Epic parent for {issue_key}"
                         )
-                        return self.get_issue(issue_key)
+                except (HTTPError, ValueError) as exc:
+                    parent_error = exc
                     logger.info(
-                        "Jira accepted the discovered epic_link update but the "
-                        "field is still set. Trying fallbacks..."
+                        "Could not clear Epic parent for %s; checking for a "
+                        "verified Epic Link field",
+                        issue_key,
                     )
-                except Exception as e:
+                else:
                     logger.info(
-                        "Couldn't clear discovered epic_link "
-                        f"field: {e}. Trying fallbacks..."
+                        "Successfully unlinked %s using the parent field", issue_key
                     )
+                    return self.get_issue(issue_key)
 
-            # Fallback to common custom field IDs.
-            common_fields = [
-                "customfield_10014",  # Common in Jira Cloud
-                "customfield_10008",  # Common in Jira Server
-                "customfield_10000",
-                "customfield_11703",
-            ]
-
-            for field_id in common_fields:
-                try:
-                    self.jira.update_issue(
-                        issue_key=issue_key,
-                        update={"fields": {field_id: None}},
-                    )
-                    if self._is_epic_link_cleared(issue_key, field_id):
-                        logger.info(
-                            f"Successfully unlinked {issue_key} "
-                            f"from epic using field: {field_id}"
-                        )
-                        return self.get_issue(issue_key)
-                    logger.info(
-                        f"Jira accepted the update for {field_id} but did not "
-                        "clear that field"
-                    )
-                except Exception as e:
-                    logger.info(f"Couldn't clear field {field_id}: {e}")
-                    continue
-
-            raise ValueError(
-                f"Could not unlink issue {issue_key} from its "
-                "epic. Your Jira instance might use a different "
-                "field for epic links."
+        epic_link_field_id = self._get_verified_epic_link_field_id()
+        if epic_link_field_id and issue_fields.get(epic_link_field_id) is not None:
+            self._clear_epic_relationship_field(issue_key, epic_link_field_id)
+            if not self._is_epic_link_cleared(issue_key, epic_link_field_id):
+                raise ValueError(
+                    f"Jira did not clear Epic Link field {epic_link_field_id} "
+                    f"for {issue_key}"
+                )
+            logger.info(
+                "Successfully unlinked %s using verified field %s",
+                issue_key,
+                epic_link_field_id,
             )
+            return self.get_issue(issue_key)
 
-        except ValueError:
-            raise
-        except Exception as e:
-            logger.error(f"Error unlinking {issue_key} from epic: {e}")
-            if "API error" in str(e):
-                raise Exception(f"Error unlinking issue from epic: {e}")
-            raise
+        if parent_error is not None:
+            raise ValueError(
+                f"Could not unlink issue {issue_key} from its Epic parent"
+            ) from parent_error
+
+        logger.info("Issue %s is not linked to an Epic", issue_key)
+        return self.get_issue(issue_key)
 
     def get_epic_issues(
         self, epic_key: str, start: int = 0, limit: int = 50

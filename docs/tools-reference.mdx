@@ -1,9 +1,9 @@
 ---
 title: "Tools Reference"
-description: "Overview of all 96 MCP tools for Jira and Confluence — organized by category with quick links"
+description: "Overview of all 97 MCP tools for Jira and Confluence — organized by category with quick links"
 ---
 
-MCP Atlassian provides **96 tools** for interacting with Jira and Confluence. Tools are organized by category below.
+MCP Atlassian provides **97 tools** for interacting with Jira and Confluence. Tools are organized by category below.
 
 ## Jira Tools
 
@@ -73,7 +73,7 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 | `jira_transitions` | Yes | `jira_get_transitions`, `jira_transition_issue` |
 | `jira_projects` | No | `jira_get_all_projects`, `jira_get_project_versions`, `jira_get_project_components`, `jira_create_version`, `jira_batch_create_versions`, `jira_update_version` |
 | `jira_agile` | No | `jira_get_agile_boards`, `jira_get_board_issues`, `jira_get_sprints_from_board`, `jira_get_sprint_issues`, `jira_create_sprint`, `jira_update_sprint`, `jira_add_issues_to_sprint` |
-| `jira_links` | No | `jira_get_link_types`, `jira_link_to_epic`, `jira_create_issue_link`, `jira_create_remote_issue_link`, `jira_remove_issue_link` |
+| `jira_links` | No | `jira_get_link_types`, `jira_link_to_epic`, `jira_unlink_from_epic`, `jira_create_issue_link`, `jira_create_remote_issue_link`, `jira_remove_issue_link` |
 | `jira_worklog` | No | `jira_get_worklog`, `jira_add_worklog` |
 | `jira_attachments` | No | `jira_download_attachments`, `jira_get_issue_images` |
 | `jira_users` | No | `jira_get_user_profile` |
@@ -101,7 +101,7 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 # To restrict to core toolsets plus specific extras:
 TOOLSETS=default,jira_agile,jira_attachments
 
-# Enable all toolsets (96 tools)
+# Enable all toolsets (97 tools)
 TOOLSETS=all
 
 # Command line
