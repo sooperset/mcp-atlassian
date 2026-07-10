@@ -747,7 +747,11 @@ async def get_issue(
                 "assignee, and type, plus a completion percentage). By "
                 "default the summary is aggregate-only; set "
                 "'epic_summary_children=true' to also inline a compact "
-                "child list."
+                "child list. "
+                "Note: transitions inlined via include are "
+                "lightweight (no required_fields). Use "
+                "jira_get_transitions with expand_fields=true "
+                "for full field metadata."
             ),
             default=None,
         ),
