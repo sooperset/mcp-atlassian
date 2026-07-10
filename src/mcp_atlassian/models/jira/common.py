@@ -80,6 +80,7 @@ class JiraUser(ApiModel):
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""
         result: dict[str, Any] = {
+            "account_id": self.account_id,
             "display_name": self.display_name,
             "name": self.username or self.display_name,
             "email": self.email,

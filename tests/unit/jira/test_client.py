@@ -6,9 +6,11 @@ from typing import Literal
 from unittest.mock import MagicMock, call, patch
 
 import pytest
+from requests.sessions import Session
 
 from mcp_atlassian.jira.client import JiraClient
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.ssl import NoProxyAdapter
 
 
 class DeepcopyMock(MagicMock):
@@ -56,11 +58,99 @@ def test_init_with_basic_auth():
             client_cert=None,
             client_key=None,
             client_key_password=None,
+            no_proxy=None,
         )
 
         assert client.config == config
         assert client._field_ids_cache is None
         assert client._current_user_account_id is None
+
+
+@pytest.mark.security_regression
+def test_base_session_has_ssrf_redirect_hook():
+    """Every fetcher's underlying session must validate redirects for SSRF, not
+    only the per-user HTTP path. Direct ``self.jira._session.get()`` calls (e.g.
+    jira/development.py, jira/users.py) and global/stdio fetchers previously
+    followed redirects unhooked. Closes GHSA-v9m3-wfh8-5646, GHSA-5wf4-jqxh-8gm3.
+    """
+    import requests
+
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_jira.return_value._session = requests.Session()
+        client = JiraClient(
+            config=JiraConfig(
+                url="https://test.atlassian.net",
+                auth_type="basic",
+                username="u",
+                api_token="t",
+            )
+        )
+
+    hooks = client.jira._session.hooks["response"]
+    assert len(hooks) > 0, "base session must carry an SSRF redirect hook"
+
+    # The hook must actually block a redirect to an internal/metadata host.
+    internal_redirect = MagicMock()
+    internal_redirect.is_redirect = True
+    internal_redirect.headers = {"Location": "http://169.254.169.254/latest/meta-data/"}
+    with pytest.raises(ValueError, match="SSRF"):
+        for hook in hooks:
+            hook(internal_redirect)
+
+    # And the base session must use the DNS-pinning adapter (rebind protection).
+    from mcp_atlassian.utils.ssrf_adapter import SsrfPinningAdapter
+
+    assert isinstance(
+        client.jira._session.get_adapter("https://example.atlassian.net"),
+        SsrfPinningAdapter,
+    ), "base session must mount the SSRF DNS-pinning adapter for https"
+
+
+@pytest.mark.security_regression
+def test_http_hardening_survives_ssrf_pinning_mount(monkeypatch):
+    """The opt-in HTTP hardening wrappers patch ``adapter.send`` in place, so
+    they must be applied AFTER ``mount_ssrf_pinning`` replaces the generic
+    http/https adapters — otherwise the pinning mount silently drops the
+    concurrency/rate-limit/circuit-breaker wrappers (retries survive via the
+    max_retries carry-over, the send wrappers do not).
+    """
+    import requests
+
+    from mcp_atlassian.utils.http import (
+        _reset_concurrency_semaphore_for_tests,
+        _reset_rate_limit_bucket_for_tests,
+    )
+    from mcp_atlassian.utils.ssrf_adapter import SsrfPinningAdapter
+
+    monkeypatch.setenv("ATLASSIAN_MAX_CONCURRENT_REQUESTS", "2")
+    _reset_concurrency_semaphore_for_tests()
+    try:
+        with (
+            patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+            patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+        ):
+            mock_jira.return_value._session = requests.Session()
+            client = JiraClient(
+                config=JiraConfig(
+                    url="https://test.atlassian.net",
+                    auth_type="basic",
+                    username="u",
+                    api_token="t",
+                )
+            )
+
+        adapter = client.jira._session.get_adapter("https://example.atlassian.net")
+        assert isinstance(adapter, SsrfPinningAdapter)
+        assert getattr(adapter, "_mcp_atlassian_throttled", False), (
+            "concurrency wrapper must be present on the pinning adapter — "
+            "hardening was applied before mount_ssrf_pinning replaced it"
+        )
+    finally:
+        _reset_concurrency_semaphore_for_tests()
+        _reset_rate_limit_bucket_for_tests()
 
 
 def test_init_with_token_auth():
@@ -98,6 +188,7 @@ def test_init_with_token_auth():
             client_cert=None,
             client_key=None,
             client_key_password=None,
+            no_proxy=None,
         )
 
         assert client.config == config
@@ -277,6 +368,33 @@ def test_init_sets_proxies_and_no_proxy(monkeypatch):
     assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
 
 
+def test_init_configures_no_proxy_adapter_from_config(monkeypatch):
+    """Test that client no_proxy config is visible during SSL setup."""
+    mock_jira = MagicMock()
+    mock_jira._session = Session()
+    monkeypatch.setattr("mcp_atlassian.jira.client.Jira", lambda **kwargs: mock_jira)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    config = JiraConfig(
+        url="https://test.atlassian.net",
+        auth_type="basic",
+        username="user",
+        api_token="pat",
+        http_proxy="http://proxy:8080",
+        no_proxy="test.atlassian.net",
+    )
+
+    JiraClient(config=config)
+
+    assert os.environ["NO_PROXY"] == "test.atlassian.net"
+    assert mock_jira._session.proxies["http"] == "http://proxy:8080"
+    assert isinstance(
+        mock_jira._session.get_adapter("https://test.atlassian.net"),
+        NoProxyAdapter,
+    )
+
+
 def test_init_no_proxies(monkeypatch):
     """Test that JiraClient does not set proxies if not configured."""
     # Patch Jira and its _session
@@ -396,6 +514,134 @@ def test_jira_client_basic_auth_preserves_trust_env():
         JiraClient(config=config)
 
         assert mock_session.trust_env is True
+
+
+def test_jira_client_sets_default_user_agent() -> None:
+    """An explicit User-Agent is set so WAFs don't block the requests default."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        headers: dict[str, str] = {}
+        mock_jira.return_value._session.headers = headers
+
+        config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="pat",
+        )
+        JiraClient(config=config)
+
+        assert headers["User-Agent"].startswith("mcp-atlassian/")
+
+
+def test_jira_client_custom_user_agent_overrides_default() -> None:
+    """Custom headers must still win over the built-in User-Agent default."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        headers: dict[str, str] = {}
+        mock_jira.return_value._session.headers = headers
+
+        config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="pat",
+            custom_headers={"User-Agent": "my-app/1.0"},
+        )
+        JiraClient(config=config)
+
+        assert headers["User-Agent"] == "my-app/1.0"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://test.atlassian.net",
+        "https://jira.example.com",
+    ],
+    ids=["cloud", "server_dc"],
+)
+def test_create_version_uses_rest_v2_endpoint(url: str) -> None:
+    """Test that create_version uses the REST v2 endpoint on all Jira platforms."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_jira.return_value._session.headers = {}
+        mock_jira.return_value.post.return_value = {"id": "100", "name": "v1.0"}
+
+        config = JiraConfig(url=url, auth_type="pat", personal_token="test_token")
+        client = JiraClient(config=config)
+        client.create_version(project="PROJ", name="v1.0")
+
+        mock_jira.return_value.resource_url.assert_not_called()
+        mock_jira.return_value.post.assert_called_once_with(
+            "/rest/api/2/version", json={"project": "PROJ", "name": "v1.0"}
+        )
+
+
+def test_update_version_sends_only_provided_fields() -> None:
+    """Test that update_version sends only fields explicitly provided."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_response = {"id": "10001", "name": "v2.0", "archived": False}
+        mock_jira.return_value.put.return_value = mock_response
+
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="pat",
+            personal_token="test_token",
+        )
+        client = JiraClient(config=config)
+        result = client.update_version("10001", name="v2.0", archived=False)
+
+        assert result == mock_response
+        mock_jira.return_value.put.assert_called_once_with(
+            "/rest/api/2/version/10001",
+            data={"name": "v2.0", "archived": False},
+        )
+
+
+def test_update_version_requires_at_least_one_field() -> None:
+    """Test that update_version rejects empty update payloads."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="pat",
+            personal_token="test_token",
+        )
+        client = JiraClient(config=config)
+
+        with pytest.raises(ValueError, match="requires at least one field"):
+            client.update_version("10001")
+
+        mock_jira.return_value.put.assert_not_called()
+
+
+def test_update_version_rejects_non_dict_response() -> None:
+    """Test that update_version rejects unexpected Jira responses."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_jira.return_value.put.return_value = ["not", "a", "dict"]
+
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="pat",
+            personal_token="test_token",
+        )
+        client = JiraClient(config=config)
+
+        with pytest.raises(ValueError, match="Unexpected response from Jira API"):
+            client.update_version("10001", released=True)
 
 
 # ---------------------------------------------------------------------------
