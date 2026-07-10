@@ -501,3 +501,24 @@ def test_confluence_client_custom_user_agent_overrides_default():
         ConfluenceClient(config=config)
 
         assert headers["User-Agent"] == "my-app/1.0"
+
+
+def test_confluence_client_applies_configured_cookie() -> None:
+    """The configured raw cookie is attached to the Confluence session."""
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        headers: dict[str, str] = {}
+        mock_confluence.return_value._session.headers = headers
+
+        config = ConfluenceConfig(
+            url="https://confluence.example.com",
+            auth_type="pat",
+            personal_token="pat",
+            cookie="JSESSIONID=abc123; sso_token=xyz",
+        )
+        ConfluenceClient(config=config)
+
+        assert headers["Cookie"] == "JSESSIONID=abc123; sso_token=xyz"

@@ -403,7 +403,7 @@ def test_from_env_oauth_enable_with_server_url():
         assert config.is_cloud is False
 
 
-def test_from_env_with_cookie():
+def test_from_env_with_cookie() -> None:
     """Test that from_env reads JIRA_COOKIE and stores it in config."""
     with patch.dict(
         os.environ,
@@ -418,7 +418,7 @@ def test_from_env_with_cookie():
         assert config.cookie == "JSESSIONID=abc123; other=xyz"
 
 
-def test_from_env_without_cookie():
+def test_from_env_without_cookie() -> None:
     """Test that cookie defaults to None when JIRA_COOKIE is not set."""
     with patch.dict(
         os.environ,

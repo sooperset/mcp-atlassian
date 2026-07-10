@@ -208,8 +208,28 @@ CONFLUENCE_CUSTOM_HEADERS=X-Service=mcp-integration,X-ALB-Token=secret
 ```
 
 <Note>
-Header values are masked in debug logs for security.
+Sensitive header values are masked in debug logs for security.
 </Note>
+
+### SSO Cookies
+
+For SSO gateways or reverse proxies that require session cookies, configure a raw
+`Cookie` header independently for Jira and Confluence:
+
+```bash
+JIRA_COOKIE="JSESSIONID=abc123; other_cookie=xyz"
+CONFLUENCE_COOKIE="JSESSIONID=abc123; other_cookie=xyz"
+```
+
+| Variable | Description |
+|----------|-------------|
+| `JIRA_COOKIE` | Raw cookie string attached to every Jira request |
+| `CONFLUENCE_COOKIE` | Raw cookie string attached to every Confluence request |
+
+<Warning>
+Cookie values are authentication secrets. Keep them out of source control and
+rotate them if they are exposed.
+</Warning>
 
 ## Tool Filtering
 
