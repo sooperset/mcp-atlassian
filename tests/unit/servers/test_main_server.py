@@ -247,12 +247,13 @@ class TestUserTokenMiddleware:
 
     @pytest.mark.anyio
     async def test_unsupported_auth_type_returns_401(
-        self, middleware, mock_scope, mock_receive, mock_send
+        self, middleware, mock_scope, mock_receive, mock_send, caplog
     ):
         """Test that unsupported auth types (e.g., Digest) return 401 Unauthorized."""
         mock_scope["headers"] = [(b"authorization", b"Digest username=test")]
 
-        await middleware(mock_scope, mock_receive, mock_send)
+        with caplog.at_level(logging.WARNING, logger="mcp-atlassian.server.main"):
+            await middleware(mock_scope, mock_receive, mock_send)
 
         # Verify 401 response was sent
         assert mock_send.call_count == 2
@@ -269,6 +270,31 @@ class TestUserTokenMiddleware:
 
         # Verify app was NOT called
         middleware.app.assert_not_called()
+        assert "Unsupported Authorization type: Digest" in caplog.text
+        assert "username=test" not in caplog.text
+
+    @pytest.mark.anyio
+    async def test_raw_auth_token_is_redacted_in_warning(
+        self, middleware, mock_scope, mock_receive, mock_send, caplog
+    ):
+        """Test that raw Authorization values are redacted from warning logs."""
+        raw_token = "raw-token-without-prefix"
+        mock_scope["headers"] = [(b"authorization", raw_token.encode())]
+
+        with caplog.at_level(logging.WARNING, logger="mcp-atlassian.server.main"):
+            await middleware(mock_scope, mock_receive, mock_send)
+
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+
+        body_call = mock_send.call_args_list[1][0][0]
+        body = json.loads(body_call["body"].decode())
+        assert "Bearer" in body["error"]
+
+        middleware.app.assert_not_called()
+        assert "Unsupported Authorization type: <redacted>" in caplog.text
+        assert raw_token not in caplog.text
 
     @pytest.mark.anyio
     async def test_whitespace_only_auth_returns_401(
@@ -290,6 +316,31 @@ class TestUserTokenMiddleware:
 
         # Verify app was NOT called
         middleware.app.assert_not_called()
+
+    @pytest.mark.security_regression
+    @pytest.mark.anyio
+    async def test_missing_authorization_header_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """An unauthenticated POST to the MCP endpoint must be rejected at the
+        transport boundary, not proxied to the app with the operator's credentials.
+
+        The dependencies-level global-fallback test is necessary but not sufficient,
+        because the request can still reach the app here. Secure contract: with no
+        Authorization header and ``ALLOW_GLOBAL_CRED_FALLBACK`` off, return 401 and do
+        not call ``self.app``.
+        """
+        # No Authorization header and no service headers -> unauthenticated request.
+        mock_scope["headers"] = []
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        # Secure: the request must be rejected before reaching the downstream app.
+        middleware.app.assert_not_called()
+        assert mock_send.call_count >= 1, "expected a 401 response, none was sent"
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["type"] == "http.response.start"
+        assert start_call["status"] == 401
 
     @pytest.mark.anyio
     async def test_client_disconnect_connection_reset(

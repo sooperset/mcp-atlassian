@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ from fastmcp import Client
 from fastmcp.client import FastMCPTransport
 from mcp.types import CallToolResult, TextContent
 
+from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.servers import main_mcp
 
@@ -184,6 +186,34 @@ class TestMCPConfluenceTools:
         assert result.content and isinstance(result.content[0], TextContent)
 
     @pytest.mark.anyio
+    async def test_confluence_get_page_with_tiny_link(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+        confluence_fetcher: ConfluenceFetcher,
+    ) -> None:
+        raw_page = confluence_fetcher.confluence.get_page_by_id(
+            cloud_instance.test_page_id
+        )
+        assert isinstance(raw_page, dict)
+        links = raw_page["_links"]
+        tiny_url = (
+            f"{links.get('base', cloud_instance.confluence_url).rstrip('/')}"
+            f"/{links['tinyui'].lstrip('/')}"
+        )
+
+        result = await call_tool(
+            mcp_client,
+            "confluence_get_page",
+            {"page_id": tiny_url},
+        )
+
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert str(data["metadata"]["id"]) == cloud_instance.test_page_id
+
+    @pytest.mark.anyio
     async def test_confluence_search(
         self,
         mcp_client: Client,
@@ -225,6 +255,100 @@ class TestMCPConfluenceTools:
             "confluence_delete_page",
             {"page_id": page_id},
         )
+
+    @pytest.mark.anyio
+    async def test_confluence_create_update_xhtml_page(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page_id = None
+        create_result = await call_tool(
+            mcp_client,
+            "confluence_create_page",
+            {
+                "space_key": cloud_instance.space_key,
+                "title": f"Cloud MCP XHTML Tool Test {uid}",
+                "content": "<p>Created via MCP XHTML tool test.</p>",
+                "content_format": "xhtml",
+            },
+        )
+        assert not create_result.is_error
+        assert create_result.content and isinstance(
+            create_result.content[0], TextContent
+        )
+        page_id = json.loads(create_result.content[0].text)["page"]["id"]
+        assert page_id is not None
+
+        try:
+            update_result = await call_tool(
+                mcp_client,
+                "confluence_update_page",
+                {
+                    "page_id": page_id,
+                    "title": f"Cloud MCP XHTML Tool Test {uid}",
+                    "content": "<p>Updated via MCP XHTML tool test.</p>",
+                    "content_format": "xhtml",
+                },
+            )
+            assert not update_result.is_error
+        finally:
+            if page_id:
+                await call_tool(
+                    mcp_client,
+                    "confluence_delete_page",
+                    {"page_id": page_id},
+                )
+
+    @pytest.mark.anyio
+    async def test_confluence_create_update_page_with_content_file(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+        workspace_tmp_path: Path,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page_id = None
+        create_file = workspace_tmp_path / "cloud-create.md"
+        update_file = workspace_tmp_path / "cloud-update.md"
+        create_file.write_text("# Created from file\n\nCloud body.", encoding="utf-8")
+        update_file.write_text("# Updated from file\n\nCloud body.", encoding="utf-8")
+
+        create_result = await call_tool(
+            mcp_client,
+            "confluence_create_page",
+            {
+                "space_key": cloud_instance.space_key,
+                "title": f"Cloud MCP File Tool Test {uid}",
+                "content_file": str(create_file),
+            },
+        )
+        assert not create_result.is_error
+        assert create_result.content and isinstance(
+            create_result.content[0], TextContent
+        )
+        page_id = json.loads(create_result.content[0].text)["page"]["id"]
+        assert page_id is not None
+
+        try:
+            update_result = await call_tool(
+                mcp_client,
+                "confluence_update_page",
+                {
+                    "page_id": page_id,
+                    "title": f"Cloud MCP File Tool Test {uid}",
+                    "content_file": str(update_file),
+                },
+            )
+            assert not update_result.is_error
+        finally:
+            if page_id:
+                await call_tool(
+                    mcp_client,
+                    "confluence_delete_page",
+                    {"page_id": page_id},
+                )
 
     @pytest.mark.anyio
     async def test_confluence_update_page_section(

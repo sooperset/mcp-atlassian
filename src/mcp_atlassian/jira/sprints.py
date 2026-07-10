@@ -149,6 +149,24 @@ class SprintsMixin(JiraClient):
         )
         return True
 
+    def move_issues_to_backlog(self, issue_keys: list[str]) -> bool:
+        """Move issues to the backlog (removes them from any sprint).
+
+        Args:
+            issue_keys: List of issue keys to move (e.g., ["PROJ-1", "PROJ-2"]).
+
+        Returns:
+            True if successful.
+
+        Raises:
+            requests.HTTPError: If the API call fails.
+        """
+        self.jira.post(
+            "rest/agile/1.0/backlog/issue",
+            data={"issues": issue_keys},
+        )
+        return True
+
     def create_sprint(
         self,
         board_id: str,

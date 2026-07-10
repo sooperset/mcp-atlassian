@@ -63,6 +63,9 @@ class TestJiraIssue:
         assert isinstance(issue.fix_versions, list)
         assert "v1.0" in issue.fix_versions
 
+        assert isinstance(issue.versions, list)
+        assert "v0.9" in issue.versions
+
         assert isinstance(issue.attachments, list)
         assert len(issue.attachments) == 1
         assert issue.attachments[0].filename == "test_attachment.txt"
@@ -318,6 +321,7 @@ class TestJiraIssue:
             "epic_key",
             "epic_name",
             "fix_versions",
+            "versions",
             "project",
             "resolution",
             "duedate",
@@ -609,6 +613,7 @@ class TestJiraIssue:
             "labels",
             "components",
             "fix_versions",
+            "versions",
             "epic_key",
             "epic_name",
             "timetracking",
@@ -655,6 +660,7 @@ class TestJiraIssue:
         ("requested_field", "expected_key"),
         [
             ("fixVersions", "fix_versions"),
+            ("versions", "versions"),
             ("issuetype", "issue_type"),
         ],
     )
@@ -668,6 +674,7 @@ class TestJiraIssue:
             summary="Test",
             issue_type=JiraIssueType(id="1", name="Task"),
             fix_versions=["1.0"],
+            versions=["0.9"],
             requested_fields=[requested_field],
         )
         result = issue.to_simplified_dict()
