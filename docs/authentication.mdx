@@ -41,25 +41,25 @@ For AI agents and automations that should act under a dedicated bot identity ins
     Go to [Atlassian Admin](https://admin.atlassian.com) → **Directory** → **Service accounts** and create a new service account
   </Step>
   <Step title="Generate API Token">
-    Generate an API token for the service account
+    Generate an API token for the service account and select the Jira or Confluence scopes it needs
   </Step>
   <Step title="Get Cloud ID">
-    Visit `https://your-company.atlassian.net/_edge/tenant_info` and copy the `cloudId` value from the JSON response
+    Copy the site ID from Atlassian Administration, or visit `https://your-company.atlassian.net/_edge/tenant_info` and copy the `cloudId` value
   </Step>
 </Steps>
 
 **Environment variables:**
 ```bash
 ATLASSIAN_CLOUD_ID=your-cloud-id-uuid
-JIRA_USERNAME=service-account@your-company.atlassian.net
+JIRA_USERNAME=bot@serviceaccount.atlassian.com
 JIRA_API_TOKEN=service_account_api_token
-CONFLUENCE_USERNAME=service-account@your-company.atlassian.net
+CONFLUENCE_USERNAME=bot@serviceaccount.atlassian.com
 CONFLUENCE_API_TOKEN=service_account_api_token
 ```
 
 <Note>
 When `ATLASSIAN_CLOUD_ID` is set, `JIRA_URL` and `CONFLUENCE_URL` are optional — the server routes requests through the `api.atlassian.com` gateway automatically.
-You can also use `JIRA_CLOUD_ID` and `CONFLUENCE_CLOUD_ID` separately if your Jira and Confluence are on different Cloud sites.
+You can also use `JIRA_CLOUD_ID` and `CONFLUENCE_CLOUD_ID` separately if your Jira and Confluence are on different Cloud sites. Service-specific values take precedence over `ATLASSIAN_CLOUD_ID`.
 </Note>
 
 ## Personal Access Token (Server/Data Center)

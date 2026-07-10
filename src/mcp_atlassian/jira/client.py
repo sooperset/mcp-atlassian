@@ -55,7 +55,9 @@ class JiraClient:
         """
         # Load configuration from environment variables if not provided
         self.config = config or JiraConfig.from_env()
-        transport_url = self.config.url
+        transport_url = self.config.api_url
+        if not isinstance(transport_url, str):
+            transport_url = self.config.url
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "oauth":

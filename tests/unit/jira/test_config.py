@@ -408,7 +408,7 @@ def test_from_env_oauth_enable_with_server_url():
 # ---------------------------------------------------------------------------
 
 
-def test_from_env_service_account_with_cloud_id():
+def test_from_env_service_account_with_cloud_id() -> None:
     """Test service account config with ATLASSIAN_CLOUD_ID and basic auth."""
     with patch.dict(
         os.environ,
@@ -424,10 +424,11 @@ def test_from_env_service_account_with_cloud_id():
         assert config.auth_type == "basic"
         assert config.is_cloud is True
         assert config.username == "svc@company.atlassian.net"
+        assert config.url == "https://api.atlassian.com/ex/jira/test-cloud-uuid"
 
 
-def test_from_env_service_account_with_jira_cloud_id():
-    """Test service-specific JIRA_CLOUD_ID takes priority over ATLASSIAN_CLOUD_ID."""
+def test_from_env_service_account_with_jira_cloud_id() -> None:
+    """Test JIRA_CLOUD_ID takes priority over ATLASSIAN_CLOUD_ID."""
     with patch.dict(
         os.environ,
         {
@@ -440,10 +441,11 @@ def test_from_env_service_account_with_jira_cloud_id():
     ):
         config = JiraConfig.from_env()
         assert config.cloud_id == "jira-specific-cloud-id"
+        assert config.api_url.endswith("/jira/jira-specific-cloud-id")
 
 
-def test_from_env_service_account_no_url_required():
-    """Test that JIRA_URL is not required when cloud_id is set."""
+def test_from_env_service_account_no_url_required() -> None:
+    """Test that cloud_id derives the Jira gateway when JIRA_URL is absent."""
     with patch.dict(
         os.environ,
         {
@@ -453,13 +455,12 @@ def test_from_env_service_account_no_url_required():
         },
         clear=True,
     ):
-        # Should not raise ValueError about missing URL
         config = JiraConfig.from_env()
         assert config.cloud_id == "test-cloud-uuid"
-        assert config.url == ""
+        assert config.url == "https://api.atlassian.com/ex/jira/test-cloud-uuid"
 
 
-def test_from_env_service_account_with_url():
+def test_from_env_service_account_with_url() -> None:
     """Test service account config with both cloud_id and URL."""
     with patch.dict(
         os.environ,
@@ -477,7 +478,7 @@ def test_from_env_service_account_with_url():
         assert config.is_cloud is True
 
 
-def test_is_cloud_with_cloud_id_basic_auth():
+def test_is_cloud_with_cloud_id_basic_auth() -> None:
     """Test is_cloud returns True when cloud_id is set, regardless of URL."""
     config = JiraConfig(
         url="",
@@ -487,6 +488,7 @@ def test_is_cloud_with_cloud_id_basic_auth():
         cloud_id="test-cloud-uuid",
     )
     assert config.is_cloud is True
+    assert config.url == "https://api.atlassian.com/ex/jira/test-cloud-uuid"
 
     # Even with a server-like URL, cloud_id means Cloud
     config = JiraConfig(

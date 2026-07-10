@@ -649,11 +649,13 @@ def test_update_version_rejects_non_dict_response() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_init_basic_auth_with_cloud_id():
+def test_init_basic_auth_with_cloud_id() -> None:
     """Test that basic auth with cloud_id routes through api.atlassian.com."""
     with (
         patch("mcp_atlassian.jira.client.Jira") as mock_jira,
-        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+        patch(
+            "mcp_atlassian.jira.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
     ):
         config = JiraConfig(
             url="https://company.atlassian.net",
@@ -673,9 +675,12 @@ def test_init_basic_auth_with_cloud_id():
             verify_ssl=True,
             timeout=75,
         )
+        assert mock_configure_ssl.call_args.kwargs["url"] == (
+            "https://api.atlassian.com/ex/jira/test-cloud-uuid"
+        )
 
 
-def test_init_pat_auth_with_cloud_id():
+def test_init_pat_auth_with_cloud_id() -> None:
     """Test that PAT auth with cloud_id routes through api.atlassian.com."""
     with (
         patch("mcp_atlassian.jira.client.Jira") as mock_jira,
@@ -699,7 +704,7 @@ def test_init_pat_auth_with_cloud_id():
         )
 
 
-def test_init_basic_auth_without_cloud_id_uses_direct_url():
+def test_init_basic_auth_without_cloud_id_uses_direct_url() -> None:
     """Test that basic auth without cloud_id uses the direct URL as before."""
     with (
         patch("mcp_atlassian.jira.client.Jira") as mock_jira,

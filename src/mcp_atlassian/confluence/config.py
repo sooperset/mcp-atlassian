@@ -50,6 +50,13 @@ class ConfluenceConfig:
     #   False -> always the legacy link
     attachment_download_use_v1: bool | None = None
 
+    def __post_init__(self) -> None:
+        """Normalize Cloud ID settings and derive a gateway URL when needed."""
+        if self.cloud_id is not None:
+            self.cloud_id = self.cloud_id.strip() or None
+        if (not self.url or not self.url.strip()) and self.cloud_id:
+            self.url = self.api_url
+
     @property
     def is_cloud(self) -> bool:
         """Check if this is a cloud instance.
@@ -88,10 +95,11 @@ class ConfluenceConfig:
         """Get the effective API URL, using the Cloud gateway when cloud_id is set.
 
         Returns:
-            The api.atlassian.com gateway URL if cloud_id is set, otherwise the base URL.
+            The api.atlassian.com gateway URL if cloud_id is set, otherwise the
+            base URL.
         """
         if self.cloud_id:
-            return f"https://api.atlassian.com/ex/confluence/{self.cloud_id}"
+            return f"https://api.atlassian.com/ex/confluence/{self.cloud_id}/wiki"
         return self.url
 
     @property
@@ -114,10 +122,11 @@ class ConfluenceConfig:
             ValueError: If any required environment variable is missing
         """
         url = os.getenv("CONFLUENCE_URL")
+        cloud_id = (
+            os.getenv("CONFLUENCE_CLOUD_ID") or os.getenv("ATLASSIAN_CLOUD_ID") or ""
+        ).strip() or None
         # cloud_id can substitute for URL (service accounts use api.atlassian.com)
-        has_cloud_id = bool(
-            os.getenv("CONFLUENCE_CLOUD_ID") or os.getenv("ATLASSIAN_CLOUD_ID")
-        )
+        has_cloud_id = cloud_id is not None
         if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE") and not has_cloud_id:
             error_msg = (
                 "Missing required CONFLUENCE_URL environment variable. "
@@ -214,9 +223,6 @@ class ConfluenceConfig:
             and os.getenv("CONFLUENCE_TIMEOUT", "").isdigit()
         ):
             timeout = int(os.getenv("CONFLUENCE_TIMEOUT", "75"))
-
-        # Cloud ID for service accounts (api.atlassian.com gateway)
-        cloud_id = os.getenv("CONFLUENCE_CLOUD_ID") or os.getenv("ATLASSIAN_CLOUD_ID")
 
         # Unset or empty/whitespace -> None (auto); only an explicit value forces.
         _use_v1_raw = os.getenv("CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1")

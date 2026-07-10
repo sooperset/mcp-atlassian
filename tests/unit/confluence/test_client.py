@@ -546,7 +546,7 @@ def test_confluence_client_custom_user_agent_overrides_default():
 # ---------------------------------------------------------------------------
 
 
-def test_init_basic_auth_with_cloud_id():
+def test_init_basic_auth_with_cloud_id() -> None:
     """Test that basic auth with cloud_id routes through api.atlassian.com."""
     config = ConfluenceConfig(
         url="https://company.atlassian.net/wiki",
@@ -559,21 +559,26 @@ def test_init_basic_auth_with_cloud_id():
     with (
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
         patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
-        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+        patch(
+            "mcp_atlassian.confluence.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
     ):
         ConfluenceClient(config=config)
 
         mock_confluence.assert_called_once_with(
-            url="https://api.atlassian.com/ex/confluence/test-cloud-uuid",
+            url="https://api.atlassian.com/ex/confluence/test-cloud-uuid/wiki",
             username="svc@company.atlassian.net",
             password="svc_token",
             cloud=True,
             verify_ssl=True,
             timeout=75,
         )
+        assert mock_configure_ssl.call_args.kwargs["url"] == (
+            "https://api.atlassian.com/ex/confluence/test-cloud-uuid/wiki"
+        )
 
 
-def test_init_pat_auth_with_cloud_id():
+def test_init_pat_auth_with_cloud_id() -> None:
     """Test that PAT auth with cloud_id routes through api.atlassian.com."""
     config = ConfluenceConfig(
         url="https://company.atlassian.net/wiki",
@@ -590,7 +595,7 @@ def test_init_pat_auth_with_cloud_id():
         ConfluenceClient(config=config)
 
         mock_confluence.assert_called_once_with(
-            url="https://api.atlassian.com/ex/confluence/test-cloud-uuid",
+            url="https://api.atlassian.com/ex/confluence/test-cloud-uuid/wiki",
             token="test_pat",
             cloud=True,
             verify_ssl=True,
@@ -598,7 +603,7 @@ def test_init_pat_auth_with_cloud_id():
         )
 
 
-def test_init_basic_auth_without_cloud_id_uses_direct_url():
+def test_init_basic_auth_without_cloud_id_uses_direct_url() -> None:
     """Test that basic auth without cloud_id uses the direct URL as before."""
     config = ConfluenceConfig(
         url="https://company.atlassian.net/wiki",

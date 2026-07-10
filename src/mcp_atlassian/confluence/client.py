@@ -41,7 +41,9 @@ class ConfluenceClient:
             MCPAtlassianAuthenticationError: If OAuth authentication fails
         """
         self.config = config or ConfluenceConfig.from_env()
-        transport_url = self.config.url
+        transport_url = self.config.api_url
+        if not isinstance(transport_url, str):
+            transport_url = self.config.url
 
         # Initialize the Confluence client based on auth type
         if self.config.auth_type == "oauth":

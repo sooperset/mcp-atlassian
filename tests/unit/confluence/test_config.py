@@ -367,7 +367,7 @@ def test_from_env_oauth_enable_with_server_url():
 # ---------------------------------------------------------------------------
 
 
-def test_from_env_service_account_with_cloud_id():
+def test_from_env_service_account_with_cloud_id() -> None:
     """Test service account config with ATLASSIAN_CLOUD_ID and basic auth."""
     with patch.dict(
         os.environ,
@@ -383,10 +383,13 @@ def test_from_env_service_account_with_cloud_id():
         assert config.auth_type == "basic"
         assert config.is_cloud is True
         assert config.username == "svc@company.atlassian.net"
+        assert config.url == (
+            "https://api.atlassian.com/ex/confluence/test-cloud-uuid/wiki"
+        )
 
 
-def test_from_env_service_account_with_confluence_cloud_id():
-    """Test service-specific CONFLUENCE_CLOUD_ID takes priority over ATLASSIAN_CLOUD_ID."""
+def test_from_env_service_account_with_confluence_cloud_id() -> None:
+    """Test CONFLUENCE_CLOUD_ID takes priority over ATLASSIAN_CLOUD_ID."""
     with patch.dict(
         os.environ,
         {
@@ -399,10 +402,11 @@ def test_from_env_service_account_with_confluence_cloud_id():
     ):
         config = ConfluenceConfig.from_env()
         assert config.cloud_id == "confluence-specific-cloud-id"
+        assert config.api_url.endswith("/confluence/confluence-specific-cloud-id/wiki")
 
 
-def test_from_env_service_account_no_url_required():
-    """Test that CONFLUENCE_URL is not required when cloud_id is set."""
+def test_from_env_service_account_no_url_required() -> None:
+    """Test that cloud_id derives the gateway when CONFLUENCE_URL is absent."""
     with patch.dict(
         os.environ,
         {
@@ -412,13 +416,14 @@ def test_from_env_service_account_no_url_required():
         },
         clear=True,
     ):
-        # Should not raise ValueError about missing URL
         config = ConfluenceConfig.from_env()
         assert config.cloud_id == "test-cloud-uuid"
-        assert config.url == ""
+        assert config.url == (
+            "https://api.atlassian.com/ex/confluence/test-cloud-uuid/wiki"
+        )
 
 
-def test_is_cloud_with_cloud_id_basic_auth():
+def test_is_cloud_with_cloud_id_basic_auth() -> None:
     """Test is_cloud returns True when cloud_id is set, regardless of URL."""
     config = ConfluenceConfig(
         url="",
@@ -428,3 +433,6 @@ def test_is_cloud_with_cloud_id_basic_auth():
         cloud_id="test-cloud-uuid",
     )
     assert config.is_cloud is True
+    assert config.url == (
+        "https://api.atlassian.com/ex/confluence/test-cloud-uuid/wiki"
+    )

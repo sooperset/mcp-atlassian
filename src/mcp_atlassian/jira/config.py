@@ -118,6 +118,13 @@ class JiraConfig:
     timeout: int = 75  # Connection timeout in seconds
     cloud_id: str | None = None  # Atlassian Cloud ID (for service accounts)
 
+    def __post_init__(self) -> None:
+        """Normalize Cloud ID settings and derive a gateway URL when needed."""
+        if self.cloud_id is not None:
+            self.cloud_id = self.cloud_id.strip() or None
+        if (not self.url or not self.url.strip()) and self.cloud_id:
+            self.url = self.api_url
+
     @property
     def is_cloud(self) -> bool:
         """Check if this is a cloud instance.
@@ -156,7 +163,8 @@ class JiraConfig:
         """Get the effective API URL, using the Cloud gateway when cloud_id is set.
 
         Returns:
-            The api.atlassian.com gateway URL if cloud_id is set, otherwise the base URL.
+            The api.atlassian.com gateway URL if cloud_id is set, otherwise the
+            base URL.
         """
         if self.cloud_id:
             return f"https://api.atlassian.com/ex/jira/{self.cloud_id}"
@@ -182,10 +190,11 @@ class JiraConfig:
             ValueError: If required environment variables are missing or invalid
         """
         url = os.getenv("JIRA_URL")
+        cloud_id = (
+            os.getenv("JIRA_CLOUD_ID") or os.getenv("ATLASSIAN_CLOUD_ID") or ""
+        ).strip() or None
         # cloud_id can substitute for URL (service accounts use api.atlassian.com)
-        has_cloud_id = bool(
-            os.getenv("JIRA_CLOUD_ID") or os.getenv("ATLASSIAN_CLOUD_ID")
-        )
+        has_cloud_id = cloud_id is not None
         if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE") and not has_cloud_id:
             error_msg = (
                 "Missing required JIRA_URL environment variable. "
@@ -281,9 +290,6 @@ class JiraConfig:
         timeout = 75  # Default timeout
         if os.getenv("JIRA_TIMEOUT") and os.getenv("JIRA_TIMEOUT", "").isdigit():
             timeout = int(os.getenv("JIRA_TIMEOUT", "75"))
-
-        # Cloud ID for service accounts (api.atlassian.com gateway)
-        cloud_id = os.getenv("JIRA_CLOUD_ID") or os.getenv("ATLASSIAN_CLOUD_ID")
 
         return cls(
             url=url or "",
