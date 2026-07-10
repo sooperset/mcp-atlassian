@@ -61,6 +61,94 @@ def test_pinning_adapter_blocks_internal_through_real_stack(ip):
             session.get("https://rebind.attacker.test", timeout=5)
 
 
+class _FakeConnectSock:
+    def __init__(self, connected):
+        self._connected = connected
+
+    def setsockopt(self, *a):
+        pass
+
+    def settimeout(self, *a):
+        pass
+
+    def bind(self, *a):
+        pass
+
+    def connect(self, sa):
+        self._connected["addr"] = sa
+
+    def close(self):
+        pass
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"JIRA_URL": "http://jira.internal:8080"},
+        {"CONFLUENCE_URL": "https://jira.internal/wiki"},
+        {"MCP_ALLOWED_URL_DOMAINS": "jira.internal"},
+    ],
+)
+def test_operator_configured_host_may_resolve_private(env, monkeypatch):
+    """The operator-configured base host (or an allowlisted domain) may live on a
+    private network — the non-global rejection is waived, but the connection is
+    still pinned to the single resolved address."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    connected = {"addr": None}
+
+    with (
+        patch(
+            "mcp_atlassian.utils.ssrf_adapter.socket.getaddrinfo",
+            side_effect=_gai_returning("10.0.0.5"),
+        ),
+        patch(
+            "mcp_atlassian.utils.ssrf_adapter.socket.socket",
+            return_value=_FakeConnectSock(connected),
+        ),
+    ):
+        _pinned_create_connection(("jira.internal", 8080))
+
+    assert connected["addr"][0] == "10.0.0.5"
+
+
+@pytest.mark.security_regression
+def test_untrusted_host_still_refused_when_other_hosts_are_trusted(monkeypatch):
+    """Trusting the operator's own host must not waive the guard for a
+    caller-supplied host (the rebinding-attack case)."""
+    monkeypatch.setenv("JIRA_URL", "http://jira.internal:8080")
+
+    with patch(
+        "mcp_atlassian.utils.ssrf_adapter.socket.getaddrinfo",
+        side_effect=_gai_returning("169.254.169.254"),
+    ):
+        with pytest.raises(OSError, match="non-global"):
+            _pinned_create_connection(("rebind.attacker.test", 443))
+
+
+@pytest.mark.security_regression
+def test_ssl_ignore_adapter_keeps_the_pinning_guard(monkeypatch):
+    """SSLIgnoreAdapter mounts at a more specific prefix than the session-wide
+    pinning adapter (requests picks the longest prefix), so it must carry the
+    pinned connection classes itself — otherwise ssl_verify=false silently
+    disables the SSRF rebinding guard."""
+    from mcp_atlassian.utils.ssl import SSLIgnoreAdapter
+
+    monkeypatch.delenv("JIRA_URL", raising=False)
+    session = requests.Session()
+    session.mount("http://", SsrfPinningAdapter())
+    session.mount("http://rebind.attacker.test", SSLIgnoreAdapter())
+
+    with patch(
+        "mcp_atlassian.utils.ssrf_adapter.socket.getaddrinfo",
+        side_effect=_gai_returning("169.254.169.254"),
+    ):
+        with pytest.raises(requests.exceptions.ConnectionError, match="SSRF blocked"):
+            session.get("http://rebind.attacker.test", timeout=5)
+
+
 def test_global_address_connects_to_the_validated_ip():
     """A global address passes the gate and the connection targets that same IP
     (the pin) — not a re-resolved one."""

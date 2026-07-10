@@ -10,10 +10,19 @@ exactly once, rejects any candidate address that is not globally routable
 (cloud-metadata / private / loopback), and connects to that same validated
 address — there is no separate re-resolution to rebind. The original hostname is
 preserved for TLS SNI and certificate verification, so HTTPS is unaffected.
+
+Operator-trusted hosts — the configured ``JIRA_URL`` / ``CONFLUENCE_URL`` hosts
+and ``MCP_ALLOWED_URL_DOMAINS`` entries — are exempt from the non-global
+rejection (on-prem DC instances legitimately live on private networks or
+localhost). Those values come from the server environment, which an attacker
+cannot influence through a request, so the rebinding guard is not weakened for
+caller-supplied URLs. The single-resolution pin still applies to every host.
 """
 
+import os
 import socket
 from typing import Any
+from urllib.parse import urlparse
 
 from requests import Session
 from requests.adapters import HTTPAdapter
@@ -22,7 +31,20 @@ from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 from urllib3.exceptions import NewConnectionError
 from urllib3.poolmanager import PoolManager
 
-from .urls import _check_ip_address
+from .urls import _check_ip_address, _get_domain_allowlist, _hostname_matches_allowlist
+
+
+def _operator_trusted_hosts() -> list[str]:
+    """Hosts the operator explicitly configured or allowlisted via environment."""
+    hosts = []
+    for env in ("JIRA_URL", "CONFLUENCE_URL"):
+        raw = os.environ.get(env, "").strip()
+        if raw:
+            hostname = urlparse(raw).hostname
+            if hostname:
+                hosts.append(hostname.lower())
+    hosts.extend(_get_domain_allowlist() or [])
+    return hosts
 
 
 def _pinned_create_connection(
@@ -38,12 +60,13 @@ def _pinned_create_connection(
     connection.
     """
     host, port = address
+    host_trusted = _hostname_matches_allowlist(host, _operator_trusted_hosts())
     err: Exception | None = None
     for af, socktype, proto, _canonname, sa in socket.getaddrinfo(
         host, port, 0, socket.SOCK_STREAM
     ):
         ip = sa[0]
-        if _check_ip_address(ip) is not None:
+        if not host_trusted and _check_ip_address(ip) is not None:
             msg = f"SSRF blocked: {host} resolves to non-global address {ip}"
             raise OSError(msg)
         sock = None
