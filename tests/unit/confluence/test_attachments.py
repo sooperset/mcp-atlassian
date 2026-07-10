@@ -1805,6 +1805,7 @@ class TestConfluenceAttachmentPathTraversal:
 
         confluence_mixin._upload_attachment_direct.assert_not_called()
 
+
 class TestResolveAttachmentDownloadUrl:
     """Tests for AttachmentsMixin._resolve_attachment_download_url.
 

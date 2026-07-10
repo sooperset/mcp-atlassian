@@ -27,7 +27,7 @@ from .urls import _check_ip_address
 
 def _pinned_create_connection(
     address: tuple[str, int],
-    timeout: Any = socket._GLOBAL_DEFAULT_TIMEOUT,
+    timeout: Any = socket._GLOBAL_DEFAULT_TIMEOUT,  # type: ignore[attr-defined]  # noqa: SLF001
     source_address: tuple[str, int] | None = None,
     socket_options: Any = None,
 ) -> socket.socket:
@@ -52,7 +52,7 @@ def _pinned_create_connection(
             if socket_options:
                 for opt in socket_options:
                     sock.setsockopt(*opt)
-            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:  # type: ignore[attr-defined]  # noqa: SLF001
                 sock.settimeout(timeout)
             if source_address:
                 sock.bind(source_address)
@@ -111,7 +111,8 @@ class SsrfPinningAdapter(HTTPAdapter):
         self.poolmanager = PoolManager(
             num_pools=connections, maxsize=maxsize, block=block, **pool_kwargs
         )
-        self.poolmanager.pool_classes_by_scheme = {
+        # Runtime attribute of urllib3's PoolManager; absent from the type stubs.
+        self.poolmanager.pool_classes_by_scheme = {  # type: ignore[attr-defined]
             "http": _PinnedHTTPConnectionPool,
             "https": _PinnedHTTPSConnectionPool,
         }

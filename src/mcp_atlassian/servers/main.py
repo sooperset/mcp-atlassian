@@ -268,7 +268,9 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         unavailable-service tool simply fails naturally if called.)
         """
         tool_tags = tool_obj.tags
-        if not should_include_tool_by_toolset(tool_tags, ctx["enabled_toolsets_filter"]):
+        if not should_include_tool_by_toolset(
+            tool_tags, ctx["enabled_toolsets_filter"]
+        ):
             return False
         if not should_include_tool(registered_name, ctx["enabled_tools_filter"]):
             return False
@@ -347,7 +349,9 @@ class AtlassianMCP(FastMCP[MainAppContext]):
         if ctx is not None:
             all_tools = await self.get_tools()
             tool_obj = all_tools.get(key)
-            if tool_obj is not None and not self._is_tool_authorized(key, tool_obj, ctx):
+            if tool_obj is not None and not self._is_tool_authorized(
+                key, tool_obj, ctx
+            ):
                 raise NotFoundError(f"Unknown tool: {key}")
         return await super()._call_tool_mcp(key, arguments)
 

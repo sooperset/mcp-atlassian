@@ -791,9 +791,7 @@ class TestGetJiraFetcher:
             # The HTTP path now requires an explicit opt-in to fall back to the
             # operator's global credentials; the non-HTTP (stdio) path does not.
             env = (
-                {"ALLOW_GLOBAL_CRED_FALLBACK": "true"}
-                if scenario["setup_http"]
-                else {}
+                {"ALLOW_GLOBAL_CRED_FALLBACK": "true"} if scenario["setup_http"] else {}
             )
             with patch.dict("os.environ", env):
                 result = await get_jira_fetcher(mock_context)
@@ -1138,9 +1136,7 @@ class TestGetConfluenceFetcher:
             # The HTTP path now requires an explicit opt-in to fall back to the
             # operator's global credentials; the non-HTTP (stdio) path does not.
             env = (
-                {"ALLOW_GLOBAL_CRED_FALLBACK": "true"}
-                if scenario["setup_http"]
-                else {}
+                {"ALLOW_GLOBAL_CRED_FALLBACK": "true"} if scenario["setup_http"] else {}
             )
             with patch.dict("os.environ", env):
                 result = await get_confluence_fetcher(mock_context)
