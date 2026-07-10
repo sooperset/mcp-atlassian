@@ -485,6 +485,10 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
+            # Pin the workspace so the absolute path resolves inside it — keeps
+            # validate_safe_path passing deterministically across Python versions
+            # (mocking os.path.abspath does not reach pathlib.Path.resolve on 3.13).
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.path.isabs") as mock_isabs,
@@ -559,6 +563,7 @@ class TestAttachmentsMixin:
         """Test attachment upload when file doesn't exist."""
         # Mock file operations
         with (
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
@@ -584,6 +589,7 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
@@ -610,6 +616,7 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
