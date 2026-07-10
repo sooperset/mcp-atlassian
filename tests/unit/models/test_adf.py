@@ -13,6 +13,7 @@ import pytest
 
 from src.mcp_atlassian.models.jira.adf import (
     adf_to_text,
+    build_media_comment_adf,
     extract_top_level_media_nodes,
     markdown_to_adf,
     merge_adf_with_preserved_media,
@@ -954,3 +955,69 @@ class TestMarkdownToJiraDispatch:
         """Server/DC path with empty string returns empty string."""
         result = server_client._markdown_to_jira("")
         assert result == ""
+
+
+class TestBuildMediaCommentAdf:
+    """Tests for build_media_comment_adf (inline text + media composition)."""
+
+    def test_interleaves_text_and_media_in_order(self):
+        """text -> media -> text -> media renders in the same order."""
+        segments = [
+            {"type": "text", "text": "Before"},
+            {"type": "media", "media_id": "uuid-1"},
+            {"type": "text", "text": "Between"},
+            {"type": "media", "media_id": "uuid-2"},
+        ]
+        doc = build_media_comment_adf(segments)
+
+        assert doc["version"] == 1
+        assert doc["type"] == "doc"
+        node_types = [n["type"] for n in doc["content"]]
+        assert node_types == ["paragraph", "mediaSingle", "paragraph", "mediaSingle"]
+
+    def test_media_node_structure(self):
+        """media segment builds a mediaSingle > media node with file attrs."""
+        doc = build_media_comment_adf([{"type": "media", "media_id": "abc-123"}])
+        media_single = doc["content"][0]
+        assert media_single["type"] == "mediaSingle"
+        media = media_single["content"][0]
+        assert media["type"] == "media"
+        assert media["attrs"] == {
+            "id": "abc-123",
+            "type": "file",
+            "collection": "",
+        }
+
+    def test_media_node_includes_dimensions_when_present(self):
+        """Integer width/height are written to the media node attrs."""
+        doc = build_media_comment_adf(
+            [{"type": "media", "media_id": "abc-123", "width": 800, "height": 600}]
+        )
+        media = doc["content"][0]["content"][0]
+        assert media["attrs"] == {
+            "id": "abc-123",
+            "type": "file",
+            "collection": "",
+            "width": 800,
+            "height": 600,
+        }
+
+    def test_media_node_omits_invalid_dimensions(self):
+        """Missing/zero/None dimensions leave the media node without them."""
+        doc = build_media_comment_adf(
+            [{"type": "media", "media_id": "abc-123", "width": 0, "height": None}]
+        )
+        media = doc["content"][0]["content"][0]
+        assert media["attrs"] == {"id": "abc-123", "type": "file", "collection": ""}
+
+    def test_text_segment_uses_markdown(self):
+        """Text segments are converted through markdown_to_adf."""
+        doc = build_media_comment_adf([{"type": "text", "text": "# Title"}])
+        heading = doc["content"][0]
+        assert heading["type"] == "heading"
+
+    def test_empty_segments_yield_valid_doc(self):
+        """An empty segment list still yields a valid (non-empty) ADF doc."""
+        doc = build_media_comment_adf([])
+        assert doc["type"] == "doc"
+        assert doc["content"] == [{"type": "paragraph", "content": []}]

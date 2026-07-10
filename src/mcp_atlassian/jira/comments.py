@@ -257,3 +257,87 @@ class CommentsMixin(JiraClient):
                 f"Error editing comment {comment_id} on issue {issue_key}: {str(e)}"
             )
             raise Exception(f"Error editing comment: {str(e)}") from e
+
+    def delete_comment(self, issue_key: str, comment_id: str) -> bool:
+        """
+        Delete a comment from an issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            comment_id: The ID of the comment to delete
+
+        Returns:
+            True if the comment was deleted successfully
+
+        Raises:
+            Exception: If there is an error deleting the comment
+        """
+        try:
+            resource = f"issue/{issue_key}/comment/{comment_id}"
+            # Use v3 API on Cloud for consistency; the library exposes no
+            # dedicated comment-deletion helper, so fall back to a raw DELETE.
+            if self.config.is_cloud:
+                self._delete_api3(resource)
+            else:
+                self.jira.delete(self.jira.resource_url(resource))
+            return True
+        except Exception as e:
+            logger.error(
+                f"Error deleting comment {comment_id} on issue {issue_key}: {str(e)}"
+            )
+            raise Exception(f"Error deleting comment: {str(e)}") from e
+
+    def add_comment_adf(
+        self,
+        issue_key: str,
+        adf_body: dict[str, Any],
+        visibility: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add a comment from a pre-built ADF document.
+
+        Used for rich comments that markdown cannot express, such as inline
+        media (screenshots embedded in the body). Cloud only — the v3 API is
+        required to accept ADF.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            adf_body: A complete ADF document (``version``/``type``/``content``)
+            visibility: (optional) Restrict comment visibility
+
+        Returns:
+            The created comment details
+
+        Raises:
+            ValueError: If the Jira instance is not Cloud
+            Exception: If there is an error adding the comment
+        """
+        if not self.config.is_cloud:
+            raise ValueError(
+                "ADF comments (inline media) are supported on Jira Cloud only."
+            )
+
+        try:
+            data: dict[str, Any] = {"body": adf_body}
+            if visibility:
+                data["visibility"] = visibility
+            result = self._post_api3(f"issue/{issue_key}/comment", data)
+
+            if not isinstance(result, dict):
+                msg = f"Unexpected return value type from `_post_api3`: {type(result)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
+            body_raw = result.get("body", "")
+            body_text = (
+                adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
+            )
+            return {
+                "id": result.get("id"),
+                "body": self._clean_text(body_text or ""),
+                "created": str(parse_date(result.get("created"))),
+                "author": result.get("author", {}).get("displayName", "Unknown"),
+            }
+        except Exception as e:
+            logger.error(f"Error adding ADF comment to issue {issue_key}: {str(e)}")
+            raise Exception(f"Error adding ADF comment: {str(e)}") from e

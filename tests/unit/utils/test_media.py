@@ -1,14 +1,75 @@
 """Tests for the shared MIME detection and attachment download utilities."""
 
 import base64
+import struct
 
 import pytest
 
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
+    get_image_dimensions,
     is_image_attachment,
 )
+
+
+def _png(width: int, height: int) -> bytes:
+    return b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + struct.pack(">II", width, height)
+
+
+def _gif(width: int, height: int) -> bytes:
+    return b"GIF89a" + struct.pack("<HH", width, height) + b"\x00" * 20
+
+
+def _bmp(width: int, height: int) -> bytes:
+    return b"BM" + b"\x00" * 16 + struct.pack("<ii", width, height)
+
+
+def _jpeg(width: int, height: int) -> bytes:
+    return (
+        b"\xff\xd8\xff\xc0\x00\x11\x08"
+        + struct.pack(">HH", height, width)
+        + b"\x00" * 15
+    )
+
+
+def _webp_vp8x(width: int, height: int) -> bytes:
+    return (
+        b"RIFF\x00\x00\x00\x00WEBPVP8X"
+        b"\x00\x00\x00\x0a"
+        + b"\x00" * 4
+        + (width - 1).to_bytes(3, "little")
+        + (height - 1).to_bytes(3, "little")
+    )
+
+
+class TestGetImageDimensions:
+    """Tests for stdlib image-dimension parsing."""
+
+    @pytest.mark.parametrize(
+        ("builder", "width", "height"),
+        [
+            (_png, 800, 600),
+            (_gif, 16, 32),
+            (_bmp, 120, 240),
+            (_jpeg, 710, 163),
+            (_webp_vp8x, 1024, 768),
+        ],
+        ids=["png", "gif", "bmp", "jpeg", "webp-vp8x"],
+    )
+    def test_known_formats(self, builder, width: int, height: int) -> None:
+        assert get_image_dimensions(builder(width, height)) == (width, height)
+
+    def test_bmp_negative_height_top_down(self) -> None:
+        """BMP stores top-down rows as a negative height; abs() is returned."""
+        assert get_image_dimensions(_bmp(120, -240)) == (120, 240)
+
+    def test_empty_or_short_returns_none(self) -> None:
+        assert get_image_dimensions(b"") is None
+        assert get_image_dimensions(b"\x89PNG\r\n\x1a\n") is None
+
+    def test_unknown_format_returns_none(self) -> None:
+        assert get_image_dimensions(b"not an image at all, just text...") is None
 
 
 def test_attachment_max_bytes_type() -> None:
