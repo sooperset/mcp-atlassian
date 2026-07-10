@@ -3,8 +3,10 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from requests.exceptions import HTTPError
 
 from mcp_atlassian.confluence.templates import TemplatesMixin
+from mcp_atlassian.models.confluence import ConfluencePage
 
 
 @pytest.fixture
@@ -42,55 +44,105 @@ _TEMPLATE_SUMMARY_2 = {
 }
 
 
+def _set_api_response(
+    templates_mixin: TemplatesMixin,
+    data: object,
+) -> MagicMock:
+    """Configure and return the mocked template API response."""
+    response = MagicMock()
+    response.json.return_value = data
+    templates_mixin.confluence._session.get.return_value = response
+    return response
+
+
+def _created_page(title: str = "My Meeting Notes") -> ConfluencePage:
+    """Return a page model produced by the shared page-creation path."""
+    return ConfluencePage(
+        id="999",
+        title=title,
+        url="https://example.atlassian.net/wiki/spaces/ENG/pages/999",
+    )
+
+
 # ---------------------------------------------------------------------------
 # list_page_templates
 # ---------------------------------------------------------------------------
 
 
 class TestListPageTemplates:
+    def test_requires_cloud(self, templates_mixin):
+        """Template endpoints fail clearly on Server/Data Center."""
+        templates_mixin.config = MagicMock(is_cloud=False)
+
+        with pytest.raises(ValueError, match="only available for Confluence Cloud"):
+            templates_mixin.list_page_templates()
+
     def test_returns_list_from_api(self, templates_mixin):
         """list_page_templates returns the raw list from the API."""
-        templates_mixin.confluence.get_content_templates.return_value = [
-            _TEMPLATE_SUMMARY,
-            _TEMPLATE_SUMMARY_2,
-        ]
+        response = _set_api_response(
+            templates_mixin,
+            {"results": [_TEMPLATE_SUMMARY, _TEMPLATE_SUMMARY_2]},
+        )
 
         result = templates_mixin.list_page_templates()
 
-        templates_mixin.confluence.get_content_templates.assert_called_once_with(
-            space=None,
-            limit=25,
+        templates_mixin.confluence._session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/template/page",
+            params={"limit": 25},
         )
+        response.raise_for_status.assert_called_once_with()
         assert len(result) == 2
         assert result[0]["templateId"] == "tpl-001"
         assert result[1]["name"] == "Project Charter"
 
     def test_passes_space_key_and_limit(self, templates_mixin):
         """list_page_templates forwards space_key and limit to the API."""
-        templates_mixin.confluence.get_content_templates.return_value = []
+        _set_api_response(templates_mixin, {"results": []})
 
         templates_mixin.list_page_templates(space_key="ENG", limit=50)
 
-        templates_mixin.confluence.get_content_templates.assert_called_once_with(
-            space="ENG",
-            limit=50,
+        templates_mixin.confluence._session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/template/page",
+            params={"limit": 50, "spaceKey": "ENG"},
+        )
+
+    def test_cloud_oauth_uses_gateway_wiki_prefix(self, templates_mixin):
+        """Cloud OAuth template calls include the API gateway product prefix."""
+        templates_mixin.config = MagicMock(auth_type="oauth", is_cloud=True)
+        templates_mixin.confluence.url = (
+            "https://api.atlassian.com/ex/confluence/cloud-id"
+        )
+        _set_api_response(templates_mixin, {"results": []})
+
+        templates_mixin.list_page_templates()
+
+        templates_mixin.confluence._session.get.assert_called_once_with(
+            "https://api.atlassian.com/ex/confluence/cloud-id/wiki/rest/api/"
+            "template/page",
+            params={"limit": 25},
         )
 
     def test_empty_result(self, templates_mixin):
         """list_page_templates handles an empty result gracefully."""
-        templates_mixin.confluence.get_content_templates.return_value = []
+        _set_api_response(templates_mixin, {"results": []})
 
         result = templates_mixin.list_page_templates()
 
         assert result == []
 
     def test_api_error_raises(self, templates_mixin):
-        """list_page_templates wraps API errors with a descriptive message."""
-        templates_mixin.confluence.get_content_templates.side_effect = Exception(
-            "network error"
-        )
+        """list_page_templates propagates non-authentication API errors."""
+        response = _set_api_response(templates_mixin, {})
+        response.raise_for_status.side_effect = HTTPError("network error")
 
-        with pytest.raises(Exception, match="Failed to list page templates"):
+        with pytest.raises(HTTPError, match="network error"):
+            templates_mixin.list_page_templates()
+
+    def test_invalid_results_raise_value_error(self, templates_mixin):
+        """list_page_templates rejects malformed result collections."""
+        _set_api_response(templates_mixin, {"results": "not-a-list"})
+
+        with pytest.raises(ValueError, match="invalid results"):
             templates_mixin.list_page_templates()
 
 
@@ -102,26 +154,35 @@ class TestListPageTemplates:
 class TestGetPageTemplate:
     def test_returns_template_with_body(self, templates_mixin):
         """get_page_template returns the full template dict including body."""
-        templates_mixin.confluence.get_content_template.return_value = (
-            _TEMPLATE_SUMMARY
-        )
+        _set_api_response(templates_mixin, _TEMPLATE_SUMMARY)
 
         result = templates_mixin.get_page_template("tpl-001")
 
-        templates_mixin.confluence.get_content_template.assert_called_once_with(
-            "tpl-001"
+        templates_mixin.confluence._session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/template/tpl-001",
+            params=None,
         )
         assert result["templateId"] == "tpl-001"
         assert result["body"]["storage"]["value"] == "<h1>Meeting Notes</h1>"
 
     def test_api_error_raises(self, templates_mixin):
-        """get_page_template wraps API errors with a descriptive message."""
-        templates_mixin.confluence.get_content_template.side_effect = Exception(
-            "not found"
-        )
+        """get_page_template propagates non-authentication API errors."""
+        response = _set_api_response(templates_mixin, {})
+        response.raise_for_status.side_effect = HTTPError("not found")
 
-        with pytest.raises(Exception, match="Failed to get template tpl-999"):
+        with pytest.raises(HTTPError, match="not found"):
             templates_mixin.get_page_template("tpl-999")
+
+    def test_template_id_is_url_encoded(self, templates_mixin):
+        """get_page_template cannot escape the template endpoint path."""
+        _set_api_response(templates_mixin, _TEMPLATE_SUMMARY)
+
+        templates_mixin.get_page_template("folder/id")
+
+        templates_mixin.confluence._session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/template/folder%2Fid",
+            params=None,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -131,99 +192,92 @@ class TestGetPageTemplate:
 
 class TestCreatePageFromTemplate:
     def test_creates_page_with_template_body(self, templates_mixin):
-        """create_page_from_template fetches template then calls create_page."""
-        templates_mixin.confluence.get_content_template.return_value = (
-            _TEMPLATE_SUMMARY
-        )
-        templates_mixin.confluence.create_page = MagicMock(
-            return_value={"id": "999", "title": "My Meeting Notes"}
-        )
+        """create_page_from_template uses the shared page creation path."""
+        _set_api_response(templates_mixin, _TEMPLATE_SUMMARY)
+        with patch(
+            "mcp_atlassian.confluence.templates.PagesMixin.create_page",
+            return_value=_created_page(),
+        ) as create_page:
+            result = templates_mixin.create_page_from_template(
+                space_key="ENG",
+                title="My Meeting Notes",
+                template_id="tpl-001",
+            )
 
-        result = templates_mixin.create_page_from_template(
+        create_page.assert_called_once_with(
+            templates_mixin,
             space_key="ENG",
-            title="My Meeting Notes",
-            template_id="tpl-001",
-        )
-
-        templates_mixin.confluence.get_content_template.assert_called_once_with(
-            "tpl-001"
-        )
-        templates_mixin.confluence.create_page.assert_called_once_with(
-            space="ENG",
             title="My Meeting Notes",
             body="<h1>Meeting Notes</h1>",
             parent_id=None,
-            representation="storage",
+            is_markdown=False,
+            content_representation="storage",
         )
         assert result["id"] == "999"
         assert result["space_key"] == "ENG"
 
     def test_passes_parent_id(self, templates_mixin):
         """create_page_from_template forwards parent_id to create_page."""
-        templates_mixin.confluence.get_content_template.return_value = (
-            _TEMPLATE_SUMMARY
-        )
-        templates_mixin.confluence.create_page = MagicMock(
-            return_value={"id": "888", "title": "Child Page"}
-        )
+        _set_api_response(templates_mixin, _TEMPLATE_SUMMARY)
+        with patch(
+            "mcp_atlassian.confluence.templates.PagesMixin.create_page",
+            return_value=_created_page("Child Page"),
+        ) as create_page:
+            templates_mixin.create_page_from_template(
+                space_key="ENG",
+                title="Child Page",
+                template_id="tpl-001",
+                parent_id="777",
+            )
 
-        templates_mixin.create_page_from_template(
-            space_key="ENG",
-            title="Child Page",
-            template_id="tpl-001",
-            parent_id="777",
-        )
+        assert create_page.call_args.kwargs["parent_id"] == "777"
 
-        call_kwargs = templates_mixin.confluence.create_page.call_args[1]
-        assert call_kwargs["parent_id"] == "777"
+    def test_returns_url_from_created_page(self, templates_mixin):
+        """create_page_from_template preserves the edition-aware page URL."""
+        _set_api_response(templates_mixin, _TEMPLATE_SUMMARY)
+        page = _created_page()
+        with patch(
+            "mcp_atlassian.confluence.templates.PagesMixin.create_page",
+            return_value=page,
+        ):
+            result = templates_mixin.create_page_from_template(
+                space_key="ENG",
+                title="Test",
+                template_id="tpl-001",
+            )
 
-    def test_url_built_from_config(self, templates_mixin):
-        """create_page_from_template constructs the page URL from config.url."""
-        templates_mixin.confluence.get_content_template.return_value = (
-            _TEMPLATE_SUMMARY
-        )
-        templates_mixin.confluence.create_page = MagicMock(
-            return_value={"id": "123", "title": "Test"}
-        )
-
-        result = templates_mixin.create_page_from_template(
-            space_key="ENG",
-            title="Test",
-            template_id="tpl-001",
-        )
-
-        assert "123" in result["url"]
-        assert "ENG" in result["url"]
+        assert result["url"] == page.url
 
     def test_empty_template_body(self, templates_mixin):
-        """create_page_from_template handles a template with no body gracefully."""
-        templates_mixin.confluence.get_content_template.return_value = {
-            "templateId": "tpl-empty",
-            "name": "Empty",
-            "body": {},
-        }
-        templates_mixin.confluence.create_page = MagicMock(
-            return_value={"id": "500", "title": "Empty Page"}
+        """create_page_from_template permits an explicitly empty template body."""
+        _set_api_response(
+            templates_mixin,
+            {
+                "templateId": "tpl-empty",
+                "name": "Empty",
+                "body": {"storage": {"value": ""}},
+            },
+        )
+        with patch(
+            "mcp_atlassian.confluence.templates.PagesMixin.create_page",
+            return_value=_created_page("Empty Page"),
+        ) as create_page:
+            templates_mixin.create_page_from_template(
+                space_key="ENG",
+                title="Empty Page",
+                template_id="tpl-empty",
+            )
+
+        assert create_page.call_args.kwargs["body"] == ""
+
+    def test_missing_template_body_raises(self, templates_mixin):
+        """create_page_from_template does not silently create a blank page."""
+        _set_api_response(
+            templates_mixin,
+            {"templateId": "tpl-bad", "name": "Missing body"},
         )
 
-        templates_mixin.create_page_from_template(
-            space_key="ENG",
-            title="Empty Page",
-            template_id="tpl-empty",
-        )
-
-        call_kwargs = templates_mixin.confluence.create_page.call_args[1]
-        assert call_kwargs["body"] == ""
-
-    def test_api_error_raises(self, templates_mixin):
-        """create_page_from_template raises when template fetch fails."""
-        templates_mixin.confluence.get_content_template.side_effect = Exception(
-            "not found"
-        )
-
-        with pytest.raises(
-            Exception, match="Failed to create page from template tpl-bad"
-        ):
+        with pytest.raises(ValueError, match="has no storage-format body"):
             templates_mixin.create_page_from_template(
                 space_key="ENG",
                 title="Whatever",

@@ -5,10 +5,13 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
+from bs4 import BeautifulSoup
 from md2conf.converter import (
     ConfluenceConverterOptions,
     ConfluenceStorageFormatConverter,
+    attachment_name,
     elements_to_string,
     markdown_to_html,
 )
@@ -37,12 +40,25 @@ class ConfluencePreprocessor(BasePreprocessor):
         """
         super().__init__(base_url=base_url)
 
+    # Table width and layout keyed by the caller-supplied table_layout value.
+    _TABLE_WIDTHS: dict[str, str] = {
+        "full-width": "1800",
+        "wide": "960",
+        "default": "760",
+    }
+    _TABLE_LAYOUTS: dict[str, str] = {
+        "full-width": "full-width",
+        "wide": "wide",
+        "default": "default",
+    }
+
     def markdown_to_confluence_storage(
         self,
         markdown_content: str,
         *,
         enable_heading_anchors: bool = False,
         apply_task_lists: bool = True,
+        table_layout: str | None = None,
     ) -> str:
         """
         Convert Markdown content to Confluence storage format (XHTML)
@@ -54,6 +70,10 @@ class ConfluencePreprocessor(BasePreprocessor):
             apply_task_lists: Whether to convert GFM task-list items
                 (``- [ ]`` / ``- [x]``) to Confluence ``ac:task-list`` macros
                 (default: True)
+            table_layout: Optional table width preset applied to all tables in the output.
+                Values: 'full-width' (1800 px), 'wide' (960 px), or 'default'
+                (760 px / Confluence default).
+                When None, tables retain the default 760 px width emitted by the converter.
 
         Returns:
             Confluence storage format (XHTML) string
@@ -91,11 +111,16 @@ class ConfluencePreprocessor(BasePreprocessor):
                 converter.visit(root)
 
                 # Convert the element tree back to a string
-                storage_format = str(elements_to_string(root))
+                storage_format = self._fix_attachment_images(
+                    str(elements_to_string(root))
+                )
 
                 if apply_task_lists:
                     storage_format = self._apply_task_lists(storage_format)
-
+                if table_layout is not None and table_layout in self._TABLE_WIDTHS:
+                    storage_format = self._apply_table_layout(
+                        storage_format, table_layout
+                    )
                 return storage_format
             finally:
                 # Clean up the temporary directory
@@ -109,9 +134,13 @@ class ConfluencePreprocessor(BasePreprocessor):
             html_content = markdown_to_html(markdown_content)
 
             # This creates a proper Confluence storage format document
-            storage_format = f"""<p>{html_content}</p>"""
+            storage_format = self._fix_attachment_images(f"""<p>{html_content}</p>""")
+            if apply_task_lists:
+                storage_format = self._apply_task_lists(storage_format)
+            if table_layout is not None and table_layout in self._TABLE_WIDTHS:
+                storage_format = self._apply_table_layout(storage_format, table_layout)
 
-            return str(storage_format)
+            return storage_format
 
     @classmethod
     def _apply_task_lists(cls, storage_html: str) -> str:
@@ -164,3 +193,90 @@ class ConfluencePreprocessor(BasePreprocessor):
         return re.sub(
             r"<ul>(?:(?!<ul>).)*?</ul>", _replace_ul, storage_html, flags=re.DOTALL
         )
+
+    @classmethod
+    def _apply_table_layout(cls, storage_html: str, table_layout: str) -> str:
+        """Set table width and layout attributes in Confluence storage format.
+
+        The md2conf converter emits bare ``<table>`` tags with no width or
+        layout attributes.  Confluence renders these at its default narrow
+        width.  This method injects ``data-table-width`` and ``data-layout``
+        attributes so tables render at the requested width.
+
+        If attributes already exist (e.g. content edited via another tool)
+        they are replaced rather than duplicated.
+
+        Args:
+            storage_html: Confluence storage-format string to post-process.
+            table_layout: One of 'full-width', 'wide', or 'default'.
+
+        Returns:
+            Updated storage-format string with table width attributes set.
+        """
+        width = cls._TABLE_WIDTHS.get(table_layout, "760")
+        layout = cls._TABLE_LAYOUTS.get(table_layout, "default")
+        attrs = f'data-table-width="{width}" data-layout="{layout}"'
+
+        def _replace_table_tag(m: re.Match) -> str:
+            tag = m.group(0)
+            # Strip any existing data-table-width / data-layout attributes first
+            tag = re.sub(r'\s*data-table-width="[^"]*"', "", tag)
+            tag = re.sub(r'\s*data-layout="[^"]*"', "", tag)
+            # Inject new attributes after <table
+            return re.sub(r"^<table", f"<table {attrs}", tag)
+
+        return re.sub(r"<table\b[^>]*>", _replace_table_tag, storage_html)
+
+    @staticmethod
+    def _is_attachment_image_source(src: str) -> bool:
+        """Return whether an image source should resolve as an attachment."""
+        parsed_src = urlparse(src)
+        return not parsed_src.scheme and not src.startswith(("/", "#"))
+
+    @staticmethod
+    def _fix_attachment_images(storage_html: str) -> str:
+        """Replace bare-filename ``<img>`` tags with Confluence attachment macros.
+
+        Confluence Storage Format cannot resolve bare filenames in
+        ``<img src="filename.ext"/>``. Attachment references must use the
+        ``ac:image`` / ``ri:attachment`` macro instead. External URLs
+        (``http``/``https``/``data``) and absolute paths are left untouched.
+
+        Args:
+            storage_html: Confluence storage format HTML string.
+
+        Returns:
+            Storage HTML with bare-filename img tags replaced by attachment macros.
+        """
+        if "<img" not in storage_html.lower():
+            return storage_html
+
+        soup = BeautifulSoup(storage_html, "html.parser")
+        rewritten = False
+
+        for image in soup.find_all("img"):
+            src = image.get("src")
+            if not isinstance(src, str):
+                continue
+            if not ConfluencePreprocessor._is_attachment_image_source(src):
+                continue
+
+            attachment_image = soup.new_tag("ac:image")
+            alt = image.get("alt", "")
+            attachment_image["ac:alt"] = alt if isinstance(alt, str) else ""
+
+            for html_attr, confluence_attr in (
+                ("width", "ac:width"),
+                ("height", "ac:height"),
+            ):
+                value = image.get(html_attr)
+                if isinstance(value, str):
+                    attachment_image[confluence_attr] = value
+
+            attachment = soup.new_tag("ri:attachment")
+            attachment["ri:filename"] = attachment_name(src)
+            attachment_image.append(attachment)
+            image.replace_with(attachment_image)
+            rewritten = True
+
+        return str(soup) if rewritten else storage_html

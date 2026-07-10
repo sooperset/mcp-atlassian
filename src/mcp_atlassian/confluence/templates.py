@@ -1,18 +1,63 @@
 """Module for Confluence template operations."""
 
-import logging
-from typing import Any
-
-from requests.exceptions import HTTPError
+from typing import Any, cast
+from urllib.parse import quote
 
 from ..utils.decorators import handle_auth_errors
 from .client import ConfluenceClient
-
-logger = logging.getLogger("mcp-atlassian")
+from .pages import PagesMixin
 
 
 class TemplatesMixin(ConfluenceClient):
     """Mixin for Confluence template operations."""
+
+    def _require_cloud_templates_api(self) -> None:
+        """Ensure the Confluence Cloud template API is available.
+
+        Raises:
+            ValueError: If configured for Confluence Server/Data Center.
+        """
+        if not self.config.is_cloud:
+            msg = (
+                "Page template operations are only available for Confluence "
+                "Cloud. Server/Data Center does not expose the template REST API."
+            )
+            raise ValueError(msg)
+
+    def _get_template_api_response(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return a JSON object from a Confluence template endpoint.
+
+        The explicit v1 base URL is required for Cloud OAuth, whose API gateway
+        needs the ``/wiki`` product prefix. The upstream convenience methods do
+        not add that prefix for gateway URLs.
+
+        Args:
+            path: REST path below the Confluence v1 API base URL.
+            params: Optional query parameters.
+
+        Returns:
+            Parsed JSON response object.
+
+        Raises:
+            HTTPError: If the API request fails.
+            ValueError: If the API returns a non-object JSON response.
+        """
+        self._require_cloud_templates_api()
+        response = self.confluence._session.get(
+            f"{self._v1_rest_base_url()}{path}",
+            params=params,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            msg = "Confluence template API returned a non-object response"
+            raise ValueError(msg)
+        return cast(dict[str, Any], data)
 
     @handle_auth_errors("Confluence API")
     def list_page_templates(
@@ -36,19 +81,24 @@ class TemplatesMixin(ConfluenceClient):
 
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails.
-            Exception: If the API call fails.
+            HTTPError: If the API request fails.
+            ValueError: If the API response has an unexpected shape.
         """
-        try:
-            results: list[dict[str, Any]] = self.confluence.get_content_templates(
-                space=space_key,
-                limit=limit,
-            )
-            return results
-        except HTTPError:
-            raise
-        except Exception as e:
-            logger.error(f"Error listing templates: {str(e)}")
-            raise Exception(f"Failed to list page templates: {str(e)}") from e
+        params: dict[str, Any] = {"limit": limit}
+        if space_key:
+            params["spaceKey"] = space_key
+
+        data = self._get_template_api_response(
+            "/rest/api/template/page",
+            params=params,
+        )
+        results = data.get("results", [])
+        if not isinstance(results, list) or not all(
+            isinstance(item, dict) for item in results
+        ):
+            msg = "Confluence template list response has invalid results"
+            raise ValueError(msg)
+        return cast(list[dict[str, Any]], results)
 
     @handle_auth_errors("Confluence API")
     def get_page_template(self, template_id: str) -> dict[str, Any]:
@@ -63,17 +113,13 @@ class TemplatesMixin(ConfluenceClient):
 
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails.
-            Exception: If the API call fails or the template is not found.
+            HTTPError: If the API request fails or the template is not found.
+            ValueError: If the API response has an unexpected shape.
         """
-        try:
-            return self.confluence.get_content_template(template_id)  # type: ignore[no-any-return]
-        except HTTPError:
-            raise
-        except Exception as e:
-            logger.error(f"Error fetching template {template_id}: {str(e)}")
-            raise Exception(
-                f"Failed to get template {template_id}: {str(e)}"
-            ) from e
+        encoded_template_id = quote(template_id, safe="")
+        return self._get_template_api_response(
+            f"/rest/api/template/{encoded_template_id}"
+        )
 
     @handle_auth_errors("Confluence API")
     def create_page_from_template(
@@ -100,39 +146,30 @@ class TemplatesMixin(ConfluenceClient):
 
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails.
-            Exception: If the template fetch or page creation fails.
+            HTTPError: If the template fetch fails.
+            ValueError: If the template has no storage-format body.
+            Exception: If page creation fails.
         """
-        try:
-            template = self.confluence.get_content_template(template_id)
+        template = self.get_page_template(template_id)
+        body = template.get("body")
+        storage = body.get("storage") if isinstance(body, dict) else None
+        body_value = storage.get("value") if isinstance(storage, dict) else None
+        if not isinstance(body_value, str):
+            msg = f"Template {template_id} has no storage-format body"
+            raise ValueError(msg)
 
-            body_obj = template.get("body", {})
-            # Templates store content under body.storage.value (same as pages)
-            body_value: str = body_obj.get("storage", {}).get("value", "")
-
-            result = self.confluence.create_page(
-                space=space_key,
-                title=title,
-                body=body_value,
-                parent_id=parent_id,
-                representation="storage",
-            )
-
-            page_id: str = result.get("id", "")
-            base_url = self.config.url.rstrip("/")
-            page_url = f"{base_url}/wiki/spaces/{space_key}/pages/{page_id}"
-
-            return {
-                "id": page_id,
-                "title": result.get("title", title),
-                "url": page_url,
-                "space_key": space_key,
-            }
-        except HTTPError:
-            raise
-        except Exception as e:
-            logger.error(
-                f"Error creating page from template {template_id}: {str(e)}"
-            )
-            raise Exception(
-                f"Failed to create page from template {template_id}: {str(e)}"
-            ) from e
+        page = PagesMixin.create_page(
+            cast(PagesMixin, self),
+            space_key=space_key,
+            title=title,
+            body=body_value,
+            parent_id=parent_id,
+            is_markdown=False,
+            content_representation="storage",
+        )
+        return {
+            "id": page.id,
+            "title": page.title,
+            "url": page.url,
+            "space_key": space_key,
+        }

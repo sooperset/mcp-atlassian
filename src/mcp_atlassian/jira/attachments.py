@@ -42,6 +42,17 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             # Guard against path traversal (resolves symlinks)
             validate_safe_path(target_path)
 
+            # Do not write into the working-directory root itself: that is where
+            # Python resolves imports first, so a download landing there could
+            # overwrite an importable module and gain code execution (GHSA-6vmq).
+            # Attachments must be saved into a subdirectory.
+            resolved = Path(target_path).resolve()
+            if resolved.parent == Path(os.getcwd()).resolve():
+                logger.error(
+                    f"Refusing to download into the working-directory root: {target_path}"
+                )
+                return False
+
             logger.info(f"Downloading attachment from {url} to {target_path}")
 
             # Create the directory if it doesn't exist
@@ -370,9 +381,10 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             return {"success": False, "error": "No file path provided"}
 
         try:
-            # Convert to absolute path if relative
-            if not os.path.isabs(file_path):
-                file_path = os.path.abspath(file_path)
+            # Confine the upload source to the workspace before it is read: reject
+            # traversal/absolute paths that escape CWD (arbitrary file read /
+            # exfiltration via a caller-supplied file_path).
+            file_path = str(validate_safe_path(file_path))
 
             # Check if file exists
             if not os.path.exists(file_path):
