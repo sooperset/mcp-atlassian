@@ -347,10 +347,11 @@ class TestSearchMixin:
         assert len(result.issues) == 1
         assert result.total == 1
 
-        # Test with override
+        # A projects_filter arg narrows within the config allowlist (hard boundary):
+        # the config filter is still ANDed, it cannot be replaced.
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
         search_mixin.jira.jql.assert_called_with(
-            "(text ~ 'test') AND project = OVERRIDE",
+            "((text ~ 'test') AND project IN (TEST, DEV)) AND project = OVERRIDE",
             fields=ANY,
             start=0,
             limit=50,
@@ -359,12 +360,12 @@ class TestSearchMixin:
         assert len(result.issues) == 1
         assert result.total == 1
 
-        # Test with override - multiple projects
+        # Same with a multi-project narrowing arg.
         result = search_mixin.search_issues(
             "text ~ 'test'", projects_filter="OVER1,OVER2"
         )
         search_mixin.jira.jql.assert_called_with(
-            "(text ~ 'test') AND project IN (OVER1, OVER2)",
+            "((text ~ 'test') AND project IN (TEST, DEV)) AND project IN (OVER1, OVER2)",
             fields=ANY,
             start=0,
             limit=50,
@@ -694,10 +695,10 @@ class TestSearchMixin:
         search_mixin.jira.post.reset_mock()
         search_mixin.jira.jql.reset_mock()
 
-        # Act: Call with both JQL and filter
+        # Act: Call with both JQL and filter — the allowlist is always ANDed, so a
+        # caller-supplied project clause cannot escape the configured filter.
         search_mixin.search_issues("project = OTHER", projects_filter="TEST")
-        # Assert: JQL verification (existing JQL has priority)
-        assert get_jql_from_call() == "project = OTHER"
+        assert get_jql_from_call() == "(project = OTHER) AND project = TEST"
 
     @pytest.mark.parametrize("is_cloud", [True, False])
     def test_search_issues_with_config_projects_filter_jql_construction(
@@ -729,10 +730,12 @@ class TestSearchMixin:
         search_mixin.jira.post.reset_mock()
         search_mixin.jira.jql.reset_mock()
 
-        # Act: Override config filter with parameter
+        # Act: a projects_filter arg narrows within the config allowlist; it cannot
+        # replace it, so the config filter is still ANDed (hard boundary).
         search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
-        # Assert: JQL verification
-        assert get_jql_from_call() == "(text ~ 'test') AND project = OVERRIDE"
+        assert get_jql_from_call() == (
+            "((text ~ 'test') AND project IN (CONF1, CONF2)) AND project = OVERRIDE"
+        )
 
     @pytest.mark.parametrize("is_cloud", [True, False])
     def test_search_issues_with_empty_jql_and_projects_filter(
@@ -1204,3 +1207,114 @@ class TestSearchMixin:
         )
         # The result should not have a next_page_token from Server/DC
         assert result.next_page_token is None
+
+
+class TestSearchFilterAndInjectionRegression:
+    """Regression — project/space filter bypass (GHSA-w66g, GHSA-rqwg) and JQL
+    injection (GHSA-6rrj) for Jira search.
+
+    Filter bypass: ``search_issues`` applies ``config.projects_filter``, but
+    ``get_board_issues`` never did — board issues escaped the project allowlist.
+    JQL injection: ``get_sprint_issues`` interpolated ``sprint_id`` straight into
+    JQL (``f"sprint = {sprint_id}"``), so a non-numeric value injected JQL.
+
+    Assertions follow the weakest fix-agnostic invariant: the filter tests assert
+    the project key appears *somewhere* in the outgoing JQL (not an exact string);
+    the injection test asserts a non-numeric sprint_id is rejected (numeric-only
+    contract), with ``search_issues`` mocked so the only thing that can reject it
+    is sprint_id validation.
+    """
+
+    @pytest.fixture
+    def search_mixin(self, jira_fetcher: JiraFetcher) -> SearchMixin:
+        """SearchMixin with a mocked Jira client and config (Server/DC default)."""
+        mixin = jira_fetcher
+        mixin._clean_text = MagicMock(side_effect=lambda text: text if text else "")
+        mixin.config = MagicMock()
+        mixin.config.is_cloud = False
+        mixin.config.projects_filter = None
+        mixin.config.url = "https://example.atlassian.net"
+        return mixin
+
+    @pytest.mark.security_regression
+    def test_get_board_issues_applies_projects_filter(
+        self,
+        search_mixin: SearchMixin,
+        mock_issues_response: dict,
+    ) -> None:
+        """Board issues must be restricted to the configured projects_filter."""
+        search_mixin.config.projects_filter = "SECPROJ"
+        search_mixin.jira.get_issues_for_board.return_value = mock_issues_response
+
+        search_mixin.get_board_issues("123", jql="status = Open")
+
+        sent_jql = search_mixin.jira.get_issues_for_board.call_args.kwargs.get(
+            "jql", ""
+        )
+        assert "SECPROJ" in sent_jql, (
+            "board issues must be constrained to the configured projects_filter; "
+            f"outgoing JQL was {sent_jql!r}"
+        )
+
+    @pytest.fixture
+    def mock_issues_response(self) -> dict:
+        """Minimal valid Jira board response so from_api_response succeeds."""
+        return {
+            "issues": [],
+            "total": 0,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+
+    @pytest.mark.security_regression
+    def test_get_sprint_issues_rejects_non_numeric_sprint_id(
+        self,
+        search_mixin: SearchMixin,
+    ) -> None:
+        """A non-numeric sprint_id (injection payload) must be rejected."""
+        # search_issues is mocked, so the ONLY thing that can reject the payload is
+        # validation of sprint_id itself — pinning fix-7b's numeric-only contract.
+        search_mixin.search_issues = MagicMock(return_value=MagicMock())
+
+        with pytest.raises(Exception):
+            search_mixin.get_sprint_issues("1 OR project = SECRET")
+
+    @pytest.mark.security_regression
+    def test_projects_filter_not_bypassed_by_caller_project_clause(
+        self, search_mixin: SearchMixin, mock_issues_response: dict
+    ) -> None:
+        """A caller-supplied project clause must not escape the config allowlist.
+
+        The old code skipped adding the filter when the query already named a
+        project, so `project = EVIL` bypassed JIRA_PROJECTS_FILTER entirely.
+        """
+        search_mixin.config.projects_filter = "SECPROJ"
+        search_mixin.jira.jql.return_value = mock_issues_response
+
+        search_mixin.search_issues("project = EVIL")
+
+        sent_jql = search_mixin.jira.jql.call_args[0][0]
+        assert "SECPROJ" in sent_jql, (
+            "config projects_filter must be ANDed even when the caller already "
+            f"names a project; JQL was {sent_jql!r}"
+        )
+
+    @pytest.mark.security_regression
+    def test_projects_filter_param_cannot_replace_config_allowlist(
+        self, search_mixin: SearchMixin, mock_issues_response: dict
+    ) -> None:
+        """The projects_filter tool arg may narrow, not replace, the config allowlist.
+
+        Previously ``projects_filter or config.projects_filter`` let a caller pass
+        projects_filter="SECRET" to drop the operator's allowlist entirely.
+        """
+        search_mixin.config.projects_filter = "SECPROJ"
+        search_mixin.jira.jql.return_value = mock_issues_response
+
+        search_mixin.search_issues("text ~ 'x'", projects_filter="SECRET")
+
+        sent_jql = search_mixin.jira.jql.call_args[0][0]
+        assert "SECPROJ" in sent_jql, (
+            "config allowlist must still be applied even when a projects_filter arg "
+            f"is supplied; JQL was {sent_jql!r}"
+        )

@@ -20,6 +20,7 @@ from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
+from mcp_atlassian.utils.io import validate_safe_path
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
@@ -124,15 +125,17 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
 
     Args:
         content: Inline page body (any supported content_format).
-        content_file: Absolute or relative filesystem path to read the body from.
-            Read as UTF-8.
+        content_file: Filesystem path to read the body from (UTF-8). Must
+            resolve inside the current working directory (workspace), the same
+            confinement contract as attachment paths.
 
     Returns:
         The resolved page body as a string.
 
     Raises:
-        ValueError: If neither or both arguments are supplied, or if the file does
-            not exist / is not a regular file.
+        ValueError: If neither or both arguments are supplied, if the file does
+            not exist / is not a regular file, or if the path escapes the
+            workspace.
         OSError: If the file exists but cannot be read.
     """
     has_content = content is not None
@@ -146,7 +149,10 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
     if content_file is None or content_file == "":
         raise ValueError("One of 'content' or 'content_file' must be provided.")
 
-    path = Path(content_file).expanduser()
+    # Confine the read to the workspace, same contract as attachment paths — an
+    # unconfined caller-supplied path is an arbitrary-file-read primitive (the
+    # file body is echoed back through the created/updated page).
+    path = validate_safe_path(Path(content_file).expanduser())
     if not path.is_file():
         msg = f"content_file does not exist or is not a regular file: {path}"
         raise ValueError(msg)
