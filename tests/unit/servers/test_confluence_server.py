@@ -166,6 +166,17 @@ def mock_confluence_fetcher():
         "message": "Attachment deleted successfully",
     }
     mock_fetcher.fetch_attachment_content.return_value = b"\x89PNG"
+    mock_fetcher.check_content_permissions.return_value = {"hasPermission": True}
+    mock_fetcher.get_space_permissions.return_value = {
+        "results": [
+            {
+                "id": "perm-1",
+                "principal": {"type": "user", "id": "accountid123"},
+                "operation": {"key": "read", "targetType": "page"},
+            }
+        ],
+        "_links": {},
+    }
 
     # Mock config for tools that need config.url
     mock_config = MagicMock()
@@ -200,6 +211,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     from src.mcp_atlassian.servers.confluence import (
         add_comment,
         add_label,
+        check_content_permissions,
         create_page,
         delete_attachment,
         delete_page,
@@ -212,6 +224,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_space_page_tree,
+        get_space_permissions,
         search,
         search_user,
         update_page,
@@ -257,6 +270,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(download_content_attachments)
     confluence_sub_mcp.add_tool(delete_attachment)
     confluence_sub_mcp.add_tool(get_page_images)
+    confluence_sub_mcp.add_tool(check_content_permissions)
+    confluence_sub_mcp.add_tool(get_space_permissions)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -271,6 +286,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     from src.mcp_atlassian.servers.confluence import (
         add_comment,
         add_label,
+        check_content_permissions,
         create_page,
         delete_attachment,
         delete_page,
@@ -283,6 +299,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_space_page_tree,
+        get_space_permissions,
         search,
         search_user,
         update_page,
@@ -330,6 +347,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(download_content_attachments)
     confluence_sub_mcp.add_tool(delete_attachment)
     confluence_sub_mcp.add_tool(get_page_images)
+    confluence_sub_mcp.add_tool(check_content_permissions)
+    confluence_sub_mcp.add_tool(get_space_permissions)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -1186,6 +1205,52 @@ async def test_delete_attachment(client, mock_confluence_fetcher):
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Attachment deleted successfully"
     assert result_data["attachment_id"] == "att123"
+
+
+@pytest.mark.anyio
+async def test_check_content_permissions(client, mock_confluence_fetcher):
+    """Test checking content permissions."""
+    response = await client.call_tool(
+        "confluence_check_content_permissions",
+        {
+            "content_id": "123456",
+            "user_identifier": "accountid123",
+            "operation": "read",
+            "subject_type": "user",
+        },
+    )
+
+    mock_confluence_fetcher.check_content_permissions.assert_called_once_with(
+        content_id="123456",
+        user_identifier="accountid123",
+        operation="read",
+        subject_type="user",
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data == {"hasPermission": True}
+
+
+@pytest.mark.anyio
+async def test_get_space_permissions(client, mock_confluence_fetcher):
+    """Test getting space permissions."""
+    response = await client.call_tool(
+        "confluence_get_space_permissions",
+        {
+            "space_id": "98304",
+            "limit": 50,
+            "cursor": "next-page",
+        },
+    )
+
+    mock_confluence_fetcher.get_space_permissions.assert_called_once_with(
+        space_id="98304",
+        limit=50,
+        cursor="next-page",
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["results"][0]["id"] == "perm-1"
 
 
 # --- get_page_images tool tests ---

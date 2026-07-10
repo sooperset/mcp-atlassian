@@ -2719,3 +2719,122 @@ async def copy_page(
         indent=2,
         ensure_ascii=False,
     )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_permissions"},
+    annotations={"title": "Check Content Permissions", "readOnlyHint": True},
+)
+async def check_content_permissions(
+    ctx: Context,
+    content_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence content ID (page, blog post, comment, or attachment). "
+                "Example: '123456789'"
+            )
+        ),
+    ],
+    user_identifier: Annotated[
+        str,
+        Field(
+            description=(
+                "Account ID of the user (for subject_type='user') or group ID "
+                "(for subject_type='group'). "
+                "Example user account ID: '5b10a2844c20165700ede21g'"
+            )
+        ),
+    ],
+    operation: Annotated[
+        str,
+        Field(
+            description=(
+                "The operation to check. Common values: 'read', 'update', 'delete', "
+                "'export', 'purge', 'administer', 'create_or_delete_from_view'."
+            )
+        ),
+    ],
+    subject_type: Annotated[
+        str,
+        Field(
+            description=(
+                "Whether the subject is a 'user' or a 'group'. Defaults to 'user'."
+            ),
+            default="user",
+        ),
+    ] = "user",
+) -> str:
+    """Check whether a user or group can perform an operation on specific content.
+
+    Wraps POST /wiki/rest/api/content/{id}/permission/check.
+
+    Note: This tool is only available for Confluence Cloud. Server/Data Center
+    instances use different permission APIs.
+
+    Returns a JSON object with a 'hasPermission' boolean indicating whether
+    the subject has the requested permission on the content.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    result = confluence_fetcher.check_content_permissions(
+        content_id=content_id,
+        user_identifier=user_identifier,
+        operation=operation,
+        subject_type=subject_type,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_permissions"},
+    annotations={"title": "Get Space Permissions", "readOnlyHint": True},
+)
+async def get_space_permissions(
+    ctx: Context,
+    space_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Numeric ID of the Confluence space. This is the internal space ID, "
+                "not the space key. Example: '98304'. You can find the space ID from "
+                "the Confluence REST API (GET /wiki/api/v2/spaces) or from the "
+                "space URL."
+            )
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description=(
+                "Maximum number of permission entries to return. Defaults to 25."
+            ),
+            default=25,
+            ge=1,
+        ),
+    ] = 25,
+    cursor: Annotated[
+        str | None,
+        Field(
+            description="Optional pagination cursor from a previous response.",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """List all permission assignments for a Confluence space.
+
+    Wraps GET /wiki/api/v2/spaces/{id}/permissions.
+
+    Note: This tool is only available for Confluence Cloud. Server/Data Center
+    instances use different permission APIs.
+
+    Returns a JSON object with a 'results' list of permission assignment objects.
+    Each entry contains the principal (user or group), the operation permitted,
+    and the target. Use this to audit who has access to a space.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    result = confluence_fetcher.get_space_permissions(
+        space_id=space_id,
+        limit=limit,
+        cursor=cursor,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)

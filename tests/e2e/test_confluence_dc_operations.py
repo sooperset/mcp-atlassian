@@ -26,6 +26,28 @@ class TestConfluenceDCBehavior:
         assert "/wiki" not in dc_instance.confluence_url
 
 
+class TestConfluenceDCPermissions:
+    """Cloud-only permission tools should fail clearly on DC."""
+
+    def test_check_content_permissions_requires_cloud(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+    ) -> None:
+        with pytest.raises(ValueError, match="only available for Confluence Cloud"):
+            confluence_fetcher.check_content_permissions(
+                content_id="1",
+                user_identifier="admin",
+                operation="read",
+            )
+
+    def test_get_space_permissions_requires_cloud(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+    ) -> None:
+        with pytest.raises(ValueError, match="only available for Confluence Cloud"):
+            confluence_fetcher.get_space_permissions(space_id="1")
+
+
 class TestConfluenceDCStorageFormat:
     """Storage format content creation."""
 

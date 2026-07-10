@@ -1,0 +1,45 @@
+---
+title: "Confluence Permissions"
+description: "Inspect content and space permissions"
+---
+
+<Note>These tools are only available for Confluence Cloud. Server/Data Center uses different permission APIs.</Note>
+
+### Check Content Permissions
+
+Check whether a user or group can perform an operation on Confluence content.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content_id` | `string` | Yes | Confluence content ID, such as a page, blog post, comment, or attachment ID. |
+| `user_identifier` | `string` | Yes | Account ID for `subject_type="user"` or group ID for `subject_type="group"`. |
+| `operation` | `string` | Yes | Operation to check, such as `read`, `update`, or `delete`. |
+| `subject_type` | `string` | No | Subject type to check. Defaults to `user`; use `group` for group checks. |
+
+**Example:**
+
+```json
+{"content_id": "12345678", "user_identifier": "5b10a2844c20165700ede21g", "operation": "read"}
+```
+
+---
+
+### Get Space Permissions
+
+List permission assignments for a Confluence space.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `space_id` | `string` | Yes | Numeric Confluence space ID. This is the internal space ID, not the space key. |
+| `limit` | `integer` | No | Maximum number of permission entries to return. Defaults to 25. |
+| `cursor` | `string` | No | Pagination cursor from a previous response. |
+
+**Example:**
+
+```json
+{"space_id": "98304", "limit": 50}
+```

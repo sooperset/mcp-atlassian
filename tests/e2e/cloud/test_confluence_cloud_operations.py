@@ -7,12 +7,39 @@ import uuid
 from pathlib import Path
 
 import pytest
+import requests
 
 from mcp_atlassian.confluence import ConfluenceFetcher
 
 from .conftest import CloudInstanceInfo, CloudResourceTracker
 
 pytestmark = pytest.mark.cloud_e2e
+
+
+def _get_cloud_account_id(cloud_instance: CloudInstanceInfo) -> str:
+    """Return the current Atlassian account ID from Jira Cloud."""
+    response = requests.get(
+        f"{cloud_instance.jira_url}/rest/api/3/myself",
+        auth=(cloud_instance.username, cloud_instance.api_token),
+        timeout=15,
+    )
+    response.raise_for_status()
+    return str(response.json()["accountId"])
+
+
+def _get_cloud_space_id(cloud_instance: CloudInstanceInfo) -> str:
+    """Return the numeric Confluence space ID for the configured space key."""
+    response = requests.get(
+        f"{cloud_instance.confluence_url}/api/v2/spaces",
+        params={"keys": cloud_instance.space_key, "limit": "1"},
+        auth=(cloud_instance.username, cloud_instance.api_token),
+        timeout=15,
+    )
+    response.raise_for_status()
+    for space in response.json().get("results", []):
+        if space.get("key") == cloud_instance.space_key:
+            return str(space["id"])
+    raise AssertionError(f"Space {cloud_instance.space_key} not found")
 
 
 class TestConfluenceCloudBehavior:
@@ -38,6 +65,36 @@ class TestConfluenceCloudAnalytics:
         result = confluence_fetcher.get_page_views(cloud_instance.test_page_id)
         assert result is not None
         assert result.page_id == cloud_instance.test_page_id
+
+
+class TestConfluenceCloudPermissions:
+    """Cloud-only permission inspection APIs."""
+
+    def test_check_content_permissions(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        account_id = _get_cloud_account_id(cloud_instance)
+
+        result = confluence_fetcher.check_content_permissions(
+            content_id=cloud_instance.test_page_id,
+            user_identifier=account_id,
+            operation="read",
+        )
+
+        assert result["hasPermission"] is True
+
+    def test_get_space_permissions(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        space_id = _get_cloud_space_id(cloud_instance)
+
+        result = confluence_fetcher.get_space_permissions(space_id=space_id, limit=1)
+
+        assert isinstance(result.get("results"), list)
 
 
 class TestConfluenceCloudStorageFormat:
