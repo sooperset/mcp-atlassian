@@ -136,6 +136,16 @@ class TestTransitionsMixin:
         assert isinstance(result, list)
         assert len(result) == 0
 
+    def test_get_available_transitions_invalid_transitions_value(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test get_available_transitions handles a malformed transitions value."""
+        transitions_mixin.jira.get_issue_transitions_full.return_value = {
+            "transitions": "invalid"
+        }
+
+        assert transitions_mixin.get_available_transitions("TEST-123") == []
+
     def test_get_available_transitions_with_error(
         self, transitions_mixin: TransitionsMixin
     ):
@@ -741,7 +751,9 @@ class TestTransitionsMixin:
 
         # Setup mock for _add_comment_to_transition_data
         def add_comment_side_effect(transition_data, comment_text):
-            transition_data["update"] = {"comment": [{"add": {"body": comment_text}}]}
+            transition_data.setdefault("update", {}).setdefault("comment", []).append(
+                {"add": {"body": comment_text}}
+            )
 
         transitions_mixin._add_comment_to_transition_data = MagicMock(
             side_effect=add_comment_side_effect
@@ -764,6 +776,27 @@ class TestTransitionsMixin:
             },
         )
 
+    def test_transition_issue_preserves_update_data_comments(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test comment combines with comment operations in update_data."""
+        transitions_mixin._markdown_to_jira = MagicMock(return_value="New comment")
+        existing_comment = {"add": {"body": "Existing comment"}}
+
+        transitions_mixin.transition_issue(
+            "TEST-123",
+            "10",
+            comment="New comment",
+            update_data={"comment": [existing_comment]},
+        )
+
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123",
+            status_name="In Progress",
+            fields=None,
+            update={"comment": [existing_comment, {"add": {"body": "New comment"}}]},
+        )
+
     def test_transition_issue_with_update_data_no_status_name(
         self, transitions_mixin: TransitionsMixin
     ):
@@ -776,11 +809,19 @@ class TestTransitionsMixin:
             return_value=mock_transitions
         )
         transitions_mixin.jira.set_issue_status_by_transition_id = MagicMock()
+        transitions_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
 
         update_data = {"worklog": [{"add": {"timeSpent": "1h"}}]}
         transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
 
-        # Verify the payload includes update data
-        transitions_mixin.jira.set_issue_status_by_transition_id.assert_called_once_with(
-            issue_key="TEST-123", transition_id=10
+        # Verify a single atomic request includes the transition and update data.
+        transitions_mixin.jira.set_issue_status_by_transition_id.assert_not_called()
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {"worklog": [{"add": {"timeSpent": "1h"}}]},
+            },
         )

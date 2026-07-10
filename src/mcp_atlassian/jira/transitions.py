@@ -70,16 +70,13 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                     transition_info["to_status"] = to_status
 
                 # Include has_screen flag and required fields
-                has_screen = bool(transition.get("hasScreen"))
-                if has_screen:
-                    transition_info["has_screen"] = True
-                    fields = transition.get("fields", {})
-                    if isinstance(fields, dict):
-                        required_fields = self._extract_required_fields(fields)
-                        if required_fields:
-                            transition_info["required_fields"] = required_fields
-                else:
-                    transition_info["has_screen"] = False
+                transition_info["has_screen"] = bool(transition.get("hasScreen"))
+
+                fields = transition.get("fields", {})
+                if isinstance(fields, dict):
+                    required_fields = self._extract_required_fields(fields)
+                    if required_fields:
+                        transition_info["required_fields"] = required_fields
 
                 result.append(transition_info)
 
@@ -153,7 +150,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         """
         response = self.jira.get_issue_transitions_full(issue_key, expand=expand)
         if isinstance(response, dict):
-            return response.get("transitions", [])
+            transitions = response.get("transitions", [])
+            if isinstance(transitions, list):
+                return transitions
         return []
 
     def get_transitions_models(self, issue_key: str) -> list[JiraTransition]:
@@ -251,15 +250,11 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                     fields_for_api = sanitized_fields
 
             # Prepare update data (comment + extra update_data like worklog)
-            update_for_api = None
             temp_transition_data: dict[str, Any] = {}
+            if update_data:
+                temp_transition_data["update"] = dict(update_data)
             if comment:
                 self._add_comment_to_transition_data(temp_transition_data, comment)
-            if update_data:
-                temp_transition_data.setdefault("update", {})
-                if isinstance(update_data, dict):
-                    for key, value in update_data.items():
-                        temp_transition_data["update"][key] = value
             update_for_api = temp_transition_data.get("update")
 
             # Log the transition request for debugging
@@ -286,12 +281,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 ):
                     normalized_transition_id = int(normalized_transition_id)
 
-                self.jira.set_issue_status_by_transition_id(
-                    issue_key=issue_key,
-                    transition_id=normalized_transition_id,
-                )
-
-                # Apply fields and comments separately
+                # The transition payload must be sent atomically. Performing the
+                # bare transition first would make a second request with fields or
+                # update operations target an already-transitioned issue.
                 if fields_for_api or update_for_api:
                     payload: dict[str, Any] = {
                         "transition": {"id": str(normalized_transition_id)},
@@ -301,10 +293,14 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                     if update_for_api:
                         payload["update"] = update_for_api
 
-                    if payload:
-                        base_url = self.jira.resource_url("issue")
-                        url = f"{base_url}/{issue_key}/transitions"
-                        self.jira.post(url, json=payload)
+                    base_url = self.jira.resource_url("issue")
+                    url = f"{base_url}/{issue_key}/transitions"
+                    self.jira.post(url, data=payload)
+                else:
+                    self.jira.set_issue_status_by_transition_id(
+                        issue_key=issue_key,
+                        transition_id=normalized_transition_id,
+                    )
 
             # Return the updated issue
             return self.get_issue(issue_key)
@@ -473,7 +469,12 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         if hasattr(self, "_markdown_to_jira"):
             jira_formatted_comment = self._markdown_to_jira(comment_str)
 
-        # Add to transition data
-        transition_data["update"] = {
-            "comment": [{"add": {"body": jira_formatted_comment}}]
-        }
+        # Preserve update operations supplied by the caller and append this
+        # comment to any existing comment operations.
+        update = transition_data.setdefault("update", {})
+        existing_comments = update.get("comment")
+        comments = (
+            list(existing_comments) if isinstance(existing_comments, list) else []
+        )
+        comments.append({"add": {"body": jira_formatted_comment}})
+        update["comment"] = comments
