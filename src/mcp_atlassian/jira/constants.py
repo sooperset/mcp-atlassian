@@ -209,6 +209,7 @@ DEFAULT_READ_JIRA_FIELDS: set[str] = {
     "assignee",
     "reporter",
     "labels",
+    "versions",
     "priority",
     "created",
     "updated",
