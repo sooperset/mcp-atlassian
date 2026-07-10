@@ -11,6 +11,7 @@ from requests.exceptions import HTTPError
 
 from ..models.confluence import ConfluencePage
 from ..utils.decorators import handle_auth_errors
+from ..utils.pagination import clamp_limit
 from .client import ConfluenceClient
 from .utils import emoji_to_hex_id, extract_emoji_from_property
 from .v2_adapter import ConfluenceV2Adapter
@@ -1013,6 +1014,8 @@ class PagesMixin(ConfluenceClient):
             List of ConfluencePage models containing the child pages and folders
         """
         try:
+            limit = clamp_limit(limit, context="confluence.get_page_children")
+
             v2_adapter = self._page_children_v2_adapter
             if v2_adapter:
                 logger.debug(f"Using v2 API to get children for Cloud page '{page_id}'")
@@ -1151,6 +1154,8 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error fetching pages
         """
         try:
+            limit = clamp_limit(limit, context="confluence.get_space_page_tree")
+
             # Paginate using the raw API to access _links.next for reliable
             # truncation detection. The higher-level get_all_pages_from_space()
             # has a broken termination condition when limit > server-side cap.
