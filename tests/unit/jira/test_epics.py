@@ -769,18 +769,21 @@ class TestEpicsMixin:
     # --- Tests for unlink_issue_from_epic ---
 
     def test_unlink_issue_from_epic_parent_field_success(self, epics_mixin: EpicsMixin):
-        """Test unlink via parent field when parent is an Epic."""
-        epics_mixin.jira.get_issue.return_value = {
-            "key": "TEST-123",
-            "fields": {
-                "parent": {
-                    "key": "EPIC-456",
-                    "fields": {
-                        "issuetype": {"name": "Epic"},
+        """Test a 204 update response followed by parent-field verification."""
+        epics_mixin.jira.get_issue.side_effect = [
+            {
+                "key": "TEST-123",
+                "fields": {
+                    "parent": {
+                        "key": "EPIC-456",
+                        "fields": {
+                            "issuetype": {"name": "Epic"},
+                        },
                     },
                 },
             },
-        }
+            {"key": "TEST-123", "fields": {"parent": None}},
+        ]
         epics_mixin.get_issue = MagicMock(
             return_value=JiraIssue(key="TEST-123", id="123456")
         )
@@ -792,6 +795,10 @@ class TestEpicsMixin:
             issue_key="TEST-123",
             update={"fields": {"parent": None}},
         )
+        assert epics_mixin.jira.get_issue.call_args_list == [
+            call("TEST-123"),
+            call("TEST-123", fields="parent", update_history=False),
+        ]
         epics_mixin.get_issue.assert_called_once_with("TEST-123")
         assert isinstance(result, JiraIssue)
         assert result.key == "TEST-123"
@@ -799,10 +806,10 @@ class TestEpicsMixin:
     def test_unlink_issue_from_epic_custom_field_success(self, epics_mixin: EpicsMixin):
         """Test unlink via discovered epic_link field when parent fails."""
         # Issue has no parent set
-        epics_mixin.jira.get_issue.return_value = {
-            "key": "TEST-123",
-            "fields": {},
-        }
+        epics_mixin.jira.get_issue.side_effect = [
+            {"key": "TEST-123", "fields": {}},
+            {"key": "TEST-123", "fields": {"customfield_10014": None}},
+        ]
         epics_mixin.get_issue = MagicMock(
             return_value=JiraIssue(key="TEST-123", id="123456")
         )
@@ -833,10 +840,15 @@ class TestEpicsMixin:
             return_value=JiraIssue(key="TEST-123", id="123456")
         )
         epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
-        # First common field fails, second succeeds
-        epics_mixin.jira.update_issue.side_effect = [
-            Exception("Field not found"),
-            None,
+        # Jira accepts both updates, but only the second one actually clears a field.
+        epics_mixin.jira.update_issue.return_value = None
+        epics_mixin.jira.get_issue.side_effect = [
+            {"key": "TEST-123", "fields": {}},
+            {"key": "TEST-123", "fields": {}},
+            {
+                "key": "TEST-123",
+                "fields": {"customfield_10008": None},
+            },
         ]
 
         result = epics_mixin.unlink_issue_from_epic("TEST-123")
@@ -852,6 +864,11 @@ class TestEpicsMixin:
             issue_key="TEST-123",
             update={"fields": {"customfield_10008": None}},
         )
+        assert epics_mixin.jira.get_issue.call_args_list == [
+            call("TEST-123"),
+            call("TEST-123", fields="customfield_10014", update_history=False),
+            call("TEST-123", fields="customfield_10008", update_history=False),
+        ]
         assert isinstance(result, JiraIssue)
 
     def test_unlink_issue_from_epic_all_methods_fail(self, epics_mixin: EpicsMixin):
@@ -884,17 +901,20 @@ class TestEpicsMixin:
     def test_unlink_issue_from_epic_parent_not_epic(self, epics_mixin: EpicsMixin):
         """Test that parent is skipped when it is not an Epic."""
         # Parent is a Story, not an Epic
-        epics_mixin.jira.get_issue.return_value = {
-            "key": "TEST-123",
-            "fields": {
-                "parent": {
-                    "key": "STORY-456",
-                    "fields": {
-                        "issuetype": {"name": "Story"},
+        epics_mixin.jira.get_issue.side_effect = [
+            {
+                "key": "TEST-123",
+                "fields": {
+                    "parent": {
+                        "key": "STORY-456",
+                        "fields": {
+                            "issuetype": {"name": "Story"},
+                        },
                     },
                 },
             },
-        }
+            {"key": "TEST-123", "fields": {"customfield_10014": None}},
+        ]
         epics_mixin.get_issue = MagicMock(
             return_value=JiraIssue(key="TEST-123", id="123456")
         )

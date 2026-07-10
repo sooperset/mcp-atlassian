@@ -428,6 +428,30 @@ class EpicsMixin(
                 raise Exception(f"Error linking issue to epic: {str(e)}")
             raise
 
+    def _is_epic_link_cleared(self, issue_key: str, field_id: str) -> bool:
+        """Check that an epic-link field was cleared by Jira."""
+        issue = self.jira.get_issue(
+            issue_key,
+            fields=field_id,
+            update_history=False,
+        )
+        if not isinstance(issue, dict):
+            msg = f"Unexpected return value type from `jira.get_issue`: {type(issue)}"
+            logger.error(msg)
+            raise TypeError(msg)
+
+        fields = issue.get("fields")
+        if not isinstance(fields, dict):
+            return False
+
+        if field_id == "parent":
+            return fields.get(field_id) is None
+
+        # Jira can accept an unknown custom field in an update without changing
+        # the issue. Require the requested field to be present in the follow-up
+        # response so an absent fallback field is not treated as a successful clear.
+        return field_id in fields and fields[field_id] is None
+
     def unlink_issue_from_epic(self, issue_key: str) -> JiraIssue:
         """Unlink an issue from its epic.
 
@@ -474,11 +498,16 @@ class EpicsMixin(
                             issue_key=issue_key,
                             update={"fields": {"parent": None}},
                         )
+                        if self._is_epic_link_cleared(issue_key, "parent"):
+                            logger.info(
+                                f"Successfully unlinked {issue_key} "
+                                "from epic using parent field"
+                            )
+                            return self.get_issue(issue_key)
                         logger.info(
-                            f"Successfully unlinked {issue_key} "
-                            "from epic using parent field"
+                            "Jira accepted the parent update but the epic link "
+                            "is still set. Trying other methods..."
                         )
-                        return self.get_issue(issue_key)
                     except Exception as e:
                         logger.info(
                             f"Couldn't clear parent field: {e}. Trying other methods..."
@@ -496,12 +525,18 @@ class EpicsMixin(
                             }
                         },
                     )
+                    epic_link_field = field_ids["epic_link"]
+                    if self._is_epic_link_cleared(issue_key, epic_link_field):
+                        logger.info(
+                            f"Successfully unlinked {issue_key} "
+                            "from epic using discovered "
+                            f"field: {epic_link_field}"
+                        )
+                        return self.get_issue(issue_key)
                     logger.info(
-                        f"Successfully unlinked {issue_key} "
-                        "from epic using discovered "
-                        f"field: {field_ids['epic_link']}"
+                        "Jira accepted the discovered epic_link update but the "
+                        "field is still set. Trying fallbacks..."
                     )
-                    return self.get_issue(issue_key)
                 except Exception as e:
                     logger.info(
                         "Couldn't clear discovered epic_link "
@@ -522,11 +557,16 @@ class EpicsMixin(
                         issue_key=issue_key,
                         update={"fields": {field_id: None}},
                     )
+                    if self._is_epic_link_cleared(issue_key, field_id):
+                        logger.info(
+                            f"Successfully unlinked {issue_key} "
+                            f"from epic using field: {field_id}"
+                        )
+                        return self.get_issue(issue_key)
                     logger.info(
-                        f"Successfully unlinked {issue_key} "
-                        f"from epic using field: {field_id}"
+                        f"Jira accepted the update for {field_id} but did not "
+                        "clear that field"
                     )
-                    return self.get_issue(issue_key)
                 except Exception as e:
                     logger.info(f"Couldn't clear field {field_id}: {e}")
                     continue
