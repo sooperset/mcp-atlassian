@@ -3832,6 +3832,44 @@ async def test_get_issue_include_transitions_fetches_transitions(
 
 
 @pytest.mark.anyio
+async def test_get_transitions_tool_lightweight_default(jira_client, mock_jira_fetcher):
+    """jira_get_transitions calls get_available_transitions without expand."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "11", "name": "Done", "to_status": "Done"}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_transitions",
+        {"issue_key": "TEST-123"},
+    )
+    content = json.loads(response.content[0].text)
+    assert content == [{"id": "11", "name": "Done", "to_status": "Done"}]
+    mock_jira_fetcher.get_available_transitions.assert_called_once_with(
+        "TEST-123", expand=None
+    )
+
+
+@pytest.mark.anyio
+async def test_get_transitions_tool_with_expand_fields(jira_client, mock_jira_fetcher):
+    """jira_get_transitions with expand_fields=true passes expand."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "11", "name": "Done", "to_status": "Done", "has_screen": True}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_transitions",
+        {"issue_key": "TEST-123", "expand_fields": True},
+    )
+    content = json.loads(response.content[0].text)
+    assert content == [
+        {"id": "11", "name": "Done", "to_status": "Done", "has_screen": True}
+    ]
+    mock_jira_fetcher.get_available_transitions.assert_called_once_with(
+        "TEST-123", expand="transitions.fields"
+    )
+
+
+@pytest.mark.anyio
 async def test_get_issue_include_changelog_adds_expand(jira_client, mock_jira_fetcher):
     """get_issue with include=changelog adds to expand."""
     response = await jira_client.call_tool(

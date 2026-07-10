@@ -630,7 +630,11 @@ async def get_issue(
                 "(Optional) Comma-separated sections to inline "
                 "in the response, avoiding extra tool calls. "
                 "Supported: all, remote_links, transitions, "
-                "watchers, changelog, comments, worklogs"
+                "watchers, changelog, comments, worklogs. "
+                "Note: transitions inlined via include are "
+                "lightweight (no required_fields). Use "
+                "jira_get_transitions with expand_fields=true "
+                "for full field metadata."
             ),
             default=None,
         ),
