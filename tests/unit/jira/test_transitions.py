@@ -707,6 +707,112 @@ class TestTransitionsMixin:
         }
         assert TransitionsMixin._extract_required_fields(fields) == []
 
+    def test_normalize_allowed_value_scalar(self):
+        """Test _normalize_allowed_value with scalar (non-dict) value."""
+        result = TransitionsMixin._normalize_allowed_value("Fixed")
+        assert result == {"id": "Fixed", "name": "Fixed", "value": "Fixed"}
+
+    def test_normalize_allowed_value_int_scalar(self):
+        """Test _normalize_allowed_value with integer scalar value."""
+        result = TransitionsMixin._normalize_allowed_value(42)
+        assert result == {"id": "42", "name": "42", "value": "42"}
+
+    def test_normalize_allowed_value_with_id_and_value(self):
+        """Test _normalize_allowed_value with {id, value} dict."""
+        result = TransitionsMixin._normalize_allowed_value(
+            {"id": "1", "value": "Fixed"}
+        )
+        assert result == {"id": "1", "name": "Fixed", "value": "Fixed"}
+
+    def test_normalize_allowed_value_with_id_and_name(self):
+        """Test _normalize_allowed_value with {id, name} dict."""
+        result = TransitionsMixin._normalize_allowed_value(
+            {"id": "2", "name": "Won't Fix"}
+        )
+        assert result == {"id": "2", "name": "Won't Fix", "value": "Won't Fix"}
+
+    def test_normalize_allowed_value_with_option_id(self):
+        """Test _normalize_allowed_value with optionId key."""
+        result = TransitionsMixin._normalize_allowed_value(
+            {"optionId": "100", "value": "Option A"}
+        )
+        assert result == {"id": "100", "name": "Option A", "value": "Option A"}
+
+    def test_normalize_allowed_value_empty_dict(self):
+        """Test _normalize_allowed_value with empty dict returns empty strings."""
+        result = TransitionsMixin._normalize_allowed_value({})
+        assert result == {"id": "", "name": "", "value": ""}
+
+    def test_extract_required_fields_with_scalar_allowed_values(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test _extract_required_fields with scalar allowed values."""
+        fields = {
+            "customfield_10001": {
+                "required": True,
+                "name": "Category",
+                "schema": {"type": "option", "custom": "..."},
+                "allowedValues": ["Fixed", "Won't Fix", 42],
+            }
+        }
+
+        result = TransitionsMixin._extract_required_fields(fields)
+
+        assert len(result) == 1
+        allowed = result[0]["allowed_values"]
+        assert len(allowed) == 3
+        assert allowed[0] == {"id": "Fixed", "name": "Fixed", "value": "Fixed"}
+        assert allowed[2] == {"id": "42", "name": "42", "value": "42"}
+
+    def test_extract_required_fields_with_id_value_allowed_values(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test _extract_required_fields with {id, value} allowed values."""
+        fields = {
+            "versions": {
+                "required": True,
+                "name": "Fix Versions",
+                "schema": {"type": "array", "items": "version"},
+                "allowedValues": [
+                    {"id": "10001", "value": "v1.0"},
+                    {"id": "10002", "value": "v2.0"},
+                ],
+            }
+        }
+
+        result = TransitionsMixin._extract_required_fields(fields)
+
+        assert len(result) == 1
+        allowed = result[0]["allowed_values"]
+        assert len(allowed) == 2
+        assert allowed[0] == {"id": "10001", "name": "v1.0", "value": "v1.0"}
+        assert allowed[1] == {"id": "10002", "name": "v2.0", "value": "v2.0"}
+
+    def test_extract_required_fields_with_mixed_allowed_values(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test _extract_required_fields with mixed shapes."""
+        fields = {
+            "customfield_10002": {
+                "required": True,
+                "name": "Mixed Field",
+                "allowedValues": [
+                    "Scalar",
+                    {"id": "1", "name": "Named"},
+                    {"id": "2", "value": "Valued"},
+                ],
+            }
+        }
+
+        result = TransitionsMixin._extract_required_fields(fields)
+
+        assert len(result) == 1
+        allowed = result[0]["allowed_values"]
+        assert len(allowed) == 3
+        assert allowed[0] == {"id": "Scalar", "name": "Scalar", "value": "Scalar"}
+        assert allowed[1] == {"id": "1", "name": "Named", "value": "Named"}
+        assert allowed[2] == {"id": "2", "name": "Valued", "value": "Valued"}
+
     def test_get_available_transitions_no_expand_by_default(
         self, transitions_mixin: TransitionsMixin
     ):
