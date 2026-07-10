@@ -153,7 +153,7 @@ class DevelopmentMixin(JiraClient):
         # Use _session.get() directly: the dev-status endpoint is a plugin-specific
         # path (/rest/dev-status/1.0/...) not covered by the standard Jira client
         # wrappers. No higher-level wrapper method exists for this non-standard endpoint.
-        url = f"{self.config.url}/rest/dev-status/1.0/issue/detail"
+        url = f"{self.config.api_url}/rest/dev-status/1.0/issue/detail"
         http_response = self.jira._session.get(
             url, params=params, verify=self.config.ssl_verify
         )

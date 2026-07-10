@@ -240,7 +240,7 @@ class UsersMixin(JiraClient):
             Optional[str]: Account ID if found, None otherwise.
         """
         try:
-            url = f"{self.config.url}/rest/api/2/user/permission/search"
+            url = f"{self.config.api_url}/rest/api/2/user/permission/search"
             params = {"query": username, "permissions": "BROWSE"}
 
             auth = None

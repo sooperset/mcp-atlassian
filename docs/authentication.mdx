@@ -51,14 +51,16 @@ For AI agents and automations that should act under a dedicated bot identity ins
 **Environment variables:**
 ```bash
 ATLASSIAN_CLOUD_ID=your-cloud-id-uuid
+JIRA_URL=https://your-company.atlassian.net
 JIRA_USERNAME=bot@serviceaccount.atlassian.com
 JIRA_API_TOKEN=service_account_api_token
+CONFLUENCE_URL=https://your-company.atlassian.net/wiki
 CONFLUENCE_USERNAME=bot@serviceaccount.atlassian.com
 CONFLUENCE_API_TOKEN=service_account_api_token
 ```
 
 <Note>
-When `ATLASSIAN_CLOUD_ID` is set, `JIRA_URL` and `CONFLUENCE_URL` are optional — the server routes requests through the `api.atlassian.com` gateway automatically.
+When `ATLASSIAN_CLOUD_ID` is set, `JIRA_URL` and `CONFLUENCE_URL` are optional for API calls because the server routes requests through the `api.atlassian.com` gateway automatically. Keep the site URLs when you want generated browser links to be clickable.
 You can also use `JIRA_CLOUD_ID` and `CONFLUENCE_CLOUD_ID` separately if your Jira and Confluence are on different Cloud sites. Service-specific values take precedence over `ATLASSIAN_CLOUD_ID`.
 </Note>
 

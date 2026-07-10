@@ -1823,14 +1823,18 @@ class TestResolveAttachmentDownloadUrl:
     """
 
     def _make_mixin(
-        self, *, use_v1: bool | None, url: str = "https://example.atlassian.net/wiki"
+        self,
+        *,
+        use_v1: bool | None,
+        url: str = "https://example.atlassian.net/wiki",
+        cloud_id: str | None = None,
     ) -> AttachmentsMixin:
         with patch(
             "mcp_atlassian.confluence.attachments.ConfluenceClient.__init__",
             return_value=None,
         ):
             mixin = AttachmentsMixin()
-        config = ConfluenceConfig(url=url, auth_type="basic")
+        config = ConfluenceConfig(url=url, auth_type="basic", cloud_id=cloud_id)
         config.attachment_download_use_v1 = use_v1
         mixin.config = config
         return mixin
@@ -1908,6 +1912,20 @@ class TestResolveAttachmentDownloadUrl:
         )
         assert url == (
             "https://example.atlassian.net/wiki"
+            "/rest/api/content/123/child/attachment/att999/download"
+        )
+
+    def test_service_account_download_uses_gateway(self) -> None:
+        mixin = self._make_mixin(
+            use_v1=None,
+            url="https://example.atlassian.net/wiki",
+            cloud_id="cloud-123",
+        )
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+        assert url == (
+            "https://api.atlassian.com/ex/confluence/cloud-123/wiki"
             "/rest/api/content/123/child/attachment/att999/download"
         )
 

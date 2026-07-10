@@ -210,7 +210,7 @@ class ConfluenceClient:
         if self.config.auth_type == "oauth" and self.config.is_cloud:
             base_url = self.confluence.url.rstrip("/")
         else:
-            base_url = self.config.url.rstrip("/")
+            base_url = self.config.api_url.rstrip("/")
 
         if self.config.is_cloud and not base_url.endswith("/wiki"):
             base_url = f"{base_url}/wiki"

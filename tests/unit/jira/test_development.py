@@ -163,6 +163,28 @@ class TestDevelopmentMixin:
         assert result["branches"] == []
         assert result["commits"] == []
 
+    def test_get_issue_development_info_uses_service_account_gateway(
+        self, development_mixin
+    ) -> None:
+        """Scoped service-account dev-status calls use the Cloud gateway."""
+        development_mixin.config.cloud_id = "cloud-123"
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"detail": []}
+        development_mixin.jira._session.get.return_value = mock_response
+
+        development_mixin.get_issue_development_info(
+            "TEST-123", application_type="stash", data_type="pullrequest"
+        )
+
+        assert development_mixin.jira._session.get.call_args.args[0] == (
+            "https://api.atlassian.com/ex/jira/cloud-123"
+            "/rest/dev-status/1.0/issue/detail"
+        )
+
     def test_get_issue_development_info_issue_not_found(self, development_mixin):
         """Test error when issue is not found."""
         development_mixin.jira.get_issue.return_value = {"key": "TEST-123"}
