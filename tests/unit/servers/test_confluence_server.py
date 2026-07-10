@@ -391,6 +391,70 @@ async def no_fetcher_client_fixture(no_fetcher_test_confluence_mcp, mock_request
         yield connected_client_for_no_fetcher
 
 
+@pytest.mark.parametrize(
+    ("encoded", "expected"),
+    [
+        ("AQ", 1),
+        ("N4CIO", 948469815),
+        ("_", 248),
+        ("-", 252),
+        ("AAAAAAE", 4294967296),
+        ("QgQzWVKOvQM", 269528037047075906),
+        ("---------38", (1 << 63) - 1),
+    ],
+)
+def test_decode_confluence_tiny_id(encoded: str, expected: int) -> None:
+    """Test tiny-link decoding, including URL-safe and 64-bit IDs."""
+    assert confluence_server._decode_confluence_tiny_id(encoded) == expected
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    [
+        "",
+        "A",
+        "N4CIOA",
+        "N4CI!",
+        "abcdefghijkl",
+        "AAAAAAAAAIA",
+    ],
+)
+def test_decode_confluence_tiny_id_rejects_invalid_values(encoded: str) -> None:
+    """Test malformed, non-canonical, zero, and signed-overflow IDs."""
+    assert confluence_server._decode_confluence_tiny_id(encoded) is None
+
+
+@pytest.mark.parametrize(
+    ("page_reference", "expected"),
+    [
+        ("123456789", "123456789"),
+        (
+            "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Title",
+            "123456789",
+        ),
+        (
+            "https://confluence.example.com/spaces/TEAM/pages/123456789/Title",
+            "123456789",
+        ),
+        (
+            "https://confluence.example.com/pages/viewpage.action?pageId=123456789",
+            "123456789",
+        ),
+        ("https://example.atlassian.net/wiki/x/N4CIO", "948469815"),
+        ("https://confluence.example.com/confluence/x/N4CIO", "948469815"),
+    ],
+)
+def test_resolve_page_id(page_reference: str, expected: str) -> None:
+    """Test supported Cloud and Data Center page-reference formats."""
+    assert confluence_server._resolve_page_id(page_reference) == expected
+
+
+def test_resolve_page_id_preserves_unsupported_reference() -> None:
+    """Test invalid references are not converted to a potentially wrong ID."""
+    reference = "https://example.atlassian.net/wiki/x/N4CIOA"
+    assert confluence_server._resolve_page_id(reference) == reference
+
+
 @pytest.mark.anyio
 async def test_search(client, mock_confluence_fetcher):
     """Test the search tool with basic query."""
@@ -423,6 +487,36 @@ async def test_get_page(client, mock_confluence_fetcher):
     assert "content" in result_data["metadata"]
     assert "value" in result_data["metadata"]["content"]
     assert "This is a test page content" in result_data["metadata"]["content"]["value"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("page_reference", "expected"),
+    [
+        (
+            "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Title",
+            "123456789",
+        ),
+        (
+            "https://confluence.example.com/pages/viewpage.action?pageId=123456789",
+            "123456789",
+        ),
+        ("https://example.atlassian.net/wiki/x/N4CIO", "948469815"),
+        ("https://confluence.example.com/confluence/x/N4CIO", "948469815"),
+    ],
+)
+async def test_get_page_resolves_page_references(
+    client: Client,
+    mock_confluence_fetcher: MagicMock,
+    page_reference: str,
+    expected: str,
+) -> None:
+    """Test get_page resolves full URLs and tiny links before fetching."""
+    await client.call_tool("confluence_get_page", {"page_id": page_reference})
+
+    mock_confluence_fetcher.get_page_content.assert_called_once_with(
+        expected, convert_to_markdown=True
+    )
 
 
 @pytest.mark.anyio

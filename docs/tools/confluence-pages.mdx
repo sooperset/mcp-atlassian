@@ -11,7 +11,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `page_id` | `string` | No | Confluence page ID (numeric ID, can be found in the page URL). For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. Provide this OR both 'title' and 'space_key'. If page_id is provided, title and space_key will be ignored. |
+| `page_id` | `string` | No | Confluence page ID, full page URL, or tiny link (for example, `https://example.atlassian.net/wiki/x/N4CIO`). Provide this OR both `title` and `space_key`. If `page_id` is provided, `title` and `space_key` are ignored. |
 | `title` | `string` | No | The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known. |
 | `space_key` | `string` | No | The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'. |
 | `include_metadata` | `boolean` | No | Whether to include page metadata such as creation date, last update, version, and labels. |

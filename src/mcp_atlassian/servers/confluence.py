@@ -5,8 +5,10 @@ import binascii
 import json
 import logging
 import mimetypes
+import re
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import parse_qs, urlsplit
 
 from fastmcp import Context, FastMCP
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
@@ -25,6 +27,91 @@ from mcp_atlassian.utils.media import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_CONFLUENCE_TINY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,11}")
+_PAGE_ID_PATH_PATTERN = re.compile(r"(?:^|/)pages/([0-9]+)(?:/|$)")
+_TINY_LINK_PATH_PATTERN = re.compile(r"(?:^|/)x/([A-Za-z0-9_-]+)(?:/|$)")
+_MAX_CONFLUENCE_PAGE_ID = (1 << 63) - 1
+
+
+def _encode_confluence_tiny_id(page_id: int) -> str:
+    """Encode a page ID using Confluence's tiny-link representation."""
+    encoded = base64.b64encode(page_id.to_bytes(8, byteorder="little"))
+    return (
+        encoded.decode("ascii")
+        .rstrip("=")
+        .rstrip("A")
+        .replace("/", "-")
+        .replace("+", "_")
+    )
+
+
+def _decode_confluence_tiny_id(encoded: str) -> int | None:
+    """Decode a Confluence tiny-link identifier to a numeric page ID.
+
+    Confluence encodes a little-endian 64-bit page ID with base64, substitutes
+    URL-safe characters, and removes padding and trailing zero-byte markers.
+
+    Args:
+        encoded: Identifier from the path segment after ``/x/``.
+
+    Returns:
+        The positive page ID, or ``None`` when the identifier is invalid.
+    """
+    if _CONFLUENCE_TINY_ID_PATTERN.fullmatch(encoded) is None:
+        return None
+
+    standard_base64 = encoded.replace("-", "/").replace("_", "+")
+    padded = standard_base64.ljust(11, "A") + "="
+    try:
+        decoded = base64.b64decode(padded, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+    if len(decoded) != 8:
+        return None
+
+    page_id = int.from_bytes(decoded, byteorder="little")
+    if not 0 < page_id <= _MAX_CONFLUENCE_PAGE_ID:
+        return None
+    if _encode_confluence_tiny_id(page_id) != encoded:
+        return None
+    return page_id
+
+
+def _resolve_page_id(page_reference: str) -> str:
+    """Resolve a page ID from a numeric ID, full URL, or tiny link.
+
+    Args:
+        page_reference: Numeric ID, page URL, or tiny-link URL/path.
+
+    Returns:
+        The resolved numeric ID, or the original value when it is not a
+        supported page reference.
+    """
+    if re.fullmatch(r"[0-9]+", page_reference):
+        return page_reference
+
+    parsed = urlsplit(page_reference)
+    page_match = _PAGE_ID_PATH_PATTERN.search(parsed.path)
+    if page_match:
+        return page_match.group(1)
+
+    query_page_ids = parse_qs(parsed.query).get("pageId", [])
+    if len(query_page_ids) == 1 and re.fullmatch(r"[0-9]+", query_page_ids[0]):
+        return query_page_ids[0]
+
+    tiny_match = _TINY_LINK_PATH_PATTERN.search(parsed.path)
+    if tiny_match:
+        encoded = tiny_match.group(1)
+        resolved = _decode_confluence_tiny_id(encoded)
+        if resolved is not None:
+            logger.info("Resolved tiny link 'x/%s' to page ID %s", encoded, resolved)
+            return str(resolved)
+        logger.warning("Could not decode tiny link 'x/%s'", encoded)
+
+    return page_reference
 
 
 def _resolve_page_content(content: str | None, content_file: str | None) -> str:
@@ -174,10 +261,13 @@ async def get_page(
         str | None,
         Field(
             description=(
-                "Confluence page ID (numeric ID, can be found in the page URL). "
-                "For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
-                "the page ID is '123456789'. "
-                "Provide this OR both 'title' and 'space_key'. If page_id is provided, title and space_key will be ignored."
+                "Confluence page ID, full page URL, or tiny link. For example: "
+                "'123456789', "
+                "'https://example.atlassian.net/wiki/spaces/TEAM/pages/"
+                "123456789/Page+Title', or "
+                "'https://example.atlassian.net/wiki/x/N4CIO'. Provide this OR "
+                "both 'title' and 'space_key'. If page_id is provided, title "
+                "and space_key will be ignored."
             ),
             default=None,
         ),
@@ -224,7 +314,8 @@ async def get_page(
 
     Args:
         ctx: The FastMCP context.
-        page_id: Confluence page ID. If provided, 'title' and 'space_key' are ignored.
+        page_id: Confluence page ID, full page URL, or tiny link. If provided,
+            'title' and 'space_key' are ignored.
         title: The exact title of the page. Must be used with 'space_key'.
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
@@ -243,6 +334,10 @@ async def get_page(
             )
         try:
             page_id_str = str(page_id)
+
+            # Resolve page ID from URL or tiny link
+            page_id_str = _resolve_page_id(page_id_str)
+
             page_object = confluence_fetcher.get_page_content(
                 page_id_str, convert_to_markdown=convert_to_markdown
             )
