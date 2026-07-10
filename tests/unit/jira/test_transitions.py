@@ -743,6 +743,25 @@ class TestTransitionsMixin:
         result = TransitionsMixin._normalize_allowed_value({})
         assert result == {"id": "", "name": "", "value": ""}
 
+    def test_normalize_allowed_value_with_description(self):
+        """Test _normalize_allowed_value preserves description key."""
+        result = TransitionsMixin._normalize_allowed_value(
+            {"id": "1", "name": "Fixed", "description": "A fix has been implemented"}
+        )
+        assert result == {
+            "id": "1",
+            "name": "Fixed",
+            "value": "Fixed",
+            "description": "A fix has been implemented",
+        }
+
+    def test_normalize_allowed_value_with_empty_description(self):
+        """Test _normalize_allowed_value omits falsy description."""
+        result = TransitionsMixin._normalize_allowed_value(
+            {"id": "2", "name": "Done", "description": ""}
+        )
+        assert result == {"id": "2", "name": "Done", "value": "Done"}
+
     def test_extract_required_fields_with_scalar_allowed_values(
         self, transitions_mixin: TransitionsMixin
     ):
