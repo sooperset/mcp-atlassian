@@ -440,6 +440,29 @@ class TestMCPProtocolIntegration:
             # Assert no tools are available when services not configured
             assert len(tools) == 0
 
+    async def test_deferred_credentials_keep_service_tools_listed(
+        self, atlassian_mcp_server
+    ) -> None:
+        """A viable deferred credential makes that service available for listing."""
+        app_context = MainAppContext(
+            full_jira_config=None,
+            full_confluence_config=None,
+            has_deferred_jira_auth=True,
+        )
+        tool = MagicMock(spec=FastMCPTool)
+        tool.tags = {"jira", "read"}
+        filter_context = {
+            "read_only": False,
+            "enabled_tools_filter": None,
+            "enabled_toolsets_filter": None,
+            "app_lifespan_state": app_context,
+            "header_based_services": {"jira": False, "confluence": False},
+        }
+
+        assert atlassian_mcp_server._is_tool_enabled(
+            "jira_get_issue", tool, filter_context
+        )
+
     async def test_middleware_oauth_token_processing(self):
         """Test UserTokenMiddleware OAuth token extraction and processing."""
         # Create mock mcp_server with get_streamable_http_path
@@ -824,6 +847,29 @@ class TestMCPProtocolIntegration:
                     assert app_context.full_confluence_config == conf_config
                     assert app_context.read_only is False
                     assert app_context.enabled_tools is None
+
+    async def test_lifespan_defers_command_without_executing_it(self) -> None:
+        """Startup exposes Jira tools but leaves the secret command untouched."""
+        env = {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test@example.com",
+            "JIRA_API_TOKEN_COMMAND": "get-jira-token",
+        }
+        with (
+            MockEnvironment.clean_env(),
+            patch.dict(os.environ, env),
+            patch(
+                "mcp_atlassian.utils.credential_command.subprocess.run"
+            ) as run_command,
+        ):
+            app = MagicMock()
+            async with main_lifespan(app) as context:
+                app_context = context["app_lifespan_context"]
+                assert app_context.full_jira_config is None
+                assert app_context.has_deferred_jira_auth is True
+                assert app_context.has_deferred_confluence_auth is False
+
+        run_command.assert_not_called()
 
     async def test_lifespan_with_partial_configuration(self):
         """Test lifespan with only Jira configured."""

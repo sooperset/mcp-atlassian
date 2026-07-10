@@ -1,6 +1,8 @@
 """Tests for the environment utilities module."""
 
 import logging
+import os
+from unittest.mock import patch
 
 import pytest
 
@@ -132,6 +134,64 @@ class TestGetAvailableServices:
                 )
             elif scenario in ["pat_server", "basic_auth_server"]:
                 _assert_authentication_logs(caplog, "server", ["confluence", "jira"])
+
+    def test_cloud_api_token_commands_make_services_available(self, caplog):
+        """Cloud services are listed without running deferred token commands."""
+        env = {
+            "JIRA_URL": "https://company.atlassian.net",
+            "JIRA_USERNAME": "user@company.com",
+            "JIRA_API_TOKEN_COMMAND": "get-jira-token",
+            "CONFLUENCE_URL": "https://company.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "user@company.com",
+            "CONFLUENCE_API_TOKEN_COMMAND": "get-confluence-token",
+        }
+        with MockEnvironment.clean_env(), patch.dict(os.environ, env):
+            result = get_available_services()
+
+        _assert_service_availability(
+            result, confluence_expected=True, jira_expected=True
+        )
+        assert "credentials will be resolved on first use" in caplog.text
+
+    def test_server_personal_token_commands_make_services_available(self):
+        """Server/DC PAT commands don't require usernames."""
+        env = {
+            "JIRA_URL": "https://jira.company.com",
+            "JIRA_PERSONAL_TOKEN_COMMAND": "get-jira-token",
+            "CONFLUENCE_URL": "https://confluence.company.com",
+            "CONFLUENCE_PERSONAL_TOKEN_COMMAND": "get-confluence-token",
+        }
+        with MockEnvironment.clean_env(), patch.dict(os.environ, env):
+            result = get_available_services()
+
+        _assert_service_availability(
+            result, confluence_expected=True, jira_expected=True
+        )
+
+    @pytest.mark.parametrize(
+        "env",
+        [
+            {"JIRA_API_TOKEN_COMMAND": "get-token"},
+            {
+                "JIRA_URL": "https://company.atlassian.net",
+                "JIRA_API_TOKEN_COMMAND": "get-token",
+            },
+            {
+                "JIRA_URL": "https://company.atlassian.net",
+                "JIRA_PERSONAL_TOKEN_COMMAND": "get-token",
+            },
+        ],
+    )
+    def test_incomplete_deferred_auth_does_not_make_service_available(
+        self, env: dict[str, str]
+    ) -> None:
+        """Deferred credentials still require URL, username, and edition fit."""
+        with MockEnvironment.clean_env(), patch.dict(os.environ, env):
+            result = get_available_services()
+
+        _assert_service_availability(
+            result, confluence_expected=False, jira_expected=False
+        )
 
     @pytest.mark.parametrize(
         "missing_oauth_var",

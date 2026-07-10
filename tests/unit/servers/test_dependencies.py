@@ -805,6 +805,40 @@ class TestGetJiraFetcher:
             mock_jira_fetcher_class.reset_mock()
             mock_get_http_request.reset_mock()
 
+    async def test_deferred_credentials_resolve_for_stdio(
+        self, mock_context, config_factory
+    ) -> None:
+        """Stdio resolves a command, then builds a fetcher from the result."""
+        app_context = config_factory.create_app_context(
+            full_jira_config=None,
+            has_deferred_jira_auth=True,
+        )
+        _setup_mock_context(mock_context, app_context)
+        config = config_factory.create_jira_config()
+        fetcher = _create_mock_fetcher(JiraFetcher)
+        resolver = MagicMock()
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                side_effect=RuntimeError("No HTTP context"),
+            ),
+            patch(
+                "mcp_atlassian.servers.dependencies.get_resolver",
+                return_value=resolver,
+            ),
+            patch.object(JiraConfig, "from_env", return_value=config),
+            patch(
+                "mcp_atlassian.servers.dependencies.JiraFetcher",
+                return_value=fetcher,
+            ) as fetcher_class,
+        ):
+            result = await get_jira_fetcher(mock_context)
+
+        assert result is fetcher
+        resolver.resolve.assert_called_once_with("jira")
+        fetcher_class.assert_called_once_with(config=config)
+
     @pytest.mark.parametrize(
         "error_scenario,expected_error_match",
         [
@@ -1785,6 +1819,31 @@ class TestUnauthenticatedGlobalFallbackRegression:
 
         with pytest.raises(ValueError):
             await get_jira_fetcher(mock_context)
+
+    @pytest.mark.security_regression
+    async def test_unauthenticated_http_refuses_deferred_jira_credentials(
+        self, mock_context, mock_request, config_factory
+    ) -> None:
+        """HTTP callers can't trigger or use an operator credential command."""
+        _setup_mock_request_state(mock_request)
+        app_context = config_factory.create_app_context(
+            full_jira_config=None,
+            has_deferred_jira_auth=True,
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                return_value=mock_request,
+            ),
+            patch("mcp_atlassian.servers.dependencies.get_resolver") as get_resolver,
+            patch.dict("os.environ", {"ALLOW_GLOBAL_CRED_FALLBACK": ""}),
+            pytest.raises(ValueError, match="operator's global credentials"),
+        ):
+            await get_jira_fetcher(mock_context)
+
+        get_resolver.assert_not_called()
 
     @pytest.mark.security_regression
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
