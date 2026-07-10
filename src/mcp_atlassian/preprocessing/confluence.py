@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 from md2conf.converter import (
     ConfluenceConverterOptions,
     ConfluenceStorageFormatConverter,
@@ -57,6 +57,7 @@ class ConfluencePreprocessor(BasePreprocessor):
         markdown_content: str,
         *,
         enable_heading_anchors: bool = False,
+        apply_task_lists: bool = True,
         table_layout: str | None = None,
     ) -> str:
         """
@@ -64,9 +65,14 @@ class ConfluencePreprocessor(BasePreprocessor):
 
         Args:
             markdown_content: Markdown text to convert
-            enable_heading_anchors: Whether to enable automatic heading anchor generation (default: False)
+            enable_heading_anchors: Whether to enable automatic heading anchor
+                generation (default: False)
+            apply_task_lists: Whether to convert GFM task-list items
+                (``- [ ]`` / ``- [x]``) to Confluence ``ac:task-list`` macros
+                (default: True)
             table_layout: Optional table width preset applied to all tables in the output.
-                Values: 'full-width' (1800 px), 'wide' (960 px), 'default' (760 px / Confluence default).
+                Values: 'full-width' (1800 px), 'wide' (960 px), or 'default'
+                (760 px / Confluence default).
                 When None, tables retain the default 760 px width emitted by the converter.
 
         Returns:
@@ -108,11 +114,13 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = self._fix_attachment_images(
                     str(elements_to_string(root))
                 )
+
+                if apply_task_lists:
+                    storage_format = self._apply_task_lists(storage_format)
                 if table_layout is not None and table_layout in self._TABLE_WIDTHS:
                     storage_format = self._apply_table_layout(
                         storage_format, table_layout
                     )
-
                 return storage_format
             finally:
                 # Clean up the temporary directory
@@ -127,10 +135,94 @@ class ConfluencePreprocessor(BasePreprocessor):
 
             # This creates a proper Confluence storage format document
             storage_format = self._fix_attachment_images(f"""<p>{html_content}</p>""")
+            if apply_task_lists:
+                storage_format = self._apply_task_lists(storage_format)
             if table_layout is not None and table_layout in self._TABLE_WIDTHS:
                 storage_format = self._apply_table_layout(storage_format, table_layout)
 
             return storage_format
+
+    @classmethod
+    def _apply_task_lists(cls, storage_html: str) -> str:
+        """Convert GFM-style task list items to Confluence ac:task-list macros.
+
+        md2conf renders GFM task list items (``- [ ]`` / ``- [x]``) as plain
+        ``<ul><li>`` elements with the checkbox marker as literal text.
+        Confluence needs ``<ac:task-list>`` / ``<ac:task>`` elements to render
+        interactive checkboxes.
+
+        Only converts unnested ``<ul>`` blocks whose every direct ``<li>``
+        begins with a checkbox marker. Mixed and nested lists are left unchanged.
+
+        Args:
+            storage_html: Confluence storage-format string to post-process.
+
+        Returns:
+            Updated storage-format string with task lists converted.
+        """
+        if "<ul" not in storage_html.lower() or "[" not in storage_html:
+            return storage_html
+
+        marker_pattern = re.compile(
+            r"^\s*\[(?P<checked>[ xX])\](?:[ \t]+|$)(?P<body>.*)$",
+            re.DOTALL,
+        )
+        soup = BeautifulSoup(storage_html, "html.parser")
+        rewritten = False
+
+        for unordered_list in soup.find_all("ul"):
+            if not isinstance(unordered_list, Tag):
+                continue
+            if unordered_list.find("ul") or unordered_list.find_parent("ul"):
+                continue
+
+            items = unordered_list.find_all("li", recursive=False)
+            if not items:
+                continue
+
+            matches: list[tuple[Tag, NavigableString, re.Match[str]]] = []
+            for item in items:
+                if not isinstance(item, Tag):
+                    break
+                first_content = next(
+                    (
+                        child
+                        for child in item.contents
+                        if not isinstance(child, NavigableString) or str(child).strip()
+                    ),
+                    None,
+                )
+                if not isinstance(first_content, NavigableString):
+                    break
+                match = marker_pattern.match(str(first_content))
+                if match is None:
+                    break
+                matches.append((item, first_content, match))
+
+            if len(matches) != len(items):
+                continue
+
+            task_list = soup.new_tag("ac:task-list")
+            for item, marker_text, match in matches:
+                marker_text.replace_with(match.group("body"))
+
+                task = soup.new_tag("ac:task")
+                status = soup.new_tag("ac:task-status")
+                status.string = (
+                    "complete"
+                    if match.group("checked").lower() == "x"
+                    else "incomplete"
+                )
+                body = soup.new_tag("ac:task-body")
+                while item.contents:
+                    body.append(item.contents[0].extract())
+                task.extend((status, body))
+                task_list.append(task)
+
+            unordered_list.replace_with(task_list)
+            rewritten = True
+
+        return str(soup) if rewritten else storage_html
 
     @classmethod
     def _apply_table_layout(cls, storage_html: str, table_layout: str) -> str:

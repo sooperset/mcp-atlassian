@@ -145,6 +145,11 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_check_content_permissions",
         "confluence_get_space_permissions",
     ],
+    "confluence-templates": [
+        "confluence_list_page_templates",
+        "confluence_get_page_template",
+        "confluence_create_page_from_template",
+    ],
 }
 
 CATEGORY_META: dict[str, dict[str, str]] = {
@@ -201,6 +206,10 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     "confluence-permissions": {
         "title": "Confluence Permissions",
         "description": "Inspect content and space permissions",
+    },
+    "confluence-templates": {
+        "title": "Confluence Templates",
+        "description": "List page templates and create pages from them",
     },
 }
 

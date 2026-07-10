@@ -122,6 +122,82 @@ class TestConfluenceCloudStorageFormat:
         resource_tracker.add_confluence_page(page.id)
         assert page.id is not None
 
+    def test_markdown_task_lists_use_confluence_storage_macros(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Task List {uid}",
+            body="- [ ] Todo item\n- [x] Done item",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        raw_page = confluence_fetcher.confluence.get_page_by_id(
+            page.id,
+            expand="body.storage",
+        )
+        storage_body = raw_page["body"]["storage"]["value"]
+        assert "<ac:task-list>" in storage_body
+        assert "<ac:task-status>incomplete</ac:task-status>" in storage_body
+        assert "<ac:task-status>complete</ac:task-status>" in storage_body
+
+
+class TestConfluenceCloudTemplates:
+    """Cloud page template operations."""
+
+    def test_page_template_workflow(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        marker = f"template-marker-{uid}"
+        created_template = confluence_fetcher.confluence.create_or_update_template(
+            name=f"Cloud E2E Template {uid}",
+            body={
+                "storage": {
+                    "value": f"<h1>Template E2E</h1><p>{marker}</p>",
+                    "representation": "storage",
+                }
+            },
+            description="Temporary MCP template test",
+            space=cloud_instance.space_key,
+        )
+        template_id = str(created_template["templateId"])
+
+        try:
+            templates = confluence_fetcher.list_page_templates(
+                space_key=cloud_instance.space_key,
+                limit=200,
+            )
+            assert any(
+                str(template.get("templateId")) == template_id for template in templates
+            )
+
+            template = confluence_fetcher.get_page_template(template_id)
+            template_body = template["body"]["storage"]["value"]
+            assert marker in template_body
+
+            page = confluence_fetcher.create_page_from_template(
+                space_key=cloud_instance.space_key,
+                title=f"Cloud E2E Template Page {uid}",
+                template_id=template_id,
+            )
+            resource_tracker.add_confluence_page(str(page["id"]))
+
+            raw_page = confluence_fetcher.confluence.get_page_by_id(
+                str(page["id"]),
+                expand="body.storage",
+            )
+            assert marker in raw_page["body"]["storage"]["value"]
+        finally:
+            confluence_fetcher.confluence.remove_template(template_id)
+
 
 class TestConfluenceCloudAttachments:
     """Attachment upload/versioning through the fetcher API."""

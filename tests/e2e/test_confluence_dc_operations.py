@@ -48,6 +48,26 @@ class TestConfluenceDCPermissions:
             confluence_fetcher.get_space_permissions(space_id="1")
 
 
+class TestConfluenceDCTemplates:
+    """Cloud-only template tools should fail clearly on DC."""
+
+    def test_template_operations_require_cloud(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+    ) -> None:
+        message = "only available for Confluence Cloud"
+        with pytest.raises(ValueError, match=message):
+            confluence_fetcher.list_page_templates()
+        with pytest.raises(ValueError, match=message):
+            confluence_fetcher.get_page_template("1")
+        with pytest.raises(ValueError, match=message):
+            confluence_fetcher.create_page_from_template(
+                space_key="E2E",
+                title="Not created",
+                template_id="1",
+            )
+
+
 class TestConfluenceDCStorageFormat:
     """Storage format content creation."""
 
@@ -70,6 +90,29 @@ class TestConfluenceDCStorageFormat:
         )
         resource_tracker.add_confluence_page(page.id)
         assert page.id is not None
+
+    def test_markdown_task_lists_use_confluence_storage_macros(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=dc_instance.space_key,
+            title=f"E2E Task List {uid}",
+            body="- [ ] Todo item\n- [x] Done item",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        raw_page = confluence_fetcher.confluence.get_page_by_id(
+            page.id,
+            expand="body.storage",
+        )
+        storage_body = raw_page["body"]["storage"]["value"]
+        assert "<ac:task-list>" in storage_body
+        assert "<ac:task-status>incomplete</ac:task-status>" in storage_body
+        assert "<ac:task-status>complete</ac:task-status>" in storage_body
 
 
 class TestConfluenceDCAttachments:

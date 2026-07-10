@@ -14,6 +14,7 @@ from .permissions import PermissionsMixin
 from .restrictions import RestrictionsMixin
 from .search import SearchMixin
 from .spaces import SpacesMixin
+from .templates import TemplatesMixin
 from .users import UsersMixin
 
 
@@ -26,6 +27,7 @@ class ConfluenceFetcher(
     UsersMixin,
     AnalyticsMixin,
     AttachmentsMixin,
+    TemplatesMixin,
     PermissionsMixin,
     RestrictionsMixin,
 ):
@@ -43,6 +45,7 @@ class ConfluenceFetcher(
     - UsersMixin: User operations
     - AnalyticsMixin: Page view analytics (Cloud only)
     - AttachmentsMixin: Attachment operations
+    - TemplatesMixin: Template operations
     - PermissionsMixin: Permission inspection operations (Cloud only)
     - RestrictionsMixin: Page restriction operations
     """
@@ -57,4 +60,5 @@ __all__ = [
     "AnalyticsMixin",
     "PermissionsMixin",
     "RestrictionsMixin",
+    "TemplatesMixin",
 ]

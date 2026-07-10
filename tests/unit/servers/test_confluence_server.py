@@ -177,6 +177,27 @@ def mock_confluence_fetcher():
         ],
         "_links": {},
     }
+    mock_fetcher.list_page_templates.return_value = [
+        {
+            "templateId": "tpl-001",
+            "name": "Meeting Notes",
+            "templateType": "page",
+            "description": "Meeting template",
+        }
+    ]
+    mock_fetcher.get_page_template.return_value = {
+        "templateId": "tpl-001",
+        "name": "Meeting Notes",
+        "templateType": "page",
+        "description": {"value": "Meeting template"},
+        "body": {"storage": {"value": "<h1>Meeting Notes</h1>"}},
+    }
+    mock_fetcher.create_page_from_template.return_value = {
+        "id": "123456",
+        "title": "Weekly Meeting",
+        "url": "https://example.atlassian.net/wiki/spaces/TEST/pages/123456",
+        "space_key": "TEST",
+    }
 
     # Mock config for tools that need config.url
     mock_config = MagicMock()
@@ -213,6 +234,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         add_label,
         check_content_permissions,
         create_page,
+        create_page_from_template,
         delete_attachment,
         delete_page,
         download_attachment,
@@ -223,8 +245,10 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page,
         get_page_children,
         get_page_images,
+        get_page_template,
         get_space_page_tree,
         get_space_permissions,
+        list_page_templates,
         search,
         search_user,
         update_page,
@@ -272,6 +296,9 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(get_page_images)
     confluence_sub_mcp.add_tool(check_content_permissions)
     confluence_sub_mcp.add_tool(get_space_permissions)
+    confluence_sub_mcp.add_tool(list_page_templates)
+    confluence_sub_mcp.add_tool(get_page_template)
+    confluence_sub_mcp.add_tool(create_page_from_template)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -288,6 +315,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         add_label,
         check_content_permissions,
         create_page,
+        create_page_from_template,
         delete_attachment,
         delete_page,
         download_attachment,
@@ -298,8 +326,10 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_page,
         get_page_children,
         get_page_images,
+        get_page_template,
         get_space_page_tree,
         get_space_permissions,
+        list_page_templates,
         search,
         search_user,
         update_page,
@@ -349,6 +379,9 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(get_page_images)
     confluence_sub_mcp.add_tool(check_content_permissions)
     confluence_sub_mcp.add_tool(get_space_permissions)
+    confluence_sub_mcp.add_tool(list_page_templates)
+    confluence_sub_mcp.add_tool(get_page_template)
+    confluence_sub_mcp.add_tool(create_page_from_template)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -1380,6 +1413,65 @@ async def test_get_space_permissions(client, mock_confluence_fetcher):
 
     result_data = json.loads(response.content[0].text)
     assert result_data["results"][0]["id"] == "perm-1"
+
+
+# --- page template tool tests ---
+
+
+@pytest.mark.anyio
+async def test_list_page_templates(client, mock_confluence_fetcher):
+    """Test listing page template summaries."""
+    response = await client.call_tool(
+        "confluence_list_page_templates",
+        {"space_key": "TEST", "limit": 10},
+    )
+
+    mock_confluence_fetcher.list_page_templates.assert_called_once_with(
+        space_key="TEST",
+        limit=10,
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["total"] == 1
+    assert result_data["templates"][0]["templateId"] == "tpl-001"
+    assert result_data["templates"][0]["description"] == "Meeting template"
+
+
+@pytest.mark.anyio
+async def test_get_page_template(client, mock_confluence_fetcher):
+    """Test fetching a page template with its storage body."""
+    response = await client.call_tool(
+        "confluence_get_page_template",
+        {"template_id": "tpl-001"},
+    )
+
+    mock_confluence_fetcher.get_page_template.assert_called_once_with("tpl-001")
+    result_data = json.loads(response.content[0].text)
+    assert result_data["body"] == "<h1>Meeting Notes</h1>"
+    assert result_data["description"] == "Meeting template"
+
+
+@pytest.mark.anyio
+async def test_create_page_from_template(client, mock_confluence_fetcher):
+    """Test creating a page from a template through the write tool."""
+    response = await client.call_tool(
+        "confluence_create_page_from_template",
+        {
+            "space_key": "TEST",
+            "title": "Weekly Meeting",
+            "template_id": "tpl-001",
+            "parent_id": 100,
+        },
+    )
+
+    mock_confluence_fetcher.create_page_from_template.assert_called_once_with(
+        space_key="TEST",
+        title="Weekly Meeting",
+        template_id="tpl-001",
+        parent_id="100",
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["id"] == "123456"
+    assert result_data["space_key"] == "TEST"
 
 
 # --- get_page_images tool tests ---
