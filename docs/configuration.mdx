@@ -129,6 +129,32 @@ This guide covers IDE integration, environment variables, and advanced configura
 | `CONFLUENCE_SSL_VERIFY` | SSL verification (`true`/`false`) |
 | `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE` | Use OS native trust store (`true`/`false`, default: `true`) |
 
+### Deferred Credentials
+
+Use a `*_COMMAND` variable instead of storing its token directly. MCP Atlassian
+runs the command on the first tool call for that service, trims its standard
+output, and reuses the result for the rest of the process. Startup and tool
+listing don't run the command.
+
+```bash
+JIRA_URL=https://company.atlassian.net
+JIRA_USERNAME=user@company.com
+JIRA_API_TOKEN_COMMAND='gopass show -o my/jira/token'
+```
+
+| Variable | Description |
+|----------|-------------|
+| `JIRA_API_TOKEN_COMMAND` | Command that returns a Jira API token (Cloud or Server/DC basic auth) |
+| `JIRA_PERSONAL_TOKEN_COMMAND` | Command that returns a Jira PAT (Server/DC) |
+| `CONFLUENCE_API_TOKEN_COMMAND` | Command that returns a Confluence API token (Cloud or Server/DC basic auth) |
+| `CONFLUENCE_PERSONAL_TOKEN_COMMAND` | Command that returns a Confluence PAT (Server/DC) |
+| `CREDENTIAL_COMMAND_TIMEOUT` | Positive integer timeout in seconds (default: `30`) |
+
+The plain token variable takes precedence over its `*_COMMAND` counterpart.
+API token commands still require the matching `*_USERNAME`. Commands run
+without an implicit shell; invoke one explicitly (for example, `sh -c '...'`)
+if you need pipes or redirects.
+
 ### Filtering Options
 
 | Variable | Description | Example |
