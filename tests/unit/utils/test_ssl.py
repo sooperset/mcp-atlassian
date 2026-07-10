@@ -12,6 +12,7 @@ from mcp_atlassian.utils.ssl import (
     SSLIgnoreAdapter,
     configure_ssl_verification,
 )
+from mcp_atlassian.utils.ssrf_adapter import SsrfPinningAdapter
 
 
 def test_ssl_ignore_adapter_cert_verify():
@@ -270,6 +271,12 @@ def test_configure_ssl_disabled_with_client_cert():
 def test_ssl_ignore_adapter_is_subclass_of_no_proxy_adapter():
     """SSLIgnoreAdapter must inherit from NoProxyAdapter to pick up NO_PROXY logic."""
     assert issubclass(SSLIgnoreAdapter, NoProxyAdapter)
+
+
+@pytest.mark.security_regression
+def test_no_proxy_adapter_preserves_ssrf_dns_pinning():
+    """A domain-specific NO_PROXY mount must not bypass DNS pinning."""
+    assert issubclass(NoProxyAdapter, SsrfPinningAdapter)
 
 
 def test_ssl_ignore_adapter_send_forces_verify_false():

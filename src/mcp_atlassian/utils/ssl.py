@@ -8,23 +8,27 @@ from typing import Any
 from urllib.parse import urlparse
 
 from requests import PreparedRequest, Response
-from requests.adapters import HTTPAdapter
 from requests.sessions import Session
 from requests.utils import should_bypass_proxies
 from urllib3.poolmanager import PoolManager
 
-from .ssrf_adapter import _PinnedHTTPConnectionPool, _PinnedHTTPSConnectionPool
+from .ssrf_adapter import (
+    SsrfPinningAdapter,
+    _PinnedHTTPConnectionPool,
+    _PinnedHTTPSConnectionPool,
+)
 
 logger = logging.getLogger("mcp-atlassian")
 
 
-class NoProxyAdapter(HTTPAdapter):
+class NoProxyAdapter(SsrfPinningAdapter):
     """HTTP adapter that respects NO_PROXY environment variable.
 
     A custom transport adapter that ensures NO_PROXY is honored even when
     proxies are explicitly configured on the session. By default, the requests
     library only checks NO_PROXY during auto-detection from environment variables,
-    not when proxies are explicitly set on session.proxies.
+    not when proxies are explicitly set on session.proxies. The adapter also
+    preserves the DNS-pinning SSRF protection used by the default transport.
 
     The no-proxy list is captured on the adapter when it is mounted. This keeps
     each mounted adapter bound to its own configuration, so multiple clients
