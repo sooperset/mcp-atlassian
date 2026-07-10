@@ -326,7 +326,9 @@ class TestJiraCloudTransitions:
         )
         resource_tracker.add_jira_issue(issue.key)
 
-        transitions = jira_fetcher.get_available_transitions(issue.key)
+        transitions = jira_fetcher.get_available_transitions(
+            issue.key, expand="transitions.fields"
+        )
         assert len(transitions) > 0
         assert all(isinstance(t["has_screen"], bool) for t in transitions)
         for transition in transitions:
