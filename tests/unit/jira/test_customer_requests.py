@@ -42,6 +42,107 @@ def _make_http_error(
     return HTTPError(response=response)
 
 
+def test_get_customer_request_success(jira_fetcher: JiraFetcher) -> None:
+    """Customer request lookup should call the JSM request endpoint."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(
+        return_value={"issueKey": "SUP-1", "summary": "Need help"}
+    )
+
+    result = fetcher.get_customer_request("SUP-1", expand="comment,status")
+
+    assert result["issueKey"] == "SUP-1"
+    fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/SUP-1",
+        params={"expand": "comment,status"},
+    )
+
+
+def test_search_customer_requests_success(jira_fetcher: JiraFetcher) -> None:
+    """Customer request search should pass filters to the JSM request endpoint."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(
+        return_value={
+            "start": 0,
+            "limit": 50,
+            "size": 1,
+            "values": [{"issueKey": "SUP-1"}],
+        }
+    )
+
+    result = fetcher.search_customer_requests(
+        search_term="snowflake",
+        service_desk_id="4",
+        expand="status",
+    )
+
+    assert result["values"][0]["issueKey"] == "SUP-1"
+    fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request",
+        params={
+            "requestOwnership": "OWNED_REQUESTS",
+            "start": 0,
+            "limit": 50,
+            "searchTerm": "snowflake",
+            "serviceDeskId": "4",
+            "expand": "status",
+        },
+    )
+
+
+def test_get_customer_request_comments_success(jira_fetcher: JiraFetcher) -> None:
+    """Customer request comments should call the JSM comments endpoint."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(
+        return_value={"size": 1, "values": [{"id": "10001", "body": "Done"}]}
+    )
+
+    result = fetcher.get_customer_request_comments(
+        "SUP-1",
+        public=True,
+        start_at=1,
+        limit=10,
+    )
+
+    assert result["values"][0]["body"] == "Done"
+    fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/SUP-1/comment",
+        params={"start": 1, "limit": 10, "public": "true"},
+    )
+
+
+def test_get_customer_request_statuses_success(jira_fetcher: JiraFetcher) -> None:
+    """Customer request statuses should call the JSM status endpoint."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(
+        return_value={"size": 1, "values": [{"status": "Waiting for support"}]}
+    )
+
+    result = fetcher.get_customer_request_statuses("SUP-1")
+
+    assert result["values"][0]["status"] == "Waiting for support"
+    fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/SUP-1/status",
+        params={"start": 0, "limit": 50},
+    )
+
+
+def test_get_customer_request_transitions_success(jira_fetcher: JiraFetcher) -> None:
+    """Customer request transitions should call the JSM transition endpoint."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(
+        return_value={"size": 1, "values": [{"id": "1", "name": "Resolve"}]}
+    )
+
+    result = fetcher.get_customer_request_transitions("SUP-1")
+
+    assert result["values"][0]["name"] == "Resolve"
+    fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/SUP-1/transition",
+        params={"start": 0, "limit": 50},
+    )
+
+
 def test_get_request_types_success(jira_fetcher: JiraFetcher) -> None:
     """Request type listing should parse values and pagination metadata."""
     fetcher = _make_customer_requests_fetcher(jira_fetcher)
