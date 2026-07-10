@@ -3448,7 +3448,7 @@ async def search_customer_requests(
         Field(
             description=(
                 "Request ownership filter. Common values: OWNED_REQUESTS, "
-                "PARTICIPATED_REQUESTS, APPROVER_REQUESTS."
+                "PARTICIPATED_REQUESTS, ALL_REQUESTS."
             ),
             default="OWNED_REQUESTS",
         ),

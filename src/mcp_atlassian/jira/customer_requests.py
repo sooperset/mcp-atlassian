@@ -429,7 +429,7 @@ class CustomerRequestsMixin(JiraClient):
 
         Args:
             request_ownership: Which requests to return. Common values include
-                'OWNED_REQUESTS', 'PARTICIPATED_REQUESTS', and 'APPROVER_REQUESTS'.
+                'OWNED_REQUESTS', 'PARTICIPATED_REQUESTS', and 'ALL_REQUESTS'.
             request_status: Optional request status filter.
             search_term: Optional search text.
             organization_id: Optional organization ID filter.
