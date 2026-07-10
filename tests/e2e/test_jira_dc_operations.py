@@ -258,8 +258,14 @@ class TestJiraDCTransitions:
         )
         resource_tracker.add_jira_issue(issue.key)
 
-        transitions = jira_fetcher.get_transitions(issue.key)
+        transitions = jira_fetcher.get_available_transitions(issue.key)
         assert len(transitions) > 0
+        assert all(isinstance(t["has_screen"], bool) for t in transitions)
+        for transition in transitions:
+            assert all(
+                field.get("key") and field.get("name")
+                for field in transition.get("required_fields", [])
+            )
 
         # Find "In Progress" transition or use first available
         target_id = None

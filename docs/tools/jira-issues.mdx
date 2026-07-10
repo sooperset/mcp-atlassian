@@ -168,16 +168,17 @@ Transition a Jira issue to a new status.
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `transition_id` | `string` | Yes | ID of the transition to perform. Use the jira_get_transitions tool first to get the available transition IDs for the issue. Example values: '11', '21', '31' |
-| `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: `'{"resolution": {"name": "Fixed"}}'` |
+| `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Use `jira_get_transitions` to discover `required_fields`. Example: `{"resolution": {"name": "Fixed"}}` |
 | `comment` | `string` | No | (Optional) Comment to add during the transition in Markdown format. This will be visible in the issue history. |
+| `update_data` | `string` | No | (Optional) JSON string of Jira update operations to include in the transition. Use this for worklogs and other transition-time operations. Example: `{"worklog": [{"add": {"timeSpent": "1h"}}]}` |
 **Example:**
 
 ```json
-{"issue_key": "PROJ-123", "transition_name": "Done", "comment": "Closing as completed"}
+{"issue_key": "PROJ-123", "transition_id": "31", "fields": "{\"resolution\": {\"name\": \"Fixed\"}}", "update_data": "{\"worklog\": [{\"add\": {\"timeSpent\": \"1h\"}}]}"}
 ```
 
 <Tip>
-Use `jira_get_transitions` first to see available transitions for the current issue state.
+Use `jira_get_transitions` first to see available transitions, whether they have a screen, and which fields are required for the current issue state.
 </Tip>
 
 

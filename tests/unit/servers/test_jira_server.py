@@ -634,6 +634,35 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_transition_issue_with_update_data(jira_client, mock_jira_fetcher):
+    """Test transition update data is parsed and forwarded to JiraFetcher."""
+    transitioned_issue = MagicMock()
+    transitioned_issue.to_simplified_dict.return_value = {"key": "TEST-123"}
+    mock_jira_fetcher.transition_issue.return_value = transitioned_issue
+
+    response = await jira_client.call_tool(
+        "jira_transition_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition_id": "31",
+            "fields": '{"resolution": {"name": "Done"}}',
+            "comment": "Completed",
+            "update_data": '{"worklog": [{"add": {"timeSpent": "1h"}}]}',
+        },
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Issue TEST-123 transitioned successfully"
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123",
+        transition_id="31",
+        fields={"resolution": {"name": "Done"}},
+        comment="Completed",
+        update_data={"worklog": [{"add": {"timeSpent": "1h"}}]},
+    )
+
+
+@pytest.mark.anyio
 async def test_search(jira_client, mock_jira_fetcher):
     """Test the search tool with fixture data."""
     response = await jira_client.call_tool(

@@ -2568,8 +2568,12 @@ async def transition_issue(
         Field(
             description=(
                 "(Optional) JSON string of fields to update during the transition. "
-                "Some transitions require specific fields to be set (e.g., resolution). "
-                'Example: \'{"resolution": {"name": "Fixed"}}\''
+                "Some transitions require specific fields to be set. "
+                "Use jira_get_transitions first to discover required fields "
+                "(look for 'has_screen' and 'required_fields' in the response). "
+                "Examples: "
+                '\'{"resolution": {"name": "Fixed"}}\', '
+                "'{\"customfield_10010\": 3600}'."
             ),
             default=None,
         ),
@@ -2583,6 +2587,19 @@ async def transition_issue(
             ),
         ),
     ] = None,
+    update_data: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON string of update data to pass along with the transition. "
+                "Use this for transition validators that require extra data such as worklog. "
+                'Example: \'{"worklog": [{"add": {"timeSpent": "1h"}}]}\' '
+                "when 'Time Spent' is a required validator on the transition. "
+                "This is NOT the same as 'fields' — it uses the Jira API 'update' parameter."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Transition a Jira issue to a new status.
 
@@ -2592,6 +2609,8 @@ async def transition_issue(
         transition_id: ID of the transition.
         fields: Optional JSON string of fields to update during transition.
         comment: Optional comment for the transition in Markdown format.
+        update_data: Optional JSON string of update data (e.g. worklog)
+            for transition validators.
 
     Returns:
         JSON string representing the updated issue object.
@@ -2606,11 +2625,15 @@ async def transition_issue(
     # Parse fields from JSON string
     update_fields = _parse_additional_fields(fields)
 
+    # Parse update_data from JSON string
+    parsed_update_data = _parse_additional_fields(update_data)
+
     issue = jira.transition_issue(
         issue_key=issue_key,
         transition_id=transition_id,
         fields=update_fields,
         comment=comment,
+        update_data=parsed_update_data,
     )
 
     result = {

@@ -55,12 +55,35 @@ class TestTransitionsMixin:
         self, transitions_mixin: TransitionsMixin
     ):
         """Test get_available_transitions with list format response."""
-        # Setup mock response - list format
-        mock_transitions = [
-            {"id": "10", "name": "In Progress", "to_status": "In Progress"},
-            {"id": "11", "name": "Done", "status": "Done"},
-        ]
-        transitions_mixin.jira.get_issue_transitions.return_value = mock_transitions
+        # Setup mock response - via get_issue_transitions_full
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "10",
+                    "name": "In Progress",
+                    "to": {"name": "In Progress"},
+                    "hasScreen": False,
+                },
+                {
+                    "id": "11",
+                    "name": "Done",
+                    "to": {"name": "Done"},
+                    "hasScreen": True,
+                    "fields": {
+                        "resolution": {
+                            "required": True,
+                            "name": "Resolution",
+                            "schema": {"type": "resolution", "system": "resolution"},
+                            "allowedValues": [
+                                {"id": "1", "name": "Fixed"},
+                                {"id": "2", "name": "Won't Fix"},
+                            ],
+                        }
+                    },
+                },
+            ],
+        }
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
 
         # Call the method
         result = transitions_mixin.get_available_transitions("TEST-123")
@@ -70,16 +93,27 @@ class TestTransitionsMixin:
         assert result[0]["id"] == "10"
         assert result[0]["name"] == "In Progress"
         assert result[0]["to_status"] == "In Progress"
+        assert result[0]["has_screen"] is False
+        assert "required_fields" not in result[0]
+
         assert result[1]["id"] == "11"
         assert result[1]["name"] == "Done"
-        assert result[1]["to_status"] == "Done"
+        assert result[1]["has_screen"] is True
+        required_fields = result[1]["required_fields"]
+        assert len(required_fields) == 1
+        assert required_fields[0]["key"] == "resolution"
+        assert required_fields[0]["name"] == "Resolution"
+        assert required_fields[0]["schema"]["type"] == "resolution"
+        allowed = required_fields[0]["allowed_values"]
+        assert len(allowed) == 2
+        assert allowed[0]["name"] == "Fixed"
 
     def test_get_available_transitions_empty_response(
         self, transitions_mixin: TransitionsMixin
     ):
         """Test get_available_transitions with empty response."""
-        # Setup mock response - empty
-        transitions_mixin.jira.get_issue_transitions.return_value = {}
+        # Setup mock response - empty via get_issue_transitions_full
+        transitions_mixin.jira.get_issue_transitions_full.return_value = {}
 
         # Call the method
         result = transitions_mixin.get_available_transitions("TEST-123")
@@ -93,7 +127,7 @@ class TestTransitionsMixin:
     ):
         """Test get_available_transitions with invalid format response."""
         # Setup mock response - invalid format
-        transitions_mixin.jira.get_issue_transitions.return_value = "invalid"
+        transitions_mixin.jira.get_issue_transitions_full.return_value = "invalid"
 
         # Call the method
         result = transitions_mixin.get_available_transitions("TEST-123")
@@ -102,12 +136,22 @@ class TestTransitionsMixin:
         assert isinstance(result, list)
         assert len(result) == 0
 
+    def test_get_available_transitions_invalid_transitions_value(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test get_available_transitions handles a malformed transitions value."""
+        transitions_mixin.jira.get_issue_transitions_full.return_value = {
+            "transitions": "invalid"
+        }
+
+        assert transitions_mixin.get_available_transitions("TEST-123") == []
+
     def test_get_available_transitions_with_error(
         self, transitions_mixin: TransitionsMixin
     ):
         """Test get_available_transitions error handling."""
         # Setup mock to raise exception
-        transitions_mixin.jira.get_issue_transitions.side_effect = Exception(
+        transitions_mixin.jira.get_issue_transitions_full.side_effect = Exception(
             "Transition fetch error"
         )
 
@@ -296,7 +340,7 @@ class TestTransitionsMixin:
 
         # Verify get_issue_transitions_full was called (not get_issue_transitions)
         transitions_mixin.jira.get_issue_transitions_full.assert_called_once_with(
-            "TEST-123"
+            "TEST-123", expand=None
         )
 
         # Verify we get the full transitions list with complete 'to' objects
@@ -552,4 +596,232 @@ class TestTransitionsMixin:
         assert (
             transition_data["update"]["comment"][0]["add"]["body"]
             == "Converted comment"
+        )
+
+    def test_extract_required_fields_with_resolution(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test _extract_required_fields with resolution field."""
+        fields = {
+            "resolution": {
+                "required": True,
+                "name": "Resolution",
+                "schema": {"type": "resolution", "system": "resolution"},
+                "allowedValues": [
+                    {"id": "1", "name": "Fixed"},
+                    {"id": "3", "name": "Done"},
+                ],
+            },
+            "summary": {
+                "required": False,
+                "name": "Summary",
+                "schema": {"type": "string", "system": "summary"},
+            },
+        }
+
+        result = TransitionsMixin._extract_required_fields(fields)
+
+        assert len(result) == 1
+        assert result[0]["key"] == "resolution"
+        assert result[0]["name"] == "Resolution"
+        assert result[0]["schema"]["type"] == "resolution"
+        assert len(result[0]["allowed_values"]) == 2
+        assert result[0]["allowed_values"][0]["id"] == "1"
+        assert result[0]["allowed_values"][0]["name"] == "Fixed"
+
+    def test_extract_required_fields_with_timetracking(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test _extract_required_fields with numeric custom field (e.g. Time Spent)."""
+        fields = {
+            "customfield_10000": {
+                "required": True,
+                "name": "Time Spent",
+                "schema": {
+                    "type": "number",
+                    "custom": (
+                        "com.atlassian.jira.plugin.system.customfieldtypes:float"
+                    ),
+                    "customId": 10000,
+                },
+            }
+        }
+
+        result = TransitionsMixin._extract_required_fields(fields)
+
+        assert len(result) == 1
+        assert result[0]["key"] == "customfield_10000"
+        assert result[0]["name"] == "Time Spent"
+        assert result[0]["schema"]["type"] == "number"
+        assert "allowed_values" not in result[0]
+
+    def test_extract_required_fields_empty(self):
+        """Test _extract_required_fields with no required fields."""
+        assert TransitionsMixin._extract_required_fields({}) == []
+
+        fields = {
+            "summary": {"required": False, "name": "Summary"},
+        }
+        assert TransitionsMixin._extract_required_fields(fields) == []
+
+    def test_get_available_transitions_expand_called(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test get_available_transitions calls get_transitions with expand."""
+        mock_response = {"transitions": []}
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
+
+        transitions_mixin.get_available_transitions("TEST-123")
+
+        transitions_mixin.jira.get_issue_transitions_full.assert_called_once_with(
+            "TEST-123", expand="transitions.fields"
+        )
+
+    def test_get_available_transitions_with_timetracking_field(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test get_available_transitions with Time Spent (timetracking) required."""
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "51",
+                    "name": "Resolve Issue",
+                    "to": {"name": "Resolved", "id": "5"},
+                    "hasScreen": True,
+                    "fields": {
+                        "timetracking": {
+                            "required": True,
+                            "name": "Time Spent",
+                            "schema": {
+                                "type": "timetracking",
+                                "system": "timetracking",
+                            },
+                        },
+                        "resolution": {
+                            "required": True,
+                            "name": "Resolution",
+                            "schema": {"type": "resolution", "system": "resolution"},
+                            "allowedValues": [
+                                {"id": "1", "name": "Fixed"},
+                            ],
+                        },
+                    },
+                }
+            ]
+        }
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
+
+        result = transitions_mixin.get_available_transitions("TEST-123")
+
+        assert len(result) == 1
+        assert result[0]["has_screen"] is True
+        required = result[0]["required_fields"]
+        assert len(required) == 2
+
+        # Verify timetracking field
+        tt = next(r for r in required if r["key"] == "timetracking")
+        assert tt["name"] == "Time Spent"
+        assert tt["schema"]["type"] == "timetracking"
+
+        # Verify resolution field
+        res = next(r for r in required if r["key"] == "resolution")
+        assert res["name"] == "Resolution"
+        assert len(res["allowed_values"]) == 1
+
+    def test_transition_issue_with_update_data(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test transition_issue with update_data (worklog)."""
+        # Call with update_data containing worklog
+        update_data = {"worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]}
+        transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
+
+        # Verify set_issue_status was called with update
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123",
+            status_name="In Progress",
+            fields=None,
+            update={"worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]},
+        )
+
+    def test_transition_issue_with_comment_and_update_data(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test transition_issue with both comment and update_data."""
+
+        # Setup mock for _add_comment_to_transition_data
+        def add_comment_side_effect(transition_data, comment_text):
+            transition_data.setdefault("update", {}).setdefault("comment", []).append(
+                {"add": {"body": comment_text}}
+            )
+
+        transitions_mixin._add_comment_to_transition_data = MagicMock(
+            side_effect=add_comment_side_effect
+        )
+
+        # Call with both comment and update_data
+        update_data = {"worklog": [{"add": {"timeSpent": "2h"}}]}
+        transitions_mixin.transition_issue(
+            "TEST-123", "10", comment="Done", update_data=update_data
+        )
+
+        # Verify update contains both comment and worklog
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123",
+            status_name="In Progress",
+            fields=None,
+            update={
+                "comment": [{"add": {"body": "Done"}}],
+                "worklog": [{"add": {"timeSpent": "2h"}}],
+            },
+        )
+
+    def test_transition_issue_preserves_update_data_comments(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test comment combines with comment operations in update_data."""
+        transitions_mixin._markdown_to_jira = MagicMock(return_value="New comment")
+        existing_comment = {"add": {"body": "Existing comment"}}
+
+        transitions_mixin.transition_issue(
+            "TEST-123",
+            "10",
+            comment="New comment",
+            update_data={"comment": [existing_comment]},
+        )
+
+        transitions_mixin.jira.set_issue_status.assert_called_once_with(
+            issue_key="TEST-123",
+            status_name="In Progress",
+            fields=None,
+            update={"comment": [existing_comment, {"add": {"body": "New comment"}}]},
+        )
+
+    def test_transition_issue_with_update_data_no_status_name(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test transition_issue with update_data when no status name."""
+        # Setup - transition without to_status
+        mock_transitions = [
+            JiraTransition(id="10", name="Start Progress", to_status=None)
+        ]
+        transitions_mixin.get_transitions_models = MagicMock(
+            return_value=mock_transitions
+        )
+        transitions_mixin.jira.set_issue_status_by_transition_id = MagicMock()
+        transitions_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+
+        update_data = {"worklog": [{"add": {"timeSpent": "1h"}}]}
+        transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
+
+        # Verify a single atomic request includes the transition and update data.
+        transitions_mixin.jira.set_issue_status_by_transition_id.assert_not_called()
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {"worklog": [{"add": {"timeSpent": "1h"}}]},
+            },
         )

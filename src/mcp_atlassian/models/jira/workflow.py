@@ -90,4 +90,9 @@ class JiraTransition(ApiModel):
         if self.to_status:
             result["to_status"] = self.to_status.to_simplified_dict()
 
+        if self.has_screen:
+            result["has_screen"] = True
+        if self.is_conditional:
+            result["is_conditional"] = True
+
         return result
