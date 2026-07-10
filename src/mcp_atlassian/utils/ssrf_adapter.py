@@ -128,6 +128,37 @@ class _PinnedHTTPSConnectionPool(HTTPSConnectionPool):
 class SsrfPinningAdapter(HTTPAdapter):
     """A requests adapter that validates and pins DNS resolution for every call."""
 
+    def send(
+        self,
+        request: Any,
+        stream: bool = False,
+        timeout: Any = None,
+        verify: Any = True,
+        cert: Any = None,
+        proxies: Any = None,
+    ) -> Any:
+        """Keep caller-controlled destinations on the pinned direct path.
+
+        An HTTP proxy resolves the target itself, outside this process, so merely
+        installing pinned connection pools on ``ProxyManager`` would only pin the
+        proxy host. Operator-configured service and allowlisted hosts may use a
+        deployment proxy; other destinations connect directly through this
+        adapter's validating pool.
+        """
+        hostname = urlparse(request.url or "").hostname or ""
+        if proxies and not _hostname_matches_allowlist(
+            hostname, _operator_trusted_hosts()
+        ):
+            proxies = {}
+        return super().send(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            proxies=proxies,
+        )
+
     def init_poolmanager(
         self, connections: int, maxsize: int, block: bool = False, **pool_kwargs: Any
     ) -> None:

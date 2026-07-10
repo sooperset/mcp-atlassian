@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 import requests
+from requests.adapters import HTTPAdapter
 
 from mcp_atlassian.utils.ssrf_adapter import (
     SsrfPinningAdapter,
@@ -59,6 +60,34 @@ def test_pinning_adapter_blocks_internal_through_real_stack(ip):
     ):
         with pytest.raises(requests.exceptions.ConnectionError, match="SSRF blocked"):
             session.get("https://rebind.attacker.test", timeout=5)
+
+
+@pytest.mark.security_regression
+def test_untrusted_target_bypasses_proxy_to_keep_dns_pinning():
+    """A proxy must not re-resolve a caller-controlled target outside the guard."""
+    adapter = SsrfPinningAdapter()
+    request = requests.Request("GET", "https://rebind.attacker.test").prepare()
+    proxies = {"https": "http://proxy.example.test:8080"}
+    response = requests.Response()
+
+    with patch.object(HTTPAdapter, "send", return_value=response) as send:
+        assert adapter.send(request, proxies=proxies) is response
+
+    assert send.call_args.kwargs["proxies"] == {}
+
+
+def test_operator_configured_target_keeps_proxy(monkeypatch):
+    """Operator-controlled service hosts may continue using deployment proxies."""
+    monkeypatch.setenv("JIRA_URL", "https://jira.internal")
+    adapter = SsrfPinningAdapter()
+    request = requests.Request("GET", "https://jira.internal/rest/api/2").prepare()
+    proxies = {"https": "http://proxy.example.test:8080"}
+    response = requests.Response()
+
+    with patch.object(HTTPAdapter, "send", return_value=response) as send:
+        assert adapter.send(request, proxies=proxies) is response
+
+    assert send.call_args.kwargs["proxies"] == proxies
 
 
 class _FakeConnectSock:

@@ -6,7 +6,7 @@ import re
 import socket
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 
 def make_ssrf_redirect_hook() -> Callable[..., Any]:
@@ -18,7 +18,8 @@ def make_ssrf_redirect_hook() -> Callable[..., Any]:
 
     def hook(response: Any, **kwargs: Any) -> Any:
         if response.is_redirect:
-            error = validate_url_for_ssrf(response.headers.get("Location", ""))
+            redirect_url = urljoin(response.url, response.headers.get("Location", ""))
+            error = validate_url_for_ssrf(redirect_url)
             if error:
                 response.close()
                 raise ValueError(f"Redirect blocked (SSRF): {error}")
