@@ -567,6 +567,61 @@ class TestGetJiraFetcher:
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_header_based_jira_fetcher_inherits_global_network_config(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Header PAT fetchers inherit safe global network settings."""
+        service_headers = {
+            "X-Atlassian-Jira-Url": "https://test.atlassian.net",
+            "X-Atlassian-Jira-Personal-Token": "test-pat-token",
+        }
+        jira_config = config_factory.create_jira_config(
+            auth_type="pat",
+            ssl_verify=False,
+            http_proxy="http://proxy.example",
+            https_proxy="https://proxy.example",
+            no_proxy="localhost",
+            socks_proxy="socks5://proxy.example",
+            custom_headers={"X-Instance-Secret": "do-not-forward"},
+        )
+        app_context = config_factory.create_app_context(jira_config=jira_config)
+        _setup_mock_context(mock_context, app_context)
+
+        class MockState:
+            def __init__(self):
+                self.jira_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
+        mock_get_http_request.return_value = mock_request
+        mock_jira_fetcher_class.return_value = _create_mock_fetcher(JiraFetcher)
+
+        await get_jira_fetcher(mock_context)
+
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.ssl_verify is False
+        assert called_config.http_proxy == "http://proxy.example"
+        assert called_config.https_proxy == "https://proxy.example"
+        assert called_config.no_proxy == "localhost"
+        assert called_config.socks_proxy == "socks5://proxy.example"
+        assert called_config.custom_headers is None
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
     async def test_header_based_jira_fetcher_validation_failure(
         self, mock_jira_fetcher_class, mock_get_http_request, mock_context, mock_request
     ):
@@ -938,6 +993,64 @@ class TestGetConfluenceFetcher:
         assert called_config.auth_type == "pat"
         assert called_config.url == "https://test.atlassian.net"
         assert called_config.personal_token == "test-confluence-pat-token"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_header_based_confluence_fetcher_reads_network_env_without_config(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        monkeypatch,
+    ):
+        """Header PAT fetchers use proxy environment variables without config."""
+        monkeypatch.setenv("CONFLUENCE_SSL_VERIFY", "false")
+        monkeypatch.setenv("HTTP_PROXY", "http://shared-proxy.example")
+        monkeypatch.setenv("CONFLUENCE_HTTP_PROXY", "http://confluence-proxy.example")
+        monkeypatch.setenv("HTTPS_PROXY", "https://shared-proxy.example")
+        monkeypatch.delenv("CONFLUENCE_HTTPS_PROXY", raising=False)
+        monkeypatch.setenv("CONFLUENCE_NO_PROXY", "localhost")
+        monkeypatch.setenv("SOCKS_PROXY", "socks5://shared-proxy.example")
+        monkeypatch.delenv("CONFLUENCE_SOCKS_PROXY", raising=False)
+        monkeypatch.setenv(
+            "CONFLUENCE_CUSTOM_HEADERS", "X-Instance-Secret=do-not-forward"
+        )
+        mock_context.request_context.lifespan_context = {}
+        service_headers = {
+            "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
+            "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
+        }
+
+        class MockState:
+            def __init__(self):
+                self.confluence_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
+        mock_get_http_request.return_value = mock_request
+        mock_confluence_fetcher_class.return_value = _create_mock_fetcher(
+            ConfluenceFetcher
+        )
+
+        await get_confluence_fetcher(mock_context)
+
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        assert called_config.ssl_verify is False
+        assert called_config.http_proxy == "http://confluence-proxy.example"
+        assert called_config.https_proxy == "https://shared-proxy.example"
+        assert called_config.no_proxy == "localhost"
+        assert called_config.socks_proxy == "socks5://shared-proxy.example"
+        assert called_config.custom_headers is None
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")

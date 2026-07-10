@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +18,7 @@ from starlette.requests import Request
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
-from mcp_atlassian.utils.env import is_env_truthy
+from mcp_atlassian.utils.env import is_env_ssl_verify, is_env_truthy
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
@@ -196,6 +197,44 @@ def _get_global_config(
             "available from lifespan context."
         )
     return config
+
+
+def _get_header_pat_network_config(ctx: Context, spec: _ServiceSpec) -> dict[str, Any]:
+    """Resolve operator-controlled network settings for header PAT requests.
+
+    Args:
+        ctx: FastMCP request context.
+        spec: Service specification for Jira or Confluence.
+
+    Returns:
+        SSL and proxy settings from the global config when available, otherwise
+        from service-specific or shared environment variables.
+    """
+    try:
+        global_config = _get_global_config(ctx, spec)
+    except ValueError:
+        env_prefix = spec.name.upper()
+        return {
+            "ssl_verify": is_env_ssl_verify(f"{env_prefix}_SSL_VERIFY"),
+            "http_proxy": os.getenv(
+                f"{env_prefix}_HTTP_PROXY", os.getenv("HTTP_PROXY")
+            ),
+            "https_proxy": os.getenv(
+                f"{env_prefix}_HTTPS_PROXY", os.getenv("HTTPS_PROXY")
+            ),
+            "no_proxy": os.getenv(f"{env_prefix}_NO_PROXY", os.getenv("NO_PROXY")),
+            "socks_proxy": os.getenv(
+                f"{env_prefix}_SOCKS_PROXY", os.getenv("SOCKS_PROXY")
+            ),
+        }
+
+    return {
+        "ssl_verify": global_config.ssl_verify,
+        "http_proxy": global_config.http_proxy,
+        "https_proxy": global_config.https_proxy,
+        "no_proxy": global_config.no_proxy,
+        "socks_proxy": global_config.socks_proxy,
+    }
 
 
 def _create_and_validate(
@@ -550,11 +589,9 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 url=url_header_val,
                 auth_type="pat",
                 personal_token=token_header_val,
-                ssl_verify=True,
-                http_proxy=None,
-                https_proxy=None,
-                no_proxy=None,
-                socks_proxy=None,
+                **_get_header_pat_network_config(ctx, spec),
+                # Never forward instance-specific custom headers to a URL
+                # selected per request.
                 custom_headers=None,
                 **spec.filter_kwargs,
             )
