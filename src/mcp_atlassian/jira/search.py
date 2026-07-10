@@ -94,7 +94,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                   start from the first page.
             limit: Maximum issues to return
             expand: Optional items to expand (comma-separated)
-            projects_filter: Optional comma-separated list of project keys to filter by, overrides config
+            projects_filter: Optional comma-separated list of project keys to narrow
+                results within the configured allowlist (ANDed with config, never
+                replaces it)
             page_token: Optional pagination token from a previous search result.
                   Cloud only — Server/DC uses start for pagination.
 

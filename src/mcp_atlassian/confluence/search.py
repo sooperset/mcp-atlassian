@@ -56,8 +56,9 @@ class SearchMixin(ConfluenceClient):
         Args:
             cql: Confluence Query Language string
             limit: Maximum number of results to return
-            spaces_filter: Optional comma-separated list of space keys to filter by,
-                overrides config
+            spaces_filter: Optional comma-separated list of space keys to narrow
+                results within the configured allowlist (ANDed with config,
+                never replaces it)
 
         Returns:
             List of ConfluencePage models containing search results
