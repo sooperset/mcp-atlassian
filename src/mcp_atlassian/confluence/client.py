@@ -8,9 +8,16 @@ from requests import Session
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from ..exceptions import MCPAtlassianAuthenticationError
+from ..utils.http import (
+    configure_circuit_breaker,
+    configure_concurrency,
+    configure_rate_limit,
+    configure_retry,
+)
 from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
+from ..utils.user_agent import get_default_user_agent
 from .config import ConfluenceConfig
 
 # Configure logging
@@ -123,6 +130,13 @@ class ConfluenceClient:
             client_key_password=self.config.client_key_password,
         )
 
+        # Apply opt-in HTTP hardening after SSL setup so SSLIgnoreAdapter, if
+        # mounted, also picks up the configured behavior.
+        configure_retry(self.confluence._session, service="Confluence")
+        configure_concurrency(self.confluence._session, service="Confluence")
+        configure_rate_limit(self.confluence._session, service="Confluence")
+        configure_circuit_breaker(self.confluence._session, service="Confluence")
+
         # Proxy configuration
         proxies = {}
         if self.config.http_proxy:
@@ -140,6 +154,11 @@ class ConfluenceClient:
         if self.config.no_proxy and isinstance(self.config.no_proxy, str):
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
+
+        # Set an explicit User-Agent so requests aren't blocked by WAFs that
+        # reject the default ``python-requests/X.Y`` header. User-supplied
+        # custom headers below can still override this.
+        self.confluence._session.headers["User-Agent"] = get_default_user_agent()
 
         # Apply custom headers if configured
         if self.config.custom_headers:
@@ -159,6 +178,25 @@ class ConfluenceClient:
                     "Authentication validation failed during client initialization - "
                     "continuing anyway"
                 )
+
+    def _v1_rest_base_url(self) -> str:
+        """Return the base URL for direct Confluence REST API v1 calls.
+
+        Confluence Cloud OAuth uses the Atlassian API gateway base URL stored on
+        the underlying client. V1 REST calls through that gateway require the
+        ``/wiki`` product prefix before ``/rest/api``.
+
+        Returns:
+            Base URL suitable for appending ``/rest/api/...``.
+        """
+        if self.config.auth_type == "oauth" and self.config.is_cloud:
+            base_url = self.confluence.url.rstrip("/")
+        else:
+            base_url = self.config.url.rstrip("/")
+
+        if self.config.is_cloud and not base_url.endswith("/wiki"):
+            base_url = f"{base_url}/wiki"
+        return base_url
 
     def _validate_authentication(self) -> None:
         """Validate authentication by making a simple API call."""

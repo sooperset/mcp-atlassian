@@ -6,6 +6,7 @@ Regression for https://github.com/sooperset/mcp-atlassian/issues/460
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import pytest
 
@@ -14,6 +15,16 @@ from mcp_atlassian.jira import JiraFetcher
 from .conftest import CloudInstanceInfo, CloudResourceTracker
 
 pytestmark = pytest.mark.cloud_e2e
+
+
+def _get_task_issue_type(issue_types: list[dict[str, Any]]) -> dict[str, Any]:
+    """Find Task by its stable untranslated name on localized Jira sites."""
+    return next(
+        issue_type
+        for issue_type in issue_types
+        if (issue_type.get("untranslatedName") or issue_type.get("name", "")).casefold()
+        == "task"
+    )
 
 
 class TestAgentIssueCreationWorkflow:
@@ -33,7 +44,7 @@ class TestAgentIssueCreationWorkflow:
         """Agent can discover what issue types a project supports."""
         types = jira_fetcher.get_project_issue_types(cloud_instance.project_key)
         assert len(types) > 0, "No issue types returned"
-        names = [t.get("name") for t in types]
+        names = [t.get("untranslatedName") or t.get("name") for t in types]
         assert "Task" in names or "Bug" in names, f"Expected common types, got: {names}"
 
     def test_discover_create_fields(
@@ -43,7 +54,7 @@ class TestAgentIssueCreationWorkflow:
     ) -> None:
         """Agent can discover what fields are needed for an issue type."""
         types = jira_fetcher.get_project_issue_types(cloud_instance.project_key)
-        task_type = next((t for t in types if t["name"] == "Task"), types[0])
+        task_type = _get_task_issue_type(types)
 
         fields = jira_fetcher.get_create_fields(
             cloud_instance.project_key, task_type["id"]
@@ -66,7 +77,7 @@ class TestAgentIssueCreationWorkflow:
         assert len(types) > 0
 
         # Step 2: Pick Task
-        task_type = next(t for t in types if t["name"] == "Task")
+        task_type = _get_task_issue_type(types)
 
         # Step 3: Discover fields
         fields = jira_fetcher.get_create_fields(
