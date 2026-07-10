@@ -342,6 +342,13 @@ def test_configure_rate_limit_shares_bucket_across_sessions(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv("ATLASSIAN_REQUESTS_PER_SECOND", "5")
+    clock = [0.0]
+
+    def advance_clock(seconds: float) -> None:
+        clock[0] += seconds
+
+    monkeypatch.setattr("mcp_atlassian.utils.http.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("mcp_atlassian.utils.http.time.sleep", advance_clock)
 
     s1, s2 = Session(), Session()
     for sess in (s1, s2):
@@ -357,10 +364,8 @@ def test_configure_rate_limit_shares_bucket_across_sessions(
     s2.adapters["https://"].send(MagicMock())
     s2.adapters["https://"].send(MagicMock())
 
-    start = time.monotonic()
     s1.adapters["https://"].send(MagicMock())
-    elapsed = time.monotonic() - start
-    assert elapsed >= 0.1
+    assert clock[0] == pytest.approx(0.2)
 
 
 def _build_circuit_session(status_codes_iter):
