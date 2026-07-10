@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import shutil
 import uuid
 from collections.abc import Generator
@@ -463,6 +464,12 @@ def dc_instance() -> DCInstanceInfo:
     Skips entire session if instances are unreachable.
     """
     info = DCInstanceInfo()
+
+    # Mirror a real deployment: the operator sets JIRA_URL/CONFLUENCE_URL in the
+    # environment, which the SSRF pinning adapter trusts — without this, the
+    # localhost DC instances are (correctly) rejected as non-global addresses.
+    os.environ.setdefault("JIRA_URL", info.jira_url)
+    os.environ.setdefault("CONFLUENCE_URL", info.confluence_url)
 
     if not _check_dc_health(info.jira_url):
         pytest.skip(f"Jira DC not reachable at {info.jira_url}")
