@@ -1311,19 +1311,16 @@ class TestAttachmentsMixin:
 
 
 class TestUploadPathTraversalRegression:
-    """SP5 fam1 — upload-side attachment path traversal / arbitrary file read.
+    """Regression — upload-side attachment path traversal / arbitrary file read.
 
     Covers GHSA-wm45, vc25, 93xw, 6cr4, f4p7, f6pj, 2xj6, mrq8, wv8v, p6hp, h7wj,
     mfv2, f26r, 9547, cc5h (read half), and the 6vmq download-overwrite variant.
 
-    The download side gained ``validate_safe_path`` (CVE-2026-27825), but the upload
-    path still feeds any caller-supplied ``file_path`` to the API after only an
-    ``os.path.exists`` check (``jira/attachments.py:378`` →
-    ``add_attachment(filename=file_path)`` at ``:387``), so a path outside the
-    workspace is read and exfiltrated. These tests assert the secure outcome — a
-    traversal/absolute path never reaches the upload sink — and currently xfail.
-    Phase B fix-1a (``validate_safe_path`` on the upload ``file_path``) flips them
-    green; the strict marker then forces removing the xfail.
+    The download side gained ``validate_safe_path`` (CVE-2026-27825), but the
+    upload path used to feed any caller-supplied ``file_path`` to the API after
+    only an ``os.path.exists`` check, so a path outside the workspace was read and
+    exfiltrated. These tests assert the secure outcome: a traversal/absolute path
+    never reaches the upload sink.
 
     Assertions target the *sink* (``add_attachment`` not called), not an exception
     type, because ``upload_attachment`` wraps its body in ``except Exception`` and
@@ -1351,7 +1348,7 @@ class TestUploadPathTraversalRegression:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         secret = tmp_path / "secret.txt"  # sibling of workspace -> outside it
-        secret.write_bytes(b"SP5-SECRET-EXFIL")
+        secret.write_bytes(b"SECRET-EXFIL")
         malicious = str(secret) if attack == "absolute_outside_cwd" else "../secret.txt"
 
         with patch("os.getcwd", return_value=str(workspace)):
@@ -1369,7 +1366,7 @@ class TestUploadPathTraversalRegression:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         secret = tmp_path / "secret.txt"
-        secret.write_bytes(b"SP5-SECRET-EXFIL")
+        secret.write_bytes(b"SECRET-EXFIL")
 
         with patch("os.getcwd", return_value=str(workspace)):
             attachments_mixin.upload_attachments("PROJ-1", [str(secret)])

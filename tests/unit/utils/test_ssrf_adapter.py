@@ -1,4 +1,4 @@
-"""Regression tests for the SSRF DNS-pinning transport adapter (fam4 rebind).
+"""Regression tests for the SSRF DNS-pinning transport adapter (DNS rebinding).
 
 These cover GHSA-49xv, GHSA-72fm, GHSA-489g: the validate-then-reconnect TOCTOU
 where a rebinding host returns a public IP to ``validate_url_for_ssrf`` and a

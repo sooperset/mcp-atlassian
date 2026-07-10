@@ -1774,13 +1774,11 @@ class TestConfluenceAttachmentPathTraversal:
         with pytest.raises(ValueError, match="Path traversal detected"):
             confluence_mixin.download_content_attachments("12345", "/etc")
 
-    # --- SP5 fam1: upload-side path traversal (currently UNFIXED) ---------------
-    # The download tests above are green (CVE-2026-27825 fix). The upload path still
-    # feeds any caller-supplied file_path to the sink after only an os.path.exists
-    # check (confluence/attachments.py:68 -> _upload_attachment_direct at :78, real
-    # open at :477). These tests assert the secure outcome — the sink is never
-    # reached with a path outside the workspace — and currently xfail. Phase B
-    # fix-1a (validate_safe_path on the upload file_path) flips them green.
+    # --- Upload-side path traversal regression -----------------------------------
+    # The download tests above cover the CVE-2026-27825 fix. The upload path used to
+    # feed any caller-supplied file_path to the sink after only an os.path.exists
+    # check. These tests assert the secure outcome — the sink is never reached with
+    # a path outside the workspace.
     # Covers GHSA-wm45, vc25, 93xw, 6cr4, f4p7, f6pj, mrq8, wv8v, p6hp, h7wj, mfv2,
     # f26r, 9547, cc5h (read half). Asserts on the sink (not an exception type)
     # because upload_attachment wraps its body in except Exception -> error dict.
@@ -1797,7 +1795,7 @@ class TestConfluenceAttachmentPathTraversal:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         secret = tmp_path / "secret.txt"  # sibling of workspace -> outside it
-        secret.write_bytes(b"SP5-SECRET-EXFIL")
+        secret.write_bytes(b"SECRET-EXFIL")
         malicious = str(secret) if attack == "absolute_outside_cwd" else "../secret.txt"
 
         confluence_mixin._upload_attachment_direct = MagicMock(return_value={"id": "1"})

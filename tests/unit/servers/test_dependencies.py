@@ -1602,16 +1602,14 @@ class TestSsrfProtection:
 
 
 class TestSsrfHookCoverageRegression:
-    """SP5 fam4 (GHSA-6529) — SSRF redirect hook must cover the basic-auth and OAuth
-    per-user fetcher sessions, not only the header-PAT branch.
+    """Regression (GHSA-6529) — the SSRF redirect hook must cover the basic-auth
+    and OAuth per-user fetcher sessions, not only the header-PAT branch.
 
-    ``_create_and_validate`` is called with ``attach_ssrf_hook=True`` only on the
-    header-PAT branch (``dependencies.py:561``); the basic (``:587``) and oauth_pat
-    (``:636``) branches omit it, so per-user fetchers built from those branches follow
-    HTTP redirects without SSRF validation. These tests assert the secure outcome — a
-    redirect hook is attached to the fetcher's session — and currently xfail. Phase B
-    fix-4a (pass ``attach_ssrf_hook=True`` on every auth branch) flips them green; the
-    strict marker then forces removal of the xfail.
+    ``_create_and_validate`` used to pass ``attach_ssrf_hook=True`` only on the
+    header-PAT branch; the basic and oauth_pat branches omitted it, so per-user
+    fetchers built from those branches followed HTTP redirects without SSRF
+    validation. These tests assert the secure outcome: a redirect hook is attached
+    to the fetcher's session on every auth branch.
     """
 
     @pytest.mark.security_regression
@@ -1754,23 +1752,21 @@ class TestSsrfHookCoverageRegression:
 
 
 class TestUnauthenticatedGlobalFallbackRegression:
-    """SP5 fam2 (GHSA-wrhw, vc8m, cc5h auth half) — an unauthenticated HTTP request
-    must not silently fall back to the operator's global credentials.
+    """Regression (GHSA-wrhw, GHSA-vc8m, GHSA-cc5h auth half) — an unauthenticated
+    HTTP request must not silently fall back to the operator's global credentials.
 
-    In an HTTP request context with no user identity, ``_get_fetcher`` falls through
-    to the global fallback at ``dependencies.py:658-670`` and returns
+    In an HTTP request context with no user identity, ``_get_fetcher`` used to fall
+    through to the global fallback and return
     ``spec.fetcher_class(config=global_config_fallback)`` unconditionally, so any
-    unauthenticated caller on a remotely-exposed streamable-http server transacts as
-    the operator. These tests assert the secure outcome — the global fallback is
+    unauthenticated caller on a remotely-exposed streamable-http server transacted
+    as the operator. These tests assert the secure outcome: the global fallback is
     refused for unauthenticated HTTP requests unless ``ALLOW_GLOBAL_CRED_FALLBACK``
-    is explicitly enabled — and currently xfail. Phase B fix-2 (opt-in gate) flips
-    them green; the strict marker then forces removing the xfail.
+    is explicitly enabled.
 
-    The companion ``test_global_fallback_scenarios`` above pins the *current*
-    behavior (returns the global fetcher), so this xfail's red is genuinely the
-    fallback firing, not an incidental setup error. The assertion uses
-    ``pytest.raises`` so that when the fix refuses by raising, the test flips to
-    XPASS (a raised exception in the body would otherwise keep it xfailed).
+    The companion ``test_global_fallback_scenarios`` above pins the authenticated
+    fallback behavior (returns the global fetcher), so a failure here is genuinely
+    the unauthenticated fallback firing, not an incidental setup error. The
+    assertion uses ``pytest.raises``: the fix refuses by raising.
     """
 
     @pytest.mark.security_regression

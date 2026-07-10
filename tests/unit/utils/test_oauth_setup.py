@@ -48,16 +48,14 @@ class TestCallbackHandlerLogic:
 
 
 class TestCallbackHandlerXssRegression:
-    """SP5 fam7 (GHSA-g2r2) — reflected XSS in the OAuth callback page.
+    """Regression (GHSA-g2r2) — reflected XSS in the OAuth callback page.
 
-    ``CallbackHandler._send_response`` interpolates the caller-supplied ``message``
-    straight into the HTML body (``oauth_setup.py:125`` → ``<p>{message}</p>``). For
-    the error branch that message is built from the attacker-controlled ``error``
-    query parameter (``do_GET`` ``:64,66``), so a crafted ``?error=<script>…`` renders
-    executable markup in the victim's browser. This test asserts the secure outcome —
-    the payload is HTML-escaped in the rendered page — and currently xfails. Phase B
-    fix-7a (escape callback output) flips it green; the strict marker then forces
-    removal of the xfail.
+    ``CallbackHandler._send_response`` used to interpolate the caller-supplied
+    ``message`` straight into the HTML body (``<p>{message}</p>``). For the error
+    branch that message is built from the attacker-controlled ``error`` query
+    parameter, so a crafted ``?error=<script>…`` rendered executable markup in the
+    victim's browser. This test asserts the secure outcome: the payload is
+    HTML-escaped in the rendered page.
     """
 
     @pytest.mark.security_regression
@@ -71,7 +69,7 @@ class TestCallbackHandlerXssRegression:
         handler.send_header = MagicMock()
         handler.end_headers = MagicMock()
 
-        payload = "<script>alert('xss-sp5-g2r2')</script>"
+        payload = "<script>alert('xss-g2r2')</script>"
         handler._send_response(f"Authorization failed: {payload}")
 
         body = handler.wfile.getvalue().decode()

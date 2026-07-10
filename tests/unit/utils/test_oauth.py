@@ -1214,16 +1214,15 @@ class TestDataCenterOAuth:
 
 
 class TestTokenFilePermissionsRegression:
-    """SP5 fam6 (GHSA-g5xv, 76pr, 4596) — OAuth token file world/group-readable.
+    """Regression (GHSA-g5xv, GHSA-76pr, GHSA-4596) — the OAuth token file must
+    not be world/group-readable.
 
-    ``_save_tokens_to_file`` (``utils/oauth.py:402-418``) creates
-    ``~/.mcp-atlassian`` with ``mkdir(exist_ok=True)`` (no mode) and writes
-    ``oauth-<client>.json`` with ``open(..., "w")`` (no chmod), so the refresh and
-    access tokens land with the process umask's default permissions (commonly 0o644,
-    i.e. group/world-readable). This test forces a permissive umask so the result is
-    deterministic regardless of the runner, then asserts the file is owner-only
-    (0o600). Currently xfails; Phase B fix-6 (explicit ``chmod 0o600`` / ``0o700``)
-    flips it green.
+    ``_save_tokens_to_file`` used to create ``~/.mcp-atlassian`` with
+    ``mkdir(exist_ok=True)`` (no mode) and write ``oauth-<client>.json`` with
+    ``open(..., "w")`` (no chmod), so the refresh and access tokens landed with the
+    process umask's default permissions (commonly 0o644, i.e. group/world-readable).
+    This test forces a permissive umask so the result is deterministic regardless
+    of the runner, then asserts the file is owner-only (0o600).
     """
 
     @pytest.mark.security_regression

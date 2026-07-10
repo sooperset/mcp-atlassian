@@ -331,16 +331,15 @@ class TestValidateUrlForSsrf:
 
 
 class TestSsrfBackslashBypassRegression:
-    """SP5 fam4 (GHSA-hgcf) — backslash authority-confusion SSRF bypass.
+    """Regression (GHSA-hgcf) — backslash authority-confusion SSRF bypass.
 
     ``validate_url_for_ssrf`` extracts the host via ``urlparse().hostname``
     (``urls.py:92``), but ``requests`` (and browsers) parse a backslash in the
     authority differently: ``urlparse("http://localhost\\@evil.com/").hostname`` is
     ``"evil.com"`` (external, so validation passes), while ``requests`` connects to
-    ``localhost`` / ``127.0.0.1``. The validator therefore approves a URL that
-    actually targets an internal host. These tests assert the secure outcome — the
-    backslash-confusion URL is blocked — and currently xfail. Phase B fix-4b
-    (normalize/reject the parse mismatch) flips them green.
+    ``localhost`` / ``127.0.0.1`` — the validator would approve a URL that
+    actually targets an internal host. These tests assert the secure outcome: the
+    backslash-confusion URL is blocked.
     """
 
     @pytest.mark.security_regression

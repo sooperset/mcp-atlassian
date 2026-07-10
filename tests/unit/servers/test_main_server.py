@@ -325,11 +325,10 @@ class TestUserTokenMiddleware:
         """An unauthenticated POST to the MCP endpoint must be rejected at the
         transport boundary, not proxied to the app with the operator's credentials.
 
-        This is the transport seam Codex flagged as mandatory: the dependencies-level
-        global-fallback test is necessary but not sufficient, because the request can
-        still reach the app here. Secure contract (fix-2, opt-in gate): with no
+        The dependencies-level global-fallback test is necessary but not sufficient,
+        because the request can still reach the app here. Secure contract: with no
         Authorization header and ``ALLOW_GLOBAL_CRED_FALLBACK`` off, return 401 and do
-        not call ``self.app``. Currently xfails; Phase B fix-2 flips it green.
+        not call ``self.app``.
         """
         # No Authorization header and no service headers -> unauthenticated request.
         mock_scope["headers"] = []

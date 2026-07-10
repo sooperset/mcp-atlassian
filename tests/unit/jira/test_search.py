@@ -1210,19 +1210,19 @@ class TestSearchMixin:
 
 
 class TestSearchFilterAndInjectionRegression:
-    """SP5 fam5 (filter bypass) + fam7 (JQL injection) for Jira search.
+    """Regression — project/space filter bypass (GHSA-w66g, GHSA-rqwg) and JQL
+    injection (GHSA-6rrj) for Jira search.
 
-    fam5 (GHSA-w66g, rqwg): ``search_issues`` applies ``config.projects_filter``,
-    but ``get_board_issues`` (``jira/search.py:208``) never does — board issues
-    escape the project allowlist. fam7 (GHSA-6rrj): ``get_sprint_issues``
-    (``:298``) interpolates ``sprint_id`` straight into JQL
-    (``f"sprint = {sprint_id}"``), so a non-numeric value injects JQL.
+    Filter bypass: ``search_issues`` applies ``config.projects_filter``, but
+    ``get_board_issues`` never did — board issues escaped the project allowlist.
+    JQL injection: ``get_sprint_issues`` interpolated ``sprint_id`` straight into
+    JQL (``f"sprint = {sprint_id}"``), so a non-numeric value injected JQL.
 
-    Assertions follow the weakest fix-agnostic invariant: fam5 asserts the project
-    key appears *somewhere* in the outgoing JQL (not an exact string); fam7 asserts a
-    non-numeric sprint_id is rejected (fix-7b contract = numeric-only), with
-    ``search_issues`` mocked so the only thing that can reject it is sprint_id
-    validation. Both currently xfail; Phase B fix-5 / fix-7b flip them green.
+    Assertions follow the weakest fix-agnostic invariant: the filter tests assert
+    the project key appears *somewhere* in the outgoing JQL (not an exact string);
+    the injection test asserts a non-numeric sprint_id is rejected (numeric-only
+    contract), with ``search_issues`` mocked so the only thing that can reject it
+    is sprint_id validation.
     """
 
     @pytest.fixture
