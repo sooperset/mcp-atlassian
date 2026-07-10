@@ -41,6 +41,7 @@ class ConfluenceClient:
             MCPAtlassianAuthenticationError: If OAuth authentication fails
         """
         self.config = config or ConfluenceConfig.from_env()
+        transport_url = self.config.url
 
         # Initialize the Confluence client based on auth type
         if self.config.auth_type == "oauth":
@@ -73,6 +74,7 @@ class ConfluenceClient:
                 # Cloud: use the Atlassian Cloud API URL
                 api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
+            transport_url = api_url
 
             # Initialize Confluence with the session
             self.confluence = Confluence(
@@ -121,15 +123,20 @@ class ConfluenceClient:
         if self.config.auth_type in ("pat", "oauth"):
             self.confluence._session.trust_env = False
 
+        if self.config.no_proxy and isinstance(self.config.no_proxy, str):
+            os.environ["NO_PROXY"] = self.config.no_proxy
+            log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
+
         # Configure SSL verification using the shared utility
         configure_ssl_verification(
             service_name="Confluence",
-            url=self.config.url,
+            url=transport_url,
             session=self.confluence._session,
             ssl_verify=self.config.ssl_verify,
             client_cert=self.config.client_cert,
             client_key=self.config.client_key,
             client_key_password=self.config.client_key_password,
+            no_proxy=self.config.no_proxy,
         )
 
         # Validate redirects for SSRF on every outbound call from this session
@@ -163,9 +170,6 @@ class ConfluenceClient:
                 log_config_param(
                     logger, "Confluence", f"{k.upper()}_PROXY", v, sensitive=True
                 )
-        if self.config.no_proxy and isinstance(self.config.no_proxy, str):
-            os.environ["NO_PROXY"] = self.config.no_proxy
-            log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
 
         # Set an explicit User-Agent so requests aren't blocked by WAFs that
         # reject the default ``python-requests/X.Y`` header. User-supplied

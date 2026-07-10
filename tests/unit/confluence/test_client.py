@@ -3,9 +3,12 @@
 import os
 from unittest.mock import MagicMock, patch
 
+from requests.sessions import Session
+
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.ssl import NoProxyAdapter
 
 
 def test_init_with_basic_auth():
@@ -53,6 +56,7 @@ def test_init_with_basic_auth():
             client_cert=None,
             client_key=None,
             client_key_password=None,
+            no_proxy=None,
         )
 
 
@@ -100,6 +104,7 @@ def test_init_with_token_auth():
             client_cert=None,
             client_key=None,
             client_key_password=None,
+            no_proxy=None,
         )
 
 
@@ -239,6 +244,39 @@ def test_init_sets_proxies_and_no_proxy(monkeypatch):
     assert mock_session.proxies["https"] == "https://proxy:8443"
     assert mock_session.proxies["socks"] == "socks5://user:pass@proxy:1080"
     assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
+
+
+def test_init_configures_no_proxy_adapter_from_config(monkeypatch):
+    """Test that client no_proxy config is visible during SSL setup."""
+    mock_confluence = MagicMock()
+    mock_confluence._session = Session()
+    monkeypatch.setattr(
+        "mcp_atlassian.confluence.client.Confluence", lambda **kwargs: mock_confluence
+    )
+    monkeypatch.setattr(
+        "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor",
+        lambda **kwargs: MagicMock(),
+    )
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    config = ConfluenceConfig(
+        url="https://test.atlassian.net/wiki",
+        auth_type="basic",
+        username="user",
+        api_token="token",
+        https_proxy="https://proxy:8443",
+        no_proxy="test.atlassian.net",
+    )
+
+    ConfluenceClient(config=config)
+
+    assert os.environ["NO_PROXY"] == "test.atlassian.net"
+    assert mock_confluence._session.proxies["https"] == "https://proxy:8443"
+    assert isinstance(
+        mock_confluence._session.get_adapter("https://test.atlassian.net"),
+        NoProxyAdapter,
+    )
 
 
 def test_init_no_proxies(monkeypatch):
