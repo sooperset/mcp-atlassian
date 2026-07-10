@@ -17,9 +17,9 @@ from ..utils.http import (
 from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
-from ..utils.user_agent import get_default_user_agent
 from ..utils.ssrf_adapter import mount_ssrf_pinning
 from ..utils.urls import make_ssrf_redirect_hook
+from ..utils.user_agent import get_default_user_agent
 from .config import ConfluenceConfig
 
 # Configure logging

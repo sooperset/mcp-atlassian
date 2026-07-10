@@ -23,9 +23,9 @@ from mcp_atlassian.utils.logging import (
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.ssl import configure_ssl_verification
-from mcp_atlassian.utils.user_agent import get_default_user_agent
 from mcp_atlassian.utils.ssrf_adapter import mount_ssrf_pinning
 from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
+from mcp_atlassian.utils.user_agent import get_default_user_agent
 
 from ..models.jira.adf import markdown_to_adf
 from .config import JiraConfig
