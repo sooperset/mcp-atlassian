@@ -156,9 +156,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         return required_fields
 
     @staticmethod
-    def _normalize_allowed_value(value: Any) -> dict[str, str]:
+    def _normalize_allowed_value(value: Any) -> dict[str, Any]:
         """
-        Normalize a single allowed value to {id, name, value} dict.
+        Normalize a single allowed value to a dict with id, name, value.
 
         Jira returns allowed values in multiple shapes:
         - Scalar (str, int): ``"Fixed"``
@@ -169,7 +169,8 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             value: A raw allowed value from the Jira API.
 
         Returns:
-            A dict with ``id``, ``name``, and ``value`` keys.
+            A dict with ``id``, ``name``, ``value``, and optionally
+            ``description`` keys.
         """
         if not isinstance(value, dict):
             scalar = str(value)
@@ -178,7 +179,10 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         vid = str(value.get("id", value.get("optionId", "")))
         vname = str(value.get("name", value.get("value", "")))
         vvalue = str(value.get("value", value.get("name", vname)))
-        return {"id": vid, "name": vname, "value": vvalue}
+        result: dict[str, Any] = {"id": vid, "name": vname, "value": vvalue}
+        if "description" in value and value["description"]:
+            result["description"] = str(value["description"])
+        return result
 
     def get_transitions(
         self, issue_key: str, expand: str | None = None
