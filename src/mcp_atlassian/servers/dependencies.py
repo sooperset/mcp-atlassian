@@ -423,16 +423,18 @@ def _create_user_config_for_fetcher(
                 "or set base_url for Data Center OAuth."
             )
 
-        # For minimal OAuth config (user-provided tokens), use empty strings for client credentials
+        # Minimal OAuth config (user-provided tokens): client credentials fall back
+        # to empty strings. The global oauth_config may be a
+        # BYOAccessTokenOAuthConfig (e.g. a placeholder *_OAUTH_ACCESS_TOKEN set to
+        # suppress the headless OAuth setup flow), which has no
+        # client_id/client_secret/redirect_uri/scope attributes. With the OAuth proxy
+        # active these come from the proxy config, not here, so getattr() with an
+        # empty-string fallback is safe and avoids an AttributeError.
         oauth_config_for_user = OAuthConfig(
-            client_id=global_oauth_cfg.client_id if global_oauth_cfg.client_id else "",
-            client_secret=global_oauth_cfg.client_secret
-            if global_oauth_cfg.client_secret
-            else "",
-            redirect_uri=global_oauth_cfg.redirect_uri
-            if global_oauth_cfg.redirect_uri
-            else "",
-            scope=global_oauth_cfg.scope if global_oauth_cfg.scope else "",
+            client_id=getattr(global_oauth_cfg, "client_id", "") or "",
+            client_secret=getattr(global_oauth_cfg, "client_secret", "") or "",
+            redirect_uri=getattr(global_oauth_cfg, "redirect_uri", "") or "",
+            scope=getattr(global_oauth_cfg, "scope", "") or "",
             access_token=user_access_token,
             refresh_token=None,
             expires_at=None,
