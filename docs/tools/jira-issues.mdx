@@ -18,6 +18,7 @@ Get details of a specific Jira issue including its Epic links and relationship i
 | `properties` | `string` | No | (Optional) A comma-separated list of issue properties to return |
 | `update_history` | `boolean` | No | Whether to update the issue view history for the requesting user |
 | `include` | `string` | No | (Optional) Comma-separated sections to inline in the response. Supported values: `all`, `remote_links`, `transitions`, `watchers`, `changelog`, `comments`, `worklogs`. |
+| `use_display_names` | `boolean` | No | When true, custom field keys in the output use human-readable display names (e.g. 'Story Points') instead of opaque IDs (e.g. 'customfield_10243'). The `names` expansion is added automatically. Standard fields are unaffected. Default: false. |
 **Example:**
 
 ```json
@@ -26,6 +27,11 @@ Get details of a specific Jira issue including its Epic links and relationship i
 
 <Tip>
 Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content. Use `include: "all"` to inline common enrichments that otherwise require separate tool calls.
+</Tip>
+
+<Tip>
+Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`.
+If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
 </Tip>
 
 

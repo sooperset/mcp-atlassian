@@ -1383,6 +1383,14 @@ class TestIssuesMixin:
         # Test with "*all" parameter
         issue = issues_mixin.get_issue("TEST-123", fields="*all")
 
+        issues_mixin.jira.get_issue.assert_called_once_with(
+            "TEST-123",
+            expand=None,
+            fields="*all",
+            properties=None,
+            update_history=True,
+        )
+
         # Check that all fields are included
         simplified = issue.to_simplified_dict()
         assert "summary" in simplified
