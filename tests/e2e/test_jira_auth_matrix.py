@@ -84,6 +84,23 @@ class TestJiraReadOperations:
         meta = authed_jira.get_project_issue_types(dc_instance.project_key)
         assert meta is not None
 
+    def test_get_create_fields(
+        self,
+        authed_jira: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        """Verify per-issue-type create metadata works on Server/DC."""
+        issue_types = authed_jira.get_project_issue_types(dc_instance.project_key)
+        issue_type = next(item for item in issue_types if item.get("id"))
+
+        fields = authed_jira.get_create_fields(
+            dc_instance.project_key,
+            str(issue_type["id"]),
+        )
+
+        assert fields
+        assert any(field.get("fieldId") == "summary" for field in fields)
+
 
 class TestJiraWriteOperations:
     """Jira write operations tested across all auth methods."""

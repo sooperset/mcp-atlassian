@@ -121,6 +121,13 @@ def mock_confluence_fetcher():
             "extensions": {"fileSize": 1024},
         },
     }
+    mock_fetcher.upload_attachment_from_content.return_value = {
+        "success": True,
+        "content_id": "123456",
+        "filename": "test-file.txt",
+        "size": 1024,
+        "id": "att123",
+    }
     mock_fetcher.upload_attachments.return_value = {
         "success": True,
         "content_id": "123456",
@@ -159,6 +166,17 @@ def mock_confluence_fetcher():
         "message": "Attachment deleted successfully",
     }
     mock_fetcher.fetch_attachment_content.return_value = b"\x89PNG"
+    mock_fetcher.check_content_permissions.return_value = {"hasPermission": True}
+    mock_fetcher.get_space_permissions.return_value = {
+        "results": [
+            {
+                "id": "perm-1",
+                "principal": {"type": "user", "id": "accountid123"},
+                "operation": {"key": "read", "targetType": "page"},
+            }
+        ],
+        "_links": {},
+    }
 
     # Mock config for tools that need config.url
     mock_config = MagicMock()
@@ -193,6 +211,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     from src.mcp_atlassian.servers.confluence import (
         add_comment,
         add_label,
+        check_content_permissions,
         create_page,
         delete_attachment,
         delete_page,
@@ -205,6 +224,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_space_page_tree,
+        get_space_permissions,
         search,
         search_user,
         update_page,
@@ -250,6 +270,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(download_content_attachments)
     confluence_sub_mcp.add_tool(delete_attachment)
     confluence_sub_mcp.add_tool(get_page_images)
+    confluence_sub_mcp.add_tool(check_content_permissions)
+    confluence_sub_mcp.add_tool(get_space_permissions)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -264,6 +286,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     from src.mcp_atlassian.servers.confluence import (
         add_comment,
         add_label,
+        check_content_permissions,
         create_page,
         delete_attachment,
         delete_page,
@@ -276,6 +299,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_space_page_tree,
+        get_space_permissions,
         search,
         search_user,
         update_page,
@@ -323,6 +347,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(download_content_attachments)
     confluence_sub_mcp.add_tool(delete_attachment)
     confluence_sub_mcp.add_tool(get_page_images)
+    confluence_sub_mcp.add_tool(check_content_permissions)
+    confluence_sub_mcp.add_tool(get_space_permissions)
 
     test_mcp.mount(confluence_sub_mcp, prefix="confluence")
 
@@ -365,6 +391,70 @@ async def no_fetcher_client_fixture(no_fetcher_test_confluence_mcp, mock_request
         yield connected_client_for_no_fetcher
 
 
+@pytest.mark.parametrize(
+    ("encoded", "expected"),
+    [
+        ("AQ", 1),
+        ("N4CIO", 948469815),
+        ("_", 248),
+        ("-", 252),
+        ("AAAAAAE", 4294967296),
+        ("QgQzWVKOvQM", 269528037047075906),
+        ("---------38", (1 << 63) - 1),
+    ],
+)
+def test_decode_confluence_tiny_id(encoded: str, expected: int) -> None:
+    """Test tiny-link decoding, including URL-safe and 64-bit IDs."""
+    assert confluence_server._decode_confluence_tiny_id(encoded) == expected
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    [
+        "",
+        "A",
+        "N4CIOA",
+        "N4CI!",
+        "abcdefghijkl",
+        "AAAAAAAAAIA",
+    ],
+)
+def test_decode_confluence_tiny_id_rejects_invalid_values(encoded: str) -> None:
+    """Test malformed, non-canonical, zero, and signed-overflow IDs."""
+    assert confluence_server._decode_confluence_tiny_id(encoded) is None
+
+
+@pytest.mark.parametrize(
+    ("page_reference", "expected"),
+    [
+        ("123456789", "123456789"),
+        (
+            "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Title",
+            "123456789",
+        ),
+        (
+            "https://confluence.example.com/spaces/TEAM/pages/123456789/Title",
+            "123456789",
+        ),
+        (
+            "https://confluence.example.com/pages/viewpage.action?pageId=123456789",
+            "123456789",
+        ),
+        ("https://example.atlassian.net/wiki/x/N4CIO", "948469815"),
+        ("https://confluence.example.com/confluence/x/N4CIO", "948469815"),
+    ],
+)
+def test_resolve_page_id(page_reference: str, expected: str) -> None:
+    """Test supported Cloud and Data Center page-reference formats."""
+    assert confluence_server._resolve_page_id(page_reference) == expected
+
+
+def test_resolve_page_id_preserves_unsupported_reference() -> None:
+    """Test invalid references are not converted to a potentially wrong ID."""
+    reference = "https://example.atlassian.net/wiki/x/N4CIOA"
+    assert confluence_server._resolve_page_id(reference) == reference
+
+
 @pytest.mark.anyio
 async def test_search(client, mock_confluence_fetcher):
     """Test the search tool with basic query."""
@@ -397,6 +487,36 @@ async def test_get_page(client, mock_confluence_fetcher):
     assert "content" in result_data["metadata"]
     assert "value" in result_data["metadata"]["content"]
     assert "This is a test page content" in result_data["metadata"]["content"]["value"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("page_reference", "expected"),
+    [
+        (
+            "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Title",
+            "123456789",
+        ),
+        (
+            "https://confluence.example.com/pages/viewpage.action?pageId=123456789",
+            "123456789",
+        ),
+        ("https://example.atlassian.net/wiki/x/N4CIO", "948469815"),
+        ("https://confluence.example.com/confluence/x/N4CIO", "948469815"),
+    ],
+)
+async def test_get_page_resolves_page_references(
+    client: Client,
+    mock_confluence_fetcher: MagicMock,
+    page_reference: str,
+    expected: str,
+) -> None:
+    """Test get_page resolves full URLs and tiny links before fetching."""
+    await client.call_tool("confluence_get_page", {"page_id": page_reference})
+
+    mock_confluence_fetcher.get_page_content.assert_called_once_with(
+        expected, convert_to_markdown=True
+    )
 
 
 @pytest.mark.anyio
@@ -895,6 +1015,8 @@ def test_page_content_file_parameters_preserve_positional_order():
         "include_content",
         "emoji",
         "content_file",
+        "page_width",
+        "table_layout",
     ]
 
     update_params = list(inspect.signature(confluence_server.update_page.fn).parameters)
@@ -911,6 +1033,8 @@ def test_page_content_file_parameters_preserve_positional_order():
         "include_content",
         "emoji",
         "content_file",
+        "page_width",
+        "table_layout",
     ]
 
 
@@ -1057,6 +1181,111 @@ async def test_upload_attachment(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_upload_attachment_base64(client, mock_confluence_fetcher):
+    """Test uploading an attachment via base64 content (filesystem-free)."""
+    import base64
+
+    raw = b"hello base64 world"
+    encoded = base64.b64encode(raw).decode("ascii")
+
+    response = await client.call_tool(
+        "confluence_upload_attachment",
+        {
+            "content_id": "123456",
+            "content_base64": encoded,
+            "filename": "test-file.txt",
+            "comment": "Test attachment",
+            "minor_edit": True,
+        },
+    )
+
+    mock_confluence_fetcher.upload_attachment_from_content.assert_called_once_with(
+        content_id="123456",
+        filename="test-file.txt",
+        content=raw,
+        comment="Test attachment",
+        minor_edit=True,
+    )
+    # The filesystem-based path must not be used in base64 mode
+    mock_confluence_fetcher.upload_attachment.assert_not_called()
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Attachment uploaded successfully"
+    assert result_data["attachment"]["id"] == "att123"
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_base64_allows_empty_content(
+    client, mock_confluence_fetcher
+):
+    """Test uploading an empty attachment via base64 content."""
+    await client.call_tool(
+        "confluence_upload_attachment",
+        {
+            "content_id": "123456",
+            "content_base64": "",
+            "filename": "empty.txt",
+        },
+    )
+
+    mock_confluence_fetcher.upload_attachment_from_content.assert_called_once_with(
+        content_id="123456",
+        filename="empty.txt",
+        content=b"",
+        comment=None,
+        minor_edit=False,
+    )
+    mock_confluence_fetcher.upload_attachment.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_requires_exactly_one_source(
+    client, mock_confluence_fetcher
+):
+    """Test that providing neither or both file_path and content_base64 fails."""
+    # Neither provided
+    with pytest.raises(Exception, match="exactly one of 'file_path'"):
+        await client.call_tool("confluence_upload_attachment", {"content_id": "123456"})
+
+    # Both provided
+    with pytest.raises(Exception, match="exactly one of 'file_path'"):
+        await client.call_tool(
+            "confluence_upload_attachment",
+            {
+                "content_id": "123456",
+                "file_path": "/path/to/file.txt",
+                "content_base64": "Zm9v",
+            },
+        )
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_base64_requires_filename(
+    client, mock_confluence_fetcher
+):
+    """Test that base64 uploads require a filename."""
+    with pytest.raises(Exception, match="'filename' is required"):
+        await client.call_tool(
+            "confluence_upload_attachment",
+            {"content_id": "123456", "content_base64": "Zm9v"},
+        )
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_invalid_base64(client, mock_confluence_fetcher):
+    """Test that invalid base64 content is rejected."""
+    with pytest.raises(Exception, match="Invalid base64 content"):
+        await client.call_tool(
+            "confluence_upload_attachment",
+            {
+                "content_id": "123456",
+                "content_base64": "not valid base64!!!",
+                "filename": "test-file.txt",
+            },
+        )
+
+
+@pytest.mark.anyio
 async def test_delete_attachment(client, mock_confluence_fetcher):
     """Test deleting an attachment."""
     response = await client.call_tool(
@@ -1070,6 +1299,52 @@ async def test_delete_attachment(client, mock_confluence_fetcher):
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Attachment deleted successfully"
     assert result_data["attachment_id"] == "att123"
+
+
+@pytest.mark.anyio
+async def test_check_content_permissions(client, mock_confluence_fetcher):
+    """Test checking content permissions."""
+    response = await client.call_tool(
+        "confluence_check_content_permissions",
+        {
+            "content_id": "123456",
+            "user_identifier": "accountid123",
+            "operation": "read",
+            "subject_type": "user",
+        },
+    )
+
+    mock_confluence_fetcher.check_content_permissions.assert_called_once_with(
+        content_id="123456",
+        user_identifier="accountid123",
+        operation="read",
+        subject_type="user",
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data == {"hasPermission": True}
+
+
+@pytest.mark.anyio
+async def test_get_space_permissions(client, mock_confluence_fetcher):
+    """Test getting space permissions."""
+    response = await client.call_tool(
+        "confluence_get_space_permissions",
+        {
+            "space_id": "98304",
+            "limit": 50,
+            "cursor": "next-page",
+        },
+    )
+
+    mock_confluence_fetcher.get_space_permissions.assert_called_once_with(
+        space_id="98304",
+        limit=50,
+        cursor="next-page",
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["results"][0]["id"] == "perm-1"
 
 
 # --- get_page_images tool tests ---

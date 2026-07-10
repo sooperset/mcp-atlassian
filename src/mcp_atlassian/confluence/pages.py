@@ -11,6 +11,7 @@ from requests.exceptions import HTTPError
 
 from ..models.confluence import ConfluencePage
 from ..utils.decorators import handle_auth_errors
+from ..utils.pagination import clamp_limit
 from .client import ConfluenceClient
 from .utils import emoji_to_hex_id, extract_emoji_from_property
 from .v2_adapter import ConfluenceV2Adapter
@@ -664,6 +665,7 @@ class PagesMixin(ConfluenceClient):
         content_representation: str | None = None,
         emoji: str | None = None,
         page_width: str | None = None,
+        table_layout: str | None = None,
     ) -> ConfluencePage:
         """
         Create a new page in a Confluence space.
@@ -678,6 +680,7 @@ class PagesMixin(ConfluenceClient):
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
             emoji: Optional emoji character for the page title icon (keyword-only)
             page_width: Optional page layout width ('full-width', 'max', or 'default', keyword-only)
+            table_layout: Optional table width preset for markdown tables ('full-width', 'wide', 'default', keyword-only)
 
         Returns:
             ConfluencePage model containing the new page's data
@@ -690,7 +693,9 @@ class PagesMixin(ConfluenceClient):
             if is_markdown:
                 # Convert markdown to Confluence storage format
                 final_body = self.preprocessor.markdown_to_confluence_storage(
-                    body, enable_heading_anchors=enable_heading_anchors
+                    body,
+                    enable_heading_anchors=enable_heading_anchors,
+                    table_layout=table_layout,
                 )
                 representation = "storage"
             else:
@@ -759,6 +764,7 @@ class PagesMixin(ConfluenceClient):
         content_representation: str | None = None,
         emoji: str | None = None,
         page_width: str | None = None,
+        table_layout: str | None = None,
     ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
@@ -775,6 +781,7 @@ class PagesMixin(ConfluenceClient):
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
             emoji: Optional emoji character for the page title icon (keyword-only). Pass empty string to remove emoji.
             page_width: Optional page layout width ('full-width', 'max', or 'default', keyword-only). Pass empty string to reset to default.
+            table_layout: Optional table width preset for markdown tables ('full-width', 'wide', 'default', keyword-only)
 
         Returns:
             ConfluencePage model containing the updated page's data
@@ -787,7 +794,9 @@ class PagesMixin(ConfluenceClient):
             if is_markdown:
                 # Convert markdown to Confluence storage format
                 final_body = self.preprocessor.markdown_to_confluence_storage(
-                    body, enable_heading_anchors=enable_heading_anchors
+                    body,
+                    enable_heading_anchors=enable_heading_anchors,
+                    table_layout=table_layout,
                 )
                 representation = "storage"
             else:
@@ -1005,6 +1014,8 @@ class PagesMixin(ConfluenceClient):
             List of ConfluencePage models containing the child pages and folders
         """
         try:
+            limit = clamp_limit(limit, context="confluence.get_page_children")
+
             v2_adapter = self._page_children_v2_adapter
             if v2_adapter:
                 logger.debug(f"Using v2 API to get children for Cloud page '{page_id}'")
@@ -1143,6 +1154,8 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error fetching pages
         """
         try:
+            limit = clamp_limit(limit, context="confluence.get_space_page_tree")
+
             # Paginate using the raw API to access _links.next for reliable
             # truncation detection. The higher-level get_all_pages_from_space()
             # has a broken termination condition when limit > server-side cap.
@@ -1501,3 +1514,81 @@ class PagesMixin(ConfluenceClient):
             "to_version": to_version,
             "diff": diff_string,
         }
+
+    @handle_auth_errors("Confluence API")
+    def copy_page(
+        self,
+        source_page_id: str,
+        destination_space_key: str,
+        new_title: str,
+        destination_parent_id: str | None = None,
+        *,
+        copy_attachments: bool = True,
+    ) -> ConfluencePage:
+        """Copy a Confluence page to a new location.
+
+        On Confluence Cloud the native copy endpoint is used
+        (``POST /wiki/rest/api/content/{id}/copy``).  On Server/Data Center
+        the page body and title are fetched and a new page is created manually
+        (attachments are not copied in the Server/DC fallback path).
+
+        Args:
+            source_page_id: The ID of the page to copy.
+            destination_space_key: Space key for the new page.
+            new_title: Title of the new page.
+            destination_parent_id: Optional parent page ID in the destination space.
+                When omitted the new page is created at the space root.
+            copy_attachments: Whether to copy attachments (Cloud only, keyword-only).
+
+        Returns:
+            ConfluencePage model for the newly created copy.
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails.
+            Exception: If the copy operation fails.
+        """
+        try:
+            if self.config.is_cloud:
+                payload: dict[str, object] = {
+                    "copyAttachments": copy_attachments,
+                    "copyPermissions": False,
+                    "copyProperties": False,
+                    "copyLabels": False,
+                    "pageTitle": new_title,
+                    "destination": {
+                        "type": "parent_page" if destination_parent_id else "space",
+                        "value": destination_parent_id or destination_space_key,
+                    },
+                }
+                result = self.confluence.post(
+                    f"{self._v1_rest_base_url()}/rest/api/content/"
+                    f"{source_page_id}/copy",
+                    data=payload,
+                    absolute=True,
+                )
+            else:
+                # Server/DC: manual GET + POST (no native copy endpoint)
+                source = self.confluence.get_page_by_id(
+                    source_page_id, expand="body.storage,version,space"
+                )
+                body = source.get("body", {}).get("storage", {}).get("value", "")
+                create_kwargs: dict[str, object] = {
+                    "space": destination_space_key,
+                    "title": new_title,
+                    "body": body,
+                    "representation": "storage",
+                }
+                if destination_parent_id:
+                    create_kwargs["parent_id"] = destination_parent_id
+                result = self.confluence.create_page(**create_kwargs)
+
+            new_page_id = result.get("id")
+            if not new_page_id:
+                raise ValueError("Copy response did not contain a page ID")
+
+            return self.get_page_content(new_page_id)
+        except HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"Error copying page {source_page_id}: {str(e)}")
+            raise Exception(f"Failed to copy page {source_page_id}: {str(e)}") from e

@@ -14,6 +14,7 @@ from fastmcp import Client
 from fastmcp.client import FastMCPTransport
 from mcp.types import CallToolResult, TextContent
 
+from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.servers import main_mcp
 
 from .conftest import DCInstanceInfo
@@ -182,6 +183,34 @@ class TestMCPConfluenceTools:
         )
         assert not result.is_error
         assert result.content and isinstance(result.content[0], TextContent)
+
+    @pytest.mark.anyio
+    async def test_confluence_get_page_with_tiny_link(
+        self,
+        mcp_client: Client,
+        dc_instance: DCInstanceInfo,
+        confluence_fetcher: ConfluenceFetcher,
+    ) -> None:
+        raw_page = confluence_fetcher.confluence.get_page_by_id(
+            dc_instance.test_page_id
+        )
+        assert isinstance(raw_page, dict)
+        links = raw_page["_links"]
+        tiny_url = (
+            f"{links.get('base', dc_instance.confluence_url).rstrip('/')}"
+            f"/{links['tinyui'].lstrip('/')}"
+        )
+
+        result = await call_tool(
+            mcp_client,
+            "confluence_get_page",
+            {"page_id": tiny_url},
+        )
+
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert str(data["metadata"]["id"]) == dc_instance.test_page_id
 
     @pytest.mark.anyio
     async def test_confluence_search(

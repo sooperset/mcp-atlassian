@@ -461,12 +461,14 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_agile_boards,
         get_all_projects,
         get_board_issues,
+        get_create_fields,
         get_field_options,
         get_issue,
         get_issue_images,
         get_link_types,
         get_project_components,
         get_project_fields,
+        get_project_issue_types,
         get_project_issues,
         get_project_versions,
         get_queue_issues,
@@ -498,6 +500,8 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_project_versions)
     jira_sub_mcp.add_tool(get_project_components)
     jira_sub_mcp.add_tool(get_project_fields)
+    jira_sub_mcp.add_tool(get_project_issue_types)
+    jira_sub_mcp.add_tool(get_create_fields)
     jira_sub_mcp.add_tool(get_all_projects)
     jira_sub_mcp.add_tool(search_projects)
     jira_sub_mcp.add_tool(get_service_desk_for_project)
@@ -1625,6 +1629,70 @@ async def test_search_projects_tool_authentication_error_handling(
     data = json.loads(response.content[0].text)
     assert data["success"] is False
     assert "Authentication/Permission Error" in data["error"]
+
+
+@pytest.mark.anyio
+async def test_get_project_issue_types_tool(jira_client, mock_jira_fetcher):
+    """Test jira_get_project_issue_types returns compact discovery metadata."""
+    mock_jira_fetcher.get_project_issue_types.return_value = [
+        {
+            "self": "https://example.atlassian.net/rest/api/2/issuetype/10000",
+            "id": 10000,
+            "name": "Epic",
+            "untranslatedName": "Epic",
+            "description": "A large body of work.",
+            "iconUrl": "https://example.atlassian.net/icon.svg",
+            "subtask": False,
+            "hierarchyLevel": 1,
+        }
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_project_issue_types",
+        {"project_key": "TEST"},
+    )
+
+    mock_jira_fetcher.get_project_issue_types.assert_called_once_with("TEST")
+    data = json.loads(response.content[0].text)
+    assert data == [
+        {
+            "id": "10000",
+            "name": "Epic",
+            "description": "A large body of work.",
+            "subtask": False,
+            "untranslated_name": "Epic",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_get_create_fields_tool(jira_client, mock_jira_fetcher):
+    """Test jira_get_create_fields returns compact per-type field metadata."""
+    mock_jira_fetcher.get_create_fields.return_value = [
+        {
+            "fieldId": "summary",
+            "name": "Summary",
+            "required": True,
+            "schema": {"type": "string", "system": "summary"},
+            "operations": ["set"],
+        }
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_create_fields",
+        {"project_key": "TEST", "issue_type_id": "10000"},
+    )
+
+    mock_jira_fetcher.get_create_fields.assert_called_once_with("TEST", "10000")
+    data = json.loads(response.content[0].text)
+    assert data == [
+        {
+            "field_id": "summary",
+            "name": "Summary",
+            "required": True,
+            "schema": {"type": "string", "system": "summary"},
+        }
+    ]
 
 
 @pytest.mark.anyio
