@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from unittest.mock import patch
 
 import pytest
@@ -18,10 +20,14 @@ from mcp_atlassian.utils.credential_command import (
 
 # All *_COMMAND and target env vars that must be clean between tests.
 _ALL_VARS = [
+    "JIRA_URL",
+    "JIRA_USERNAME",
     "JIRA_API_TOKEN",
     "JIRA_API_TOKEN_COMMAND",
     "JIRA_PERSONAL_TOKEN",
     "JIRA_PERSONAL_TOKEN_COMMAND",
+    "CONFLUENCE_URL",
+    "CONFLUENCE_USERNAME",
     "CONFLUENCE_API_TOKEN",
     "CONFLUENCE_API_TOKEN_COMMAND",
     "CONFLUENCE_PERSONAL_TOKEN",
@@ -56,6 +62,8 @@ class TestHasDeferredCredentials:
         assert resolver.has_deferred_credentials("confluence") is False
 
     def test_jira_api_token_command(self, resolver: CredentialCommandResolver) -> None:
+        os.environ["JIRA_URL"] = "https://example.atlassian.net"
+        os.environ["JIRA_USERNAME"] = "user@example.com"
         os.environ["JIRA_API_TOKEN_COMMAND"] = "echo secret"
         assert resolver.has_deferred_credentials("jira") is True
         assert resolver.has_deferred_credentials("confluence") is False
@@ -63,6 +71,7 @@ class TestHasDeferredCredentials:
     def test_confluence_personal_token_command(
         self, resolver: CredentialCommandResolver
     ) -> None:
+        os.environ["CONFLUENCE_URL"] = "https://confluence.example.com"
         os.environ["CONFLUENCE_PERSONAL_TOKEN_COMMAND"] = "echo secret"
         assert resolver.has_deferred_credentials("confluence") is True
         assert resolver.has_deferred_credentials("jira") is False
@@ -70,8 +79,30 @@ class TestHasDeferredCredentials:
     def test_plain_var_takes_precedence(
         self, resolver: CredentialCommandResolver
     ) -> None:
+        os.environ["JIRA_URL"] = "https://example.atlassian.net"
+        os.environ["JIRA_USERNAME"] = "user@example.com"
         os.environ["JIRA_API_TOKEN"] = "already-set"
         os.environ["JIRA_API_TOKEN_COMMAND"] = "echo secret"
+        assert resolver.has_deferred_credentials("jira") is False
+
+    @pytest.mark.parametrize(
+        "env",
+        [
+            {"JIRA_API_TOKEN_COMMAND": "echo secret"},
+            {
+                "JIRA_URL": "https://example.atlassian.net",
+                "JIRA_API_TOKEN_COMMAND": "echo secret",
+            },
+            {
+                "JIRA_URL": "https://example.atlassian.net",
+                "JIRA_PERSONAL_TOKEN_COMMAND": "echo secret",
+            },
+        ],
+    )
+    def test_incomplete_cloud_configuration_is_not_deferred(
+        self, resolver: CredentialCommandResolver, env: dict[str, str]
+    ) -> None:
+        os.environ.update(env)
         assert resolver.has_deferred_credentials("jira") is False
 
     def test_unknown_service(self, resolver: CredentialCommandResolver) -> None:
@@ -140,8 +171,14 @@ class TestResolve:
         os.environ["JIRA_API_TOKEN_COMMAND"] = "nonexistent-binary"
         with patch("mcp_atlassian.utils.credential_command.subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError("not found")
-            with pytest.raises(ValueError, match="not found"):
+            with pytest.raises(ValueError, match="could not be started"):
                 resolver.resolve("jira")
+
+    def test_invalid_command_quoting(self, resolver: CredentialCommandResolver) -> None:
+        os.environ["JIRA_API_TOKEN_COMMAND"] = "secret-tool 'unterminated"
+
+        with pytest.raises(ValueError, match="invalid quoting"):
+            resolver.resolve("jira")
 
     def test_skips_when_plain_var_set(
         self, resolver: CredentialCommandResolver
@@ -164,8 +201,22 @@ class TestResolve:
             resolver.resolve("jira")
 
         mock_run.assert_called_once_with(
-            "echo secret", shell=True, capture_output=True, text=True, timeout=5
+            ["echo", "secret"],
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
+
+    @pytest.mark.parametrize("timeout", ["invalid", "0", "-1"])
+    def test_invalid_timeout(
+        self, resolver: CredentialCommandResolver, timeout: str
+    ) -> None:
+        os.environ["JIRA_API_TOKEN_COMMAND"] = "echo secret"
+        os.environ["CREDENTIAL_COMMAND_TIMEOUT"] = timeout
+
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            resolver.resolve("jira")
 
     def test_resolves_multiple_vars(self, resolver: CredentialCommandResolver) -> None:
         os.environ["JIRA_API_TOKEN_COMMAND"] = "echo token1"
@@ -185,22 +236,82 @@ class TestResolve:
         assert os.environ["JIRA_PERSONAL_TOKEN"] == "token2"
         assert mock_run.call_count == 2
 
+    def test_failed_command_can_be_retried_without_partial_credentials(
+        self, resolver: CredentialCommandResolver
+    ) -> None:
+        os.environ["JIRA_API_TOKEN_COMMAND"] = "get-api-secret"
+        os.environ["JIRA_PERSONAL_TOKEN_COMMAND"] = "get-pat-secret"
+        with patch("mcp_atlassian.utils.credential_command.subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                subprocess.CompletedProcess(
+                    args=["get-api-secret"],
+                    returncode=0,
+                    stdout="api-secret\n",
+                    stderr="",
+                ),
+                subprocess.CompletedProcess(
+                    args=["get-pat-secret"],
+                    returncode=1,
+                    stdout="",
+                    stderr="locked",
+                ),
+                subprocess.CompletedProcess(
+                    args=["get-api-secret"],
+                    returncode=0,
+                    stdout="api-secret\n",
+                    stderr="",
+                ),
+                subprocess.CompletedProcess(
+                    args=["get-pat-secret"],
+                    returncode=0,
+                    stdout="pat-secret\n",
+                    stderr="",
+                ),
+            ]
 
-# ---------------------------------------------------------------------------
-# Fetcher cache
-# ---------------------------------------------------------------------------
+            with pytest.raises(ValueError, match="failed"):
+                resolver.resolve("jira")
+            assert "JIRA_API_TOKEN" not in os.environ
+            assert "JIRA_PERSONAL_TOKEN" not in os.environ
 
+            resolver.resolve("jira")
 
-class TestFetcherCache:
-    def test_cache_miss(self, resolver: CredentialCommandResolver) -> None:
-        assert resolver.get_cached_fetcher("jira") is None
+        assert os.environ["JIRA_API_TOKEN"] == "api-secret"
+        assert os.environ["JIRA_PERSONAL_TOKEN"] == "pat-secret"
+        assert mock_run.call_count == 4
 
-    def test_cache_roundtrip(self, resolver: CredentialCommandResolver) -> None:
-        sentinel = object()
-        resolver.cache_fetcher("jira", sentinel)
-        assert resolver.get_cached_fetcher("jira") is sentinel
+    def test_concurrent_resolution_runs_command_once(
+        self, resolver: CredentialCommandResolver
+    ) -> None:
+        os.environ["JIRA_API_TOKEN_COMMAND"] = "get-secret"
+        command_started = Event()
+        release_command = Event()
 
-    def test_services_isolated(self, resolver: CredentialCommandResolver) -> None:
-        sentinel = object()
-        resolver.cache_fetcher("jira", sentinel)
-        assert resolver.get_cached_fetcher("confluence") is None
+        def run_command(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            command_started.set()
+            assert release_command.wait(timeout=1)
+            return subprocess.CompletedProcess(
+                args=["get-secret"], returncode=0, stdout="secret\n", stderr=""
+            )
+
+        with patch(
+            "mcp_atlassian.utils.credential_command.subprocess.run",
+            side_effect=run_command,
+        ) as mock_run:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                first = executor.submit(resolver.resolve, "jira")
+                assert command_started.wait(timeout=1)
+                second = executor.submit(resolver.resolve, "jira")
+                release_command.set()
+                first.result(timeout=1)
+                second.result(timeout=1)
+
+        mock_run.assert_called_once()
+
+    def test_unknown_service_is_rejected(
+        self, resolver: CredentialCommandResolver
+    ) -> None:
+        with pytest.raises(ValueError, match="Unsupported credential service"):
+            resolver.resolve("unknown")

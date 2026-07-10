@@ -5,6 +5,7 @@ Provides get_jira_fetcher and get_confluence_fetcher for use in tool functions.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import logging
@@ -21,6 +22,7 @@ from starlette.requests import Request
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
+from mcp_atlassian.utils.credential_command import get_resolver
 from mcp_atlassian.utils.env import (
     get_header_names,
     is_env_ssl_verify,
@@ -982,22 +984,33 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
     global_config_fallback = (
         getattr(app_ctx, spec.config_attr, None) if app_ctx else None
     )
+    deferred_attr = f"has_deferred_{spec.name.lower()}_auth"
+    has_deferred_fallback = bool(app_ctx and getattr(app_ctx, deferred_attr, False))
+
+    # An HTTP request that reaches here has no per-user identity: serving it
+    # with the operator's global credentials lets any unauthenticated caller
+    # transact as the operator. Refuse unless explicitly opted in. Non-HTTP
+    # (stdio, single-user) is unaffected — the operator is the user there.
+    # External auth mode is exempt: it holds no operator credentials, the caller
+    # supplies them per request. A pending credential command is never exempt —
+    # running it would produce exactly the credentials this guard protects.
+    operator_credentials_at_risk = has_deferred_fallback or (
+        global_config_fallback is not None
+        and global_config_fallback.auth_type != "external"
+    )
+    if (
+        operator_credentials_at_risk
+        and in_http_context
+        and not is_env_truthy("ALLOW_GLOBAL_CRED_FALLBACK")
+    ):
+        raise ValueError(
+            f"{spec.name} client (fetcher) not available: refusing to serve an "
+            "unauthenticated request with the operator's global credentials. "
+            "Provide a user token, or set ALLOW_GLOBAL_CRED_FALLBACK=true to "
+            "allow the global-credential fallback (single-user deployments only)."
+        )
+
     if global_config_fallback:
-        # An HTTP request that reaches here has no per-user identity: serving it
-        # with the operator's global credentials lets any unauthenticated caller
-        # transact as the operator. Refuse unless explicitly opted in. Non-HTTP
-        # (stdio, single-user) is unaffected — the operator is the user there.
-        if (
-            in_http_context
-            and global_config_fallback.auth_type != "external"
-            and not is_env_truthy("ALLOW_GLOBAL_CRED_FALLBACK")
-        ):
-            raise ValueError(
-                f"{spec.name} client (fetcher) not available: refusing to serve an "
-                "unauthenticated request with the operator's global credentials. "
-                "Provide a user token, or set ALLOW_GLOBAL_CRED_FALLBACK=true to "
-                "allow the global-credential fallback (single-user deployments only)."
-            )
         logger.debug(
             f"{fn_name}: Using global {spec.name}Fetcher "
             "from lifespan_context. "
@@ -1044,18 +1057,11 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
         return spec.fetcher_class(config=global_config_fallback)
 
     # Try deferred credential resolution via *_COMMAND env vars
-    deferred_attr = f"has_deferred_{spec.name.lower()}_auth"
-    if app_ctx and getattr(app_ctx, deferred_attr, False):
-        from mcp_atlassian.utils.credential_command import get_resolver
-
+    if has_deferred_fallback:
         resolver = get_resolver()
-        cached = resolver.get_cached_fetcher(spec.name.lower())
-        if cached:
-            return cached
-        resolver.resolve(spec.name.lower())
+        await asyncio.to_thread(resolver.resolve, spec.name.lower())
         config = spec.config_class.from_env()  # type: ignore[attr-defined]
         fetcher = spec.fetcher_class(config=config)
-        resolver.cache_fetcher(spec.name.lower(), fetcher)
         logger.info(
             "%s credentials resolved from *_COMMAND env vars on first use.",
             spec.name,

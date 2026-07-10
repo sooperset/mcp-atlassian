@@ -1,23 +1,17 @@
-"""Deferred credential resolution via shell commands.
-
-Supports ``*_COMMAND`` environment variable variants (e.g.
-``JIRA_API_TOKEN_COMMAND``) that run a shell command lazily on first tool
-use and populate the corresponding plain environment variable with the
-command's stdout.  This allows users who store secrets in tools like
-``gopass`` or ``1password-cli`` to avoid unlocking their secret storage
-until they actually need it.
-"""
+"""Deferred credential resolution via external commands."""
 
 from __future__ import annotations
 
 import logging
 import os
+import shlex
 import subprocess
-from typing import Any
+import threading
+
+from mcp_atlassian.utils.urls import is_atlassian_cloud_url
 
 logger = logging.getLogger("mcp-atlassian.utils.credential_command")
 
-# Maps *_COMMAND env var → target env var it resolves to.
 COMMAND_ENV_MAP: dict[str, str] = {
     "JIRA_API_TOKEN_COMMAND": "JIRA_API_TOKEN",
     "JIRA_PERSONAL_TOKEN_COMMAND": "JIRA_PERSONAL_TOKEN",
@@ -25,155 +19,169 @@ COMMAND_ENV_MAP: dict[str, str] = {
     "CONFLUENCE_PERSONAL_TOKEN_COMMAND": "CONFLUENCE_PERSONAL_TOKEN",
 }
 
-# Which *_COMMAND vars belong to which service.
-_SERVICE_COMMANDS: dict[str, list[str]] = {
-    "jira": [
+_SERVICE_COMMANDS: dict[str, tuple[str, ...]] = {
+    "jira": (
         "JIRA_API_TOKEN_COMMAND",
         "JIRA_PERSONAL_TOKEN_COMMAND",
-    ],
-    "confluence": [
+    ),
+    "confluence": (
         "CONFLUENCE_API_TOKEN_COMMAND",
         "CONFLUENCE_PERSONAL_TOKEN_COMMAND",
-    ],
+    ),
 }
 
 _DEFAULT_TIMEOUT = 30
 
 
 class CredentialCommandResolver:
-    """Resolves ``*_COMMAND`` env vars by running the command and caching the result."""
+    """Resolve credentials produced by configured commands exactly once."""
 
     def __init__(self) -> None:
         self._resolved_services: set[str] = set()
-        self._fetcher_cache: dict[str, Any] = {}
-
-    # ------------------------------------------------------------------
-    # Public helpers (no side-effects — safe to call at startup)
-    # ------------------------------------------------------------------
+        self._service_locks = {
+            service: threading.Lock() for service in _SERVICE_COMMANDS
+        }
 
     def has_deferred_credentials(self, service: str) -> bool:
-        """Check if any ``*_COMMAND`` vars are configured for a service.
+        """Check whether a service has a viable deferred credential.
 
-        Returns ``True`` only when a command var is set and the corresponding
-        plain env var is **not** already populated.  This method is safe to
-        call at startup — it never executes any commands.
+        This method never executes a command. Cloud API-token commands require
+        the matching username, while Server/Data Center can also use a deferred
+        personal token.
 
         Args:
             service: Service name (``"jira"`` or ``"confluence"``).
 
         Returns:
-            ``True`` if deferred credentials are available for *service*.
+            ``True`` when the remaining static configuration is sufficient.
         """
-        for cmd_var in _SERVICE_COMMANDS.get(service, []):
-            target_var = COMMAND_ENV_MAP[cmd_var]
-            if os.getenv(cmd_var) and not os.getenv(target_var):
-                return True
-        return False
+        if service not in _SERVICE_COMMANDS:
+            return False
 
-    # ------------------------------------------------------------------
-    # Resolution (runs commands — call only when credentials are needed)
-    # ------------------------------------------------------------------
+        prefix = service.upper()
+        url = os.getenv(f"{prefix}_URL")
+        if not url:
+            return False
+
+        username = os.getenv(f"{prefix}_USERNAME")
+        api_token_is_deferred = bool(
+            os.getenv(f"{prefix}_API_TOKEN_COMMAND")
+        ) and not bool(os.getenv(f"{prefix}_API_TOKEN"))
+        personal_token_is_deferred = bool(
+            os.getenv(f"{prefix}_PERSONAL_TOKEN_COMMAND")
+        ) and not bool(os.getenv(f"{prefix}_PERSONAL_TOKEN"))
+
+        if is_atlassian_cloud_url(url):
+            return bool(username and api_token_is_deferred)
+        return personal_token_is_deferred or bool(username and api_token_is_deferred)
 
     def resolve(self, service: str) -> None:
-        """Run all pending ``*_COMMAND`` env vars for a service.
+        """Run all pending credential commands for a service.
 
-        Sets the corresponding plain env var with the trimmed stdout of
-        each command.  Idempotent per service — subsequent calls are
-        no-ops.
+        Commands are parsed into arguments and run without an implicit shell.
+        Results become visible only after every pending command succeeds, and a
+        failed attempt can be retried.
 
         Args:
             service: Service name (``"jira"`` or ``"confluence"``).
 
         Raises:
-            ValueError: If any command fails, times out, or returns
-                empty output.
+            ValueError: If the service or command configuration is invalid, or
+                if a command fails, times out, or returns empty output.
         """
-        if service in self._resolved_services:
-            return
-        self._resolved_services.add(service)
+        if service not in _SERVICE_COMMANDS:
+            message = f"Unsupported credential service: {service}"
+            raise ValueError(message)
 
-        timeout = int(os.getenv("CREDENTIAL_COMMAND_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+        with self._service_locks[service]:
+            if service in self._resolved_services:
+                return
 
-        for cmd_var in _SERVICE_COMMANDS.get(service, []):
-            target_var = COMMAND_ENV_MAP[cmd_var]
-            command = os.getenv(cmd_var)
-            if not command or os.getenv(target_var):
-                continue
+            timeout = self._get_timeout()
+            resolved_credentials: dict[str, str] = {}
 
-            logger.debug("Resolving %s via %s", target_var, cmd_var)
-            try:
-                result = subprocess.run(  # noqa: S602
-                    command,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                )
-            except subprocess.TimeoutExpired as exc:
-                raise ValueError(
-                    f"Credential command for {target_var} (from {cmd_var}) "
-                    f"timed out after {timeout}s"
-                ) from exc
-            except FileNotFoundError as exc:
-                raise ValueError(
-                    f"Credential command not found for {cmd_var}: {command}"
-                ) from exc
+            for command_var in _SERVICE_COMMANDS[service]:
+                target_var = COMMAND_ENV_MAP[command_var]
+                command = os.getenv(command_var)
+                if not command or os.getenv(target_var):
+                    continue
 
-            if result.returncode != 0:
-                raise ValueError(
-                    f"Credential command for {target_var} (from {cmd_var}) "
-                    f"failed (exit code {result.returncode}): {result.stderr.strip()}"
-                )
+                try:
+                    arguments = shlex.split(command, posix=os.name != "nt")
+                except ValueError as exc:
+                    message = f"Credential command in {command_var} has invalid quoting"
+                    raise ValueError(message) from exc
+                if not arguments:
+                    message = f"Credential command in {command_var} is empty"
+                    raise ValueError(message)
 
-            token = result.stdout.strip()
-            if not token:
-                raise ValueError(
-                    f"Credential command for {target_var} (from {cmd_var}) "
-                    "returned empty output"
-                )
+                logger.debug("Resolving %s via %s", target_var, command_var)
+                try:
+                    result = subprocess.run(  # noqa: S603
+                        arguments,
+                        shell=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    message = (
+                        f"Credential command for {target_var} (from {command_var}) "
+                        f"timed out after {timeout}s"
+                    )
+                    raise ValueError(message) from exc
+                except OSError as exc:
+                    message = (
+                        f"Credential command configured by {command_var} "
+                        "could not be started"
+                    )
+                    raise ValueError(message) from exc
 
-            os.environ[target_var] = token
-            logger.info("Resolved %s from %s", target_var, cmd_var)
+                if result.returncode != 0:
+                    message = (
+                        f"Credential command for {target_var} (from {command_var}) "
+                        f"failed with exit code {result.returncode}"
+                    )
+                    raise ValueError(message)
 
-    # ------------------------------------------------------------------
-    # Fetcher cache
-    # ------------------------------------------------------------------
+                credential = result.stdout.strip()
+                if not credential:
+                    message = (
+                        f"Credential command for {target_var} (from {command_var}) "
+                        "returned empty output"
+                    )
+                    raise ValueError(message)
+                resolved_credentials[target_var] = credential
 
-    def get_cached_fetcher(self, service: str) -> Any | None:
-        """Return the cached fetcher for a service.
+            os.environ.update(resolved_credentials)
+            self._resolved_services.add(service)
+            for target_var in resolved_credentials:
+                logger.info("Resolved %s from its configured command", target_var)
 
-        Args:
-            service: Service name (``"jira"`` or ``"confluence"``).
+    @staticmethod
+    def _get_timeout() -> int:
+        raw_timeout = os.getenv(
+            "CREDENTIAL_COMMAND_TIMEOUT",
+            str(_DEFAULT_TIMEOUT),
+        )
+        try:
+            timeout = int(raw_timeout)
+        except ValueError as exc:
+            raise ValueError(
+                "CREDENTIAL_COMMAND_TIMEOUT must be a positive integer"
+            ) from exc
+        if timeout <= 0:
+            raise ValueError("CREDENTIAL_COMMAND_TIMEOUT must be a positive integer")
+        return timeout
 
-        Returns:
-            The cached fetcher instance, or ``None`` if not yet resolved.
-        """
-        return self._fetcher_cache.get(service)
 
-    def cache_fetcher(self, service: str, fetcher: Any) -> None:
-        """Cache a fetcher instance for a service.
-
-        Args:
-            service: Service name (``"jira"`` or ``"confluence"``).
-            fetcher: The fetcher instance to cache.
-        """
-        self._fetcher_cache[service] = fetcher
-
-
-# ------------------------------------------------------------------
-# Module-level singleton
-# ------------------------------------------------------------------
-
-_resolver: CredentialCommandResolver | None = None
+_resolver = CredentialCommandResolver()
 
 
 def get_resolver() -> CredentialCommandResolver:
-    """Return the module-level ``CredentialCommandResolver`` singleton.
+    """Return the process-wide credential command resolver.
 
     Returns:
         The shared resolver instance.
     """
-    global _resolver  # noqa: PLW0603
-    if _resolver is None:
-        _resolver = CredentialCommandResolver()
     return _resolver
