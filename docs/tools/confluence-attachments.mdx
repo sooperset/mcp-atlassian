@@ -14,13 +14,19 @@ Upload an attachment to Confluence content (page or blog post).
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `content_id` | `string` | Yes | The ID of the Confluence content (page or blog post) to attach the file to. Page IDs can be found in the page URL or by using the search/get_page tools. Example: '123456789' |
-| `file_path` | `string` | Yes | Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\Users\name\file.docx') or relative to the current working directory (e.g., './uploads/document.pdf'). If a file with the same name already exists, a new version will be created. |
+| `file_path` | `string` | No | Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\Users\name\file.docx') or relative to the current working directory (e.g., './uploads/document.pdf'). Requires the MCP server to be able to read the path. Provide exactly one of `file_path` or `content_base64`. |
+| `content_base64` | `string` | No | Base64-encoded file content to upload directly, without the server reading from disk. Use this for remote or containerized MCP servers. Provide exactly one of `file_path` or `content_base64`. |
+| `filename` | `string` | No | Attachment filename, including extension. Required when using `content_base64`; ignored when using `file_path`. |
 | `comment` | `string` | No | (Optional) A comment describing this attachment or version. Visible in the attachment history. Example: 'Updated Q4 2024 figures' |
 | `minor_edit` | `boolean` | No | (Optional) Whether this is a minor edit. If true, watchers are not notified. Default is false. |
 **Example:**
 
 ```json
-{"page_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
+{"content_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
+```
+
+```json
+{"content_id": "12345678", "content_base64": "SGVsbG8=", "filename": "hello.txt"}
 ```
 
 <Tip>
@@ -82,6 +88,8 @@ Confluence API returns generic MIME types — use the `mediaTypeDescription` fie
 
 Download an attachment from Confluence as an embedded resource.
 
+<Note>On Confluence Cloud, attachment downloads automatically use the v1 REST endpoint (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.</Note>
+
 **Parameters:**
 
 | Parameter | Type | Required | Description |
@@ -119,6 +127,8 @@ Permanently delete an attachment from Confluence.
 ### Get Page Images
 
 Get all images attached to a Confluence page as inline image content.
+
+<Note>On Confluence Cloud, images are fetched via the v1 REST endpoint automatically (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.</Note>
 
 **Parameters:**
 

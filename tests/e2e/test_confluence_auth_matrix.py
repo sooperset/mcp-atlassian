@@ -110,6 +110,39 @@ class TestConfluenceWriteOperations:
         )
         assert updated is not None
 
+    def test_update_page_section(
+        self,
+        authed_confluence: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = authed_confluence.create_page(
+            space_key=dc_instance.space_key,
+            title=f"E2E Section Update Test {uid}",
+            body=(
+                "# Summary\n\nKeep summary.\n\n"
+                "## Target Section\n\nOld target body.\n\n"
+                "## Next Section\n\nKeep next."
+            ),
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        updated = authed_confluence.update_page_section(
+            page_id=page.id,
+            heading_text="Target Section",
+            new_content="New target body.",
+            is_minor_edit=True,
+            version_comment="DC e2e section update",
+        )
+        assert updated is not None
+
+        retrieved = authed_confluence.get_page_content(page.id)
+        assert "New target body" in (retrieved.content or "")
+        assert "Old target body" not in (retrieved.content or "")
+        assert "Keep summary" in (retrieved.content or "")
+        assert "Keep next" in (retrieved.content or "")
+
     def test_add_comment(
         self,
         authed_confluence: ConfluenceFetcher,
