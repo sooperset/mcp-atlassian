@@ -148,8 +148,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             allowed_values = field_data.get("allowedValues")
             if isinstance(allowed_values, list):
                 field_info["allowed_values"] = [
-                    TransitionsMixin._normalize_allowed_value(v)
-                    for v in allowed_values
+                    TransitionsMixin._normalize_allowed_value(v) for v in allowed_values
                 ]
 
             required_fields.append(field_info)

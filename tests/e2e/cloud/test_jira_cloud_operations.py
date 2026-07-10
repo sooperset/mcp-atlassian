@@ -349,6 +349,7 @@ class TestJiraCloudTransitions:
             issue.key,
             target_id,
             comment=f"Cloud transition comment {uid}",
+            update_data={"worklog": [{"add": {"timeSpent": "1m"}}]},
         )
 
         updated = jira_fetcher.get_issue(issue.key)
