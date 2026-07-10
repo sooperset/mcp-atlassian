@@ -148,14 +148,38 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             allowed_values = field_data.get("allowedValues")
             if isinstance(allowed_values, list):
                 field_info["allowed_values"] = [
-                    {"id": str(v.get("id", "")), "name": v.get("name", "")}
+                    TransitionsMixin._normalize_allowed_value(v)
                     for v in allowed_values
-                    if isinstance(v, dict)
                 ]
 
             required_fields.append(field_info)
 
         return required_fields
+
+    @staticmethod
+    def _normalize_allowed_value(value: Any) -> dict[str, str]:
+        """
+        Normalize a single allowed value to {id, name, value} dict.
+
+        Jira returns allowed values in multiple shapes:
+        - Scalar (str, int): ``"Fixed"``
+        - ``{id, name}``: ``{"id": "1", "name": "Fixed"}``
+        - ``{id, value}`` (custom field options): ``{"id": "1", "value": "Fixed"}``
+
+        Args:
+            value: A raw allowed value from the Jira API.
+
+        Returns:
+            A dict with ``id``, ``name``, and ``value`` keys.
+        """
+        if not isinstance(value, dict):
+            scalar = str(value)
+            return {"id": scalar, "name": scalar, "value": scalar}
+
+        vid = str(value.get("id", value.get("optionId", "")))
+        vname = str(value.get("name", value.get("value", "")))
+        vvalue = str(value.get("value", value.get("name", vname)))
+        return {"id": vid, "name": vname, "value": vvalue}
 
     def get_transitions(
         self, issue_key: str, expand: str | None = None
