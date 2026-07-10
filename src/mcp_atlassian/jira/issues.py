@@ -133,13 +133,9 @@ class IssuesMixin(
             fields_set = (
                 set(fields_param.split(",")) if fields_param != "*all" else None
             )
-            if fields_param == "*all" or fields_set == DEFAULT_READ_JIRA_FIELDS:
+            if fields_set == DEFAULT_READ_JIRA_FIELDS:
                 # Default fields are being used - preserve the order
-                default_fields_list = (
-                    fields_param.split(",")
-                    if fields_param != "*all"
-                    else list(DEFAULT_READ_JIRA_FIELDS)
-                )
+                default_fields_list = fields_param.split(",")
                 additional_fields = []
 
                 # Add appropriate fields based on expand parameter

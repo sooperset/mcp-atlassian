@@ -3269,3 +3269,237 @@ async def test_jira_move_issue_not_cloud(jira_client, mock_jira_fetcher):
             {"issue_key": "PROJ-123", "target_project_key": "OTHER"},
         )
     assert "Jira Cloud" in str(excinfo.value)
+
+
+# ============================================================================
+# Display-Name Feature Tests
+# ============================================================================
+
+
+@pytest.mark.anyio
+async def test_get_issue_use_display_names(jira_client, mock_jira_fetcher):
+    """Test get_issue with use_display_names=True returns display-name keys."""
+    display_name_response = {
+        "key": "TEST-123",
+        "summary": "Test Issue Summary",
+        "status": {"name": "Open"},
+        "Story Points": {"value": 5, "field_id": "customfield_10243"},
+    }
+
+    def mock_get_issue_dn(
+        issue_key,
+        fields=None,
+        expand=None,
+        comment_limit=10,
+        properties=None,
+        update_history=True,
+    ):
+        mock_issue = MagicMock()
+        mock_issue.to_simplified_dict.return_value = {
+            "key": issue_key,
+            "summary": "Test Issue Summary",
+            "status": {"name": "Open"},
+            "customfield_10243": 5,
+        }
+        mock_issue.to_display_name_dict.return_value = {
+            **display_name_response,
+            "key": issue_key,
+        }
+        return mock_issue
+
+    mock_jira_fetcher.get_issue.side_effect = mock_get_issue_dn
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "use_display_names": True},
+    )
+    content = json.loads(response.content[0].text)
+    assert "Story Points" in content
+    assert "customfield_10243" not in content
+
+    mock_jira_fetcher.get_issue.assert_called_once()
+    call_kwargs = mock_jira_fetcher.get_issue.call_args
+    assert call_kwargs[1]["issue_key"] == "TEST-123"
+    assert call_kwargs[1]["expand"] == "names"
+
+
+@pytest.mark.anyio
+async def test_search_use_display_names(jira_client, mock_jira_fetcher):
+    """Test search with use_display_names=True returns display-name keys."""
+    display_name_issues = [
+        {
+            "key": "PROJ-123",
+            "summary": "First issue",
+            "Story Points": {"value": 3, "field_id": "customfield_10243"},
+        },
+    ]
+
+    def mock_search_dn(jql, **kwargs):
+        mock_search_result = MagicMock()
+        mock_search_result.to_simplified_dict.return_value = {
+            "total": 1,
+            "start_at": kwargs.get("start", 0),
+            "max_results": kwargs.get("limit", 50),
+            "issues": [
+                {"key": "PROJ-123", "summary": "First issue", "customfield_10243": 3},
+            ],
+        }
+        mock_search_result.to_display_name_dict.return_value = {
+            "total": 1,
+            "start_at": kwargs.get("start", 0),
+            "max_results": kwargs.get("limit", 50),
+            "issues": display_name_issues,
+        }
+        return mock_search_result
+
+    mock_jira_fetcher.search_issues.side_effect = mock_search_dn
+
+    response = await jira_client.call_tool(
+        "jira_search",
+        {
+            "jql": "project = TEST",
+            "expand": "renderedFields",
+            "use_display_names": True,
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["issues"][0].get("Story Points") is not None
+    assert "customfield_10243" not in content["issues"][0]
+
+    mock_jira_fetcher.search_issues.assert_called_once()
+    call_kwargs = mock_jira_fetcher.search_issues.call_args
+    assert call_kwargs[1]["jql"] == "project = TEST"
+    assert call_kwargs[1]["expand"] == "renderedFields,names"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "include_key",
+    ["remote_links", "transitions", "watchers", "worklogs"],
+)
+async def test_display_name_collision_with_include_key_preserves_both(
+    jira_client, mock_jira_fetcher, include_key
+):
+    """Custom field whose display name collides with include output key falls back to raw ID."""
+    output_key_map = {
+        "remote_links": "remote_links",
+        "transitions": "transitions",
+        "watchers": "watchers",
+        "worklogs": "worklogs",
+    }
+    output_key = output_key_map[include_key]
+
+    def mock_get_issue_collision(
+        issue_key,
+        fields=None,
+        expand=None,
+        comment_limit=10,
+        properties=None,
+        update_history=True,
+    ):
+        mock_issue = MagicMock()
+        mock_issue.to_simplified_dict.return_value = {
+            "key": issue_key,
+            "summary": "Test",
+            "status": {"name": "Open"},
+            "customfield_99999": {"name": output_key, "value": "custom"},
+        }
+
+        def display_name_dict(extra_reserved_keys=None):
+            if extra_reserved_keys and output_key in extra_reserved_keys:
+                return {
+                    "key": issue_key,
+                    "summary": "Test",
+                    "status": {"name": "Open"},
+                    "customfield_99999": {
+                        "value": "custom",
+                        "field_id": "customfield_99999",
+                    },
+                }
+            return {
+                "key": issue_key,
+                "summary": "Test",
+                "status": {"name": "Open"},
+                output_key: {"value": "custom", "field_id": "customfield_99999"},
+            }
+
+        mock_issue.to_display_name_dict.side_effect = display_name_dict
+        return mock_issue
+
+    mock_jira_fetcher.get_issue.side_effect = mock_get_issue_collision
+    mock_jira_fetcher.get_remote_issue_links.return_value = [{"url": "http://x"}]
+    mock_jira_fetcher.get_available_transitions.return_value = [{"name": "Done"}]
+    mock_jira_fetcher.get_issue_watchers.return_value = {"watchers": ["u1"]}
+    mock_jira_fetcher.get_worklogs.return_value = [{"time": "1h"}]
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "COL-1", "use_display_names": True, "include": include_key},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert "customfield_99999" in content
+    assert content["customfield_99999"]["value"] == "custom"
+
+    assert output_key in content
+    assert content[output_key] != {"value": "custom", "field_id": "customfield_99999"}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("include_key", ["comments", "changelog"])
+async def test_display_name_collision_with_setdefault_include_key(
+    jira_client, mock_jira_fetcher, include_key
+):
+    """Custom field whose display name matches a setdefault enrichment key falls back to raw ID."""
+    output_key_map = {"comments": "comments", "changelog": "changelogs"}
+    output_key = output_key_map[include_key]
+
+    def mock_get_issue_collision(
+        issue_key,
+        fields=None,
+        expand=None,
+        comment_limit=10,
+        properties=None,
+        update_history=True,
+    ):
+        mock_issue = MagicMock()
+        mock_issue.to_simplified_dict.return_value = {
+            "key": issue_key,
+            "summary": "Test",
+            "status": {"name": "Open"},
+            "customfield_88888": {"name": output_key, "value": "custom"},
+        }
+
+        def display_name_dict(extra_reserved_keys=None):
+            if extra_reserved_keys and output_key in extra_reserved_keys:
+                return {
+                    "key": issue_key,
+                    "summary": "Test",
+                    "status": {"name": "Open"},
+                    "customfield_88888": {
+                        "value": "custom",
+                        "field_id": "customfield_88888",
+                    },
+                }
+            return {
+                "key": issue_key,
+                "summary": "Test",
+                "status": {"name": "Open"},
+                output_key: {"value": "custom", "field_id": "customfield_88888"},
+            }
+
+        mock_issue.to_display_name_dict.side_effect = display_name_dict
+        return mock_issue
+
+    mock_jira_fetcher.get_issue.side_effect = mock_get_issue_collision
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "COL-2", "use_display_names": True, "include": include_key},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert "customfield_88888" in content
+    assert content["customfield_88888"]["value"] == "custom"
+
+    assert output_key in content

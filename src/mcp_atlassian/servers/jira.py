@@ -49,6 +49,14 @@ _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
         "worklogs",
     }
 )
+_GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
+    "remote_links": "remote_links",
+    "transitions": "transitions",
+    "watchers": "watchers",
+    "changelog": "changelogs",
+    "comments": "comments",
+    "worklogs": "worklogs",
+}
 _GET_ISSUE_INCLUDE_ALIASES = {
     "comment": "comments",
     "worklog": "worklogs",
@@ -547,6 +555,18 @@ async def get_issue(
             default=None,
         ),
     ] = None,
+    use_display_names: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true, custom field keys in the output use human-readable "
+                "display names (e.g. 'Story Points') instead of opaque IDs "
+                "(e.g. 'customfield_10243'). The 'names' expansion is added "
+                "automatically. Standard fields are unaffected."
+            ),
+            default=False,
+        ),
+    ] = False,
 ) -> str:
     """Get details of a specific Jira issue.
 
@@ -564,6 +584,7 @@ async def get_issue(
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
         include: Comma-separated enrichment sections to inline.
+        use_display_names: Opt into human-readable custom field keys.
 
     Returns:
         JSON string representing the Jira issue object.
@@ -586,6 +607,8 @@ async def get_issue(
     expand_additions = []
     if "changelog" in include_sections:
         expand_additions.append("changelog")
+    if use_display_names:
+        expand_additions.append("names")
     expand = _merge_expand(expand, expand_additions)
 
     # Fetch the issue (with augmented expand)
@@ -597,7 +620,15 @@ async def get_issue(
         properties=properties.split(",") if properties else None,
         update_history=update_history,
     )
-    result = issue.to_simplified_dict()
+    if use_display_names:
+        include_output_keys = {
+            _GET_ISSUE_INCLUDE_OUTPUT_KEYS[s]
+            for s in include_sections
+            if s in _GET_ISSUE_INCLUDE_OUTPUT_KEYS
+        }
+        result = issue.to_display_name_dict(extra_reserved_keys=include_output_keys)
+    else:
+        result = issue.to_simplified_dict()
 
     if "comments" in include_sections:
         result.setdefault("comments", [])
@@ -700,6 +731,18 @@ async def search(
             default=None,
         ),
     ] = None,
+    use_display_names: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true, custom field keys in the output use human-readable "
+                "display names (e.g. 'Story Points') instead of opaque IDs "
+                "(e.g. 'customfield_10243'). The 'names' expansion is added "
+                "automatically. Standard fields are unaffected."
+            ),
+            default=False,
+        ),
+    ] = False,
 ) -> str:
     """Search Jira issues using JQL (Jira Query Language).
 
@@ -712,6 +755,7 @@ async def search(
         projects_filter: Comma-separated list of project keys to filter by.
         expand: Optional fields to expand.
         page_token: Pagination token from a previous search result (Cloud only).
+        use_display_names: Opt into human-readable custom field keys.
 
     Returns:
         JSON string representing the search results including pagination info.
@@ -720,6 +764,9 @@ async def search(
     fields_list: str | list[str] | None = fields
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
+
+    if use_display_names:
+        expand = _merge_expand(expand, ["names"])
 
     search_result = jira.search_issues(
         jql=jql,
@@ -730,7 +777,10 @@ async def search(
         projects_filter=projects_filter,
         page_token=page_token,
     )
-    result = search_result.to_simplified_dict()
+    if use_display_names:
+        result = search_result.to_display_name_dict()
+    else:
+        result = search_result.to_simplified_dict()
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 

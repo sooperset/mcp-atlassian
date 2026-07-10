@@ -1111,6 +1111,46 @@ class TestSearchMixin:
         assert result.next_page_token == "remaining_token_xyz"
         assert len(result.issues) == 2
 
+    def test_search_issues_cloud_preserves_names_map(
+        self,
+        search_mixin: SearchMixin,
+    ):
+        """Cloud v3 search keeps field display names for custom fields."""
+        search_mixin.config.is_cloud = True
+        search_mixin.config.projects_filter = None
+        search_mixin.config.url = "https://test.example.com"
+
+        response_page = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-1",
+                    "fields": {
+                        "summary": "Issue 1",
+                        "customfield_10001": 13,
+                    },
+                },
+            ],
+            "names": {"customfield_10001": "Story Points"},
+        }
+        search_mixin.jira.post = MagicMock(return_value=response_page)
+
+        result = search_mixin.search_issues(
+            "key = TEST-1",
+            fields="*all",
+            limit=1,
+            expand="names",
+        )
+
+        assert isinstance(result, JiraSearchResult)
+        assert result.issues[0].custom_fields["customfield_10001"]["name"] == (
+            "Story Points"
+        )
+        display_result = result.to_display_name_dict()
+        issue = display_result["issues"][0]
+        assert issue["Story Points"]["value"] == 13
+        assert "customfield_10001" not in issue
+
     def test_search_issues_cloud_no_remaining_token(
         self,
         search_mixin: SearchMixin,

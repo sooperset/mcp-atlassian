@@ -75,6 +75,33 @@ class TestMCPJiraTools:
         assert data["key"] == cloud_instance.test_issue_key
 
     @pytest.mark.anyio
+    async def test_jira_get_issue_use_display_names(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        result = await call_tool(
+            mcp_client,
+            "jira_get_issue",
+            {
+                "issue_key": cloud_instance.test_issue_key,
+                "fields": "*all",
+                "use_display_names": True,
+            },
+        )
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert data["key"] == cloud_instance.test_issue_key
+        custom_fields = {
+            key: value
+            for key, value in data.items()
+            if isinstance(value, dict) and "field_id" in value
+        }
+        assert custom_fields
+        assert any(key != value["field_id"] for key, value in custom_fields.items())
+
+    @pytest.mark.anyio
     async def test_jira_search(
         self,
         mcp_client: Client,
@@ -93,6 +120,36 @@ class TestMCPJiraTools:
         data = json.loads(result.content[0].text)
         assert "issues" in data
         assert len(data["issues"]) > 0
+
+    @pytest.mark.anyio
+    async def test_jira_search_use_display_names(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        result = await call_tool(
+            mcp_client,
+            "jira_search",
+            {
+                "jql": f"project={cloud_instance.project_key}",
+                "fields": "*all",
+                "limit": 1,
+                "use_display_names": True,
+            },
+        )
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert len(data["issues"]) == 1
+        issue = data["issues"][0]
+        assert issue["key"].startswith(f"{cloud_instance.project_key}-")
+        custom_fields = {
+            key: value
+            for key, value in issue.items()
+            if isinstance(value, dict) and "field_id" in value
+        }
+        assert custom_fields
+        assert any(key != value["field_id"] for key, value in custom_fields.items())
 
     @pytest.mark.anyio
     async def test_jira_create_and_delete_issue(

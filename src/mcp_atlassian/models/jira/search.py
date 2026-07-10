@@ -49,9 +49,15 @@ class JiraSearchResult(ApiModel):
 
         issues = []
         issues_data = data.get("issues", [])
+        # The 'names' map (field ID → display name) lives at the top level
+        # of search responses.  Propagate it into each issue dict so that
+        # JiraIssue.from_api_response can populate display names.
+        top_level_names = data.get("names")
         if isinstance(issues_data, list):
             for issue_data in issues_data:
                 if issue_data:
+                    if top_level_names and isinstance(issue_data, dict):
+                        issue_data = {**issue_data, "names": top_level_names}
                     requested_fields = kwargs.get("requested_fields")
                     issues.append(
                         JiraIssue.from_api_response(
@@ -108,6 +114,18 @@ class JiraSearchResult(ApiModel):
             "start_at": self.start_at,
             "max_results": self.max_results,
             "issues": [issue.to_simplified_dict() for issue in self.issues],
+        }
+        if self.next_page_token is not None:
+            result["next_page_token"] = self.next_page_token
+        return result
+
+    def to_display_name_dict(self) -> dict[str, Any]:
+        """Like ``to_simplified_dict`` but with display-name keys on each issue."""
+        result: dict[str, Any] = {
+            "total": self.total,
+            "start_at": self.start_at,
+            "max_results": self.max_results,
+            "issues": [issue.to_display_name_dict() for issue in self.issues],
         }
         if self.next_page_token is not None:
             result["next_page_token"] = self.next_page_token
