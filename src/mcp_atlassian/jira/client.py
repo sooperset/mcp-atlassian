@@ -145,13 +145,6 @@ class JiraClient:
             client_key_password=self.config.client_key_password,
         )
 
-        # Apply opt-in HTTP hardening after SSL setup so SSLIgnoreAdapter, if
-        # mounted, also picks up the configured behavior.
-        configure_retry(self.jira._session, service="Jira")
-        configure_concurrency(self.jira._session, service="Jira")
-        configure_rate_limit(self.jira._session, service="Jira")
-        configure_circuit_breaker(self.jira._session, service="Jira")
-
         # Validate redirects for SSRF on every outbound call from this session
         # (covers direct _session.get() paths and global/stdio fetchers, not just
         # the per-user HTTP path).
@@ -159,6 +152,15 @@ class JiraClient:
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
         mount_ssrf_pinning(self.jira._session)
+
+        # Apply opt-in HTTP hardening after SSL setup and after the pinning
+        # adapter is mounted: these wrappers patch send() in place on whatever
+        # adapters are mounted now, so mounting the pinning adapter later would
+        # silently drop them.
+        configure_retry(self.jira._session, service="Jira")
+        configure_concurrency(self.jira._session, service="Jira")
+        configure_rate_limit(self.jira._session, service="Jira")
+        configure_circuit_breaker(self.jira._session, service="Jira")
 
         # Proxy configuration
         proxies = {}

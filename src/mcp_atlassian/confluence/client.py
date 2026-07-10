@@ -132,13 +132,6 @@ class ConfluenceClient:
             client_key_password=self.config.client_key_password,
         )
 
-        # Apply opt-in HTTP hardening after SSL setup so SSLIgnoreAdapter, if
-        # mounted, also picks up the configured behavior.
-        configure_retry(self.confluence._session, service="Confluence")
-        configure_concurrency(self.confluence._session, service="Confluence")
-        configure_rate_limit(self.confluence._session, service="Confluence")
-        configure_circuit_breaker(self.confluence._session, service="Confluence")
-
         # Validate redirects for SSRF on every outbound call from this session
         # (covers direct _session.get() paths and global/stdio fetchers, not just
         # the per-user HTTP path).
@@ -146,6 +139,15 @@ class ConfluenceClient:
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
         mount_ssrf_pinning(self.confluence._session)
+
+        # Apply opt-in HTTP hardening after SSL setup and after the pinning
+        # adapter is mounted: these wrappers patch send() in place on whatever
+        # adapters are mounted now, so mounting the pinning adapter later would
+        # silently drop them.
+        configure_retry(self.confluence._session, service="Confluence")
+        configure_concurrency(self.confluence._session, service="Confluence")
+        configure_rate_limit(self.confluence._session, service="Confluence")
+        configure_circuit_breaker(self.confluence._session, service="Confluence")
 
         # Proxy configuration
         proxies = {}

@@ -106,6 +106,50 @@ def test_base_session_has_ssrf_redirect_hook():
     ), "base session must mount the SSRF DNS-pinning adapter for https"
 
 
+@pytest.mark.security_regression
+def test_http_hardening_survives_ssrf_pinning_mount(monkeypatch):
+    """The opt-in HTTP hardening wrappers patch ``adapter.send`` in place, so
+    they must be applied AFTER ``mount_ssrf_pinning`` replaces the generic
+    http/https adapters — otherwise the pinning mount silently drops the
+    concurrency/rate-limit/circuit-breaker wrappers (retries survive via the
+    max_retries carry-over, the send wrappers do not).
+    """
+    import requests
+
+    from mcp_atlassian.utils.http import (
+        _reset_concurrency_semaphore_for_tests,
+        _reset_rate_limit_bucket_for_tests,
+    )
+    from mcp_atlassian.utils.ssrf_adapter import SsrfPinningAdapter
+
+    monkeypatch.setenv("ATLASSIAN_MAX_CONCURRENT_REQUESTS", "2")
+    _reset_concurrency_semaphore_for_tests()
+    try:
+        with (
+            patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+            patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+        ):
+            mock_jira.return_value._session = requests.Session()
+            client = JiraClient(
+                config=JiraConfig(
+                    url="https://test.atlassian.net",
+                    auth_type="basic",
+                    username="u",
+                    api_token="t",
+                )
+            )
+
+        adapter = client.jira._session.get_adapter("https://example.atlassian.net")
+        assert isinstance(adapter, SsrfPinningAdapter)
+        assert getattr(adapter, "_mcp_atlassian_throttled", False), (
+            "concurrency wrapper must be present on the pinning adapter — "
+            "hardening was applied before mount_ssrf_pinning replaced it"
+        )
+    finally:
+        _reset_concurrency_semaphore_for_tests()
+        _reset_rate_limit_bucket_for_tests()
+
+
 def test_init_with_token_auth():
     """Test initializing the client with token auth configuration."""
     with (
