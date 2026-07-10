@@ -92,6 +92,7 @@ def test_base_session_has_ssrf_redirect_hook():
     # The hook must actually block a redirect to an internal/metadata host.
     internal_redirect = MagicMock()
     internal_redirect.is_redirect = True
+    internal_redirect.url = "https://test.atlassian.net/start"
     internal_redirect.headers = {"Location": "http://169.254.169.254/latest/meta-data/"}
     with pytest.raises(ValueError, match="SSRF"):
         for hook in hooks:
