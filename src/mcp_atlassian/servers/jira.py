@@ -183,7 +183,8 @@ def _parse_request_field_values(
     try:
         return _parse_additional_fields(request_field_values)
     except ValueError as e:
-        raise ValueError(f"request_field_values is not valid JSON: {e}") from e
+        msg = f"request_field_values is not valid JSON: {e}"
+        raise ValueError(msg) from e
 
 
 def _parse_request_participants(
@@ -230,7 +231,8 @@ def _parse_attachments(
         try:
             parsed = json.loads(stripped)
         except json.JSONDecodeError as e:
-            raise ValueError(f"attachments is not valid JSON: {e}") from e
+            msg = f"attachments is not valid JSON: {e}"
+            raise ValueError(msg) from e
     else:
         parsed = attachments
 

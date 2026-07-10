@@ -13,6 +13,7 @@ from ..models.jira import (
     JiraRequestTypeFieldsResult,
     JiraRequestTypesResult,
 )
+from ..utils.media import ATTACHMENT_MAX_BYTES
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -93,7 +94,10 @@ class CustomerRequestsMixin(JiraClient):
         jira_schema = field_definition.jira_schema
         field_type = str(jira_schema.get("type", "")).lower()
         custom_type = str(jira_schema.get("custom", "")).lower()
-        return field_type == "option" or "select" in custom_type
+        option_markers = ("select", "radiobutton", "checkbox")
+        return field_type == "option" or any(
+            marker in custom_type for marker in option_markers
+        )
 
     @staticmethod
     def _normalize_array_value(value: Any) -> list[Any]:
@@ -387,29 +391,21 @@ class CustomerRequestsMixin(JiraClient):
         if limit < 1:
             raise ValueError("limit must be >= 1")
 
-        try:
-            response = self.jira.get(
-                f"rest/servicedeskapi/servicedesk/{service_desk_id}/requesttype",
-                params={"start": start_at, "limit": limit},
+        response = self.jira.get(
+            f"rest/servicedeskapi/servicedesk/{service_desk_id}/requesttype",
+            params={"start": start_at, "limit": limit},
+        )
+        if not isinstance(response, dict):
+            msg = (
+                "Unexpected response type from request type list endpoint: "
+                f"{type(response)}"
             )
-            if not isinstance(response, dict):
-                logger.error(
-                    "Unexpected response type from request type list endpoint: %s",
-                    type(response),
-                )
-                return JiraRequestTypesResult(service_desk_id=service_desk_id)
+            raise TypeError(msg)
 
-            return JiraRequestTypesResult.from_api_response(
-                response,
-                service_desk_id=service_desk_id,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                "Error getting request types for service desk %s: %s",
-                service_desk_id,
-                str(e),
-            )
-            return JiraRequestTypesResult(service_desk_id=service_desk_id)
+        return JiraRequestTypesResult.from_api_response(
+            response,
+            service_desk_id=service_desk_id,
+        )
 
     def get_request_type_fields(
         self,
@@ -422,40 +418,22 @@ class CustomerRequestsMixin(JiraClient):
         if not request_type_id or not request_type_id.strip():
             raise ValueError("Request type ID is required")
 
-        try:
-            response = self.jira.get(
-                "rest/servicedeskapi/servicedesk/"
-                f"{service_desk_id}/requesttype/{request_type_id}/field"
+        response = self.jira.get(
+            "rest/servicedeskapi/servicedesk/"
+            f"{service_desk_id}/requesttype/{request_type_id}/field"
+        )
+        if not isinstance(response, dict):
+            msg = (
+                "Unexpected response type from request type fields endpoint: "
+                f"{type(response)}"
             )
-            if not isinstance(response, dict):
-                logger.error(
-                    "Unexpected response type from request type fields endpoint: %s",
-                    type(response),
-                )
-                return JiraRequestTypeFieldsResult(
-                    service_desk_id=service_desk_id,
-                    request_type_id=request_type_id,
-                )
+            raise TypeError(msg)
 
-            return JiraRequestTypeFieldsResult.from_api_response(
-                response,
-                service_desk_id=service_desk_id,
-                request_type_id=request_type_id,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                (
-                    "Error getting request type fields for service desk %s "
-                    "request type %s: %s"
-                ),
-                service_desk_id,
-                request_type_id,
-                str(e),
-            )
-            return JiraRequestTypeFieldsResult(
-                service_desk_id=service_desk_id,
-                request_type_id=request_type_id,
-            )
+        return JiraRequestTypeFieldsResult.from_api_response(
+            response,
+            service_desk_id=service_desk_id,
+            request_type_id=request_type_id,
+        )
 
     @staticmethod
     def _decode_attachment_file(file: Any) -> tuple[str, str, bytes]:
@@ -481,21 +459,29 @@ class CustomerRequestsMixin(JiraClient):
 
         mime_type = file.get("mime_type") or "application/octet-stream"
         if not isinstance(mime_type, str) or not mime_type.strip():
-            raise ValueError(f"Attachment '{filename}' mime_type must be a string")
+            msg = f"Attachment '{filename}' mime_type must be a string"
+            raise ValueError(msg)
 
         encoded = file.get("base64")
         if not isinstance(encoded, str) or not encoded.strip():
-            raise ValueError(f"Attachment '{filename}' is missing base64 content")
+            msg = f"Attachment '{filename}' is missing base64 content"
+            raise ValueError(msg)
 
         try:
             content = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError) as exc:
-            raise ValueError(
-                f"Attachment '{filename}' has invalid base64 content"
-            ) from exc
+            msg = f"Attachment '{filename}' has invalid base64 content"
+            raise ValueError(msg) from exc
 
         if not content:
-            raise ValueError(f"Attachment '{filename}' is empty")
+            msg = f"Attachment '{filename}' is empty"
+            raise ValueError(msg)
+        if len(content) > ATTACHMENT_MAX_BYTES:
+            msg = (
+                f"Attachment '{filename}' exceeds the "
+                f"{ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB inline limit"
+            )
+            raise ValueError(msg)
 
         return filename.strip(), mime_type.strip(), content
 
@@ -533,7 +519,7 @@ class CustomerRequestsMixin(JiraClient):
         # Let requests set the multipart Content-Type (with boundary) itself.
         headers.pop("Content-Type", None)
 
-        base_url = self.config.url.rstrip("/")
+        base_url = self.jira.url.rstrip("/")
         url = (
             f"{base_url}/rest/servicedeskapi/servicedesk/"
             f"{service_desk_id}/attachTemporaryFile"
@@ -542,15 +528,26 @@ class CustomerRequestsMixin(JiraClient):
         response = self.jira._session.post(url, headers=headers, files=multipart_files)
         response.raise_for_status()
         data = response.json()
+        if not isinstance(data, dict):
+            msg = "Unexpected response type from temporary attachment API"
+            raise TypeError(msg)
 
-        temporary_attachments = (
-            data.get("temporaryAttachments", []) if isinstance(data, dict) else []
-        )
-        return [
+        temporary_attachments = data.get("temporaryAttachments")
+        if not isinstance(temporary_attachments, list):
+            msg = "Temporary attachment API did not return an attachment list"
+            raise TypeError(msg)
+
+        temporary_ids = [
             str(item["temporaryAttachmentId"])
             for item in temporary_attachments
             if isinstance(item, dict) and item.get("temporaryAttachmentId")
         ]
+        if len(temporary_ids) != len(files):
+            msg = (
+                "Temporary attachment API did not return an ID for every uploaded file"
+            )
+            raise ValueError(msg)
+        return temporary_ids
 
     def _attach_files_to_request(
         self,
@@ -655,6 +652,9 @@ class CustomerRequestsMixin(JiraClient):
             raise ValueError("Request type ID is required")
         if not isinstance(request_field_values, dict):
             raise ValueError("request_field_values must be a dictionary")
+        if attachments:
+            for attachment in attachments:
+                self._decode_attachment_file(attachment)
 
         fields_result = self.get_request_type_fields(
             service_desk_id=service_desk_id,
@@ -757,6 +757,9 @@ class CustomerRequestsMixin(JiraClient):
             if (
                 raise_on_behalf_of
                 and not strict_on_behalf
+                and isinstance(e, HTTPError)
+                and e.response is not None
+                and e.response.status_code in {400, 403}
                 and self._should_retry_without_on_behalf(error_message)
             ):
                 fallback_payload = {

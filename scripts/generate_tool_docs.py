@@ -93,6 +93,9 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_service_desk_for_project",
         "jira_get_service_desk_queues",
         "jira_get_queue_issues",
+        "jira_get_request_types",
+        "jira_get_request_type_fields",
+        "jira_create_customer_request",
     ],
     "jira-forms-metrics": [
         "jira_get_issue_proforma_forms",
@@ -181,7 +184,7 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     },
     "jira-service-desk": {
         "title": "Jira Service Desk",
-        "description": "Service desk queues and queue issues",
+        "description": "Customer requests, service desks, and queues",
     },
     "jira-forms-metrics": {
         "title": "Jira Forms & Metrics",

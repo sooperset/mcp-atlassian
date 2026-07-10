@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from requests.exceptions import HTTPError
 
+import mcp_atlassian.jira.customer_requests as customer_requests_module
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.models.jira import (
     JiraCustomerRequest,
@@ -114,6 +115,17 @@ def test_get_request_type_fields_success(jira_fetcher: JiraFetcher) -> None:
     assert result.fields[1].valid_values == ["alice", "bob"]
 
 
+def test_get_request_type_fields_propagates_api_errors(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Field discovery failures must not look like a valid empty field set."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(side_effect=_make_http_error(status_code=403))
+
+    with pytest.raises(HTTPError):
+        fetcher.get_request_type_fields("4", "23")
+
+
 def test_create_customer_request_success(jira_fetcher: JiraFetcher) -> None:
     """Customer request creation should format fields and return portal URL."""
     fetcher = _make_customer_requests_fetcher(jira_fetcher)
@@ -212,6 +224,45 @@ def test_create_customer_request_normalizes_select_value_to_option_id(
 
     post_payload = fetcher.jira.post.call_args.kwargs["data"]
     assert post_payload["requestFieldValues"]["customfield_17902"] == {"id": "21721"}
+
+
+def test_create_customer_request_normalizes_radio_button_value(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """JSM radio buttons should use the option object expected by Jira."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(
+        return_value={
+            "requestTypeFields": [
+                {
+                    "fieldId": "customfield_10001",
+                    "name": "Gifts",
+                    "required": True,
+                    "visible": True,
+                    "jiraSchema": {
+                        "type": "string",
+                        "custom": (
+                            "com.atlassian.jira.plugin.system."
+                            "customfieldtypes:radiobuttons"
+                        ),
+                    },
+                    "validValues": [{"value": "10000", "label": "Bottle of Wine"}],
+                }
+            ]
+        }
+    )
+    fetcher.jira.post = MagicMock(
+        return_value={"issueId": "10010", "issueKey": "SUP-101"}
+    )
+
+    fetcher.create_customer_request(
+        service_desk_id="4",
+        request_type_id="23",
+        request_field_values={"customfield_10001": "Bottle of Wine"},
+    )
+
+    post_payload = fetcher.jira.post.call_args.kwargs["data"]
+    assert post_payload["requestFieldValues"]["customfield_10001"] == {"id": "10000"}
 
 
 def test_create_customer_request_rejects_unknown_select_value_before_post(
@@ -405,6 +456,25 @@ def test_create_customer_request_strict_on_behalf_raises(
     assert fetcher.jira.post.call_count == 1
 
 
+def test_create_customer_request_does_not_retry_non_http_errors(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Ambiguous client errors must not trigger a second write request."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(return_value={"requestTypeFields": []})
+    fetcher.jira.post = MagicMock(side_effect=ValueError("unknown user"))
+
+    with pytest.raises(ValueError, match="unknown user"):
+        fetcher.create_customer_request(
+            service_desk_id="4",
+            request_type_id="23",
+            request_field_values={"summary": "No retry"},
+            raise_on_behalf_of="d.zagitov",
+        )
+
+    fetcher.jira.post.assert_called_once()
+
+
 def _make_session_response(payload: dict) -> MagicMock:
     """Build a mocked requests.Response for multipart uploads."""
     response = MagicMock()
@@ -418,6 +488,7 @@ def test_attach_temporary_files_uploads_and_returns_ids(
 ) -> None:
     """Temporary upload should send multipart data and return attachment IDs."""
     fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.url = "https://api.atlassian.com/ex/jira/cloud-id"
     fetcher.jira._session = MagicMock()
     fetcher.jira._session.post = MagicMock(
         return_value=_make_session_response(
@@ -432,8 +503,9 @@ def test_attach_temporary_files_uploads_and_returns_ids(
 
     assert result == ["temp-1"]
     call = fetcher.jira._session.post.call_args
-    assert call.args[0].endswith(
-        "/rest/servicedeskapi/servicedesk/4/attachTemporaryFile"
+    assert call.args[0] == (
+        "https://api.atlassian.com/ex/jira/cloud-id/"
+        "rest/servicedeskapi/servicedesk/4/attachTemporaryFile"
     )
     assert call.kwargs["headers"]["X-Atlassian-Token"] == "no-check"
     assert "Content-Type" not in call.kwargs["headers"]
@@ -452,6 +524,41 @@ def test_decode_attachment_file_rejects_invalid_base64(
         fetcher._decode_attachment_file(
             {"filename": "bad.txt", "mime_type": "text/plain", "base64": "!!!"}
         )
+
+
+def test_decode_attachment_file_rejects_oversized_content(
+    jira_fetcher: JiraFetcher,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inline attachments must respect the shared in-memory size limit."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    monkeypatch.setattr(customer_requests_module, "ATTACHMENT_MAX_BYTES", 4)
+
+    with pytest.raises(ValueError, match="exceeds the 0 MiB inline limit"):
+        fetcher._decode_attachment_file(
+            {"filename": "big.txt", "mime_type": "text/plain", "base64": "aGVsbG8="}
+        )
+
+
+def test_create_customer_request_validates_attachments_before_post(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Malformed attachment input must fail before the request is created."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(return_value={"requestTypeFields": []})
+    fetcher.jira.post = MagicMock()
+
+    with pytest.raises(ValueError, match="invalid base64 content"):
+        fetcher.create_customer_request(
+            service_desk_id="4",
+            request_type_id="23",
+            request_field_values={"summary": "Invalid attachment"},
+            attachments=[
+                {"filename": "bad.txt", "mime_type": "text/plain", "base64": "!!!"}
+            ],
+        )
+
+    fetcher.jira.post.assert_not_called()
 
 
 def test_create_customer_request_attaches_files(
