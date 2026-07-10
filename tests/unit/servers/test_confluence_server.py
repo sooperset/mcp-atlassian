@@ -926,11 +926,14 @@ async def test_update_page_with_xhtml_format(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
-async def test_create_page_with_content_file(client, mock_confluence_fetcher, tmp_path):
+async def test_create_page_with_content_file(
+    client, mock_confluence_fetcher, tmp_path, monkeypatch
+):
     """content_file should load the body from disk and be passed to the fetcher."""
     body = "# Heading\n\nFrom a file."
     fp = tmp_path / "page.md"
     fp.write_text(body, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)  # content_file is confined to the workspace
 
     await client.call_tool(
         "confluence_create_page",
@@ -947,11 +950,14 @@ async def test_create_page_with_content_file(client, mock_confluence_fetcher, tm
 
 
 @pytest.mark.anyio
-async def test_update_page_with_content_file(client, mock_confluence_fetcher, tmp_path):
+async def test_update_page_with_content_file(
+    client, mock_confluence_fetcher, tmp_path, monkeypatch
+):
     """content_file should be accepted by update_page as an alternative to content."""
     body = "Updated body from disk."
     fp = tmp_path / "update.md"
     fp.write_text(body, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)  # content_file is confined to the workspace
 
     await client.call_tool(
         "confluence_update_page",
@@ -1073,6 +1079,35 @@ async def test_create_page_rejects_neither_content_nor_file(
 
 
 @pytest.mark.anyio
+async def test_create_page_content_file_rejects_path_outside_workspace(
+    client, mock_confluence_fetcher, tmp_path, monkeypatch
+):
+    """Regression — a content_file outside the workspace must be refused.
+
+    The file body is echoed back through the created page, so an unconfined
+    path is an arbitrary-file-read/exfiltration primitive (same class as the
+    attachment-path advisories).
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    secret = tmp_path / "secret.md"  # sibling of workspace -> outside it
+    secret.write_text("SECRET-EXFIL", encoding="utf-8")
+    monkeypatch.chdir(workspace)
+
+    for content_file in [str(secret), "../secret.md"]:
+        with pytest.raises(Exception, match="Path traversal detected"):
+            await client.call_tool(
+                "confluence_create_page",
+                {
+                    "space_key": "TEST",
+                    "title": "Exfil",
+                    "content_file": content_file,
+                },
+            )
+    mock_confluence_fetcher.create_page.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_update_page_rejects_missing_file(client, mock_confluence_fetcher):
     """A content_file path that does not exist should error before calling fetcher."""
     with pytest.raises(Exception, match="does not exist"):
@@ -1081,7 +1116,7 @@ async def test_update_page_rejects_missing_file(client, mock_confluence_fetcher)
             {
                 "page_id": "999999",
                 "title": "Bad Path",
-                "content_file": "/tmp/definitely-not-here-6f3a2d.md",
+                "content_file": "definitely-not-here-6f3a2d.md",
             },
         )
     mock_confluence_fetcher.update_page.assert_not_called()

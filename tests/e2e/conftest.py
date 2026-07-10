@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import base64
 import logging
+import shutil
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,6 +25,21 @@ from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture
+def workspace_tmp_path() -> Generator[Path, None, None]:
+    """A temp directory *inside* the workspace (CWD).
+
+    ``upload_attachment`` / ``content_file`` confine caller-supplied paths to
+    the working directory, so files fed to those tools must live under it —
+    pytest's ``tmp_path`` (outside CWD) is rejected by design.
+    """
+    d = Path.cwd() / f".e2e-tmp-{uuid.uuid4().hex[:8]}"
+    d.mkdir()
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
+
 
 # Default DC instance settings
 DEFAULT_JIRA_URL = "http://localhost:8080"

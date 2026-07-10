@@ -305,12 +305,12 @@ class TestMCPConfluenceTools:
         self,
         mcp_client: Client,
         dc_instance: DCInstanceInfo,
-        tmp_path: Path,
+        workspace_tmp_path: Path,
     ) -> None:
         uid = uuid.uuid4().hex[:8]
         page_id = None
-        create_file = tmp_path / "dc-create.md"
-        update_file = tmp_path / "dc-update.md"
+        create_file = workspace_tmp_path / "dc-create.md"
+        update_file = workspace_tmp_path / "dc-update.md"
         create_file.write_text("# Created from file\n\nDC body.", encoding="utf-8")
         update_file.write_text("# Updated from file\n\nDC body.", encoding="utf-8")
 

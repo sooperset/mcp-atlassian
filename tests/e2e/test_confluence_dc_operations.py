@@ -80,7 +80,7 @@ class TestConfluenceDCAttachments:
         confluence_fetcher: ConfluenceFetcher,
         dc_instance: DCInstanceInfo,
         resource_tracker: DCResourceTracker,
-        tmp_path: Path,
+        workspace_tmp_path: Path,
     ) -> None:
         uid = uuid.uuid4().hex[:8]
         page = confluence_fetcher.create_page(
@@ -90,7 +90,7 @@ class TestConfluenceDCAttachments:
         )
         resource_tracker.add_confluence_page(page.id)
 
-        attachment_path = tmp_path / f"dc upload {uid} & notes #1.txt"
+        attachment_path = workspace_tmp_path / f"dc upload {uid} & notes #1.txt"
         attachment_path.write_text(f"first upload {uid}", encoding="utf-8")
 
         first = confluence_fetcher.upload_attachment(
