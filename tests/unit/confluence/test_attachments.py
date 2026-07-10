@@ -241,7 +241,7 @@ class TestAttachmentsMixin:
             result = attachments_mixin.upload_attachment("123456", "test_file.txt")
 
         assert result["success"] is True
-        attachments_mixin.confluence._session.put.assert_called_once()
+        attachments_mixin.confluence._session.post.assert_called_once()
 
     def test_upload_attachment_no_content_id(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no content ID."""
