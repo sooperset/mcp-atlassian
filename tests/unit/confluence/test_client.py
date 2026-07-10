@@ -379,6 +379,7 @@ def test_confluence_fetcher_attachment_method_calls():
 
         # Test upload_attachment can be called
         with (
+            patch("os.getcwd", return_value="/path/to"),
             patch("os.path.exists", return_value=True),
             patch("os.path.isabs", return_value=True),
             patch("os.path.basename", return_value="test.txt"),
@@ -459,3 +460,44 @@ def test_confluence_fetcher_mro_order():
     # Verify that attachment methods are accessible (the real test)
     assert hasattr(ConfluenceFetcher, "upload_attachment")
     assert hasattr(ConfluenceFetcher, "get_content_attachments")
+
+
+def test_confluence_client_sets_default_user_agent():
+    """An explicit User-Agent is set so WAFs don't block the requests default."""
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        headers: dict[str, str] = {}
+        mock_confluence.return_value._session.headers = headers
+
+        config = ConfluenceConfig(
+            url="https://confluence.example.com",
+            auth_type="pat",
+            personal_token="pat",
+        )
+        ConfluenceClient(config=config)
+
+        assert headers["User-Agent"].startswith("mcp-atlassian/")
+
+
+def test_confluence_client_custom_user_agent_overrides_default():
+    """Custom headers must still win over the built-in User-Agent default."""
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        headers: dict[str, str] = {}
+        mock_confluence.return_value._session.headers = headers
+
+        config = ConfluenceConfig(
+            url="https://confluence.example.com",
+            auth_type="pat",
+            personal_token="pat",
+            custom_headers={"User-Agent": "my-app/1.0"},
+        )
+        ConfluenceClient(config=config)
+
+        assert headers["User-Agent"] == "my-app/1.0"

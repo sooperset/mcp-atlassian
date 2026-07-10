@@ -156,6 +156,30 @@ class TestUsersMixin:
         # Verify no lookups were performed
         users_mixin.jira.user_find_by_user_string.assert_not_called()
 
+    def test_get_account_id_modern_cloud_format(self, users_mixin):
+        """Test that _get_account_id returns modern Cloud account IDs unchanged."""
+        # Call the method with a modern Atlassian Cloud account ID
+        account_id = users_mixin._get_account_id(
+            "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        )
+
+        # Verify result
+        assert account_id == "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        # Verify no lookups were performed
+        users_mixin.jira.user_find_by_user_string.assert_not_called()
+
+    def test_get_account_id_strips_accountid_prefix(self, users_mixin):
+        """Test that _get_account_id strips the accountid: prefix."""
+        # Call the method with an accountid:-prefixed Cloud account ID
+        account_id = users_mixin._get_account_id(
+            "accountid:712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        )
+
+        # Verify result
+        assert account_id == "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
+        # Verify no lookups were performed
+        users_mixin.jira.user_find_by_user_string.assert_not_called()
+
     def test_get_account_id_direct_lookup(self, users_mixin):
         """Test that _get_account_id uses direct lookup."""
         # Mock both methods to avoid AttributeError
@@ -903,3 +927,183 @@ class TestUnicodeLookup:
         # Searching with the email should match (case insensitive)
         account_id = users_mixin._lookup_user_directly("TËST@EXAMPLE.COM")
         assert account_id == "email-account-id"
+
+
+class TestSearchAssignableUsers:
+    """Tests for UsersMixin.search_assignable_users."""
+
+    @pytest.fixture
+    def users_mixin(self, jira_client):
+        """Create a UsersMixin instance with mocked dependencies."""
+        mixin = UsersMixin(config=jira_client.config)
+        mixin.jira = jira_client.jira
+        return mixin
+
+    def test_search_assignable_users_by_project(self, users_mixin):
+        """Cloud search uses query= and project= params."""
+        users_mixin.jira.resource_url.return_value = "rest/api/2/user/assignable/search"
+        users_mixin.jira.get.return_value = [
+            {
+                "name": "jsmith@example.com",
+                "key": "JIRAUSER1001",
+                "displayName": "John Smith",
+                "emailAddress": "jsmith@example.com",
+                "active": True,
+            }
+        ]
+
+        users = users_mixin.search_assignable_users(
+            query="Smith", project_key="PROJ", limit=5
+        )
+
+        assert len(users) == 1
+        assert users[0].username == "jsmith@example.com"
+        assert users[0].user_key == "JIRAUSER1001"
+        assert users[0].display_name == "John Smith"
+
+        users_mixin.jira.resource_url.assert_called_once_with("user/assignable/search")
+        users_mixin.jira.get.assert_called_once()
+        call_args = users_mixin.jira.get.call_args
+        assert call_args.args[0] == "rest/api/2/user/assignable/search"
+        params = call_args.kwargs["params"]
+        assert params["project"] == "PROJ"
+        assert params["query"] == "Smith"
+        assert params["maxResults"] == 5
+        assert "username" not in params
+        assert "issueKey" not in params
+
+    def test_search_assignable_users_server_dc_uses_username_param(self, users_mixin):
+        """Server/DC search uses the username= parameter."""
+        users_mixin.config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="test-token",
+        )
+        users_mixin.jira.get.return_value = []
+
+        users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
+
+        params = users_mixin.jira.get.call_args.kwargs["params"]
+        assert params["username"] == "Smith"
+        assert "query" not in params
+
+    def test_search_assignable_users_by_issue_key(self, users_mixin):
+        """When issue_key is given, project param is omitted."""
+        users_mixin.jira.get.return_value = []
+
+        users_mixin.search_assignable_users(
+            query="Smith", issue_key="PROJ-42", limit=20
+        )
+
+        params = users_mixin.jira.get.call_args.kwargs["params"]
+        assert params["issueKey"] == "PROJ-42"
+        assert "project" not in params
+
+    def test_search_assignable_users_returns_multiple(self, users_mixin):
+        """All matching users are returned in API order."""
+        users_mixin.jira.get.return_value = [
+            {"name": "a", "key": "K1", "displayName": "Alice Smith"},
+            {"name": "b", "key": "K2", "displayName": "Bob Smith"},
+            {"name": "c", "key": "K3", "displayName": "Carol Smith"},
+        ]
+
+        users = users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
+
+        assert [u.username for u in users] == ["a", "b", "c"]
+        assert [u.display_name for u in users] == [
+            "Alice Smith",
+            "Bob Smith",
+            "Carol Smith",
+        ]
+
+    def test_search_assignable_users_requires_scope(self, users_mixin):
+        """Missing both project_key and issue_key raises ValueError."""
+        with pytest.raises(ValueError, match="Exactly one"):
+            users_mixin.search_assignable_users(query="Smith")
+
+        users_mixin.jira.get.assert_not_called()
+
+    def test_search_assignable_users_rejects_multiple_scopes(self, users_mixin):
+        """Providing both project_key and issue_key raises ValueError."""
+        with pytest.raises(ValueError, match="Exactly one"):
+            users_mixin.search_assignable_users(
+                query="Smith", project_key="PROJ", issue_key="PROJ-42"
+            )
+
+        users_mixin.jira.get.assert_not_called()
+
+    def test_search_assignable_users_non_list_response(self, users_mixin):
+        """A non-list response (e.g. error envelope) yields an empty result."""
+        users_mixin.jira.get.return_value = {"errorMessages": ["nope"]}
+
+        users = users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
+
+        assert users == []
+
+    def test_search_assignable_users_limit_clamped(self, users_mixin):
+        """Limit is clamped to [1, 1000]; falsy is treated as default 20."""
+        users_mixin.jira.get.return_value = []
+
+        # Falsy → default 20
+        users_mixin.search_assignable_users(query="Smith", project_key="PROJ", limit=0)
+        assert users_mixin.jira.get.call_args.kwargs["params"]["maxResults"] == 20
+
+        # Above ceiling → clamped to 1000
+        users_mixin.jira.get.reset_mock()
+        users_mixin.search_assignable_users(
+            query="Smith", project_key="PROJ", limit=5000
+        )
+        assert users_mixin.jira.get.call_args.kwargs["params"]["maxResults"] == 1000
+
+    def test_search_assignable_users_http_error_propagates(self, users_mixin):
+        """HTTPError from the wrapper bubbles up so the auth decorator can handle 401/403."""
+        users_mixin.jira.get.side_effect = requests.exceptions.HTTPError(
+            "403 Forbidden"
+        )
+
+        with pytest.raises(requests.exceptions.HTTPError):
+            users_mixin.search_assignable_users(query="Smith", project_key="PROJ")
+
+
+class TestUserProfileMeIdentifier:
+    """get_user_profile_by_identifier handles 'me' identifier.
+
+    Regression for https://github.com/sooperset/mcp-atlassian/issues/596
+    Also addresses https://github.com/sooperset/mcp-atlassian/issues/459
+    """
+
+    def test_me_resolves_to_current_user(self, jira_fetcher):
+        """'me' identifier resolves via get_current_user_account_id."""
+        user_response = {
+            "accountId": "5b10ac8d82e05b22cc7d4ef5",
+            "displayName": "Test User",
+            "emailAddress": "test@example.com",
+            "active": True,
+        }
+        with patch.object(
+            jira_fetcher,
+            "get_current_user_account_id",
+            return_value="5b10ac8d82e05b22cc7d4ef5",
+        ) as mock_get_current:
+            jira_fetcher.jira.user = MagicMock(return_value=user_response)
+            result = jira_fetcher.get_user_profile_by_identifier("me")
+            assert result is not None
+            assert result.account_id == "5b10ac8d82e05b22cc7d4ef5"
+            mock_get_current.assert_called_once()
+
+    def test_me_case_insensitive(self, jira_fetcher):
+        """'Me', 'ME', 'mE' all resolve to current user."""
+        user_response = {
+            "accountId": "5b10ac8d82e05b22cc7d4ef5",
+            "displayName": "Test User",
+            "active": True,
+        }
+        with patch.object(
+            jira_fetcher,
+            "get_current_user_account_id",
+            return_value="5b10ac8d82e05b22cc7d4ef5",
+        ):
+            jira_fetcher.jira.user = MagicMock(return_value=user_response)
+            for variant in ["Me", "ME", "mE"]:
+                result = jira_fetcher.get_user_profile_by_identifier(variant)
+                assert result is not None
