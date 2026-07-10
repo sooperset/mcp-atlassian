@@ -117,7 +117,11 @@ def get_available_services(
             "per-request credentials via headers"
         )
 
-    if not confluence_is_setup and is_env_truthy("ATLASSIAN_OAUTH_ENABLE"):
+    if (
+        not confluence_is_setup
+        and not is_url_only_multi_user_mode()
+        and is_env_truthy("ATLASSIAN_OAUTH_ENABLE")
+    ):
         confluence_is_setup = True
         logger.info(
             "Using Confluence minimal OAuth configuration "
@@ -159,7 +163,11 @@ def get_available_services(
             "per-request credentials via headers"
         )
 
-    if not jira_is_setup and is_env_truthy("ATLASSIAN_OAUTH_ENABLE"):
+    if (
+        not jira_is_setup
+        and not is_url_only_multi_user_mode()
+        and is_env_truthy("ATLASSIAN_OAUTH_ENABLE")
+    ):
         jira_is_setup = True
         logger.info(
             "Using Jira minimal OAuth configuration "

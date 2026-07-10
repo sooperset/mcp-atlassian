@@ -530,9 +530,12 @@ class UserTokenMiddleware:
             return False
 
         try:
-            mcp_path = self.mcp_server_ref.get_streamable_http_path()
             request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
-            return request_path == mcp_path
+            auth_paths = {
+                self.mcp_server_ref.get_streamable_http_path(),
+                AtlassianMCP._normalize_http_path(fastmcp_settings.message_path),
+            }
+            return request_path in auth_paths
         except (AttributeError, ValueError) as e:
             logger.warning(f"Error checking auth path: {e}")
             return False

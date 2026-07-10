@@ -469,6 +469,19 @@ class TestGetAvailableServicesWithHeaders:
                 result, confluence_expected=False, jira_expected=False
             )
 
+    def test_url_only_multi_user_takes_precedence_over_legacy_mode(self, caplog):
+        """The strict flag still requires URLs when the legacy flag is also set."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["MCP_ATLASSIAN_MULTI_USER_MODE"] = "true"
+            os.environ["ATLASSIAN_OAUTH_ENABLE"] = "true"
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=False, jira_expected=False
+            )
+
     def test_url_only_multi_user_with_service_urls(self, caplog):
         """Strict multi-user mode advertises URL-configured services."""
         with MockEnvironment.clean_env():

@@ -591,6 +591,20 @@ class TestUserTokenMiddleware:
             is True
         )
 
+    def test_should_process_auth_accepts_sse_message_path(self):
+        """SSE clients send tool calls to the configured message endpoint."""
+        mock_app = AsyncMock()
+        mock_mcp_server = MagicMock()
+        mock_mcp_server.get_streamable_http_path.return_value = "/mcp"
+        middleware = UserTokenMiddleware(mock_app, mcp_server_ref=mock_mcp_server)
+
+        assert (
+            middleware._should_process_auth(
+                {"type": "http", "method": "POST", "path": "/messages/"}
+            )
+            is True
+        )
+
     @pytest.mark.anyio
     @pytest.mark.parametrize(
         "env_value,should_skip",

@@ -439,16 +439,23 @@ def _create_user_config_for_fetcher(
             raise ValueError(
                 "OAuth access token missing in credentials for user auth_type 'oauth'"
             )
-        if (
-            not base_config
-            or not hasattr(base_config, "oauth_config")
-            or not getattr(base_config, "oauth_config", None)
-        ):
+        global_oauth_cfg = getattr(base_config, "oauth_config", None)
+        if global_oauth_cfg is None and cloud_id:
+            # URL-only multi-user configs intentionally have no server-side
+            # OAuth configuration. The request's access token and Cloud ID are
+            # sufficient to construct the Atlassian gateway client.
+            global_oauth_cfg = OAuthConfig(
+                client_id="",
+                client_secret="",
+                redirect_uri="",
+                scope="",
+                cloud_id=cloud_id,
+            )
+        if global_oauth_cfg is None:
             raise ValueError(
                 f"Global OAuth config for {type(base_config).__name__} is missing, "
-                "but user auth_type is 'oauth'."
+                "but user auth_type is 'oauth' and no Cloud ID was supplied."
             )
-        global_oauth_cfg = base_config.oauth_config
 
         # Determine if this is DC OAuth (base_url set, no cloud_id)
         is_dc_oauth = getattr(global_oauth_cfg, "is_data_center", False) is True

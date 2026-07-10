@@ -251,6 +251,42 @@ class TestCreateUserConfigForFetcher:
         )  # Should preserve minimal config
 
     @pytest.mark.parametrize(
+        ("base_config", "expected_type"),
+        [
+            (
+                JiraConfig(
+                    url="https://test.atlassian.net",
+                    auth_type=None,
+                ),
+                JiraConfig,
+            ),
+            (
+                ConfluenceConfig(
+                    url="https://test.atlassian.net/wiki",
+                    auth_type=None,
+                ),
+                ConfluenceConfig,
+            ),
+        ],
+    )
+    def test_oauth_url_only_config_uses_request_cloud_id(
+        self, base_config, expected_type
+    ):
+        """Cloud OAuth works without server-side OAuth client configuration."""
+        result = _create_user_config_for_fetcher(
+            base_config=base_config,
+            auth_type="oauth",
+            credentials={"oauth_access_token": "user-access-token"},
+            cloud_id="user-cloud-id",
+        )
+
+        assert isinstance(result, expected_type)
+        assert result.auth_type == "oauth"
+        assert result.oauth_config is not None
+        assert result.oauth_config.access_token == "user-access-token"
+        assert result.oauth_config.cloud_id == "user-cloud-id"
+
+    @pytest.mark.parametrize(
         "byo_config,cloud_id_arg,expected_cloud_id,expected_base_url",
         [
             pytest.param(
