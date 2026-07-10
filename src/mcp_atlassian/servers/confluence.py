@@ -1,6 +1,7 @@
 """Confluence FastMCP server instance and tool definitions."""
 
 import base64
+import binascii
 import json
 import logging
 import mimetypes
@@ -634,6 +635,28 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    page_width: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Page layout width. Options: 'full-width', "
+                "'default'. Defaults to null (Confluence default)."
+            ),
+            default=None,
+        ),
+    ] = None,
+    table_layout: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Table width preset applied to all markdown tables. "
+                "Options: 'full-width' (1800 px), 'wide' (960 px), "
+                "'default' (760 px). Only applies when content_format is "
+                "'markdown'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -652,6 +675,8 @@ async def create_page(
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
+        page_width: Optional page layout width ('full-width' or 'default').
+        table_layout: Optional table width preset ('full-width', 'wide', 'default').
 
     Returns:
         JSON string representing the created page object.
@@ -692,6 +717,8 @@ async def create_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        page_width=page_width,
+        table_layout=table_layout if content_format == "markdown" else None,
     )
     result = page.to_simplified_dict()
     if not include_content:
@@ -781,6 +808,28 @@ async def update_page(
             default=None,
         ),
     ] = None,
+    page_width: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Page layout width. Options: 'full-width', "
+                "'default'. Defaults to null (preserve existing)."
+            ),
+            default=None,
+        ),
+    ] = None,
+    table_layout: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Table width preset applied to all markdown tables. "
+                "Options: 'full-width' (1800 px), 'wide' (960 px), "
+                "'default' (760 px). Only applies when content_format is "
+                "'markdown'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Update an existing Confluence page.
 
@@ -802,6 +851,8 @@ async def update_page(
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
+        page_width: Optional page layout width ('full-width' or 'default').
+        table_layout: Optional table width preset ('full-width', 'wide', 'default').
 
     Returns:
         JSON string representing the updated page object.
@@ -844,6 +895,8 @@ async def update_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        page_width=page_width,
+        table_layout=table_layout if content_format == "markdown" else None,
     )
     page_data = updated_page.to_simplified_dict()
     if not include_content:
@@ -1656,15 +1709,43 @@ async def upload_attachment(
         ),
     ],
     file_path: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\\Users\\name\\file.docx') "
                 "or relative to the current working directory (e.g., './uploads/document.pdf'). "
-                "If a file with the same name already exists, a new version will be created."
-            )
+                "If a file with the same name already exists, a new version will be created. "
+                "Requires the server to be able to read the path; for remote or "
+                "containerized servers use 'content_base64' instead. Provide either "
+                "'file_path' or 'content_base64', not both."
+            ),
+            default=None,
         ),
-    ],
+    ] = None,
+    content_base64: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Base64-encoded file content to upload directly, without "
+                "the server reading from disk. Use this when the server cannot access "
+                "host file paths (e.g. a remote or containerized MCP server). "
+                "Requires 'filename'. Provide either 'file_path' or 'content_base64', "
+                "not both."
+            ),
+            default=None,
+        ),
+    ] = None,
+    filename: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Attachment filename, including extension (e.g. "
+                "'report.pdf'). Required when using 'content_base64'; it determines "
+                "the attachment title and file type. Ignored when 'file_path' is used."
+            ),
+            default=None,
+        ),
+    ] = None,
     comment: Annotated[
         str | None,
         Field(
@@ -1688,6 +1769,11 @@ async def upload_attachment(
 ) -> str:
     """Upload an attachment to Confluence content (page or blog post).
 
+    Provide the file either as a server-readable path ('file_path') or as
+    base64-encoded content ('content_base64' together with 'filename'). The
+    base64 form is intended for remote or containerized servers that cannot
+    read host file paths. Exactly one of the two must be supplied.
+
     If the attachment already exists (same filename), a new version is created.
     This is useful for:
     - Attaching documents, images, or files to a page
@@ -1697,21 +1783,48 @@ async def upload_attachment(
     Args:
         ctx: The FastMCP context.
         content_id: The ID of the content to attach to.
-        file_path: Path to the file to upload.
+        file_path: Path to the file to upload (server-readable).
+        content_base64: Base64-encoded file content (filesystem-free upload).
+        filename: Attachment filename, required with content_base64.
         comment: Optional comment for the attachment.
         minor_edit: Whether this is a minor edit (no notifications).
 
     Returns:
         JSON string with upload confirmation and attachment metadata.
     """
+    has_file_path = file_path is not None and file_path != ""
+    has_content = content_base64 is not None
+    if has_file_path == has_content:
+        raise ValueError("Provide exactly one of 'file_path' or 'content_base64'.")
+
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
-    result = confluence_fetcher.upload_attachment(
-        content_id=content_id,
-        file_path=file_path,
-        comment=comment,
-        minor_edit=minor_edit,
-    )
+    if has_content:
+        if not filename:
+            raise ValueError("'filename' is required when using 'content_base64'.")
+        if content_base64 is None:
+            raise ValueError("Provide exactly one of 'file_path' or 'content_base64'.")
+        try:
+            content = base64.b64decode(content_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"Invalid base64 content: {exc}") from exc
+
+        result = confluence_fetcher.upload_attachment_from_content(
+            content_id=content_id,
+            filename=filename,
+            content=content,
+            comment=comment,
+            minor_edit=minor_edit,
+        )
+    else:
+        if not file_path:
+            raise ValueError("Provide exactly one of 'file_path' or 'content_base64'.")
+        result = confluence_fetcher.upload_attachment(
+            content_id=content_id,
+            file_path=file_path,
+            comment=comment,
+            minor_edit=minor_edit,
+        )
 
     return json.dumps(
         {"message": "Attachment uploaded successfully", "attachment": result},
@@ -2430,6 +2543,182 @@ async def get_page_images(
         ),
     )
     return contents
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Page Restrictions", "readOnlyHint": True},
+)
+async def get_page_restrictions(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="The ID of the page")],
+) -> str:
+    """Get view and edit restrictions for a Confluence page.
+
+    Returns the current restriction lists for the read (view) and update (edit)
+    operations.  An empty list means the page is unrestricted for that operation.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page.
+
+    Returns:
+        JSON string with ``read`` and ``update`` restriction lists, each
+        containing ``users`` (account IDs) and ``groups`` (group names).
+
+    Raises:
+        ValueError: If Confluence client is not configured or available.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    restrictions = confluence_fetcher.get_page_restrictions(page_id=page_id)
+    return json.dumps(restrictions, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Set Page Restrictions", "destructiveHint": True},
+)
+@check_write_access
+async def set_page_restrictions(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="The ID of the page to restrict")],
+    read_users: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "(Optional) Account IDs (Cloud) or usernames (Server/DC) "
+                "allowed to view the page. Empty list = unrestricted."
+            ),
+            default=None,
+        ),
+    ] = None,
+    read_groups: Annotated[
+        list[str] | None,
+        Field(
+            description="(Optional) Group names allowed to view the page.",
+            default=None,
+        ),
+    ] = None,
+    edit_users: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "(Optional) Account IDs (Cloud) or usernames (Server/DC) "
+                "allowed to edit the page."
+            ),
+            default=None,
+        ),
+    ] = None,
+    edit_groups: Annotated[
+        list[str] | None,
+        Field(
+            description="(Optional) Group names allowed to edit the page.",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Set view and edit restrictions on a Confluence page.
+
+    Replaces all existing restrictions with the provided lists.  Omitting all
+    parameters (or passing empty lists) removes all restrictions.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to restrict.
+        read_users: Account IDs / usernames allowed to view the page.
+        read_groups: Group names allowed to view the page.
+        edit_users: Account IDs / usernames allowed to edit the page.
+        edit_groups: Group names allowed to edit the page.
+
+    Returns:
+        JSON string with the updated restriction lists.
+
+    Raises:
+        ValueError: If Confluence client is not configured or available.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    result = confluence_fetcher.set_page_restrictions(
+        page_id=page_id,
+        read_users=read_users,
+        read_groups=read_groups,
+        edit_users=edit_users,
+        edit_groups=edit_groups,
+    )
+    return json.dumps(
+        {"message": "Page restrictions updated successfully", "restrictions": result},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Copy Page", "destructiveHint": True},
+)
+@check_write_access
+async def copy_page(
+    ctx: Context,
+    source_page_id: Annotated[str, Field(description="The ID of the page to copy")],
+    destination_space_key: Annotated[
+        str,
+        Field(description="Space key for the new page (e.g. 'DEV', 'TEAM')"),
+    ],
+    new_title: Annotated[str, Field(description="Title for the new copied page")],
+    destination_parent_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Parent page ID in the destination space. "
+                "When omitted the page is created at the space root."
+            ),
+            default=None,
+        ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
+    ] = None,
+    copy_attachments: Annotated[
+        bool,
+        Field(
+            description=(
+                "(Optional) Whether to copy attachments to the new page. "
+                "Defaults to true. Only supported on Confluence Cloud."
+            ),
+            default=True,
+        ),
+    ] = True,
+) -> str:
+    """Copy a Confluence page to a new location.
+
+    On Confluence Cloud the native copy endpoint is used.  On Server/Data Center
+    the page body is fetched and a new page is created manually (attachments are
+    not copied in the Server/DC path).
+
+    Args:
+        ctx: The FastMCP context.
+        source_page_id: The ID of the page to copy.
+        destination_space_key: Space key for the new page.
+        new_title: Title for the new copied page.
+        destination_parent_id: Optional parent page ID in the destination space.
+        copy_attachments: Whether to copy attachments (Cloud only).
+
+    Returns:
+        JSON string representing the new page.
+
+    Raises:
+        ValueError: If Confluence client is not configured or available.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    page = confluence_fetcher.copy_page(
+        source_page_id=source_page_id,
+        destination_space_key=destination_space_key,
+        new_title=new_title,
+        destination_parent_id=destination_parent_id,
+        copy_attachments=copy_attachments,
+    )
+    return json.dumps(
+        {"message": "Page copied successfully", "page": page.to_simplified_dict()},
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
 @confluence_mcp.tool(

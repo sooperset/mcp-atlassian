@@ -121,6 +121,13 @@ def mock_confluence_fetcher():
             "extensions": {"fileSize": 1024},
         },
     }
+    mock_fetcher.upload_attachment_from_content.return_value = {
+        "success": True,
+        "content_id": "123456",
+        "filename": "test-file.txt",
+        "size": 1024,
+        "id": "att123",
+    }
     mock_fetcher.upload_attachments.return_value = {
         "success": True,
         "content_id": "123456",
@@ -914,6 +921,8 @@ def test_page_content_file_parameters_preserve_positional_order():
         "include_content",
         "emoji",
         "content_file",
+        "page_width",
+        "table_layout",
     ]
 
     update_params = list(inspect.signature(confluence_server.update_page.fn).parameters)
@@ -930,6 +939,8 @@ def test_page_content_file_parameters_preserve_positional_order():
         "include_content",
         "emoji",
         "content_file",
+        "page_width",
+        "table_layout",
     ]
 
 
@@ -1073,6 +1084,111 @@ async def test_upload_attachment(client, mock_confluence_fetcher):
     assert "attachment" in result_data
     assert result_data["attachment"]["attachment"]["id"] == "att123"
     assert result_data["attachment"]["attachment"]["title"] == "test-file.txt"
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_base64(client, mock_confluence_fetcher):
+    """Test uploading an attachment via base64 content (filesystem-free)."""
+    import base64
+
+    raw = b"hello base64 world"
+    encoded = base64.b64encode(raw).decode("ascii")
+
+    response = await client.call_tool(
+        "confluence_upload_attachment",
+        {
+            "content_id": "123456",
+            "content_base64": encoded,
+            "filename": "test-file.txt",
+            "comment": "Test attachment",
+            "minor_edit": True,
+        },
+    )
+
+    mock_confluence_fetcher.upload_attachment_from_content.assert_called_once_with(
+        content_id="123456",
+        filename="test-file.txt",
+        content=raw,
+        comment="Test attachment",
+        minor_edit=True,
+    )
+    # The filesystem-based path must not be used in base64 mode
+    mock_confluence_fetcher.upload_attachment.assert_not_called()
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Attachment uploaded successfully"
+    assert result_data["attachment"]["id"] == "att123"
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_base64_allows_empty_content(
+    client, mock_confluence_fetcher
+):
+    """Test uploading an empty attachment via base64 content."""
+    await client.call_tool(
+        "confluence_upload_attachment",
+        {
+            "content_id": "123456",
+            "content_base64": "",
+            "filename": "empty.txt",
+        },
+    )
+
+    mock_confluence_fetcher.upload_attachment_from_content.assert_called_once_with(
+        content_id="123456",
+        filename="empty.txt",
+        content=b"",
+        comment=None,
+        minor_edit=False,
+    )
+    mock_confluence_fetcher.upload_attachment.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_requires_exactly_one_source(
+    client, mock_confluence_fetcher
+):
+    """Test that providing neither or both file_path and content_base64 fails."""
+    # Neither provided
+    with pytest.raises(Exception, match="exactly one of 'file_path'"):
+        await client.call_tool("confluence_upload_attachment", {"content_id": "123456"})
+
+    # Both provided
+    with pytest.raises(Exception, match="exactly one of 'file_path'"):
+        await client.call_tool(
+            "confluence_upload_attachment",
+            {
+                "content_id": "123456",
+                "file_path": "/path/to/file.txt",
+                "content_base64": "Zm9v",
+            },
+        )
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_base64_requires_filename(
+    client, mock_confluence_fetcher
+):
+    """Test that base64 uploads require a filename."""
+    with pytest.raises(Exception, match="'filename' is required"):
+        await client.call_tool(
+            "confluence_upload_attachment",
+            {"content_id": "123456", "content_base64": "Zm9v"},
+        )
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_invalid_base64(client, mock_confluence_fetcher):
+    """Test that invalid base64 content is rejected."""
+    with pytest.raises(Exception, match="Invalid base64 content"):
+        await client.call_tool(
+            "confluence_upload_attachment",
+            {
+                "content_id": "123456",
+                "content_base64": "not valid base64!!!",
+                "filename": "test-file.txt",
+            },
+        )
 
 
 @pytest.mark.anyio
