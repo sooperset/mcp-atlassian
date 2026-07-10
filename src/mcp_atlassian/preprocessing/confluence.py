@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 from md2conf.converter import (
     ConfluenceConverterOptions,
     ConfluenceStorageFormatConverter,
@@ -151,10 +151,8 @@ class ConfluencePreprocessor(BasePreprocessor):
         Confluence needs ``<ac:task-list>`` / ``<ac:task>`` elements to render
         interactive checkboxes.
 
-        Only converts ``<ul>`` blocks whose every ``<li>`` begins with a
-        checkbox marker; mixed lists (some items without a checkbox prefix)
-        are left unchanged.  Nested ``<ul>`` elements are not traversed to
-        avoid partial matches.
+        Only converts unnested ``<ul>`` blocks whose every direct ``<li>``
+        begins with a checkbox marker. Mixed and nested lists are left unchanged.
 
         Args:
             storage_html: Confluence storage-format string to post-process.
@@ -162,37 +160,69 @@ class ConfluencePreprocessor(BasePreprocessor):
         Returns:
             Updated storage-format string with task lists converted.
         """
-        task_item_re = re.compile(r"^\[( |x|X)\]\s*(.*)", re.DOTALL)
+        if "<ul" not in storage_html.lower() or "[" not in storage_html:
+            return storage_html
 
-        def _replace_ul(m: re.Match) -> str:
-            ul_html = m.group(0)
-            items = re.findall(r"<li>(.*?)</li>", ul_html, re.DOTALL)
-            if not items:
-                return ul_html
-
-            task_matches = [task_item_re.match(item) for item in items]
-            if not all(task_matches):
-                return ul_html  # mixed list — leave as-is
-
-            parts = ["<ac:task-list>"]
-            for tm in task_matches:
-                if tm is None:  # should not happen given all(task_matches) above
-                    continue
-                status = "complete" if tm.group(1).lower() == "x" else "incomplete"
-                body = tm.group(2).strip()
-                parts.append(
-                    f"<ac:task>"
-                    f"<ac:task-status>{status}</ac:task-status>"
-                    f"<ac:task-body>{body}</ac:task-body>"
-                    f"</ac:task>"
-                )
-            parts.append("</ac:task-list>")
-            return "".join(parts)
-
-        # Only match <ul> blocks with no nested <ul> to avoid partial tag matches.
-        return re.sub(
-            r"<ul>(?:(?!<ul>).)*?</ul>", _replace_ul, storage_html, flags=re.DOTALL
+        marker_pattern = re.compile(
+            r"^\s*\[(?P<checked>[ xX])\](?:[ \t]+|$)(?P<body>.*)$",
+            re.DOTALL,
         )
+        soup = BeautifulSoup(storage_html, "html.parser")
+        rewritten = False
+
+        for unordered_list in soup.find_all("ul"):
+            if not isinstance(unordered_list, Tag):
+                continue
+            if unordered_list.find("ul") or unordered_list.find_parent("ul"):
+                continue
+
+            items = unordered_list.find_all("li", recursive=False)
+            if not items:
+                continue
+
+            matches: list[tuple[Tag, NavigableString, re.Match[str]]] = []
+            for item in items:
+                if not isinstance(item, Tag):
+                    break
+                first_content = next(
+                    (
+                        child
+                        for child in item.contents
+                        if not isinstance(child, NavigableString) or str(child).strip()
+                    ),
+                    None,
+                )
+                if not isinstance(first_content, NavigableString):
+                    break
+                match = marker_pattern.match(str(first_content))
+                if match is None:
+                    break
+                matches.append((item, first_content, match))
+
+            if len(matches) != len(items):
+                continue
+
+            task_list = soup.new_tag("ac:task-list")
+            for item, marker_text, match in matches:
+                marker_text.replace_with(match.group("body"))
+
+                task = soup.new_tag("ac:task")
+                status = soup.new_tag("ac:task-status")
+                status.string = (
+                    "complete"
+                    if match.group("checked").lower() == "x"
+                    else "incomplete"
+                )
+                body = soup.new_tag("ac:task-body")
+                while item.contents:
+                    body.append(item.contents[0].extract())
+                task.extend((status, body))
+                task_list.append(task)
+
+            unordered_list.replace_with(task_list)
+            rewritten = True
+
+        return str(soup) if rewritten else storage_html
 
     @classmethod
     def _apply_table_layout(cls, storage_html: str, table_layout: str) -> str:

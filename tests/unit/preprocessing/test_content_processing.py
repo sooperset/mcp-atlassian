@@ -1039,6 +1039,27 @@ class TestTaskLists:
         result = ConfluencePreprocessor._apply_task_lists(html)
         assert result == html
 
+    def test_inline_markup_is_preserved_in_task_body(self):
+        """Inline storage markup remains inside the converted task body."""
+        html = "<ul><li>[ ] Review <strong>important</strong> notes</li></ul>"
+        result = ConfluencePreprocessor._apply_task_lists(html)
+        assert (
+            "<ac:task-body>Review <strong>important</strong> notes</ac:task-body>"
+            in result
+        )
+
+    def test_nested_task_list_is_left_unchanged(self):
+        """Nested lists are not partially converted into task macros."""
+        html = "<ul><li>[ ] Parent<ul><li>[x] Child</li></ul></li></ul>"
+        result = ConfluencePreprocessor._apply_task_lists(html)
+        assert result == html
+
+    def test_marker_without_following_space_is_left_unchanged(self):
+        """Text resembling a checkbox without GFM spacing is not converted."""
+        html = "<ul><li>[ ]not a GFM task</li></ul>"
+        result = ConfluencePreprocessor._apply_task_lists(html)
+        assert result == html
+
     def test_task_lists_and_table_layout_are_both_applied(self):
         """Task-list conversion composes with the table layout post-processor."""
         markdown = "- [ ] Todo\n\n| A | B |\n| - | - |\n| 1 | 2 |"

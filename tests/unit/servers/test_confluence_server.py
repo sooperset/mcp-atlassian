@@ -1459,7 +1459,7 @@ async def test_create_page_from_template(client, mock_confluence_fetcher):
             "space_key": "TEST",
             "title": "Weekly Meeting",
             "template_id": "tpl-001",
-            "parent_id": "100",
+            "parent_id": 100,
         },
     )
 

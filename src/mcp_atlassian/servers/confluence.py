@@ -2791,6 +2791,7 @@ async def create_page_from_template(
             default=None,
             description="Optional ID of the parent page.",
         ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
     ] = None,
 ) -> str:
     """Create a new Cloud page pre-populated with a template's body.
