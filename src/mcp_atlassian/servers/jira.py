@@ -1138,19 +1138,30 @@ async def get_transitions(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
+    expand_fields: Annotated[
+        bool,
+        Field(
+            description=(
+                "Whether to expand transition field metadata. When true, "
+                "requests required field details (allowed values, schema) "
+                "for each transition. Defaults to false (lightweight)."
+            ),
+        ),
+    ] = False,
 ) -> str:
     """Get available status transitions for a Jira issue.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
+        expand_fields: Whether to include required field metadata.
 
     Returns:
         JSON string representing a list of available transitions.
     """
     jira = await get_jira_fetcher(ctx)
-    # Underlying method returns list[dict] in the desired format
-    transitions = jira.get_available_transitions(issue_key)
+    expand = "transitions.fields" if expand_fields else None
+    transitions = jira.get_available_transitions(issue_key, expand=expand)
     return json.dumps(transitions, indent=2, ensure_ascii=False)
 
 
@@ -2960,6 +2971,17 @@ async def transition_issue(
             ),
         ),
     ] = None,
+    update_data: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON string of Jira update operations to include "
+                "in the transition. Use this for worklogs and other "
+                "transition-time operations. Example: "
+                '\'{"worklog": [{"add": {"timeSpent": "1h"}}]}\''
+            ),
+        ),
+    ] = None,
 ) -> str:
     """Transition a Jira issue to a new status.
 
@@ -2969,6 +2991,8 @@ async def transition_issue(
         transition_id: ID of the transition.
         fields: Optional JSON string of fields to update during transition.
         comment: Optional comment for the transition in Markdown format.
+        update_data: Optional JSON string of Jira update operations
+            (e.g., worklog) for the transition.
 
     Returns:
         JSON string representing the updated issue object.
@@ -2984,12 +3008,15 @@ async def transition_issue(
 
     # Parse fields from JSON string
     update_fields = _parse_additional_fields(fields)
+    # Parse update_data from JSON string
+    update_ops = _parse_additional_fields(update_data) if update_data else None
 
     issue = jira.transition_issue(
         issue_key=issue_key,
         transition_id=transition_id,
         fields=update_fields,
         comment=comment,
+        update_data=update_ops,
     )
 
     result = {
