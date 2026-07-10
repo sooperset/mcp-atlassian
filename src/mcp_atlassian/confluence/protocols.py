@@ -50,6 +50,29 @@ class AttachmentsOperationsProto(Protocol):
         """
 
     @abstractmethod
+    def upload_attachment_from_content(
+        self,
+        content_id: str,
+        filename: str,
+        content: bytes,
+        comment: str | None = None,
+        minor_edit: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Upload a single attachment from in-memory bytes.
+
+        Args:
+            content_id: The ID of the content (page/blog post) to attach the file to
+            filename: Name of the attachment (determines title and file type)
+            content: Raw file bytes to upload
+            comment: Optional comment for the attachment
+            minor_edit: Whether this is a minor edit (default: True)
+
+        Returns:
+            A dictionary with upload result information
+        """
+
+    @abstractmethod
     def download_attachment(self, url: str, target_path: str) -> bool:
         """
         Download a Confluence attachment to the specified path.
