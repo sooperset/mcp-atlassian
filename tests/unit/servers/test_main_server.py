@@ -317,6 +317,31 @@ class TestUserTokenMiddleware:
         # Verify app was NOT called
         middleware.app.assert_not_called()
 
+    @pytest.mark.security_regression
+    @pytest.mark.anyio
+    async def test_missing_authorization_header_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """An unauthenticated POST to the MCP endpoint must be rejected at the
+        transport boundary, not proxied to the app with the operator's credentials.
+
+        The dependencies-level global-fallback test is necessary but not sufficient,
+        because the request can still reach the app here. Secure contract: with no
+        Authorization header and ``ALLOW_GLOBAL_CRED_FALLBACK`` off, return 401 and do
+        not call ``self.app``.
+        """
+        # No Authorization header and no service headers -> unauthenticated request.
+        mock_scope["headers"] = []
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        # Secure: the request must be rejected before reaching the downstream app.
+        middleware.app.assert_not_called()
+        assert mock_send.call_count >= 1, "expected a 401 response, none was sent"
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["type"] == "http.response.start"
+        assert start_call["status"] == 401
+
     @pytest.mark.anyio
     async def test_client_disconnect_connection_reset(
         self, middleware, mock_scope, mock_receive

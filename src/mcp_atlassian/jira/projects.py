@@ -321,29 +321,125 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             List of issue type data dictionaries
         """
         try:
-            meta = self.jira.issue_createmeta_issuetypes(project=project_key)
-            if not isinstance(meta, dict):
-                msg = f"Unexpected return value type from `jira.issue_createmeta_issuetypes`: {type(meta)}"
-                logger.error(msg)
-                raise TypeError(msg)
+            issue_types: list[dict[str, Any]] = []
+            start_at = 0
+            page_size = 50
 
-            # The new createmeta endpoint returns paginated "values" array
-            issue_types = meta.get("values", [])
-            if not issue_types:
-                # atlassian-python-api's issue_createmeta_issuetypes endpoint
-                # returns a paginated "issueTypes" array on Jira Cloud.
-                issue_types = meta.get("issueTypes", [])
-            if not issue_types:
-                # Fallback for older response format
-                projects = meta.get("projects", [])
-                if projects and "issuetypes" in projects[0]:
-                    issue_types = projects[0]["issuetypes"]
+            while True:
+                meta = self.jira.issue_createmeta_issuetypes(
+                    project=project_key,
+                    start=start_at,
+                    limit=page_size,
+                )
+                if not isinstance(meta, dict):
+                    msg = (
+                        "Unexpected return value type from "
+                        f"`jira.issue_createmeta_issuetypes`: {type(meta)}"
+                    )
+                    logger.error(msg)
+                    raise TypeError(msg)
+
+                # Jira uses both keys across Cloud and Server/DC versions.
+                page = meta.get("values", [])
+                if not isinstance(page, list) or not page:
+                    page = meta.get("issueTypes", [])
+
+                if not isinstance(page, list) or not page:
+                    # Fallback for the legacy, non-paginated response format.
+                    projects = meta.get("projects", [])
+                    if isinstance(projects, list) and projects:
+                        first_project = projects[0]
+                        if isinstance(first_project, dict):
+                            page = first_project.get("issuetypes", [])
+
+                if not isinstance(page, list):
+                    page = []
+                issue_types.extend(item for item in page if isinstance(item, dict))
+
+                total = meta.get("total")
+                start_at += len(page)
+                if (
+                    not page
+                    or meta.get("isLast") is True
+                    or not isinstance(total, int)
+                    or start_at >= total
+                ):
+                    break
 
             return issue_types
 
         except Exception as e:
             logger.error(
                 f"Error getting issue types for project {project_key}: {str(e)}"
+            )
+            return []
+
+    def get_create_fields(
+        self, project_key: str, issue_type_id: str
+    ) -> list[dict[str, Any]]:
+        """Get all fields available when creating an issue of a given type.
+
+        Uses the non-deprecated ``issue_createmeta_fieldtypes`` endpoint to
+        return field metadata for the specified project and issue type.
+
+        Args:
+            project_key: The project key (e.g., 'PROJ')
+            issue_type_id: The issue type ID (from get_project_issue_types)
+
+        Returns:
+            List of field metadata dicts with fieldId, name, required,
+            schema, etc.
+        """
+        try:
+            fields: list[dict[str, Any]] = []
+            start_at = 0
+            page_size = 50
+
+            while True:
+                meta = self.jira.issue_createmeta_fieldtypes(
+                    project=project_key,
+                    issue_type_id=issue_type_id,
+                    start=start_at,
+                    limit=page_size,
+                )
+                if not isinstance(meta, dict):
+                    msg = (
+                        "Unexpected return type from "
+                        f"issue_createmeta_fieldtypes: {type(meta)}"
+                    )
+                    logger.error(msg)
+                    raise TypeError(msg)
+
+                page = meta.get("values", [])
+                if not isinstance(page, list) or not page:
+                    legacy_fields = meta.get("fields", [])
+                    if isinstance(legacy_fields, dict):
+                        page = [
+                            {"fieldId": field_id, **field_data}
+                            for field_id, field_data in legacy_fields.items()
+                            if isinstance(field_data, dict)
+                        ]
+                    elif isinstance(legacy_fields, list):
+                        page = legacy_fields
+                    else:
+                        page = []
+
+                fields.extend(item for item in page if isinstance(item, dict))
+
+                total = meta.get("total")
+                start_at += len(page)
+                if (
+                    not page
+                    or meta.get("isLast") is True
+                    or not isinstance(total, int)
+                    or start_at >= total
+                ):
+                    break
+
+            return fields
+        except Exception as e:
+            logger.error(
+                f"Error getting create fields for {project_key}/{issue_type_id}: {e}"
             )
             return []
 
