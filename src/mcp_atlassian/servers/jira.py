@@ -2800,6 +2800,103 @@ async def move_issues_to_backlog(
 
 @jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Project Issue Types", "readOnlyHint": True},
+)
+async def get_project_issue_types(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'JTEST')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """Get available issue types for a Jira project.
+
+    Returns the list of issue types (Bug, Task, Story, Epic, etc.) that can
+    be created in the specified project. Use the returned issue type IDs with
+    get_create_fields to discover what fields each type requires.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+
+    Returns:
+        JSON string with list of issue types (id, name, description, subtask).
+    """
+    jira = await get_jira_fetcher(ctx)
+    issue_types = []
+    for issue_type in jira.get_project_issue_types(project_key):
+        issue_type_id = issue_type.get("id")
+        compact_type = {
+            "id": str(issue_type_id) if issue_type_id is not None else "",
+            "name": issue_type.get("name", ""),
+            "description": issue_type.get("description"),
+            "subtask": bool(issue_type.get("subtask", False)),
+        }
+        untranslated_name = issue_type.get("untranslatedName")
+        if untranslated_name:
+            compact_type["untranslated_name"] = untranslated_name
+        issue_types.append(compact_type)
+    return json.dumps(issue_types, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Create Fields", "readOnlyHint": True},
+)
+async def get_create_fields(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'JTEST')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+    issue_type_id: Annotated[
+        str,
+        Field(
+            description=(
+                "The issue type ID (from get_project_issue_types). "
+                "Example: '10002' for Task."
+            )
+        ),
+    ],
+) -> str:
+    """Get fields available for creating an issue of a specific type.
+
+    Returns all fields (required and optional) for the given project and
+    issue type, including field names, IDs, whether they're required, and
+    their schema. Use jira_get_field_options when a returned field needs its
+    allowed values.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        issue_type_id: The issue type ID.
+
+    Returns:
+        JSON string with list of field metadata (field_id, name, required, schema).
+    """
+    jira = await get_jira_fetcher(ctx)
+    fields = []
+    for field in jira.get_create_fields(project_key, issue_type_id):
+        field_id = field.get("fieldId") or field.get("key")
+        fields.append(
+            {
+                "field_id": field_id,
+                "name": field.get("name", ""),
+                "required": bool(field.get("required", False)),
+                "schema": field.get("schema") or {},
+            }
+        )
+    return json.dumps(fields, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
     annotations={"title": "Get Project Versions", "readOnlyHint": True},
 )
 async def get_project_versions(

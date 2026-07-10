@@ -46,6 +46,8 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_search",
         "jira_search_fields",
         "jira_get_field_options",
+        "jira_get_project_issue_types",
+        "jira_get_create_fields",
         "jira_get_project_fields",
         "jira_search_projects",
     ],
