@@ -30,8 +30,11 @@ logger = logging.getLogger(__name__)
 # Regex patterns for Jira key validation.
 # Per Atlassian docs, Cloud project keys are 2-10 chars. Server/Data Center
 # allows longer keys (configurable). We accept any length to support both.
-# Underscores are also allowed to support non-standard project key formats
-ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d+$"
+# Underscores are also allowed to support non-standard project key formats.
+# The numeric segment of an issue key may itself contain hyphens
+# (e.g. B7-214-68901) on some Jira Server/Data Center instances with
+# non-standard key configurations; see #1389.
+ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-[\d-]+$"
 PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+$"
 
 jira_mcp = FastMCP(
