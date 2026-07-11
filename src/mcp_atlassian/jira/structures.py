@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from requests.exceptions import HTTPError
+from requests.exceptions import HTTPError, RequestException
 
 from ..utils.decorators import handle_auth_errors
 from .client import JiraClient
@@ -39,8 +39,9 @@ class StructuresMixin(JiraClient):
             "id": result.get("id"),
             "name": result.get("name"),
             "description": result.get("description", ""),
-            "editable": result.get("editable", False),
-            "is_archived": result.get("isArchived", False),
+            "editable": not result.get("readOnly", False),
+            "is_archived": result.get("archived", result.get("isArchived", False)),
+            "owner": result.get("owner"),
         }
 
     @handle_auth_errors("Jira API")
@@ -66,7 +67,7 @@ class StructuresMixin(JiraClient):
         if not isinstance(result, dict) or "formula" not in result:
             return {"structure_id": str(structure_id), "error": "Invalid response"}
 
-        rows = self._parse_formula(result["formula"])
+        rows = self._parse_formula(result["formula"], result.get("itemTypes"))
 
         return {
             "structure_id": int(structure_id),
@@ -110,7 +111,9 @@ class StructuresMixin(JiraClient):
                 "error": "Could not fetch forest",
             }
 
-        rows = self._parse_formula(forest_result["formula"])
+        rows = self._parse_formula(
+            forest_result["formula"], forest_result.get("itemTypes")
+        )
 
         # Apply depth filter
         if max_depth is not None:
@@ -124,7 +127,6 @@ class StructuresMixin(JiraClient):
 
         # Step 4: Batch resolve via search_issues (respects projects_filter)
         resolved: dict[str, dict] = {}
-        unresolved_ids: list[str] = []
         _fields = ["summary", "issuetype", "status", "project"]
         for i in range(0, len(unique_ids), _SERVER_DC_PAGE_SIZE):
             batch = unique_ids[i : i + _SERVER_DC_PAGE_SIZE]
@@ -160,9 +162,14 @@ class StructuresMixin(JiraClient):
                     }
             except HTTPError:
                 raise
-            except Exception:
+            except (
+                RequestException,
+                AttributeError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ):
                 logger.warning("Failed to resolve batch starting at index %d", i)
-                unresolved_ids.extend(batch)
 
         # Step 5: Build resolved hierarchy — keep unresolved rows as
         # placeholders so callers can see the gap.
@@ -186,13 +193,14 @@ class StructuresMixin(JiraClient):
                         "project": "",
                     }
                 )
-            elif row.get("row_type") == "generator":
+            elif row.get("row_type") != "issue":
+                row_type = row.get("row_type", "item")
                 items.append(
                     {
                         "depth": row["depth"],
                         "key": None,
-                        "summary": f"[generator: {row.get('item_ref', '?')}]",
-                        "issue_type": "generator",
+                        "summary": f"[{row_type}: {row.get('item_ref', '?')}]",
+                        "issue_type": row_type,
                         "status": "",
                         "status_category": "",
                         "project": "",
@@ -214,15 +222,21 @@ class StructuresMixin(JiraClient):
         return result_dict
 
     @staticmethod
-    def _parse_formula(formula: str) -> list[dict[str, Any]]:
+    def _parse_formula(
+        formula: str, item_types: dict[str, str] | None = None
+    ) -> list[dict[str, Any]]:
         """Parse a Structure forest formula string into row dicts.
 
         The formula format is comma-separated entries of:
-          rowId:depth:itemId:itemType  (issue rows)
-          rowId:depth:typeId/generatorId  (generator rows)
+          rowId:depth:itemIdentity[:rowSemantic]
+
+        An issue identity is its numeric Jira issue ID. Other identities use
+        ``itemType/itemId`` or ``itemType//stringItemId`` and are resolved via
+        the response's ``itemTypes`` mapping.
 
         Args:
             formula: The raw formula string from the API.
+            item_types: Optional mapping of numeric type IDs to type names.
 
         Returns:
             List of row dicts with depth, item_id, etc.  Malformed
@@ -236,30 +250,39 @@ class StructuresMixin(JiraClient):
                 continue
             parts = entry.split(":")
             try:
+                if len(parts) not in (3, 4):
+                    skipped += 1
+                    logger.debug("Skipping malformed formula entry: %s", entry)
+                    continue
+
+                row_id, depth, item_identity = parts[:3]
+                row: dict[str, Any] = {
+                    "row_id": row_id,
+                    "depth": int(depth),
+                }
                 if len(parts) == 4:
-                    row_id, depth, item_id, item_type = parts
-                    rows.append(
+                    row["row_semantic"] = parts[3]
+
+                if item_identity.isdigit():
+                    row.update(
                         {
-                            "row_id": row_id,
-                            "depth": int(depth),
-                            "item_id": item_id,
-                            "item_type": item_type,
+                            "item_id": item_identity,
+                            "item_type": "issue",
                             "row_type": "issue",
                         }
                     )
-                elif len(parts) == 3:
-                    row_id, depth, item_ref = parts
-                    rows.append(
+                else:
+                    type_id = item_identity.split("/", 1)[0]
+                    type_name = (item_types or {}).get(type_id, "item")
+                    row_type = type_name.rsplit(":type-", 1)[-1]
+                    row.update(
                         {
-                            "row_id": row_id,
-                            "depth": int(depth),
-                            "item_ref": item_ref,
-                            "row_type": "generator",
+                            "item_ref": item_identity,
+                            "item_type": type_name,
+                            "row_type": row_type,
                         }
                     )
-                else:
-                    skipped += 1
-                    logger.debug("Skipping malformed formula entry: %s", entry)
+                rows.append(row)
             except (ValueError, TypeError):
                 skipped += 1
                 logger.debug("Skipping malformed formula entry: %s", entry)

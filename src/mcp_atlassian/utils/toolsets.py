@@ -112,7 +112,10 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
     ),
     "jira_structures": ToolsetDefinition(
         name="jira_structures",
-        description="Structure (Almworks) board operations: metadata, forest, resolved hierarchy",
+        description=(
+            "Structure (Almworks) board operations: metadata, forest, "
+            "resolved hierarchy"
+        ),
         default=False,
     ),
 }

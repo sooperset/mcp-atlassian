@@ -56,8 +56,8 @@ class TestStructuresMixin:
             "id": 585,
             "name": "My Structure",
             "description": "A board",
-            "editable": True,
-            "isArchived": False,
+            "readOnly": False,
+            "owner": "user:alice",
         }
 
         result = mixin.get_structure("585")
@@ -65,6 +65,7 @@ class TestStructuresMixin:
         assert result["id"] == 585
         assert result["name"] == "My Structure"
         assert result["editable"] is True
+        assert result["owner"] == "user:alice"
 
     def test_get_structure_invalid_response(self, mixin):
         mixin.jira.get.return_value = "bad"
@@ -82,7 +83,7 @@ class TestStructuresMixin:
 
     def test_get_structure_forest_success(self, mixin):
         mixin.jira.post.return_value = {
-            "formula": "1:0:100:0,2:1:200:0,3:1:300:0",
+            "formula": "1:0:100,2:1:200,3:1:300",
             "version": 42,
         }
 
@@ -109,27 +110,37 @@ class TestStructuresMixin:
     # ---- _parse_formula ----
 
     def test_parse_formula_issue_rows(self):
-        rows = StructuresMixin._parse_formula("1:0:100:0,2:1:200:0")
+        rows = StructuresMixin._parse_formula("1:0:100,2:1:200")
         assert len(rows) == 2
         assert rows[0] == {
             "row_id": "1",
             "depth": 0,
             "item_id": "100",
-            "item_type": "0",
+            "item_type": "issue",
             "row_type": "issue",
         }
 
     def test_parse_formula_generator_rows(self):
-        rows = StructuresMixin._parse_formula("10:2:gen/abc")
+        rows = StructuresMixin._parse_formula(
+            "10:2:4/356", {"4": "com.almworks.jira.structure:type-generator"}
+        )
         assert len(rows) == 1
         assert rows[0]["row_type"] == "generator"
-        assert rows[0]["item_ref"] == "gen/abc"
+        assert rows[0]["item_ref"] == "4/356"
+
+    def test_parse_formula_optional_row_semantic(self):
+        rows = StructuresMixin._parse_formula("10374:1:5/240:3")
+        assert rows[0]["row_semantic"] == "3"
+        assert rows[0]["row_type"] == "item"
 
     def test_parse_formula_empty(self):
         assert StructuresMixin._parse_formula("") == []
 
     def test_parse_formula_mixed(self):
-        rows = StructuresMixin._parse_formula("1:0:100:0,2:1:gen/x,3:0:200:0")
+        rows = StructuresMixin._parse_formula(
+            "1:0:100,2:1:4/1,3:0:200",
+            {"4": "com.almworks.jira.structure:type-generator"},
+        )
         assert len(rows) == 3
         assert rows[0]["row_type"] == "issue"
         assert rows[1]["row_type"] == "generator"
@@ -146,7 +157,7 @@ class TestStructuresMixin:
             "isArchived": False,
         }
         mixin.jira.post.return_value = {
-            "formula": "1:0:100:0,2:1:200:0",
+            "formula": "1:0:100,2:1:200",
             "version": 1,
         }
         mixin.search_issues = MagicMock(
@@ -187,7 +198,7 @@ class TestStructuresMixin:
             "description": "",
         }
         mixin.jira.post.return_value = {
-            "formula": "1:0:100:0,2:1:200:0,3:2:300:0",
+            "formula": "1:0:100,2:1:200,3:2:300",
             "version": 1,
         }
         mixin.search_issues = MagicMock(
@@ -218,7 +229,7 @@ class TestStructuresMixin:
             "description": "",
         }
         mixin.jira.post.return_value = {
-            "formula": "1:0:100:0",
+            "formula": "1:0:100",
             "version": 1,
         }
         mixin.search_issues = MagicMock(
@@ -242,7 +253,7 @@ class TestStructuresMixin:
             "description": "",
         }
         mixin.jira.post.return_value = {
-            "formula": "1:0:100:0,2:1:200:0",
+            "formula": "1:0:100,2:1:200",
             "version": 1,
         }
         mixin.search_issues = MagicMock(side_effect=RuntimeError("connection lost"))

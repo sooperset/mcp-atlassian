@@ -111,7 +111,7 @@ class FiltersMixin(JiraClient):
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails.
         """
-        result = self.jira.get("rest/api/2/filter/favourite")
+        result: Any = self.jira.get("rest/api/2/filter/favourite")
 
         if not isinstance(result, list):
             return {"filters": [], "total": 0}
