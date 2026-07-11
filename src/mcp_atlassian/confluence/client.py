@@ -41,6 +41,7 @@ class ConfluenceClient:
             MCPAtlassianAuthenticationError: If OAuth authentication fails
         """
         self.config = config or ConfluenceConfig.from_env()
+        transport_url = self.config.url
 
         # Initialize the Confluence client based on auth type
         if self.config.auth_type == "oauth":
@@ -73,6 +74,7 @@ class ConfluenceClient:
                 # Cloud: use the Atlassian Cloud API URL
                 api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
+            transport_url = api_url
 
             # Initialize Confluence with the session
             self.confluence = Confluence(
@@ -138,7 +140,7 @@ class ConfluenceClient:
         self.confluence._session.hooks["response"].append(make_ssrf_redirect_hook())
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
-        mount_ssrf_pinning(self.confluence._session)
+        mount_ssrf_pinning(self.confluence._session, transport_url)
 
         # Apply opt-in HTTP hardening after SSL setup and after the pinning
         # adapter is mounted: these wrappers patch send() in place on whatever

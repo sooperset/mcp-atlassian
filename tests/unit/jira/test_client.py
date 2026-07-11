@@ -440,6 +440,7 @@ def test_jira_client_oauth_disables_trust_env():
         patch("mcp_atlassian.jira.client.Jira") as mock_jira,
         patch("mcp_atlassian.jira.client.configure_ssl_verification"),
         patch("mcp_atlassian.jira.client.configure_oauth_session", return_value=True),
+        patch("mcp_atlassian.jira.client.mount_ssrf_pinning") as mock_mount,
     ):
         mock_session = MagicMock()
         mock_session.trust_env = True
@@ -463,6 +464,10 @@ def test_jira_client_oauth_disables_trust_env():
         # The OAuth session is created manually, but after Jira client init
         # trust_env should be disabled on the Jira client's session
         assert mock_jira.return_value._session.trust_env is False
+        mock_mount.assert_called_once_with(
+            mock_jira.return_value._session,
+            "https://api.atlassian.com/ex/jira/cloud-123",
+        )
 
 
 def test_jira_client_basic_auth_preserves_trust_env():

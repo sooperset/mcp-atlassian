@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
 
 
 def test_init_with_basic_auth():
@@ -101,6 +102,34 @@ def test_init_with_token_auth():
             client_key=None,
             client_key_password=None,
         )
+
+
+def test_oauth_transport_url_is_trusted():
+    """Cloud OAuth pins and trusts the gateway URL used by the client."""
+    config = ConfluenceConfig(
+        url="https://test.atlassian.net/wiki",
+        auth_type="oauth",
+        oauth_config=BYOAccessTokenOAuthConfig(
+            cloud_id="cloud-123",
+            access_token="token",
+        ),
+    )
+
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch(
+            "mcp_atlassian.confluence.client.configure_oauth_session", return_value=True
+        ),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.mount_ssrf_pinning") as mock_mount,
+    ):
+        ConfluenceClient(config=config)
+
+    mock_mount.assert_called_once_with(
+        mock_confluence.return_value._session,
+        "https://api.atlassian.com/ex/confluence/cloud-123",
+    )
 
 
 def test_init_from_env():

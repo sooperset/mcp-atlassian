@@ -68,6 +68,7 @@ def issues_mixin():
     with patch("mcp_atlassian.jira.config.JiraConfig.from_env") as mock_from_env:
         mock_config = MagicMock()
         mock_config.is_cloud = True
+        mock_config.url = "https://test.atlassian.net"
         mock_from_env.return_value = mock_config
 
         mixin = ConcreteIssuesMixin()

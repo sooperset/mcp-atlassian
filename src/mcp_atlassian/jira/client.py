@@ -55,6 +55,7 @@ class JiraClient:
         """
         # Load configuration from environment variables if not provided
         self.config = config or JiraConfig.from_env()
+        transport_url = self.config.url
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "oauth":
@@ -87,6 +88,7 @@ class JiraClient:
                 # Cloud: use the Atlassian Cloud API URL
                 api_url = f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
+            transport_url = api_url
 
             # Initialize Jira with the session
             self.jira = Jira(
@@ -151,7 +153,7 @@ class JiraClient:
         self.jira._session.hooks["response"].append(make_ssrf_redirect_hook())
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
-        mount_ssrf_pinning(self.jira._session)
+        mount_ssrf_pinning(self.jira._session, transport_url)
 
         # Apply opt-in HTTP hardening after SSL setup and after the pinning
         # adapter is mounted: these wrappers patch send() in place on whatever
