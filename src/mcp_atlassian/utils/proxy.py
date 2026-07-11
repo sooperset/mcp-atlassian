@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from functools import lru_cache
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 
 from pypac import PACSession, get_pac
@@ -37,7 +37,7 @@ class ProxyConfigProtocol(Protocol):
     proxy_wpad_url: str | None
 
 
-class _NoProxyAwarePACSession(PACSession):
+class _NoProxyAwarePACSession(PACSession):  # type: ignore[misc]
     """PAC-enabled session that preserves explicit NO_PROXY bypasses."""
 
     def __init__(self, pac: Any, no_proxy: str | None) -> None:
@@ -203,7 +203,7 @@ def _copy_session_state(source: Session, target: Session) -> None:
     target.cert = source.cert
     target.proxies.update(source.proxies)
     target.hooks = source.hooks
-    target.params = dict(source.params)
+    target.params = dict(cast(dict[str, Any], source.params))
     target.stream = source.stream
     target.trust_env = source.trust_env
     target.max_redirects = source.max_redirects

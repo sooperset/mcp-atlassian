@@ -16,7 +16,7 @@ from mcp_atlassian.servers.dependencies import (
     get_confluence_fetcher,
     get_jira_fetcher,
 )
-from mcp_atlassian.utils.oauth import OAuthConfig
+from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig, OAuthConfig
 from tests.utils.assertions import assert_mock_called_with_partial
 from tests.utils.factories import AuthConfigFactory
 from tests.utils.mocks import MockFastMCP
@@ -289,6 +289,71 @@ class TestCreateUserConfigForFetcher:
         assert result.proxy_wpad_enable is True
         assert result.proxy_wpad_url == proxy_kwargs["proxy_wpad_url"]
 
+    @pytest.mark.parametrize(
+        "byo_config,cloud_id_arg,expected_cloud_id,expected_base_url",
+        [
+            pytest.param(
+                BYOAccessTokenOAuthConfig(
+                    access_token="placeholder-startup-token",
+                    base_url="https://jira.dc.example.com",
+                ),
+                None,
+                None,
+                "https://jira.dc.example.com",
+                id="data-center-byo-global-config",
+            ),
+            pytest.param(
+                BYOAccessTokenOAuthConfig(
+                    access_token="placeholder-startup-token",
+                    cloud_id="global-cloud-id",
+                ),
+                "user-cloud-id",
+                "user-cloud-id",
+                None,
+                id="cloud-byo-global-config",
+            ),
+        ],
+    )
+    def test_oauth_user_config_with_byo_global_config(
+        self, byo_config, cloud_id_arg, expected_cloud_id, expected_base_url
+    ):
+        """Regression: global oauth_config may be a BYOAccessTokenOAuthConfig.
+
+        When a placeholder ``*_OAUTH_ACCESS_TOKEN`` suppresses the headless OAuth
+        setup flow, ``get_oauth_config_from_env()`` returns a
+        ``BYOAccessTokenOAuthConfig`` (BYO takes precedence over ``OAuthConfig``).
+        That dataclass has no ``client_id``/``client_secret``/``redirect_uri``/
+        ``scope`` attributes. With per-request OAuth proxy auth enabled, this
+        function previously read those attributes directly off the global config,
+        raising ``AttributeError`` at request time. They must fall back to empty
+        strings (the real client credentials come from the OAuth proxy config).
+        """
+        base_config = JiraConfig(
+            url="https://jira.dc.example.com",
+            auth_type="oauth",
+            oauth_config=byo_config,
+        )
+        credentials = {"oauth_access_token": "user-access-token"}
+
+        # Must not raise AttributeError on the BYO global config.
+        result_config = _create_user_config_for_fetcher(
+            base_config=base_config,
+            auth_type="oauth",
+            credentials=credentials,
+            cloud_id=cloud_id_arg,
+        )
+
+        assert isinstance(result_config, JiraConfig)
+        assert result_config.oauth_config is not None
+        assert result_config.oauth_config.access_token == "user-access-token"
+        # Client credentials fall back to empty strings (supplied by the proxy).
+        assert result_config.oauth_config.client_id == ""
+        assert result_config.oauth_config.client_secret == ""
+        assert result_config.oauth_config.redirect_uri == ""
+        assert result_config.oauth_config.scope == ""
+        assert result_config.oauth_config.cloud_id == expected_cloud_id
+        assert result_config.oauth_config.base_url == expected_base_url
+
     def test_multi_tenant_config_isolation(self):
         """Test that user configs are completely isolated from each other."""
         # Setup minimal base config
@@ -553,8 +618,8 @@ class TestGetJiraFetcher:
         assert called_config.auth_type == "pat"
         assert called_config.url == "https://test.atlassian.net"
         assert called_config.personal_token == "test-pat-token"
-        assert called_config.ssl_verify is True
-        assert called_config.http_proxy is None
+        assert called_config.ssl_verify is False
+        assert called_config.http_proxy == "http://proxy.example.com:8080"
         assert called_config.https_proxy is None
         assert called_config.no_proxy == "localhost,127.0.0.1"
         assert called_config.socks_proxy is None
@@ -565,7 +630,7 @@ class TestGetJiraFetcher:
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
-    async def test_header_based_jira_fetcher_clears_proxy_when_wpad_disabled(
+    async def test_header_based_jira_fetcher_inherits_network_when_wpad_disabled(
         self,
         mock_jira_fetcher_class,
         mock_get_http_request,
@@ -573,7 +638,7 @@ class TestGetJiraFetcher:
         mock_request,
         config_factory,
     ):
-        """Test header PAT keeps previous proxy-clearing behavior without WPAD."""
+        """Test header PAT inherits network settings while WPAD stays disabled."""
         service_headers = {
             "X-Atlassian-Jira-Url": "https://test.atlassian.net",
             "X-Atlassian-Jira-Personal-Token": "test-pat-token",
@@ -617,11 +682,11 @@ class TestGetJiraFetcher:
 
         assert result == mock_fetcher
         called_config = mock_jira_fetcher_class.call_args[1]["config"]
-        assert called_config.ssl_verify is True
-        assert called_config.http_proxy is None
-        assert called_config.https_proxy is None
-        assert called_config.no_proxy is None
-        assert called_config.socks_proxy is None
+        assert called_config.ssl_verify is False
+        assert called_config.http_proxy == "http://proxy.example.com:8080"
+        assert called_config.https_proxy == "https://proxy.example.com:8443"
+        assert called_config.no_proxy == "localhost,127.0.0.1"
+        assert called_config.socks_proxy == "socks5://proxy.example.com:1080"
         assert called_config.custom_headers is None
         assert called_config.projects_filter is None
         assert called_config.proxy_wpad_enable is False
@@ -635,8 +700,24 @@ class TestGetJiraFetcher:
         mock_get_http_request,
         mock_context,
         mock_request,
+        monkeypatch,
     ):
         """Test header PAT still works without global config context."""
+        for env_var in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+            "SOCKS_PROXY",
+            "JIRA_HTTP_PROXY",
+            "JIRA_HTTPS_PROXY",
+            "JIRA_NO_PROXY",
+            "JIRA_SOCKS_PROXY",
+            "ATLASSIAN_PROXY_WPAD_ENABLE",
+            "JIRA_PROXY_WPAD_ENABLE",
+            "ATLASSIAN_PROXY_WPAD_URL",
+            "JIRA_PROXY_WPAD_URL",
+        ):
+            monkeypatch.delenv(env_var, raising=False)
         service_headers = {
             "X-Atlassian-Jira-Url": "https://test.atlassian.net",
             "X-Atlassian-Jira-Personal-Token": "test-pat-token",
@@ -669,6 +750,61 @@ class TestGetJiraFetcher:
         assert called_config.proxy_wpad_enable is False
         assert called_config.proxy_wpad_url is None
         assert called_config.no_proxy is None
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_header_based_jira_fetcher_inherits_global_network_config(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Header PAT fetchers inherit safe global network settings."""
+        service_headers = {
+            "X-Atlassian-Jira-Url": "https://test.atlassian.net",
+            "X-Atlassian-Jira-Personal-Token": "test-pat-token",
+        }
+        jira_config = config_factory.create_jira_config(
+            auth_type="pat",
+            ssl_verify=False,
+            http_proxy="http://proxy.example",
+            https_proxy="https://proxy.example",
+            no_proxy="localhost",
+            socks_proxy="socks5://proxy.example",
+            custom_headers={"X-Instance-Secret": "do-not-forward"},
+        )
+        app_context = config_factory.create_app_context(jira_config=jira_config)
+        _setup_mock_context(mock_context, app_context)
+
+        class MockState:
+            def __init__(self):
+                self.jira_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
+        mock_get_http_request.return_value = mock_request
+        mock_jira_fetcher_class.return_value = _create_mock_fetcher(JiraFetcher)
+
+        await get_jira_fetcher(mock_context)
+
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.ssl_verify is False
+        assert called_config.http_proxy == "http://proxy.example"
+        assert called_config.https_proxy == "https://proxy.example"
+        assert called_config.no_proxy == "localhost"
+        assert called_config.socks_proxy == "socks5://proxy.example"
+        assert called_config.custom_headers is None
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
@@ -907,7 +1043,13 @@ class TestGetJiraFetcher:
             mock_fetcher = _create_mock_fetcher(JiraFetcher)
             mock_jira_fetcher_class.return_value = mock_fetcher
 
-            result = await get_jira_fetcher(mock_context)
+            # The HTTP path now requires an explicit opt-in to fall back to the
+            # operator's global credentials; the non-HTTP (stdio) path does not.
+            env = (
+                {"ALLOW_GLOBAL_CRED_FALLBACK": "true"} if scenario["setup_http"] else {}
+            )
+            with patch.dict("os.environ", env):
+                result = await get_jira_fetcher(mock_context)
 
             assert result == mock_fetcher
             assert_mock_called_with_partial(
@@ -1065,8 +1207,8 @@ class TestGetConfluenceFetcher:
         assert called_config.auth_type == "pat"
         assert called_config.url == "https://test.atlassian.net"
         assert called_config.personal_token == "test-confluence-pat-token"
-        assert called_config.ssl_verify is True
-        assert called_config.http_proxy is None
+        assert called_config.ssl_verify is False
+        assert called_config.http_proxy == "http://proxy.example.com:8080"
         assert called_config.https_proxy is None
         assert called_config.no_proxy == "localhost,127.0.0.1"
         assert called_config.socks_proxy is None
@@ -1074,6 +1216,64 @@ class TestGetConfluenceFetcher:
         assert called_config.spaces_filter is None
         assert called_config.proxy_wpad_enable is True
         assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_header_based_confluence_fetcher_reads_network_env_without_config(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        monkeypatch,
+    ):
+        """Header PAT fetchers use proxy environment variables without config."""
+        monkeypatch.setenv("CONFLUENCE_SSL_VERIFY", "false")
+        monkeypatch.setenv("HTTP_PROXY", "http://shared-proxy.example")
+        monkeypatch.setenv("CONFLUENCE_HTTP_PROXY", "http://confluence-proxy.example")
+        monkeypatch.setenv("HTTPS_PROXY", "https://shared-proxy.example")
+        monkeypatch.delenv("CONFLUENCE_HTTPS_PROXY", raising=False)
+        monkeypatch.setenv("CONFLUENCE_NO_PROXY", "localhost")
+        monkeypatch.setenv("SOCKS_PROXY", "socks5://shared-proxy.example")
+        monkeypatch.delenv("CONFLUENCE_SOCKS_PROXY", raising=False)
+        monkeypatch.setenv(
+            "CONFLUENCE_CUSTOM_HEADERS", "X-Instance-Secret=do-not-forward"
+        )
+        mock_context.request_context.lifespan_context = {}
+        service_headers = {
+            "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
+            "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
+        }
+
+        class MockState:
+            def __init__(self):
+                self.confluence_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
+        mock_get_http_request.return_value = mock_request
+        mock_confluence_fetcher_class.return_value = _create_mock_fetcher(
+            ConfluenceFetcher
+        )
+
+        await get_confluence_fetcher(mock_context)
+
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        assert called_config.ssl_verify is False
+        assert called_config.http_proxy == "http://confluence-proxy.example"
+        assert called_config.https_proxy == "https://shared-proxy.example"
+        assert called_config.no_proxy == "localhost"
+        assert called_config.socks_proxy == "socks5://shared-proxy.example"
+        assert called_config.custom_headers is None
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
@@ -1279,7 +1479,13 @@ class TestGetConfluenceFetcher:
             mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
             mock_confluence_fetcher_class.return_value = mock_fetcher
 
-            result = await get_confluence_fetcher(mock_context)
+            # The HTTP path now requires an explicit opt-in to fall back to the
+            # operator's global credentials; the non-HTTP (stdio) path does not.
+            env = (
+                {"ALLOW_GLOBAL_CRED_FALLBACK": "true"} if scenario["setup_http"] else {}
+            )
+            with patch.dict("os.environ", env):
+                result = await get_confluence_fetcher(mock_context)
 
             assert result == mock_fetcher
             assert_mock_called_with_partial(
@@ -1735,3 +1941,216 @@ class TestSsrfProtection:
 
         result = hook(mock_response)
         assert result == mock_response
+
+
+class TestSsrfHookCoverageRegression:
+    """Regression (GHSA-6529) — the SSRF redirect hook must cover the basic-auth
+    and OAuth per-user fetcher sessions, not only the header-PAT branch.
+
+    ``_create_and_validate`` used to pass ``attach_ssrf_hook=True`` only on the
+    header-PAT branch; the basic and oauth_pat branches omitted it, so per-user
+    fetchers built from those branches followed HTTP redirects without SSRF
+    validation. These tests assert the secure outcome: a redirect hook is attached
+    to the fetcher's session on every auth branch.
+    """
+
+    @pytest.mark.security_regression
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_basic_auth_jira_session_has_ssrf_hook(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ) -> None:
+        """A basic-auth Jira fetcher must follow redirects through the SSRF hook."""
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = "user@example.com"
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        await get_jira_fetcher(mock_context)
+
+        response_hooks = mock_fetcher.jira._session.hooks["response"]
+        assert len(response_hooks) > 0, (
+            "basic-auth user fetcher session must carry the SSRF redirect hook"
+        )
+
+    @pytest.mark.security_regression
+    @patch("mcp_atlassian.servers.dependencies.get_access_token")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_oauth_jira_session_has_ssrf_hook(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_get_access_token,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ) -> None:
+        """An OAuth Jira fetcher must follow redirects through the SSRF hook."""
+        _setup_mock_request_state(mock_request, auth_scenarios["oauth"])
+        mock_get_http_request.return_value = mock_request
+        mock_get_access_token.side_effect = RuntimeError("no auth context")
+
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(auth_type="oauth")
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        await get_jira_fetcher(mock_context)
+
+        response_hooks = mock_fetcher.jira._session.hooks["response"]
+        assert len(response_hooks) > 0, (
+            "oauth user fetcher session must carry the SSRF redirect hook"
+        )
+
+    @pytest.mark.security_regression
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_basic_auth_confluence_session_has_ssrf_hook(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ) -> None:
+        """A basic-auth Confluence fetcher must follow redirects through the hook."""
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = "user@example.com"
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        await get_confluence_fetcher(mock_context)
+
+        response_hooks = mock_fetcher.confluence._session.hooks["response"]
+        assert len(response_hooks) > 0, (
+            "basic-auth user fetcher session must carry the SSRF redirect hook"
+        )
+
+    @pytest.mark.security_regression
+    @patch("mcp_atlassian.servers.dependencies.get_access_token")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_oauth_confluence_session_has_ssrf_hook(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_get_access_token,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ) -> None:
+        """An OAuth Confluence fetcher must follow redirects through the hook."""
+        _setup_mock_request_state(mock_request, auth_scenarios["oauth"])
+        mock_get_http_request.return_value = mock_request
+        mock_get_access_token.side_effect = RuntimeError("no auth context")
+
+        app_context = config_factory.create_app_context(
+            confluence_config=config_factory.create_confluence_config(auth_type="oauth")
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.return_value = mock_fetcher
+
+        await get_confluence_fetcher(mock_context)
+
+        response_hooks = mock_fetcher.confluence._session.hooks["response"]
+        assert len(response_hooks) > 0, (
+            "oauth user fetcher session must carry the SSRF redirect hook"
+        )
+
+
+class TestUnauthenticatedGlobalFallbackRegression:
+    """Regression (GHSA-wrhw, GHSA-vc8m, GHSA-cc5h auth half) — an unauthenticated
+    HTTP request must not silently fall back to the operator's global credentials.
+
+    In an HTTP request context with no user identity, ``_get_fetcher`` used to fall
+    through to the global fallback and return
+    ``spec.fetcher_class(config=global_config_fallback)`` unconditionally, so any
+    unauthenticated caller on a remotely-exposed streamable-http server transacted
+    as the operator. These tests assert the secure outcome: the global fallback is
+    refused for unauthenticated HTTP requests unless ``ALLOW_GLOBAL_CRED_FALLBACK``
+    is explicitly enabled.
+
+    The companion ``test_global_fallback_scenarios`` above pins the authenticated
+    fallback behavior (returns the global fetcher), so a failure here is genuinely
+    the unauthenticated fallback firing, not an incidental setup error. The
+    assertion uses ``pytest.raises``: the fix refuses by raising.
+    """
+
+    @pytest.mark.security_regression
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_unauthenticated_http_request_refuses_global_jira_fetcher(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ) -> None:
+        """No user identity + HTTP context must not yield the global Jira fetcher."""
+        _setup_mock_request_state(mock_request)  # no scenario -> no user identity
+        mock_get_http_request.return_value = mock_request
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+        mock_jira_fetcher_class.return_value = _create_mock_fetcher(JiraFetcher)
+
+        with pytest.raises(ValueError):
+            await get_jira_fetcher(mock_context)
+
+    @pytest.mark.security_regression
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_unauthenticated_http_request_refuses_global_confluence_fetcher(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ) -> None:
+        """No user identity + HTTP context must not yield the global Confluence fetcher."""
+        _setup_mock_request_state(mock_request)  # no scenario -> no user identity
+        mock_get_http_request.return_value = mock_request
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+        mock_confluence_fetcher_class.return_value = _create_mock_fetcher(
+            ConfluenceFetcher
+        )
+
+        with pytest.raises(ValueError):
+            await get_confluence_fetcher(mock_context)

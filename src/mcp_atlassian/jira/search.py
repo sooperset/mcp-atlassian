@@ -9,6 +9,7 @@ from requests.exceptions import HTTPError
 
 from ..models.jira import JiraSearchResult
 from ..utils.decorators import handle_auth_errors
+from ..utils.pagination import clamp_limit
 from .client import JiraClient
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import IssueOperationsProto
@@ -19,6 +20,57 @@ logger = logging.getLogger("mcp-jira")
 
 class SearchMixin(JiraClient, IssueOperationsProto):
     """Mixin for Jira search operations."""
+
+    def _apply_projects_filter(
+        self, jql: str, projects_filter: str | None = None
+    ) -> str:
+        """Constrain a JQL query to the allowed projects (JIRA_PROJECTS_FILTER).
+
+        Every JQL-issuing path routes through here so none can escape the project
+        allowlist. ``config.projects_filter`` is a hard boundary and is always
+        applied; a caller-supplied ``projects_filter`` may only *narrow* within it
+        (both are ANDed), never replace it — otherwise the tool argument would
+        defeat the operator's allowlist in shared-credential deployments.
+        """
+        for filter_str in (self.config.projects_filter, projects_filter):
+            if filter_str:
+                jql = self._and_projects_filter(jql, filter_str)
+        return jql
+
+    def _and_projects_filter(self, jql: str, filter_to_use: str) -> str:
+        """AND a single comma-separated project allowlist into ``jql``."""
+        projects = [p.strip() for p in filter_to_use.split(",")]
+
+        if len(projects) == 1:
+            quoted = quote_jql_identifier_if_needed(projects[0])
+            project_query = f"project = {quoted}"
+        else:
+            quoted_projects = [quote_jql_identifier_if_needed(p) for p in projects]
+            projects_list = ", ".join(quoted_projects)
+            project_query = f"project IN ({projects_list})"
+        grouped_project_query = f"({project_query})"
+
+        if not jql:
+            jql = project_query
+        elif jql.strip().upper().startswith("ORDER BY"):
+            jql = f"{project_query} {jql}"
+        else:
+            # Always AND the allowlist, even when the caller's query already names a
+            # project: a caller-supplied `project = X` must not be able to escape the
+            # configured allowlist (out-of-allowlist queries then return empty).
+            # Extract a trailing ORDER BY so the AND does not produce invalid JQL.
+            order_match = re.search(r"\s+(ORDER\s+BY\s+.*)$", jql, re.IGNORECASE)
+            if order_match:
+                order_clause = order_match.group(1)
+                jql_without_order = jql[: order_match.start()]
+                jql = (
+                    f"({jql_without_order}) AND {grouped_project_query} {order_clause}"
+                )
+            else:
+                jql = f"({jql}) AND {grouped_project_query}"
+
+        logger.info(f"Applied projects filter to query: {jql}")
+        return jql
 
     @handle_auth_errors("Jira API")
     def search_issues(
@@ -42,7 +94,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                   start from the first page.
             limit: Maximum issues to return
             expand: Optional items to expand (comma-separated)
-            projects_filter: Optional comma-separated list of project keys to filter by, overrides config
+            projects_filter: Optional comma-separated list of project keys to narrow
+                results within the configured allowlist (ANDed with config, never
+                replaces it)
             page_token: Optional pagination token from a previous search result.
                   Cloud only — Server/DC uses start for pagination.
 
@@ -54,59 +108,13 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error searching for issues
         """
         try:
+            limit = clamp_limit(limit, context="jira.search_issues")
+
             # Sanitize JQL reserved words in project key values
             jql = sanitize_jql_reserved_words(jql)
 
-            # Use projects_filter parameter if provided, otherwise fall back to config
-            filter_to_use = projects_filter or self.config.projects_filter
-
-            # Apply projects filter if present
-            if filter_to_use:
-                # Split projects filter by commas and handle possible whitespace
-                projects = [p.strip() for p in filter_to_use.split(",")]
-
-                # Build the project filter query part
-                # Sanitize project names to prevent JQL injection
-                # Escape backslashes before double-quotes to prevent bypass
-                projects = [
-                    p.replace("\\", "\\\\").replace('"', '\\"') for p in projects
-                ]
-
-                if len(projects) == 1:
-                    quoted = quote_jql_identifier_if_needed(projects[0])
-                    project_query = f"project = {quoted}"
-                else:
-                    quoted_projects = [
-                        quote_jql_identifier_if_needed(p) for p in projects
-                    ]
-                    projects_list = ", ".join(quoted_projects)
-                    project_query = f"project IN ({projects_list})"
-
-                # Add the project filter to existing query
-                if not jql:
-                    # Empty JQL - just use project filter
-                    jql = project_query
-                elif jql.strip().upper().startswith("ORDER BY"):
-                    # JQL starts with ORDER BY - prepend project filter
-                    jql = f"{project_query} {jql}"
-                elif (
-                    "project = " not in jql.lower() and "project in" not in jql.lower()
-                ):
-                    # Only add if not already filtering by project
-                    # Extract ORDER BY clause if present to avoid invalid JQL
-                    order_match = re.search(
-                        r"\s+(ORDER\s+BY\s+.*)$", jql, re.IGNORECASE
-                    )
-                    if order_match:
-                        order_clause = order_match.group(1)
-                        jql_without_order = jql[: order_match.start()]
-                        jql = (
-                            f"({jql_without_order}) AND {project_query} {order_clause}"
-                        )
-                    else:
-                        jql = f"({jql}) AND {project_query}"
-
-                logger.info(f"Applied projects filter to query: {jql}")
+            # Constrain to the allowed projects (JIRA_PROJECTS_FILTER)
+            jql = self._apply_projects_filter(jql, projects_filter)
 
             # Convert fields to proper format if it's a list/tuple/set
             fields_param: str | None
@@ -134,6 +142,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
                 # Fetch issues using v3 API with nextPageToken pagination
                 all_issues: list[dict[str, Any]] = []
+                field_names: dict[str, Any] = {}
                 next_page_token: str | None = page_token
 
                 while len(all_issues) < limit:
@@ -158,6 +167,10 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     issues = response.get("issues", [])
                     all_issues.extend(issues)
 
+                    names = response.get("names")
+                    if isinstance(names, dict):
+                        field_names.update(names)
+
                     # Check for more pages
                     next_page_token = response.get("nextPageToken")
                     if not next_page_token:
@@ -173,6 +186,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 }
                 if next_page_token:
                     response_dict["nextPageToken"] = next_page_token
+                if field_names:
+                    response_dict["names"] = field_names
 
                 search_result = JiraSearchResult.from_api_response(
                     response_dict,
@@ -232,8 +247,13 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             Exception: If there is an error getting board issues
         """
         try:
+            limit = clamp_limit(limit, context="jira.get_board_issues")
+
             # Sanitize JQL reserved words in project key values
             jql = sanitize_jql_reserved_words(jql) or jql
+
+            # Constrain board issues to the allowed projects (JIRA_PROJECTS_FILTER)
+            jql = self._apply_projects_filter(jql)
 
             # Determine fields_param
             fields_param = fields
@@ -293,9 +313,20 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         Raises:
             Exception: If there is an error getting sprint issues
         """
+        # sprint_id is interpolated into JQL; require an integer to prevent
+        # JQL injection via a crafted non-numeric value.
         try:
+            sprint_id_int = int(str(sprint_id).strip())
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"Invalid sprint_id {sprint_id!r}: must be an integer"
+            ) from e
+
+        try:
+            limit = clamp_limit(limit, context="jira.get_sprint_issues")
+
             # Use JQL search to get sprint issues with proper fields filtering
-            jql = f"sprint = {sprint_id}"
+            jql = f"sprint = {sprint_id_int}"
             return self.search_issues(
                 jql=jql,
                 fields=fields,

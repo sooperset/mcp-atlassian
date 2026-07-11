@@ -141,6 +141,22 @@ Header values containing sensitive information are automatically masked in logs.
     ```
   </Accordion>
 
+  <Accordion title="401 Unauthorized — Confluence attachment / image download (Cloud)">
+    **Symptom:** Reading pages works, but `confluence_get_page_images` returns
+    `downloaded: 0` (every image `"Fetch failed"`) and `confluence_download_attachment` /
+    `confluence_download_content_attachments` fail. Logs show
+    `401 ... /wiki/download/attachments/...`.
+
+    **Cause:** Confluence Cloud removed the legacy `/download/attachments/...` endpoint
+    (changelog [CHANGE-2735](https://developer.atlassian.com/cloud/confluence/changelog/) /
+    ["Deprecation of /download/attachments/ APIs"](https://community.developer.atlassian.com/t/deprecation-of-download-attachments-apis/94448)).
+    It now returns 401 for API-token / scoped-token auth, while metadata endpoints keep working.
+
+    **Fix:** On Cloud this is handled automatically — downloads use the v1 REST endpoint
+    `/rest/api/content/{id}/child/attachment/{aid}/download`. To force the behaviour, set
+    `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1=true` (or `false` to keep the legacy link).
+  </Accordion>
+
   <Accordion title="401 Unauthorized — Personal Access Token (PAT)">
     **Cause:** Invalid PAT or PAT doesn't have required permissions.
 

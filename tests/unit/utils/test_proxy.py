@@ -7,8 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from pypac.parser import MalformedPacError
-from requests import Session
+from requests import PreparedRequest
 from requests.exceptions import ProxyError
+from requests.sessions import Session
 
 from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
@@ -20,6 +21,7 @@ from mcp_atlassian.utils.proxy import (
     apply_proxy_configuration,
     get_proxy_settings_from_env,
 )
+from mcp_atlassian.utils.ssl import NoProxyAdapter, configure_proxy_bypass
 from tests.utils.base import BaseAuthTest
 from tests.utils.mocks import MockEnvironment
 
@@ -480,3 +482,77 @@ def test_load_pac_file_is_cached():
         assert mock_get_pac.call_count == 1
     finally:
         _load_pac_file.cache_clear()
+
+
+class TestNoProxyAdapter:
+    """Tests for NoProxyAdapter and configure_proxy_bypass."""
+
+    def _make_request(self, url: str) -> PreparedRequest:
+        req = PreparedRequest()
+        req.url = url
+        return req
+
+    def test_clears_proxies_when_url_matches_no_proxy(self, monkeypatch):
+        """Proxies are cleared when the request URL matches NO_PROXY."""
+        monkeypatch.setenv("NO_PROXY", "internal.example.com")
+        adapter = NoProxyAdapter()
+        proxies = {"https": "https://proxy:8443"}
+
+        with patch.object(adapter.__class__.__bases__[0], "send") as mock_send:
+            mock_send.return_value = MagicMock()
+            adapter.send(
+                self._make_request("https://internal.example.com/api"),
+                proxies=proxies,
+            )
+            _, kwargs = mock_send.call_args
+            assert kwargs["proxies"] is None
+
+    def test_preserves_proxies_when_url_does_not_match_no_proxy(self, monkeypatch):
+        """Proxies are kept when the request URL is not in NO_PROXY."""
+        monkeypatch.setenv("NO_PROXY", "other.example.com")
+        adapter = NoProxyAdapter()
+        proxies = {"https": "https://proxy:8443"}
+
+        with patch.object(adapter.__class__.__bases__[0], "send") as mock_send:
+            mock_send.return_value = MagicMock()
+            adapter.send(
+                self._make_request("https://external.example.com/api"),
+                proxies=proxies,
+            )
+            _, kwargs = mock_send.call_args
+            assert kwargs["proxies"] == proxies
+
+    def test_no_effect_when_no_proxy_not_set(self, monkeypatch):
+        """Proxies are untouched when NO_PROXY is not set."""
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        adapter = NoProxyAdapter()
+        proxies = {"https": "https://proxy:8443"}
+
+        with patch.object(adapter.__class__.__bases__[0], "send") as mock_send:
+            mock_send.return_value = MagicMock()
+            adapter.send(
+                self._make_request("https://internal.example.com/api"),
+                proxies=proxies,
+            )
+            _, kwargs = mock_send.call_args
+            assert kwargs["proxies"] == proxies
+
+    def test_configure_proxy_bypass_mounts_adapter_when_no_proxy_set(self, monkeypatch):
+        """configure_proxy_bypass mounts NoProxyAdapter when NO_PROXY is set."""
+        monkeypatch.setenv("NO_PROXY", "example.com")
+        session = Session()
+        configure_proxy_bypass("TestService", "https://example.com", session)
+        assert isinstance(session.get_adapter("https://example.com"), NoProxyAdapter)
+        assert isinstance(session.get_adapter("http://example.com"), NoProxyAdapter)
+
+    def test_configure_proxy_bypass_does_nothing_when_no_proxy_not_set(
+        self, monkeypatch
+    ):
+        """configure_proxy_bypass does not mount an adapter when NO_PROXY is absent."""
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        session = Session()
+        default_https_adapter = session.get_adapter("https://example.com")
+        configure_proxy_bypass("TestService", "https://example.com", session)
+        assert session.get_adapter("https://example.com") is default_https_adapter

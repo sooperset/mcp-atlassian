@@ -17,7 +17,9 @@ from starlette.requests import Request
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
+from mcp_atlassian.utils.env import is_env_ssl_verify, is_env_truthy
 from mcp_atlassian.utils.oauth import OAuthConfig
+from mcp_atlassian.utils.proxy import get_proxy_settings_from_env
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 if TYPE_CHECKING:
@@ -195,6 +197,38 @@ def _get_global_config(
             "available from lifespan context."
         )
     return config
+
+
+def _get_header_pat_network_config(ctx: Context, spec: _ServiceSpec) -> dict[str, Any]:
+    """Resolve operator-controlled network settings for header PAT requests.
+
+    Args:
+        ctx: FastMCP request context.
+        spec: Service specification for Jira or Confluence.
+
+    Returns:
+        SSL and proxy settings from the global config when available, otherwise
+        from service-specific or shared environment variables.
+    """
+    try:
+        global_config = _get_global_config(ctx, spec)
+    except ValueError:
+        env_prefix = spec.name.upper()
+        proxy_settings = get_proxy_settings_from_env(env_prefix)
+        return {
+            "ssl_verify": is_env_ssl_verify(f"{env_prefix}_SSL_VERIFY"),
+            **proxy_settings,
+        }
+
+    return {
+        "ssl_verify": global_config.ssl_verify,
+        "http_proxy": global_config.http_proxy,
+        "https_proxy": global_config.https_proxy,
+        "no_proxy": global_config.no_proxy,
+        "socks_proxy": global_config.socks_proxy,
+        "proxy_wpad_enable": global_config.proxy_wpad_enable,
+        "proxy_wpad_url": global_config.proxy_wpad_url,
+    }
 
 
 def _create_and_validate(
@@ -424,16 +458,18 @@ def _create_user_config_for_fetcher(
                 "or set base_url for Data Center OAuth."
             )
 
-        # For minimal OAuth config (user-provided tokens), use empty strings for client credentials
+        # Minimal OAuth config (user-provided tokens): client credentials fall back
+        # to empty strings. The global oauth_config may be a
+        # BYOAccessTokenOAuthConfig (e.g. a placeholder *_OAUTH_ACCESS_TOKEN set to
+        # suppress the headless OAuth setup flow), which has no
+        # client_id/client_secret/redirect_uri/scope attributes. With the OAuth proxy
+        # active these come from the proxy config, not here, so getattr() with an
+        # empty-string fallback is safe and avoids an AttributeError.
         oauth_config_for_user = OAuthConfig(
-            client_id=global_oauth_cfg.client_id if global_oauth_cfg.client_id else "",
-            client_secret=global_oauth_cfg.client_secret
-            if global_oauth_cfg.client_secret
-            else "",
-            redirect_uri=global_oauth_cfg.redirect_uri
-            if global_oauth_cfg.redirect_uri
-            else "",
-            scope=global_oauth_cfg.scope if global_oauth_cfg.scope else "",
+            client_id=getattr(global_oauth_cfg, "client_id", "") or "",
+            client_secret=getattr(global_oauth_cfg, "client_secret", "") or "",
+            redirect_uri=getattr(global_oauth_cfg, "redirect_uri", "") or "",
+            scope=getattr(global_oauth_cfg, "scope", "") or "",
             access_token=user_access_token,
             refresh_token=None,
             expires_at=None,
@@ -508,8 +544,10 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
     """
     fn_name = f"get_{spec.name.lower()}_fetcher"
     logger.debug(f"{fn_name}: ENTERED. Context ID: {id(ctx)}")
+    in_http_context = False
     try:
         request: Request = get_http_request()
+        in_http_context = True
         logger.debug(
             f"{fn_name}: In HTTP request context. "
             f"Request URL: {request.url}. "
@@ -543,27 +581,13 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 f"Creating header-based {spec.name}Fetcher "
                 f"with URL: {url_header_val} and PAT token"
             )
-            global_config = getattr(_get_app_lifespan_ctx(ctx), spec.config_attr, None)
-            proxy_wpad_enable = (
-                bool(global_config.proxy_wpad_enable) if global_config else False
-            )
             header_config = spec.config_class(
                 url=url_header_val,
                 auth_type="pat",
                 personal_token=token_header_val,
-                ssl_verify=True,
-                http_proxy=None,
-                https_proxy=None,
-                no_proxy=(
-                    global_config.no_proxy
-                    if global_config and proxy_wpad_enable
-                    else None
-                ),
-                socks_proxy=None,
-                proxy_wpad_enable=proxy_wpad_enable,
-                proxy_wpad_url=(
-                    global_config.proxy_wpad_url if global_config else None
-                ),
+                **_get_header_pat_network_config(ctx, spec),
+                # Never forward instance-specific custom headers to a URL
+                # selected per request.
                 custom_headers=None,
                 **spec.filter_kwargs,
             )
@@ -604,6 +628,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 user_config,
                 "basic",
                 user_email=user_email,
+                attach_ssrf_hook=True,
             )
 
         # --- Branch 3: OAuth / PAT with token ---
@@ -653,6 +678,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 user_config,
                 "oauth_pat",
                 user_email=user_email,
+                attach_ssrf_hook=True,
             )
 
         else:
@@ -675,6 +701,17 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
         getattr(app_ctx, spec.config_attr, None) if app_ctx else None
     )
     if global_config_fallback:
+        # An HTTP request that reaches here has no per-user identity: serving it
+        # with the operator's global credentials lets any unauthenticated caller
+        # transact as the operator. Refuse unless explicitly opted in. Non-HTTP
+        # (stdio, single-user) is unaffected — the operator is the user there.
+        if in_http_context and not is_env_truthy("ALLOW_GLOBAL_CRED_FALLBACK"):
+            raise ValueError(
+                f"{spec.name} client (fetcher) not available: refusing to serve an "
+                "unauthenticated request with the operator's global credentials. "
+                "Provide a user token, or set ALLOW_GLOBAL_CRED_FALLBACK=true to "
+                "allow the global-credential fallback (single-user deployments only)."
+            )
         logger.debug(
             f"{fn_name}: Using global {spec.name}Fetcher "
             "from lifespan_context. "
