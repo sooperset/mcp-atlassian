@@ -472,6 +472,28 @@ def test_pac_session_routes_requests_and_preserves_no_proxy(
     assert mock_request.call_args.kwargs["proxies"] == expected_proxies
 
 
+def test_pac_session_no_proxy_handles_empty_proxy_mapping() -> None:
+    """An empty caller proxy map must not disable the NO_PROXY bypass."""
+    pac = get_pac(
+        js=(
+            "function FindProxyForURL(url, host) { "
+            'return "PROXY proxy.example.com:8080"; }'
+        )
+    )
+    session = _NoProxyAwarePACSession(
+        pac=pac,
+        no_proxy="internal.example.com",
+    )
+
+    with patch.object(Session, "request", return_value=MagicMock()) as mock_request:
+        session.get("https://internal.example.com/api", proxies={})
+
+    assert mock_request.call_args.kwargs["proxies"] == {
+        "http": None,
+        "https": None,
+    }
+
+
 def test_apply_proxy_configuration_raises_for_malformed_pac():
     """Test malformed PAC files produce a clear service-specific error."""
     config = JiraConfig(

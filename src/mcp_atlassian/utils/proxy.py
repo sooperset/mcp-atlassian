@@ -44,15 +44,20 @@ class _NoProxyAwarePACSession(PACSession):
         super().__init__(pac=pac)
         self._no_proxy = no_proxy
 
-    def request(self, method: str, url: str, *args: Any, **kwargs: Any) -> Any:
+    def request(
+        self,
+        method: str,
+        url: str,
+        proxies: Any = None,
+        **kwargs: Any,
+    ) -> Any:
         if (
             self._no_proxy
-            and ("proxies" not in kwargs or kwargs["proxies"] is None)
+            and not proxies
             and should_bypass_proxies(url, no_proxy=self._no_proxy)
         ):
-            kwargs = dict(kwargs)
-            kwargs["proxies"] = {"http": None, "https": None}
-        return super().request(method, url, *args, **kwargs)
+            proxies = {"http": None, "https": None}
+        return super().request(method, url, proxies=proxies, **kwargs)
 
 
 @lru_cache(maxsize=16)
