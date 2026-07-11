@@ -170,15 +170,18 @@ client supplies its own credentials per request via HTTP headers — Basic
 
 2. Each client sends one of the following headers per request:
    - `Authorization: Basic <base64(email:api_token)>` (Cloud)
-   - `Authorization: Bearer <user_oauth_token>` plus
-     `X-Atlassian-Cloud-Id: <user_cloud_id>` (Cloud)
+   - `Authorization: Bearer <user_oauth_token>` (Cloud OAuth). The Cloud ID is
+     pinned to the configured URL server-side, so `X-Atlassian-Cloud-Id` is
+     optional; if sent, it must match the configured site.
    - `Authorization: Token <user_personal_access_token>` (Server/Data Center)
 
 <Note>
 For SSRF protection, URL-only multi-user mode ignores
 `X-Atlassian-Jira-Url` and `X-Atlassian-Confluence-Url` headers; the server
-enforces the URLs configured at startup. Requires HTTP transport (sse /
-streamable-http).
+enforces the URLs configured at startup. For Cloud OAuth the tenant (Cloud ID)
+is likewise pinned to the configured URL — resolved from the site or from
+`ATLASSIAN_OAUTH_CLOUD_ID` — and a request that targets a different tenant is
+rejected. Requires HTTP transport (sse / streamable-http).
 </Note>
 
 See [HTTP Transport](/docs/http-transport#multi-user-mode-url-only-server) for

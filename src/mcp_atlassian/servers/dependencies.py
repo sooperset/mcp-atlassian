@@ -23,7 +23,7 @@ from mcp_atlassian.utils.env import (
     is_env_truthy,
     is_multi_user_mode,
 )
-from mcp_atlassian.utils.oauth import OAuthConfig
+from mcp_atlassian.utils.oauth import OAuthConfig, resolve_cloud_id_for_url
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 if TYPE_CHECKING:
@@ -440,21 +440,44 @@ def _create_user_config_for_fetcher(
                 "OAuth access token missing in credentials for user auth_type 'oauth'"
             )
         global_oauth_cfg = getattr(base_config, "oauth_config", None)
-        if global_oauth_cfg is None and cloud_id:
-            # URL-only multi-user configs intentionally have no server-side
-            # OAuth configuration. The request's access token and Cloud ID are
-            # sufficient to construct the Atlassian gateway client.
+        if global_oauth_cfg is None and base_config.auth_type is None:
+            # URL-only multi-user configs intentionally have no server-side OAuth
+            # configuration (auth_type is None). The operator pins the tenant via
+            # the configured *_URL, so resolve *that* site's Cloud ID server-side.
+            # The Cloud client always calls
+            # https://api.atlassian.com/ex/<service>/<cloud_id> and ignores the
+            # pinned URL, so trusting a client-supplied Cloud ID here would let a
+            # caller redirect the server to another Atlassian tenant. Pin the
+            # Cloud ID to the configured site and reject any request that targets
+            # a different one.
+            pinned_cloud_id = resolve_cloud_id_for_url(base_config.url)
+            if not pinned_cloud_id:
+                raise ValueError(
+                    "Cloud OAuth in URL-only multi-user mode requires the server "
+                    "to know the configured site's Cloud ID. Set "
+                    "ATLASSIAN_OAUTH_CLOUD_ID to the Cloud ID for "
+                    f"{base_config.url}, or ensure its /_edge/tenant_info "
+                    "endpoint is reachable."
+                )
+            if cloud_id and cloud_id != pinned_cloud_id:
+                raise ValueError(
+                    "Requested Cloud ID does not match the server's configured "
+                    "Atlassian site. In URL-only multi-user mode the tenant is "
+                    "pinned to the configured URL and cannot be overridden per "
+                    "request."
+                )
+            cloud_id = pinned_cloud_id
             global_oauth_cfg = OAuthConfig(
                 client_id="",
                 client_secret="",
                 redirect_uri="",
                 scope="",
-                cloud_id=cloud_id,
+                cloud_id=pinned_cloud_id,
             )
         if global_oauth_cfg is None:
             raise ValueError(
                 f"Global OAuth config for {type(base_config).__name__} is missing, "
-                "but user auth_type is 'oauth' and no Cloud ID was supplied."
+                "but user auth_type is 'oauth'."
             )
 
         # Determine if this is DC OAuth (base_url set, no cloud_id)

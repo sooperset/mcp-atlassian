@@ -87,10 +87,12 @@ Then each client sends its own credentials per request:
 }
 ```
 
-`Authorization: Bearer <oauth_token>` with `X-Atlassian-Cloud-Id: <cloud_id>`,
-and `Authorization: Token <pat>`, are also supported. The server enforces its
-configured `JIRA_URL` / `CONFLUENCE_URL` and ignores per-request URL override
-headers for SSRF protection. See
+`Authorization: Bearer <oauth_token>` (Cloud OAuth) and `Authorization: Token
+<pat>` (Server/DC) are also supported. The server enforces its configured
+`JIRA_URL` / `CONFLUENCE_URL` and ignores per-request URL override headers for
+SSRF protection. For Cloud OAuth the tenant (Cloud ID) is pinned to the
+configured URL, so `X-Atlassian-Cloud-Id` is optional and a mismatching one is
+rejected. See
 [HTTP Transport](https://mcp-atlassian.soomiles.com/docs/http-transport#multi-user-mode-url-only-server)
 for full details.
 

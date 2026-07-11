@@ -284,6 +284,12 @@ Atlassian permissions.
 - For SSRF protection, the server **ignores** `X-Atlassian-Jira-Url` and
   `X-Atlassian-Confluence-Url` headers in this mode and always uses the
   configured `JIRA_URL` / `CONFLUENCE_URL`.
+- **Cloud OAuth:** the tenant (Cloud ID) is **pinned to the configured URL**.
+  The server resolves it from the site itself (or from `ATLASSIAN_OAUTH_CLOUD_ID`
+  if set), so clients need only send `Authorization: Bearer <oauth_token>`. If a
+  client also sends `X-Atlassian-Cloud-Id`, it must match the configured site —
+  requests targeting a different tenant are rejected. This guarantees a client
+  cannot redirect the server to another Atlassian instance.
 - Requests without recognised credential headers are rejected with a clear
   message instructing the client to add an `Authorization` header.
 - Each request runs under its sender's own Atlassian permissions; the server
