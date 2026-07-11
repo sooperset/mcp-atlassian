@@ -78,6 +78,10 @@ class TestConfluenceClientOAuth:
 
             # Verify SSL verification was configured
             mock_configure_ssl.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/confluence/{oauth_config.cloud_id}"
+            )
 
             # Verify preprocessor was initialized
             assert client.preprocessor == mock_preprocessor.return_value
@@ -131,6 +135,10 @@ class TestConfluenceClientOAuth:
 
             # Verify SSL verification was configured
             mock_configure_ssl.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/confluence/{byo_oauth_config.cloud_id}"
+            )
 
             # Verify preprocessor was initialized
             assert client.preprocessor == mock_preprocessor.return_value
@@ -358,6 +366,10 @@ class TestConfluenceClientOAuth:
 
             # Verify OAuth session was configured
             mock_configure_oauth.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/confluence/{mock_standard_oauth_config.cloud_id}"
+            )
 
     def test_from_env_with_byo_token_oauth(self):
         """Test creating client from env vars with BYO token OAuth config."""
@@ -398,6 +410,10 @@ class TestConfluenceClientOAuth:
                 == f"https://api.atlassian.com/ex/confluence/{mock_byo_oauth_config.cloud_id}"
             )
             mock_configure_oauth.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/confluence/{mock_byo_oauth_config.cloud_id}"
+            )
 
     def test_cloud_oauth_uses_api_url_for_proxy_target(self):
         """Test PAC/WPAD resolution uses Atlassian's Cloud API host for OAuth."""
@@ -425,9 +441,7 @@ class TestConfluenceClientOAuth:
             patch(
                 "mcp_atlassian.confluence.client.apply_proxy_configuration"
             ) as mock_apply_proxy,
-            patch(
-                "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
-            ),
+            patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
         ):
             mock_apply_proxy.side_effect = lambda **kwargs: kwargs["session"]
 
@@ -468,9 +482,7 @@ class TestConfluenceClientOAuth:
             patch(
                 "mcp_atlassian.confluence.client.apply_proxy_configuration"
             ) as mock_apply_proxy,
-            patch(
-                "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
-            ),
+            patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
         ):
             mock_apply_proxy.side_effect = lambda **kwargs: kwargs["session"]
 

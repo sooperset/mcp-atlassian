@@ -90,6 +90,48 @@ async def test_tool_registration_issue_dates_name():
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "confluence_add_label",
+        "confluence_create_page",
+        "confluence_add_comment",
+        "confluence_reply_to_comment",
+        "jira_add_watcher",
+        "jira_create_issue",
+        "jira_batch_create_issues",
+        "jira_add_comment",
+        "jira_create_issue_link",
+        "jira_create_remote_issue_link",
+        "jira_create_sprint",
+        "jira_create_version",
+        "jira_batch_create_versions",
+    ],
+)
+async def test_additive_write_tools_are_non_destructive(tool_name: str) -> None:
+    """Ensure additive write tools advertise that they preserve existing state."""
+    tools = await main_mcp.get_tools()
+
+    assert tools[tool_name].annotations.destructiveHint is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "jira_remove_watcher",
+        "jira_add_issues_to_sprint",
+        "jira_add_worklog",
+    ],
+)
+async def test_state_changing_write_tools_are_destructive(tool_name: str) -> None:
+    """Ensure tools that remove or reassign state advertise destructive behavior."""
+    tools = await main_mcp.get_tools()
+
+    assert tools[tool_name].annotations.destructiveHint is True
+
+
+@pytest.mark.anyio
 async def test_health_check_endpoint():
     """Test the health check endpoint returns 200 and correct JSON response."""
     app = main_mcp.http_app(transport="sse")
@@ -247,12 +289,13 @@ class TestUserTokenMiddleware:
 
     @pytest.mark.anyio
     async def test_unsupported_auth_type_returns_401(
-        self, middleware, mock_scope, mock_receive, mock_send
+        self, middleware, mock_scope, mock_receive, mock_send, caplog
     ):
         """Test that unsupported auth types (e.g., Digest) return 401 Unauthorized."""
         mock_scope["headers"] = [(b"authorization", b"Digest username=test")]
 
-        await middleware(mock_scope, mock_receive, mock_send)
+        with caplog.at_level(logging.WARNING, logger="mcp-atlassian.server.main"):
+            await middleware(mock_scope, mock_receive, mock_send)
 
         # Verify 401 response was sent
         assert mock_send.call_count == 2
@@ -269,6 +312,31 @@ class TestUserTokenMiddleware:
 
         # Verify app was NOT called
         middleware.app.assert_not_called()
+        assert "Unsupported Authorization type: Digest" in caplog.text
+        assert "username=test" not in caplog.text
+
+    @pytest.mark.anyio
+    async def test_raw_auth_token_is_redacted_in_warning(
+        self, middleware, mock_scope, mock_receive, mock_send, caplog
+    ):
+        """Test that raw Authorization values are redacted from warning logs."""
+        raw_token = "raw-token-without-prefix"
+        mock_scope["headers"] = [(b"authorization", raw_token.encode())]
+
+        with caplog.at_level(logging.WARNING, logger="mcp-atlassian.server.main"):
+            await middleware(mock_scope, mock_receive, mock_send)
+
+        assert mock_send.call_count == 2
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+
+        body_call = mock_send.call_args_list[1][0][0]
+        body = json.loads(body_call["body"].decode())
+        assert "Bearer" in body["error"]
+
+        middleware.app.assert_not_called()
+        assert "Unsupported Authorization type: <redacted>" in caplog.text
+        assert raw_token not in caplog.text
 
     @pytest.mark.anyio
     async def test_whitespace_only_auth_returns_401(
@@ -290,6 +358,31 @@ class TestUserTokenMiddleware:
 
         # Verify app was NOT called
         middleware.app.assert_not_called()
+
+    @pytest.mark.security_regression
+    @pytest.mark.anyio
+    async def test_missing_authorization_header_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """An unauthenticated POST to the MCP endpoint must be rejected at the
+        transport boundary, not proxied to the app with the operator's credentials.
+
+        The dependencies-level global-fallback test is necessary but not sufficient,
+        because the request can still reach the app here. Secure contract: with no
+        Authorization header and ``ALLOW_GLOBAL_CRED_FALLBACK`` off, return 401 and do
+        not call ``self.app``.
+        """
+        # No Authorization header and no service headers -> unauthenticated request.
+        mock_scope["headers"] = []
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        # Secure: the request must be rejected before reaching the downstream app.
+        middleware.app.assert_not_called()
+        assert mock_send.call_count >= 1, "expected a 401 response, none was sent"
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["type"] == "http.response.start"
+        assert start_call["status"] == 401
 
     @pytest.mark.anyio
     async def test_client_disconnect_connection_reset(
@@ -590,3 +683,137 @@ class TestUserTokenMiddleware:
         middleware.app.assert_called_once()
         passed_scope = middleware.app.call_args[0][0]
         assert passed_scope["state"]["user_atlassian_token"] == "valid-token"
+
+
+class TestUserTokenMiddlewareSsrfValidation:
+    """Regression tests for the SSRF short-circuit in UserTokenMiddleware.
+
+    Covers the auth_validation_error path set by ``_process_authentication_headers``
+    when ``validate_url_for_ssrf`` flags an X-Atlassian-Jira-Url or
+    X-Atlassian-Confluence-Url header. Ensures that future refactors of the
+    middleware cannot silently re-open the SSRF vector by skipping the early
+    return or dropping the auth_validation_error assignment.
+    """
+
+    @pytest.fixture
+    def middleware(self):
+        mock_app = AsyncMock()
+        mock_mcp_server = MagicMock()
+        mock_mcp_server.settings.streamable_http_path = "/mcp"
+        mock_mcp_server.get_streamable_http_path.return_value = "/mcp"
+        return UserTokenMiddleware(mock_app, mcp_server_ref=mock_mcp_server)
+
+    @pytest.fixture
+    def mock_scope(self):
+        return {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [],
+            "state": {},
+        }
+
+    @pytest.fixture
+    def mock_receive(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def mock_send(self):
+        return AsyncMock()
+
+    @pytest.mark.parametrize(
+        "header_name,url_value",
+        [
+            (b"x-atlassian-jira-url", b"file:///etc/passwd"),
+            (b"x-atlassian-jira-url", b"http://127.0.0.1:8080/api"),
+            (b"x-atlassian-jira-url", b"http://169.254.169.254/latest/meta-data/"),
+            (b"x-atlassian-jira-url", b"http://10.0.0.5/"),
+            (b"x-atlassian-jira-url", b"ftp://example.com/"),
+            (b"x-atlassian-confluence-url", b"http://localhost:9090/"),
+            (b"x-atlassian-confluence-url", b"http://169.254.169.254/"),
+        ],
+    )
+    @pytest.mark.anyio
+    async def test_ssrf_exploit_header_short_circuits_with_401(
+        self,
+        middleware,
+        mock_scope,
+        mock_receive,
+        mock_send,
+        header_name,
+        url_value,
+    ):
+        """Exploit URL in Jira/Confluence header returns 401 and skips the app."""
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer test-token"),
+            (header_name, url_value),
+        ]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_not_called()
+        assert mock_send.await_count >= 2
+
+        start_call = mock_send.await_args_list[0][0][0]
+        assert start_call["type"] == "http.response.start"
+        assert start_call["status"] == 401
+
+        body_call = mock_send.await_args_list[1][0][0]
+        assert body_call["type"] == "http.response.body"
+        body_json = json.loads(body_call["body"].decode("utf-8"))
+        assert "error" in body_json
+        assert "Forbidden" in body_json["error"]
+
+    @pytest.mark.parametrize(
+        "jira_url,confluence_url",
+        [
+            (b"https://example.atlassian.net", None),
+            (None, b"https://example.atlassian.net/wiki"),
+            (b"https://jira.example.com", b"https://confluence.example.com"),
+        ],
+    )
+    @pytest.mark.anyio
+    async def test_benign_urls_pass_through(
+        self,
+        middleware,
+        mock_scope,
+        mock_receive,
+        mock_send,
+        jira_url,
+        confluence_url,
+        monkeypatch,
+    ):
+        """Legitimate Atlassian Cloud / self-hosted URLs must not be short-circuited.
+
+        The benign hosts are placed on the SSRF allowlist (MCP_ALLOWED_URL_DOMAINS)
+        so the assertion is deterministic and does not depend on live DNS
+        resolution in CI. The exploit cases above are blocked before any DNS
+        lookup (bad scheme / IP literal / blocked hostname), so they are
+        unaffected by the allowlist.
+        """
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "example.com,atlassian.net")
+        headers = [(b"authorization", b"Bearer test-token")]
+        if jira_url is not None:
+            headers.append((b"x-atlassian-jira-url", jira_url))
+        if confluence_url is not None:
+            headers.append((b"x-atlassian-confluence-url", confluence_url))
+        mock_scope["headers"] = headers
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"].get("auth_validation_error") in (None, "")
+
+    @pytest.mark.anyio
+    async def test_no_service_headers_does_not_trigger_ssrf_check(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """Requests without Jira/Confluence URL headers skip the validator."""
+        mock_scope["headers"] = [(b"authorization", b"Bearer test-token")]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"].get("auth_validation_error") in (None, "")

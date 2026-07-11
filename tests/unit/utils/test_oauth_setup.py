@@ -1,5 +1,6 @@
 """Tests for the OAuth setup utilities."""
 
+import io
 import json
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
@@ -7,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from mcp_atlassian.utils.oauth_setup import (
+    CallbackHandler,
     OAuthSetupArgs,
     parse_redirect_uri,
     run_oauth_flow,
@@ -43,6 +45,38 @@ class TestCallbackHandlerLogic:
         for key, expected_values in expected_params.items():
             assert key in params
             assert params[key] == expected_values
+
+
+class TestCallbackHandlerXssRegression:
+    """Regression (GHSA-g2r2) — reflected XSS in the OAuth callback page.
+
+    ``CallbackHandler._send_response`` used to interpolate the caller-supplied
+    ``message`` straight into the HTML body (``<p>{message}</p>``). For the error
+    branch that message is built from the attacker-controlled ``error`` query
+    parameter, so a crafted ``?error=<script>…`` rendered executable markup in the
+    victim's browser. This test asserts the secure outcome: the payload is
+    HTML-escaped in the rendered page.
+    """
+
+    @pytest.mark.security_regression
+    def test_send_response_escapes_html_in_message(self) -> None:
+        """A ``<script>`` payload in the callback message must not be reflected raw."""
+        handler = CallbackHandler.__new__(CallbackHandler)
+        # _send_response only touches these members — stub them so no real socket
+        # I/O happens and we can capture the rendered HTML body.
+        handler.wfile = io.BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+
+        payload = "<script>alert('xss-g2r2')</script>"
+        handler._send_response(f"Authorization failed: {payload}")
+
+        body = handler.wfile.getvalue().decode()
+        assert payload not in body, (
+            "attacker-controlled callback message must be HTML-escaped, "
+            "not reflected as raw executable markup"
+        )
 
 
 class TestRedirectUriParsing:

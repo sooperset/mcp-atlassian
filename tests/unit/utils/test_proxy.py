@@ -6,8 +6,10 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pypac import get_pac
 from pypac.parser import MalformedPacError
-from requests import Session
+from requests import PreparedRequest, Session
+from requests.adapters import HTTPAdapter
 from requests.exceptions import ProxyError
 
 from mcp_atlassian.confluence.client import ConfluenceClient
@@ -17,9 +19,11 @@ from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils.proxy import (
     DEFAULT_PROXY_WPAD_URL,
     _load_pac_file,
+    _NoProxyAwarePACSession,
     apply_proxy_configuration,
     get_proxy_settings_from_env,
 )
+from mcp_atlassian.utils.ssl import NoProxyAdapter, configure_proxy_bypass
 from tests.utils.base import BaseAuthTest
 from tests.utils.mocks import MockEnvironment
 
@@ -332,10 +336,7 @@ def test_get_proxy_settings_from_env_service_specific_disable_overrides_global()
         proxy_settings = get_proxy_settings_from_env("CONFLUENCE")
 
     assert proxy_settings["proxy_wpad_enable"] is False
-    assert (
-        proxy_settings["proxy_wpad_url"]
-        == "http://global-wpad.example.com/wpad.dat"
-    )
+    assert proxy_settings["proxy_wpad_url"] == "http://global-wpad.example.com/wpad.dat"
 
 
 def test_apply_proxy_configuration_returns_same_session_for_explicit_proxies(
@@ -379,6 +380,10 @@ def test_apply_proxy_configuration_wraps_session_for_wpad():
     source_session.headers["X-Test"] = "1"
     source_session.cookies.set("cookie", "value")
     source_session.trust_env = False
+    response_hook = MagicMock()
+    source_session.hooks["response"].append(response_hook)
+    custom_adapter = HTTPAdapter()
+    source_session.mount("https://", custom_adapter)
 
     config = JiraConfig(
         url="https://test.atlassian.net",
@@ -426,6 +431,45 @@ def test_apply_proxy_configuration_wraps_session_for_wpad():
     assert pac_session.headers["X-Test"] == "1"
     assert pac_session.cookies.get("cookie") == "value"
     assert pac_session.trust_env is False
+    assert pac_session.hooks["response"] == [response_hook]
+    assert pac_session.get_adapter("https://example.com") is custom_adapter
+
+
+@pytest.mark.parametrize(
+    ("url", "expected_proxies"),
+    [
+        (
+            "https://external.example.com/api",
+            {
+                "http": "http://proxy.example.com:8080",
+                "https": "http://proxy.example.com:8080",
+            },
+        ),
+        (
+            "https://internal.example.com/api",
+            {"http": None, "https": None},
+        ),
+    ],
+)
+def test_pac_session_routes_requests_and_preserves_no_proxy(
+    url: str, expected_proxies: dict[str, str | None]
+) -> None:
+    """Test PAC evaluation routes requests while NO_PROXY forces direct access."""
+    pac = get_pac(
+        js=(
+            "function FindProxyForURL(url, host) { "
+            'return "PROXY proxy.example.com:8080"; }'
+        )
+    )
+    session = _NoProxyAwarePACSession(
+        pac=pac,
+        no_proxy="internal.example.com",
+    )
+
+    with patch.object(Session, "request", return_value=MagicMock()) as mock_request:
+        session.get(url)
+
+    assert mock_request.call_args.kwargs["proxies"] == expected_proxies
 
 
 def test_apply_proxy_configuration_raises_for_malformed_pac():
@@ -481,5 +525,94 @@ def test_load_pac_file_is_cached():
         assert first is pac
         assert second is pac
         assert mock_get_pac.call_count == 1
+        mock_get_pac.assert_called_once_with(
+            url="http://wpad/wpad.dat",
+            session=mock_get_pac.call_args.kwargs["session"],
+            timeout=10,
+            allowed_content_types=[
+                "application/x-ns-proxy-autoconfig",
+                "application/x-javascript-config",
+                "application/x-javascript",
+                "text/plain",
+            ],
+        )
+        bootstrap_session = mock_get_pac.call_args.kwargs["session"]
+        assert bootstrap_session.verify is True
+        assert bootstrap_session.cert is None
+        assert bootstrap_session.trust_env is False
     finally:
         _load_pac_file.cache_clear()
+
+
+class TestNoProxyAdapter:
+    """Tests for NoProxyAdapter and configure_proxy_bypass."""
+
+    def _make_request(self, url: str) -> PreparedRequest:
+        req = PreparedRequest()
+        req.url = url
+        return req
+
+    def test_clears_proxies_when_url_matches_no_proxy(self, monkeypatch):
+        """Proxies are cleared when the request URL matches NO_PROXY."""
+        monkeypatch.setenv("NO_PROXY", "internal.example.com")
+        adapter = NoProxyAdapter()
+        proxies = {"https": "https://proxy:8443"}
+
+        with patch.object(adapter.__class__.__bases__[0], "send") as mock_send:
+            mock_send.return_value = MagicMock()
+            adapter.send(
+                self._make_request("https://internal.example.com/api"),
+                proxies=proxies,
+            )
+            _, kwargs = mock_send.call_args
+            assert kwargs["proxies"] is None
+
+    def test_preserves_proxies_when_url_does_not_match_no_proxy(self, monkeypatch):
+        """Proxies are kept when the request URL is not in NO_PROXY."""
+        monkeypatch.setenv("NO_PROXY", "other.example.com")
+        adapter = NoProxyAdapter()
+        proxies = {"https": "https://proxy:8443"}
+
+        with patch.object(adapter.__class__.__bases__[0], "send") as mock_send:
+            mock_send.return_value = MagicMock()
+            adapter.send(
+                self._make_request("https://external.example.com/api"),
+                proxies=proxies,
+            )
+            _, kwargs = mock_send.call_args
+            assert kwargs["proxies"] == proxies
+
+    def test_no_effect_when_no_proxy_not_set(self, monkeypatch):
+        """Proxies are untouched when NO_PROXY is not set."""
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        adapter = NoProxyAdapter()
+        proxies = {"https": "https://proxy:8443"}
+
+        with patch.object(adapter.__class__.__bases__[0], "send") as mock_send:
+            mock_send.return_value = MagicMock()
+            adapter.send(
+                self._make_request("https://internal.example.com/api"),
+                proxies=proxies,
+            )
+            _, kwargs = mock_send.call_args
+            assert kwargs["proxies"] == proxies
+
+    def test_configure_proxy_bypass_mounts_adapter_when_no_proxy_set(self, monkeypatch):
+        """configure_proxy_bypass mounts NoProxyAdapter when NO_PROXY is set."""
+        monkeypatch.setenv("NO_PROXY", "example.com")
+        session = Session()
+        configure_proxy_bypass("TestService", "https://example.com", session)
+        assert isinstance(session.get_adapter("https://example.com"), NoProxyAdapter)
+        assert isinstance(session.get_adapter("http://example.com"), NoProxyAdapter)
+
+    def test_configure_proxy_bypass_does_nothing_when_no_proxy_not_set(
+        self, monkeypatch
+    ):
+        """configure_proxy_bypass does not mount an adapter when NO_PROXY is absent."""
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        session = Session()
+        default_https_adapter = session.get_adapter("https://example.com")
+        configure_proxy_bypass("TestService", "https://example.com", session)
+        assert session.get_adapter("https://example.com") is default_https_adapter

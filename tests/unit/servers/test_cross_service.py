@@ -354,7 +354,10 @@ class TestSharedSSLProxyConfiguration:
                 confluence_config = ConfluenceConfig.from_env()
 
                 assert jira_config.proxy_wpad_enable is False
-                assert jira_config.proxy_wpad_url == "http://global-wpad.example.com/wpad.dat"
+                assert (
+                    jira_config.proxy_wpad_url
+                    == "http://global-wpad.example.com/wpad.dat"
+                )
                 assert confluence_config.proxy_wpad_enable is True
                 assert (
                     confluence_config.proxy_wpad_url

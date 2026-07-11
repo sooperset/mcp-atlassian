@@ -75,6 +75,10 @@ class TestJiraClientOAuth:
 
             # Verify SSL verification was configured
             mock_configure_ssl.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/jira/{oauth_config.cloud_id}"
+            )
 
     def test_init_with_oauth_missing_cloud_id(self):
         """Test initializing the client with OAuth but missing cloud_id."""
@@ -199,6 +203,10 @@ class TestJiraClientOAuth:
 
             # Verify SSL verification was configured
             mock_configure_ssl.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/jira/{byo_oauth_config.cloud_id}"
+            )
 
     def test_init_with_byo_oauth_missing_cloud_id(self):
         """Test initializing with BYO OAuth but missing cloud_id."""
@@ -341,6 +349,10 @@ class TestJiraClientOAuth:
 
             # Verify OAuth session was configured
             mock_configure_oauth.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/jira/{mock_oauth_config.cloud_id}"
+            )
 
     def test_from_env_with_byo_token_oauth(self):
         """Test JiraClient.from_env() when BYO token OAuth config is found."""
@@ -390,6 +402,10 @@ class TestJiraClientOAuth:
                 == f"https://api.atlassian.com/ex/jira/{mock_byo_oauth_config.cloud_id}"
             )
             mock_configure_ssl.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/jira/{mock_byo_oauth_config.cloud_id}"
+            )
 
     def test_from_env_with_no_oauth_config_found(self):
         """Test JiraClient.from_env() when no OAuth config is found."""
@@ -439,7 +455,9 @@ class TestJiraClientOAuth:
                 "mcp_atlassian.jira.client.configure_oauth_session",
                 return_value=True,
             ),
-            patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+            patch(
+                "mcp_atlassian.jira.client.configure_ssl_verification"
+            ) as mock_configure_ssl,
         ):
             client = JiraClient(config=config)
 
@@ -448,6 +466,11 @@ class TestJiraClientOAuth:
             assert jira_kwargs["url"] == "https://jira.corp.example.com"
             assert jira_kwargs["cloud"] is False
             assert "session" in jira_kwargs
+            mock_configure_ssl.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == "https://jira.corp.example.com"
+            )
 
     def test_cloud_oauth_uses_api_url_for_proxy_target(self):
         """Test PAC/WPAD resolution uses Atlassian's Cloud API host for OAuth."""
