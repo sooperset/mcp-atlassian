@@ -1481,7 +1481,7 @@ class TestAttachmentsMixin:
 
 
 class TestDownloadAttachmentServerTool:
-    """Tests for the server-level download_attachment tool (EmbeddedResource return)."""
+    """Tests for the server-level download_attachment tool."""
 
     @pytest.mark.asyncio
     async def test_returns_embedded_resource_on_success(self):
@@ -1515,6 +1515,42 @@ class TestDownloadAttachmentServerTool:
         assert isinstance(result, EmbeddedResource)
         assert result.resource.mimeType == "application/pdf"
         assert result.resource.blob
+
+    @pytest.mark.asyncio
+    async def test_returns_text_content_for_text_attachment(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter = MagicMock()
+        mock_fetcher._v2_adapter.get_attachment_by_id.return_value = {
+            "title": "process.bpmn",
+            "_links": {"download": "/download/process.bpmn"},
+            "extensions": {
+                "mediaType": "application/octet-stream",
+                "fileSize": 11,
+            },
+        }
+        mock_fetcher.fetch_attachment_content.return_value = b"<process />"
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment.fn(
+                ctx=MagicMock(), attachment_id="att123456"
+            )
+
+        assert isinstance(result, TextContent)
+        payload = json.loads(result.text)
+        assert payload == {
+            "success": True,
+            "attachment_id": "att123456",
+            "filename": "process.bpmn",
+            "mimeType": "application/octet-stream",
+            "content": "<process />",
+        }
 
     @pytest.mark.asyncio
     async def test_returns_text_on_missing_download_url(self):

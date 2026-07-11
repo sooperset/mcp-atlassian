@@ -80,6 +80,8 @@ def test_is_image_attachment(
         ("application/octet-stream", "arch.drawio", True),
         ("application/json", "data.json", True),
         ("application/xml", "feed.xml", True),
+        ("Application/JSON; charset=UTF-8", "data.bin", True),
+        ("application/bpmn+xml", "process.bin", True),
         ("text/plain", "notes.txt", True),
         ("application/octet-stream", "photo.png", False),
         ("application/octet-stream", "report.pdf", False),
@@ -92,6 +94,8 @@ def test_is_image_attachment(
         "octet-stream-drawio",
         "json",
         "xml",
+        "mime-normalization",
+        "structured-xml-suffix",
         "text-plain",
         "octet-stream-png-ext",
         "octet-stream-pdf",
@@ -102,7 +106,7 @@ def test_is_image_attachment(
 def test_is_text_attachment(
     media_type: str | None,
     filename: str | None,
-    expected: bool,
+    expected: bool,  # noqa: FBT001
 ) -> None:
     """Parametrized test for text-based attachment detection."""
     assert is_text_attachment(media_type, filename) is expected

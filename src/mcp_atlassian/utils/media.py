@@ -78,13 +78,19 @@ def is_text_attachment(media_type: str | None, filename: str | None) -> bool:
     Returns:
         ``True`` if the attachment is text-based, ``False`` otherwise.
     """
+    normalized_media_type = ""
     if media_type:
-        if media_type.startswith("text/"):
+        normalized_media_type = media_type.partition(";")[0].strip().lower()
+        if normalized_media_type.startswith("text/"):
             return True
-        if media_type in _TEXT_MIME_TYPES:
+        if normalized_media_type in _TEXT_MIME_TYPES:
+            return True
+        if normalized_media_type.endswith(("+json", "+xml")):
             return True
 
-    if (not media_type or media_type in _AMBIGUOUS_MIME_TYPES) and filename:
+    if (
+        not normalized_media_type or normalized_media_type in _AMBIGUOUS_MIME_TYPES
+    ) and filename:
         ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         if ext in _TEXT_EXTENSIONS:
             return True
