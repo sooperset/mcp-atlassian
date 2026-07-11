@@ -15,11 +15,13 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: TruffleHog secret scan
-        uses: trufflesecurity/trufflehog@v3.63.7
+        uses: trufflesecurity/trufflehog@27b0417c16317ca9a472a9a8092acce143b49c55 # v3.95.9
         with:
-          extra_args: --only-verified --exclude-paths=/tmp/.trufflehog-exclude.txt
+          version: 3.95.9
+          extra_args: --results=verified,unknown
