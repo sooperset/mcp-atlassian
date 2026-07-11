@@ -146,27 +146,56 @@ class TestUsersMixin:
         # Verify self.jira.myself was called
         users_mixin.jira.myself.assert_called_once()
 
-    def test_get_account_id_already_account_id(self, users_mixin):
-        """Test that _get_account_id returns the input if it looks like an account ID."""
-        # Call the method with a string that looks like an account ID
-        account_id = users_mixin._get_account_id("5abcdef1234567890")
+    @pytest.mark.parametrize(
+        "account_id",
+        [
+            "5b10ac8d82e05b22cc7d4ef5",
+            "606b8fb83a516300764cb19d",
+            "aabbccdd11223344aabbccdd",
+            "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d",
+        ],
+    )
+    def test_get_account_id_already_account_id(self, users_mixin, account_id):
+        """Return recognized Cloud account ID formats without a user lookup."""
+        with (
+            patch.object(users_mixin, "_lookup_user_directly") as mock_direct,
+            patch.object(
+                users_mixin, "_lookup_user_by_permissions"
+            ) as mock_permissions,
+        ):
+            result = users_mixin._get_account_id(account_id)
 
-        # Verify result
-        assert account_id == "5abcdef1234567890"
-        # Verify no lookups were performed
-        users_mixin.jira.user_find_by_user_string.assert_not_called()
+        assert result == account_id
+        mock_direct.assert_not_called()
+        mock_permissions.assert_not_called()
 
-    def test_get_account_id_modern_cloud_format(self, users_mixin):
-        """Test that _get_account_id returns modern Cloud account IDs unchanged."""
-        # Call the method with a modern Atlassian Cloud account ID
-        account_id = users_mixin._get_account_id(
-            "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
-        )
+    @pytest.mark.parametrize(
+        "identifier",
+        [
+            "5abcdef1234567890",
+            "712020:",
+            "john@example.com",
+            "John Smith",
+            "jsmith",
+        ],
+    )
+    def test_get_account_id_non_account_identifier_uses_lookup(
+        self, users_mixin, identifier
+    ):
+        """Resolve identifiers that do not match a known account ID format."""
+        with (
+            patch.object(
+                users_mixin, "_lookup_user_directly", return_value="resolved-id"
+            ) as mock_direct,
+            patch.object(
+                users_mixin, "_lookup_user_by_permissions"
+            ) as mock_permissions,
+        ):
+            result = users_mixin._get_account_id(identifier)
 
-        # Verify result
-        assert account_id == "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
-        # Verify no lookups were performed
-        users_mixin.jira.user_find_by_user_string.assert_not_called()
+        assert result == "resolved-id"
+        mock_direct.assert_called_once_with(identifier)
+        mock_permissions.assert_not_called()
 
     def test_get_account_id_strips_accountid_prefix(self, users_mixin):
         """Test that _get_account_id strips the accountid: prefix."""

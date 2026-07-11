@@ -88,7 +88,7 @@ class TimestampMixin:
                     ts = ts[: tz_pos + 3] + ":" + ts[tz_pos + 3 :]
 
             dt = datetime.fromisoformat(ts)
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
+            return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
         except (ValueError, TypeError):
             return timestamp or EMPTY_STRING
 

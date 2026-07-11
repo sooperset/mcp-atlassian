@@ -64,6 +64,31 @@ class TestJiraCloudBehavior:
         )
 
 
+class TestJiraCloudProjectAnalysis:
+    """Project analysis through Jira Cloud search pagination."""
+
+    def test_project_analysis(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        hierarchy = jira_fetcher.get_project_epic_hierarchy(
+            cloud_instance.project_key,
+            max_epics=10,
+        )
+        dependencies = jira_fetcher.get_cross_project_dependencies(
+            cloud_instance.project_key,
+            max_issues=10,
+        )
+
+        assert hierarchy["project_key"] == cloud_instance.project_key
+        assert hierarchy["total_epics"] <= 10
+        assert isinstance(hierarchy["groups"], list)
+        assert dependencies["project_key"] == cloud_instance.project_key
+        assert dependencies["total_issues_scanned"] <= 10
+        assert isinstance(dependencies["by_project"], dict)
+
+
 class TestJiraCloudEpicOperations:
     """Epic creation on Cloud."""
 
@@ -290,7 +315,11 @@ class TestJiraCloudTransitions:
         if target_id is None:
             target_id = transitions[0]["id"]
 
-        jira_fetcher.transition_issue(issue.key, target_id)
+        jira_fetcher.transition_issue(
+            issue.key,
+            target_id,
+            comment=f"Cloud transition comment {uid}",
+        )
 
         updated = jira_fetcher.get_issue(issue.key)
         assert updated.status is not None

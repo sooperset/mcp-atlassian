@@ -90,6 +90,48 @@ async def test_tool_registration_issue_dates_name():
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "confluence_add_label",
+        "confluence_create_page",
+        "confluence_add_comment",
+        "confluence_reply_to_comment",
+        "jira_add_watcher",
+        "jira_create_issue",
+        "jira_batch_create_issues",
+        "jira_add_comment",
+        "jira_create_issue_link",
+        "jira_create_remote_issue_link",
+        "jira_create_sprint",
+        "jira_create_version",
+        "jira_batch_create_versions",
+    ],
+)
+async def test_additive_write_tools_are_non_destructive(tool_name: str) -> None:
+    """Ensure additive write tools advertise that they preserve existing state."""
+    tools = await main_mcp.get_tools()
+
+    assert tools[tool_name].annotations.destructiveHint is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "jira_remove_watcher",
+        "jira_add_issues_to_sprint",
+        "jira_add_worklog",
+    ],
+)
+async def test_state_changing_write_tools_are_destructive(tool_name: str) -> None:
+    """Ensure tools that remove or reassign state advertise destructive behavior."""
+    tools = await main_mcp.get_tools()
+
+    assert tools[tool_name].annotations.destructiveHint is True
+
+
+@pytest.mark.anyio
 async def test_health_check_endpoint():
     """Test the health check endpoint returns 200 and correct JSON response."""
     app = main_mcp.http_app(transport="sse")
@@ -316,6 +358,31 @@ class TestUserTokenMiddleware:
 
         # Verify app was NOT called
         middleware.app.assert_not_called()
+
+    @pytest.mark.security_regression
+    @pytest.mark.anyio
+    async def test_missing_authorization_header_returns_401(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        """An unauthenticated POST to the MCP endpoint must be rejected at the
+        transport boundary, not proxied to the app with the operator's credentials.
+
+        The dependencies-level global-fallback test is necessary but not sufficient,
+        because the request can still reach the app here. Secure contract: with no
+        Authorization header and ``ALLOW_GLOBAL_CRED_FALLBACK`` off, return 401 and do
+        not call ``self.app``.
+        """
+        # No Authorization header and no service headers -> unauthenticated request.
+        mock_scope["headers"] = []
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        # Secure: the request must be rejected before reaching the downstream app.
+        middleware.app.assert_not_called()
+        assert mock_send.call_count >= 1, "expected a 401 response, none was sent"
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["type"] == "http.response.start"
+        assert start_call["status"] == 401
 
     @pytest.mark.anyio
     async def test_client_disconnect_connection_reset(

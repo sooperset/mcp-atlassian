@@ -14,6 +14,7 @@ from fastmcp import Client
 from fastmcp.client import FastMCPTransport
 from mcp.types import CallToolResult, TextContent
 
+from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.servers import main_mcp
 
@@ -74,6 +75,33 @@ class TestMCPJiraTools:
         assert data["key"] == cloud_instance.test_issue_key
 
     @pytest.mark.anyio
+    async def test_jira_get_issue_use_display_names(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        result = await call_tool(
+            mcp_client,
+            "jira_get_issue",
+            {
+                "issue_key": cloud_instance.test_issue_key,
+                "fields": "*all",
+                "use_display_names": True,
+            },
+        )
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert data["key"] == cloud_instance.test_issue_key
+        custom_fields = {
+            key: value
+            for key, value in data.items()
+            if isinstance(value, dict) and "field_id" in value
+        }
+        assert custom_fields
+        assert any(key != value["field_id"] for key, value in custom_fields.items())
+
+    @pytest.mark.anyio
     async def test_jira_search(
         self,
         mcp_client: Client,
@@ -92,6 +120,36 @@ class TestMCPJiraTools:
         data = json.loads(result.content[0].text)
         assert "issues" in data
         assert len(data["issues"]) > 0
+
+    @pytest.mark.anyio
+    async def test_jira_search_use_display_names(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        result = await call_tool(
+            mcp_client,
+            "jira_search",
+            {
+                "jql": f"project={cloud_instance.project_key}",
+                "fields": "*all",
+                "limit": 1,
+                "use_display_names": True,
+            },
+        )
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert len(data["issues"]) == 1
+        issue = data["issues"][0]
+        assert issue["key"].startswith(f"{cloud_instance.project_key}-")
+        custom_fields = {
+            key: value
+            for key, value in issue.items()
+            if isinstance(value, dict) and "field_id" in value
+        }
+        assert custom_fields
+        assert any(key != value["field_id"] for key, value in custom_fields.items())
 
     @pytest.mark.anyio
     async def test_jira_create_and_delete_issue(
@@ -183,6 +241,34 @@ class TestMCPConfluenceTools:
         )
         assert not result.is_error
         assert result.content and isinstance(result.content[0], TextContent)
+
+    @pytest.mark.anyio
+    async def test_confluence_get_page_with_tiny_link(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+        confluence_fetcher: ConfluenceFetcher,
+    ) -> None:
+        raw_page = confluence_fetcher.confluence.get_page_by_id(
+            cloud_instance.test_page_id
+        )
+        assert isinstance(raw_page, dict)
+        links = raw_page["_links"]
+        tiny_url = (
+            f"{links.get('base', cloud_instance.confluence_url).rstrip('/')}"
+            f"/{links['tinyui'].lstrip('/')}"
+        )
+
+        result = await call_tool(
+            mcp_client,
+            "confluence_get_page",
+            {"page_id": tiny_url},
+        )
+
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert str(data["metadata"]["id"]) == cloud_instance.test_page_id
 
     @pytest.mark.anyio
     async def test_confluence_search(
@@ -277,12 +363,12 @@ class TestMCPConfluenceTools:
         self,
         mcp_client: Client,
         cloud_instance: CloudInstanceInfo,
-        tmp_path: Path,
+        workspace_tmp_path: Path,
     ) -> None:
         uid = uuid.uuid4().hex[:8]
         page_id = None
-        create_file = tmp_path / "cloud-create.md"
-        update_file = tmp_path / "cloud-update.md"
+        create_file = workspace_tmp_path / "cloud-create.md"
+        update_file = workspace_tmp_path / "cloud-update.md"
         create_file.write_text("# Created from file\n\nCloud body.", encoding="utf-8")
         update_file.write_text("# Updated from file\n\nCloud body.", encoding="utf-8")
 

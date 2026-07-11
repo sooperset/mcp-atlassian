@@ -462,7 +462,7 @@ def test_get_project_issue_types(
     result = projects_mixin.get_project_issue_types("PROJ1")
     assert result == mock_issue_types
     projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once_with(
-        project="PROJ1"
+        project="PROJ1", start=0, limit=50
     )
 
 
@@ -481,7 +481,7 @@ def test_get_project_issue_types_issue_types_format(
     result = projects_mixin.get_project_issue_types("PROJ1")
     assert result == mock_issue_types
     projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once_with(
-        project="PROJ1"
+        project="PROJ1", start=0, limit=50
     )
 
 
@@ -527,6 +527,123 @@ def test_get_project_issue_types_exception(projects_mixin: ProjectsMixin):
     result = projects_mixin.get_project_issue_types("PROJ1")
     assert result == []
     projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once()
+
+
+def test_get_project_issue_types_paginates(projects_mixin: ProjectsMixin):
+    """Test get_project_issue_types collects every response page."""
+    projects_mixin.jira.issue_createmeta_issuetypes.side_effect = [
+        {
+            "startAt": 0,
+            "total": 3,
+            "values": [
+                {"id": "10000", "name": "Bug"},
+                {"id": "10001", "name": "Task"},
+            ],
+        },
+        {
+            "startAt": 2,
+            "total": 3,
+            "values": [{"id": "10002", "name": "Story"}],
+        },
+    ]
+
+    result = projects_mixin.get_project_issue_types("PROJ1")
+
+    assert [item["id"] for item in result] == ["10000", "10001", "10002"]
+    projects_mixin.jira.issue_createmeta_issuetypes.assert_has_calls(
+        [
+            call(project="PROJ1", start=0, limit=50),
+            call(project="PROJ1", start=2, limit=50),
+        ]
+    )
+
+
+def test_get_create_fields_paginates(projects_mixin: ProjectsMixin):
+    """Test get_create_fields preserves metadata from every response page."""
+    projects_mixin.jira.issue_createmeta_fieldtypes.side_effect = [
+        {
+            "startAt": 0,
+            "total": 2,
+            "values": [
+                {
+                    "fieldId": "summary",
+                    "name": "Summary",
+                    "required": True,
+                    "schema": {"type": "string"},
+                }
+            ],
+        },
+        {
+            "startAt": 1,
+            "total": 2,
+            "values": [
+                {
+                    "fieldId": "customfield_10010",
+                    "name": "Severity",
+                    "required": False,
+                    "allowedValues": [{"id": "1", "value": "High"}],
+                    "schema": {"type": "option"},
+                }
+            ],
+        },
+    ]
+
+    result = projects_mixin.get_create_fields("PROJ1", "10000")
+
+    assert [field["fieldId"] for field in result] == [
+        "summary",
+        "customfield_10010",
+    ]
+    assert result[1]["allowedValues"] == [{"id": "1", "value": "High"}]
+    projects_mixin.jira.issue_createmeta_fieldtypes.assert_has_calls(
+        [
+            call(
+                project="PROJ1",
+                issue_type_id="10000",
+                start=0,
+                limit=50,
+            ),
+            call(
+                project="PROJ1",
+                issue_type_id="10000",
+                start=1,
+                limit=50,
+            ),
+        ]
+    )
+
+
+def test_get_create_fields_supports_legacy_mapping(projects_mixin: ProjectsMixin):
+    """Test get_create_fields converts legacy field mappings to a list."""
+    projects_mixin.jira.issue_createmeta_fieldtypes.return_value = {
+        "fields": {
+            "summary": {
+                "name": "Summary",
+                "required": True,
+                "schema": {"type": "string"},
+            }
+        }
+    }
+
+    result = projects_mixin.get_create_fields("PROJ1", "10000")
+
+    assert result == [
+        {
+            "fieldId": "summary",
+            "name": "Summary",
+            "required": True,
+            "schema": {"type": "string"},
+        }
+    ]
+
+
+def test_get_create_fields_exception(projects_mixin: ProjectsMixin):
+    """Test get_create_fields returns an empty list on API errors."""
+    projects_mixin.jira.issue_createmeta_fieldtypes.side_effect = Exception("API error")
+
+    result = projects_mixin.get_create_fields("PROJ1", "10000")
+
+    assert result == []
 
 
 def test_get_project_fields_merges_issue_type_fields(projects_mixin: ProjectsMixin):
