@@ -62,6 +62,12 @@ spec:
         - {{ .Values.config.enabledTools | quote }}
         {{- end }}
         env:
+        {{- if eq .Values.authMode "external" }}
+        - name: ATLASSIAN_EXTERNAL_AUTH_ENABLE
+          value: "true"
+        - name: IGNORE_HEADER_AUTH
+          value: "true"
+        {{- end }}
         # Confluence Configuration
         {{- if .Values.confluence.enabled }}
         - name: CONFLUENCE_URL
@@ -104,6 +110,13 @@ spec:
             secretKeyRef:
               name: {{ include "mcp-atlassian.fullname" . }}
               key: confluence-custom-headers
+        {{- end }}
+        {{- if .Values.confluence.passthroughHeaders }}
+        - name: CONFLUENCE_PASSTHROUGH_HEADERS
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-passthrough-headers
         {{- end }}
         {{- end }}
 
@@ -149,6 +162,13 @@ spec:
             secretKeyRef:
               name: {{ include "mcp-atlassian.fullname" . }}
               key: jira-custom-headers
+        {{- end }}
+        {{- if .Values.jira.passthroughHeaders }}
+        - name: JIRA_PASSTHROUGH_HEADERS
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: jira-passthrough-headers
         {{- end }}
         {{- end }}
 

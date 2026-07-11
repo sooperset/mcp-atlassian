@@ -97,6 +97,22 @@ class ConfluenceClient:
                 verify_ssl=self.config.ssl_verify,
                 timeout=self.config.timeout,
             )
+        elif self.config.auth_type == "external":
+            logger.debug(
+                f"Initializing Confluence client in external auth passthrough mode. "
+                f"URL: {self.config.url}"
+            )
+            session = Session()
+            session.trust_env = False
+            self.confluence = Confluence(
+                url=self.config.url,
+                session=session,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
+            # Ensure no Authorization header is carried over from defaults
+            self.confluence._session.headers.pop("Authorization", None)
         else:  # basic auth
             logger.debug(
                 f"Initializing Confluence client with Basic auth. "
@@ -186,7 +202,7 @@ class ConfluenceClient:
         self.preprocessor = ConfluencePreprocessor(base_url=self.config.url)
 
         # Test authentication during initialization (in debug mode only)
-        if logger.isEnabledFor(logging.DEBUG):
+        if logger.isEnabledFor(logging.DEBUG) and self.config.auth_type != "external":
             try:
                 self._validate_authentication()
             except MCPAtlassianAuthenticationError:

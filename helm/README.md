@@ -56,13 +56,33 @@ See the `values.yaml` file for all configuration options.
 
 ### Key Configuration Options
 
-- **authMode**: `api-token`, `personal-token`, `oauth`, or `byot`
+- **authMode**: `api-token`, `personal-token`, `oauth`, `byot`, or `external`
 - **transport**: `stdio`, `sse`, or `streamable-http`
 - **confluence/jira.enabled**: Enable/disable Confluence or Jira integration
 - **config.readOnlyMode**: Disable all write operations
 - **persistence.enabled**: Enable OAuth token persistence
 - **oauthProxy.enabled**: Expose MCP OAuth discovery + DCR routes (opt-in)
 - **oauthClientStorage.mode**: `default` (FastMCP storage) or `factory` (custom)
+
+### External proxy authentication
+
+Use `authMode: external` only behind a trusted gateway that authenticates every
+MCP request and overwrites the configured passthrough headers. The chart enables
+`ATLASSIAN_EXTERNAL_AUTH_ENABLE` and `IGNORE_HEADER_AUTH` for this mode.
+
+```yaml
+authMode: external
+transport: streamable-http
+jira:
+  url: "https://your-company.atlassian.net"
+  passthroughHeaders: "Cookie"
+confluence:
+  url: "https://your-company.atlassian.net/wiki"
+  passthroughHeaders: "Cookie"
+```
+
+For dynamic service URLs, add `MCP_ALLOWED_URL_DOMAINS` through `extraEnv`. The
+server rejects dynamic external-auth destinations without this allowlist.
 
 ### OAuth Proxy + DCR (opt-in)
 
