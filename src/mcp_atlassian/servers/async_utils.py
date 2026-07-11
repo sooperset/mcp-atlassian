@@ -8,6 +8,7 @@ from functools import partial
 from typing import ParamSpec, TypeVar
 
 import anyio
+from anyio.lowlevel import RunVar
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -15,8 +16,10 @@ T = TypeVar("T")
 JIRA_FETCHER_MAX_WORKERS_ENV = "JIRA_FETCHER_MAX_WORKERS"
 DEFAULT_JIRA_FETCHER_MAX_WORKERS = 8
 
-_jira_fetcher_limiter: anyio.CapacityLimiter | None = None
-_jira_fetcher_limiter_size: int | None = None
+_jira_fetcher_limiter: RunVar[tuple[int, anyio.CapacityLimiter] | None] = RunVar(
+    "jira_fetcher_limiter",
+    default=None,
+)
 
 
 def get_jira_fetcher_max_workers() -> int:
@@ -36,17 +39,13 @@ def get_jira_fetcher_max_workers() -> int:
 
 
 def _get_jira_fetcher_limiter() -> anyio.CapacityLimiter:
-    """Return a process-wide limiter for Jira fetcher worker threads."""
-    global _jira_fetcher_limiter, _jira_fetcher_limiter_size
-
+    """Return an event-loop-local limiter for Jira fetcher worker threads."""
     worker_count = get_jira_fetcher_max_workers()
-    if (
-        _jira_fetcher_limiter is None
-        or _jira_fetcher_limiter_size != worker_count
-    ):
-        _jira_fetcher_limiter = anyio.CapacityLimiter(worker_count)
-        _jira_fetcher_limiter_size = worker_count
-    return _jira_fetcher_limiter
+    limiter_state = _jira_fetcher_limiter.get()
+    if limiter_state is None or limiter_state[0] != worker_count:
+        limiter_state = (worker_count, anyio.CapacityLimiter(worker_count))
+        _jira_fetcher_limiter.set(limiter_state)
+    return limiter_state[1]
 
 
 async def run_jira_fetcher_call(

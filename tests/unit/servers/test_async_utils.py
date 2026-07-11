@@ -126,3 +126,16 @@ def test_run_jira_fetcher_call_works_from_foreign_thread(
     with ThreadPoolExecutor(max_workers=1) as executor:
         future: Future[int] = executor.submit(run_from_worker)
         assert future.result(timeout=5) == 42
+
+
+def test_run_jira_fetcher_call_works_across_anyio_backends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Limiter state is isolated between asyncio and Trio event loops."""
+    monkeypatch.setenv(JIRA_FETCHER_MAX_WORKERS_ENV, "2")
+
+    async def call(value: str) -> str:
+        return await run_jira_fetcher_call(lambda: value)
+
+    assert anyio.run(call, "asyncio") == "asyncio"
+    assert anyio.run(call, "trio", backend="trio") == "trio"
