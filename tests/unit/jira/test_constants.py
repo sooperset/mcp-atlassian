@@ -13,7 +13,7 @@ class TestDefaultReadJiraFields:
         """Test that DEFAULT_READ_JIRA_FIELDS is a set of strings."""
         assert isinstance(DEFAULT_READ_JIRA_FIELDS, set)
         assert all(isinstance(field, str) for field in DEFAULT_READ_JIRA_FIELDS)
-        assert len(DEFAULT_READ_JIRA_FIELDS) == 10
+        assert len(DEFAULT_READ_JIRA_FIELDS) == 11
 
     def test_contains_expected_jira_fields(self):
         """Test that DEFAULT_READ_JIRA_FIELDS contains the correct Jira fields."""
@@ -24,6 +24,7 @@ class TestDefaultReadJiraFields:
             "assignee",
             "reporter",
             "labels",
+            "versions",
             "priority",
             "created",
             "updated",

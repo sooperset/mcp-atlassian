@@ -1,16 +1,24 @@
 """Module for Confluence content property operations."""
 
-import logging
 from typing import Any
+from urllib.parse import quote
 
+from ..utils.decorators import handle_auth_errors
 from .client import ConfluenceClient
-
-logger = logging.getLogger("mcp-atlassian")
 
 
 class PropertiesMixin(ConfluenceClient):
     """Mixin for Confluence content property operations."""
 
+    def _content_property_url(self, page_id: str, key: str | None = None) -> str:
+        """Build a v1 content-property URL for all supported auth modes."""
+        encoded_page_id = quote(page_id, safe="")
+        url = f"{self._v1_rest_base_url()}/rest/api/content/{encoded_page_id}/property"
+        if key is not None:
+            url = f"{url}/{quote(key, safe='')}"
+        return url
+
+    @handle_auth_errors("Confluence API")
     def get_content_properties(
         self, page_id: str, key: str | None = None
     ) -> dict[str, Any]:
@@ -25,30 +33,36 @@ class PropertiesMixin(ConfluenceClient):
             Dict mapping property key(s) to their values.
 
         Raises:
-            Exception: If the API request fails.
+            HTTPError: If the API request fails.
+            ValueError: If Confluence returns an unexpected response shape.
         """
-        try:
-            base_url = self.confluence.url.rstrip("/")
-            if key:
-                url = f"{base_url}/rest/api/content/{page_id}/property/{key}"
-                response = self.confluence._session.get(url)
-                response.raise_for_status()
-                data: dict[str, Any] = response.json()
-                return {data["key"]: data["value"]}
-            else:
-                url = f"{base_url}/rest/api/content/{page_id}/property"
-                response = self.confluence._session.get(
-                    url, params={"expand": "version"}
-                )
-                response.raise_for_status()
-                data = response.json()
-                return {item["key"]: item["value"] for item in data.get("results", [])}
-        except Exception as e:
-            logger.error(f"Failed to get content properties for page {page_id}: {e}")
-            raise Exception(
-                f"Failed to get content properties for page {page_id}: {e}"
-            ) from e
+        if key is not None:
+            data = self.confluence.get(
+                self._content_property_url(page_id, key),
+                absolute=True,
+            )
+            if not isinstance(data, dict) or "key" not in data or "value" not in data:
+                raise ValueError("Confluence returned an invalid content property")
+            return {str(data["key"]): data["value"]}
 
+        data = self.confluence.get(
+            self._content_property_url(page_id),
+            params={"expand": "version", "limit": 200},
+            absolute=True,
+        )
+        if not isinstance(data, dict):
+            raise ValueError("Confluence returned an invalid content property list")
+
+        results = data.get("results", [])
+        if not isinstance(results, list):
+            raise ValueError("Confluence returned an invalid content property list")
+        return {
+            str(item["key"]): item["value"]
+            for item in results
+            if isinstance(item, dict) and "key" in item and "value" in item
+        }
+
+    @handle_auth_errors("Confluence API")
     def set_content_property(
         self, page_id: str, key: str, value: Any
     ) -> dict[str, Any]:
@@ -70,39 +84,39 @@ class PropertiesMixin(ConfluenceClient):
             Dict with ``{key: value}`` of the created or updated property.
 
         Raises:
-            Exception: If the API request fails.
+            HTTPError: If the API request fails.
+            ValueError: If Confluence returns an unexpected response shape.
         """
-        try:
-            base_url = self.confluence.url.rstrip("/")
-            get_url = f"{base_url}/rest/api/content/{page_id}/property/{key}"
-            get_response = self.confluence._session.get(get_url)
+        property_url = self._content_property_url(page_id, key)
+        current_response = self.confluence.get(
+            property_url,
+            absolute=True,
+            advanced_mode=True,
+        )
+        body: dict[str, Any] = {"key": key, "value": value}
 
-            if get_response.status_code == 404:
-                # Property does not exist — create it
-                post_url = f"{base_url}/rest/api/content/{page_id}/property"
-                body: dict[str, Any] = {"key": key, "value": value}
-                result_response = self.confluence._session.post(post_url, json=body)
-                result_response.raise_for_status()
-            else:
-                get_response.raise_for_status()
-                current: dict[str, Any] = get_response.json()
-                version_number = current.get("version", {}).get("number", 0) + 1
-                body = {
-                    "key": key,
-                    "value": value,
-                    "version": {"number": version_number},
-                }
-                put_url = f"{base_url}/rest/api/content/{page_id}/property/{key}"
-                result_response = self.confluence._session.put(put_url, json=body)
-                result_response.raise_for_status()
-
-            result: dict[str, Any] = result_response.json()
-            return {result["key"]: result["value"]}
-
-        except Exception as e:
-            logger.error(
-                f"Failed to set content property '{key}' on page {page_id}: {e}"
+        if current_response.status_code == 404:
+            result = self.confluence.post(
+                self._content_property_url(page_id),
+                data=body,
+                absolute=True,
             )
-            raise Exception(
-                f"Failed to set content property '{key}' on page {page_id}: {e}"
-            ) from e
+        else:
+            current_response.raise_for_status()
+            current = current_response.json()
+            if not isinstance(current, dict):
+                raise ValueError("Confluence returned an invalid content property")
+            version = current.get("version", {})
+            version_number = (
+                version.get("number", 0) if isinstance(version, dict) else 0
+            )
+            body["version"] = {"number": version_number + 1}
+            result = self.confluence.put(
+                property_url,
+                data=body,
+                absolute=True,
+            )
+
+        if not isinstance(result, dict) or "key" not in result or "value" not in result:
+            raise ValueError("Confluence returned an invalid content property")
+        return {str(result["key"]): result["value"]}
