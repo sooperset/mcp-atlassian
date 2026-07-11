@@ -1,6 +1,6 @@
 """Toolset definitions and filtering utilities for MCP Atlassian.
 
-Groups 95 tools into 24 named toolsets controlled via the TOOLSETS env var.
+Groups MCP tools into 25 named toolsets controlled via the TOOLSETS env var.
 Supports 'all', 'default', and comma-separated toolset names.
 """
 
@@ -107,7 +107,7 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
     ),
 }
 
-# --- Confluence toolsets (8) ---
+# --- Confluence toolsets (9) ---
 
 CONFLUENCE_TOOLSETS: dict[str, ToolsetDefinition] = {
     "confluence_pages": ToolsetDefinition(
@@ -150,6 +150,11 @@ CONFLUENCE_TOOLSETS: dict[str, ToolsetDefinition] = {
         description="Content and space permission checking",
         default=False,
     ),
+    "confluence_spaces": ToolsetDefinition(
+        name="confluence_spaces",
+        description="Space discovery and enumeration",
+        default=False,
+    ),
 }
 
 # --- Combined registry ---
@@ -167,7 +172,7 @@ DEFAULT_TOOLSETS: set[str] = {
 def get_enabled_toolsets() -> set[str]:
     """Parse the TOOLSETS env var into a set of enabled toolset names.
 
-    Supports keywords 'all' (all 24 toolsets) and 'default' (6 defaults),
+    Supports keywords 'all' (all 25 toolsets) and 'default' (6 defaults),
     plus comma-separated specific toolset names. Case-insensitive for keywords.
 
     When TOOLSETS is unset or empty, returns all toolsets with a deprecation
@@ -180,9 +185,9 @@ def get_enabled_toolsets() -> set[str]:
         names are given, returns an empty set (fail-closed).
 
     Examples:
-        TOOLSETS unset -> all 24 toolsets (with deprecation warning)
-        TOOLSETS="" -> all 24 toolsets (with deprecation warning)
-        TOOLSETS="all" -> all 24 names
+        TOOLSETS unset -> all 25 toolsets (with deprecation warning)
+        TOOLSETS="" -> all 25 toolsets (with deprecation warning)
+        TOOLSETS="all" -> all 25 names
         TOOLSETS="default" -> 6 default names
         TOOLSETS="default,jira_agile" -> defaults + jira_agile
         TOOLSETS="typo_name" -> set() (fail-closed)
