@@ -125,9 +125,9 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
     if is_url_only_multi_user_mode():
         logger.info(
             "Multi-user mode enabled: server expects per-request credentials "
-            "via the 'Authorization' header. Cloud OAuth also requires "
-            "'X-Atlassian-Cloud-Id'. URL override headers are ignored; HTTP "
-            "transport (sse / streamable-http) is required."
+            "via the 'Authorization' header. Cloud OAuth tenant information "
+            "is resolved from the configured URL. URL override headers are "
+            "ignored; HTTP transport (sse / streamable-http) is required."
         )
     services = get_available_services()
     read_only = is_read_only_mode()

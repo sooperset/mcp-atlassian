@@ -22,9 +22,10 @@ from mcp_atlassian.utils.env import (
     is_env_ssl_verify,
     is_env_truthy,
     is_multi_user_mode,
+    is_url_only_multi_user_mode,
 )
 from mcp_atlassian.utils.oauth import OAuthConfig, resolve_cloud_id_for_url
-from mcp_atlassian.utils.urls import validate_url_for_ssrf
+from mcp_atlassian.utils.urls import is_atlassian_cloud_url, validate_url_for_ssrf
 
 if TYPE_CHECKING:
     from mcp_atlassian.confluence.config import (
@@ -373,6 +374,13 @@ def _resolve_bearer_auth_type(
     if cloud_id:
         return "oauth"
 
+    # Strict URL-only mode pins the Cloud ID from the configured site, so the
+    # client does not need to repeat it in a header. Keep Bearer as OAuth for a
+    # pinned Cloud URL so _create_user_config_for_fetcher() can resolve the
+    # authoritative Cloud ID server-side. Bearer remains a PAT for Server/DC.
+    if is_url_only_multi_user_mode() and is_atlassian_cloud_url(base_config.url):
+        return "oauth"
+
     # Check if global config has OAuth set up
     global_oauth = getattr(base_config, "oauth_config", None)
     if global_oauth is not None:
@@ -440,10 +448,13 @@ def _create_user_config_for_fetcher(
                 "OAuth access token missing in credentials for user auth_type 'oauth'"
             )
         global_oauth_cfg = getattr(base_config, "oauth_config", None)
-        if global_oauth_cfg is None and base_config.auth_type is None:
-            # URL-only multi-user configs intentionally have no server-side OAuth
-            # configuration (auth_type is None). The operator pins the tenant via
-            # the configured *_URL, so resolve *that* site's Cloud ID server-side.
+        url_only_cloud_config = (
+            is_url_only_multi_user_mode() or base_config.auth_type is None
+        ) and is_atlassian_cloud_url(base_config.url)
+        if url_only_cloud_config:
+            # The operator pins the tenant via the configured *_URL, so resolve
+            # *that* site's Cloud ID server-side even if a legacy or complete
+            # global OAuth config is also present.
             # The Cloud client always calls
             # https://api.atlassian.com/ex/<service>/<cloud_id> and ignores the
             # pinned URL, so trusting a client-supplied Cloud ID here would let a
@@ -467,13 +478,14 @@ def _create_user_config_for_fetcher(
                     "request."
                 )
             cloud_id = pinned_cloud_id
-            global_oauth_cfg = OAuthConfig(
-                client_id="",
-                client_secret="",
-                redirect_uri="",
-                scope="",
-                cloud_id=pinned_cloud_id,
-            )
+            if global_oauth_cfg is None:
+                global_oauth_cfg = OAuthConfig(
+                    client_id="",
+                    client_secret="",
+                    redirect_uri="",
+                    scope="",
+                    cloud_id=pinned_cloud_id,
+                )
         if global_oauth_cfg is None:
             raise ValueError(
                 f"Global OAuth config for {type(base_config).__name__} is missing, "
@@ -768,8 +780,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             f"{spec.name} request missing credentials. The server is running "
             "in multi-user mode and expects every request to include one of: "
             "'Authorization: Basic <base64(email:api_token)>' (Cloud), "
-            "'Authorization: Bearer <oauth_token>' with "
-            "'X-Atlassian-Cloud-Id: <cloud_id>' (Cloud), or "
+            "'Authorization: Bearer <oauth_token>' (Cloud), or "
             "'Authorization: Token <pat>' (Server/Data Center). "
             "Configure your MCP client to send the appropriate header."
         )

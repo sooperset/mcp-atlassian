@@ -304,14 +304,11 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp import ClientSession
 
 user_token = "user-specific-oauth-token"
-user_cloud_id = "user-specific-cloud-id"
-
 async def main():
     async with streamablehttp_client(
         "http://localhost:9000/mcp",
         headers={
-            "Authorization": f"Bearer {user_token}",
-            "X-Atlassian-Cloud-Id": user_cloud_id
+            "Authorization": f"Bearer {user_token}"
         }
     ) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
@@ -326,7 +323,8 @@ asyncio.run(main())
 ```
 
 <Note>
-- The server uses fallback authentication when requests don't include user-specific credentials
+- Requests without user-specific credentials are rejected.
 - User tokens are isolated per request - no cross-tenant data leakage
-- Falls back to global `ATLASSIAN_OAUTH_CLOUD_ID` if header not provided
+- The server resolves the Cloud ID from the configured URL, or uses the
+  operator-provided `ATLASSIAN_OAUTH_CLOUD_ID` pin.
 </Note>

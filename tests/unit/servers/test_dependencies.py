@@ -356,6 +356,49 @@ class TestCreateUserConfigForFetcher:
     @pytest.mark.parametrize(
         "base_config",
         [
+            JiraConfig(
+                url="https://test.atlassian.net",
+                auth_type="oauth",
+                oauth_config=OAuthConfig(
+                    client_id="",
+                    client_secret="",
+                    redirect_uri="",
+                    scope="",
+                ),
+            ),
+            ConfluenceConfig(
+                url="https://test.atlassian.net/wiki",
+                auth_type="oauth",
+                oauth_config=OAuthConfig(
+                    client_id="",
+                    client_secret="",
+                    redirect_uri="",
+                    scope="",
+                ),
+            ),
+        ],
+        ids=["jira", "confluence"],
+    )
+    def test_strict_url_only_rejects_mismatched_tenant_with_legacy_oauth_config(
+        self,
+        base_config: JiraConfig | ConfluenceConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Strict URL pinning takes precedence over a legacy OAuth config."""
+        monkeypatch.setenv("MCP_ATLASSIAN_MULTI_USER_MODE", "true")
+        monkeypatch.setenv("ATLASSIAN_OAUTH_CLOUD_ID", "server-pinned-cloud-id")
+
+        with pytest.raises(ValueError, match="does not match the server's configured"):
+            _create_user_config_for_fetcher(
+                base_config=base_config,
+                auth_type="oauth",
+                credentials={"oauth_access_token": "attacker-token"},
+                cloud_id="attacker-controlled-cloud-id",
+            )
+
+    @pytest.mark.parametrize(
+        "base_config",
+        [
             JiraConfig(url="https://test.atlassian.net", auth_type=None),
             ConfluenceConfig(url="https://test.atlassian.net/wiki", auth_type=None),
         ],
@@ -1784,6 +1827,83 @@ class TestResolveBearerAuthType:
         )
         result = _resolve_bearer_auth_type(config, "oauth", cloud_id="from-header")
         assert result == "oauth"
+
+    @pytest.mark.parametrize(
+        "config",
+        [
+            JiraConfig(
+                url="https://test.atlassian.net",
+                auth_type=None,
+            ),
+            ConfluenceConfig(
+                url="https://test.atlassian.net/wiki",
+                auth_type=None,
+            ),
+            JiraConfig(
+                url="https://test.atlassian.net",
+                auth_type="oauth",
+                oauth_config=OAuthConfig(
+                    client_id="",
+                    client_secret="",
+                    redirect_uri="",
+                    scope="",
+                ),
+            ),
+            ConfluenceConfig(
+                url="https://test.atlassian.net/wiki",
+                auth_type="oauth",
+                oauth_config=OAuthConfig(
+                    client_id="",
+                    client_secret="",
+                    redirect_uri="",
+                    scope="",
+                ),
+            ),
+        ],
+        ids=[
+            "jira-no-global-oauth",
+            "confluence-no-global-oauth",
+            "jira-legacy-oauth",
+            "confluence-legacy-oauth",
+        ],
+    )
+    def test_url_only_cloud_bearer_without_cloud_id_stays_oauth(
+        self,
+        config: JiraConfig | ConfluenceConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Strict URL-only mode resolves Cloud ID after Bearer disambiguation."""
+        monkeypatch.setenv("MCP_ATLASSIAN_MULTI_USER_MODE", "true")
+
+        result = _resolve_bearer_auth_type(config, "oauth")
+
+        assert result == "oauth"
+
+    @pytest.mark.parametrize(
+        "config",
+        [
+            JiraConfig(
+                url="https://jira.corp.example.com",
+                auth_type=None,
+            ),
+            ConfluenceConfig(
+                url="https://confluence.corp.example.com",
+                auth_type=None,
+            ),
+        ],
+        ids=["jira", "confluence"],
+    )
+    def test_url_only_dc_bearer_without_cloud_id_is_pat(
+        self,
+        config: JiraConfig | ConfluenceConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Strict URL-only mode keeps Bearer compatibility for Server/DC PATs."""
+        monkeypatch.setenv("MCP_ATLASSIAN_MULTI_USER_MODE", "true")
+
+        result = _resolve_bearer_auth_type(config, "oauth")
+
+        assert result == "pat"
 
     def test_pat_auth_type_passes_through(self):
         """PAT auth_type is never re-mapped."""

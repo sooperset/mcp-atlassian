@@ -52,9 +52,10 @@ def is_multi_user_mode() -> bool:
 
     Strict URL-only mode requires `JIRA_URL` / `CONFLUENCE_URL`. Both modes
     expect every MCP client to supply its own credentials per request via the
-    `Authorization` header. Cloud OAuth also requires
-    `X-Atlassian-Cloud-Id`. URL override headers are ignored in strict
-    URL-only mode. Tools remain available without global credentials.
+    `Authorization` header. Strict URL-only mode resolves the Cloud OAuth
+    tenant from the configured URL, while legacy mode accepts it from
+    `X-Atlassian-Cloud-Id`. URL override headers are ignored in strict URL-only
+    mode. Tools remain available without global credentials.
 
     The legacy `ATLASSIAN_OAUTH_ENABLE` mode is also recognised for service
     discovery. Unlike strict URL-only mode, it retains support for per-request

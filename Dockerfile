@@ -58,7 +58,7 @@ ENV PYTHONUNBUFFERED=1
 #     your-image --transport streamable-http --port 9000
 # Clients then send one of:
 #   Authorization: Basic <base64(email:api_token)>   (Cloud)
-#   Authorization: Bearer <oauth_token> + X-Atlassian-Cloud-Id (Cloud)
+#   Authorization: Bearer <oauth_token> (Cloud OAuth; Cloud ID resolved server-side)
 #   Authorization: Token <personal_access_token>     (Server/DC)
 
 ENTRYPOINT ["mcp-atlassian"]
