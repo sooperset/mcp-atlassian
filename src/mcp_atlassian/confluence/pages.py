@@ -823,9 +823,14 @@ class PagesMixin(ConfluenceClient):
                 representation = content_representation or "storage"
 
             width_to_set = page_width if page_width else None
-            preserve_existing_width = page_width is None
-            if preserve_existing_width:
-                width_to_set = self._get_page_width(page_id)
+            if page_width is None:
+                existing_width = self._get_page_width(page_id)
+                # Confluence reports its normal layout as "fixed-width" on
+                # Cloud. It does not need to be reapplied, and it is not a
+                # supported property value for writes. Only custom layouts
+                # need restoring after the content update.
+                if existing_width in ("full-width", "max"):
+                    width_to_set = existing_width
 
             logger.debug(f"Updating page {page_id} with title '{title}'")
 

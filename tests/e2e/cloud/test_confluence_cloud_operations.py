@@ -145,6 +145,12 @@ class TestConfluenceCloudStorageFormat:
         assert "<ac:task-status>incomplete</ac:task-status>" in storage_body
         assert "<ac:task-status>complete</ac:task-status>" in storage_body
 
+        fetched = confluence_fetcher.get_page_content(
+            page.id,
+            convert_to_markdown=False,
+        )
+        assert fetched.content == storage_body
+
 
 class TestConfluenceCloudTemplates:
     """Cloud page template operations."""
@@ -319,6 +325,14 @@ class TestConfluenceCloudPageLayout:
         storage_body = raw_page["body"]["storage"]["value"]
         assert 'data-layout="full-width"' in storage_body
         assert 'data-table-width="1800"' in storage_body
+
+        updated = confluence_fetcher.update_page(
+            page_id=page.id,
+            title=page.title,
+            body="Updated without an explicit page width.",
+        )
+
+        assert updated.page_width == "full-width"
 
 
 class TestConfluenceCloudCopyAndRestrictions:

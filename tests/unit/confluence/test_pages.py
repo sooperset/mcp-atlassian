@@ -501,6 +501,32 @@ class TestPagesMixin:
             mock_set_width.assert_called_once_with(page_id, "default")
             assert result.id == page_id
 
+    def test_update_page_does_not_reapply_fixed_width_default(self, pages_mixin):
+        """Test updating a default-width page avoids an invalid property write."""
+        page_id = "987654321"
+        mock_document = ConfluencePage(
+            id=page_id,
+            title="Updated Page",
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=mock_document),
+            patch.object(pages_mixin, "_get_page_width", return_value="fixed-width"),
+            patch.object(pages_mixin, "_set_page_width") as mock_set_width,
+        ):
+            result = pages_mixin.update_page(
+                page_id,
+                "Updated Page",
+                "<p>Updated content</p>",
+                is_markdown=False,
+            )
+
+        mock_set_width.assert_not_called()
+        assert result.id == page_id
+
     def test_update_page_with_wiki_format(self, pages_mixin):
         """Test updating a page with wiki markup format."""
         # Arrange
@@ -713,39 +739,53 @@ class TestPagesMixin:
             attachments=None,
         )
 
-    def test_get_page_children_storage_preserves_macros(self, pages_mixin):
-        """Storage mode should preserve child page content exactly."""
+    def test_get_page_children_cloud_storage_preserves_macros(self, pages_mixin):
+        """Cloud storage mode should preserve child page content exactly."""
         parent_id = "123456"
-        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config.is_cloud = True
         original_storage = (
             '<p><ac:structured-macro ac:name="status">'
             '<ac:parameter ac:name="title">READY</ac:parameter>'
             "</ac:structured-macro></p>"
         )
-        child_pages_data = {
+        mock_v2_adapter = MagicMock()
+        mock_v2_adapter.get_page_direct_children.return_value = {
             "results": [
                 {
                     "id": "789012",
                     "title": "Child Page With Macro",
+                    "type": "page",
                     "space": {"key": "DEMO"},
                     "version": {"number": 1},
-                    "body": {"storage": {"value": original_storage}},
                 }
             ]
         }
-        child_folders_data = {"results": []}
+        mock_v2_adapter.get_page.return_value = {
+            "id": "789012",
+            "title": "Child Page With Macro",
+            "type": "page",
+            "space": {"key": "DEMO"},
+            "version": {"number": 1},
+            "body": {"storage": {"value": original_storage}},
+        }
 
-        pages_mixin.confluence.get_page_child_by_type.side_effect = [
-            child_pages_data,
-            child_folders_data,
-        ]
-
-        results = pages_mixin.get_page_children(
-            page_id=parent_id, expand="body.storage", convert_to_markdown=False
-        )
+        with patch.object(
+            PagesMixin, "_page_children_v2_adapter", new_callable=PropertyMock
+        ) as mock_prop:
+            mock_prop.return_value = mock_v2_adapter
+            results = pages_mixin.get_page_children(
+                page_id=parent_id,
+                expand="body.storage",
+                convert_to_markdown=False,
+            )
 
         assert len(results) == 1
         assert results[0].content == original_storage
+        mock_v2_adapter.get_page.assert_called_once_with(
+            page_id="789012",
+            expand="body.storage,version,space",
+        )
         pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_children_empty(self, pages_mixin):
@@ -1015,6 +1055,7 @@ class TestPagesMixin:
             space_key="TEST",
             confluence_client=pages_mixin.confluence,
             content_id="789012",
+            attachments=None,
         )
 
     def test_get_page_children_cloud_partial_space_uses_expandable_fallback(
