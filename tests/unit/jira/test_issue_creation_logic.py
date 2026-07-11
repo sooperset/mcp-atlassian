@@ -68,6 +68,8 @@ def issues_mixin():
     with patch("mcp_atlassian.jira.config.JiraConfig.from_env") as mock_from_env:
         mock_config = MagicMock()
         mock_config.is_cloud = True
+        mock_config.url = "https://test.atlassian.net"
+        mock_config.ssl_verify = True
         mock_from_env.return_value = mock_config
 
         mixin = ConcreteIssuesMixin()
@@ -166,14 +168,15 @@ def test_find_epic_issue_type_id_returns_id(issues_mixin):
     assert epic_id == "10001"
 
 
-def test_find_subtask_issue_type_id_returns_id(issues_mixin):
-    """Verify _find_subtask_issue_type_id returns the correct ID."""
+def test_find_epic_issue_type_id_prefers_exact_match(issues_mixin):
+    """Verify _find_epic_issue_type_id prefers exact 'Epic' over substring match."""
     issues_mixin.get_project_issue_types.return_value = [
-        {"id": "10002", "name": "Sub-task", "subtask": True},
+        {"id": "10099", "name": "Program Epic", "subtask": False},
+        {"id": "10001", "name": "Epic", "subtask": False},
     ]
 
-    subtask_id = issues_mixin._find_subtask_issue_type_id("PROJ")
-    assert subtask_id == "10002"
+    epic_id = issues_mixin._find_epic_issue_type_id("PROJ")
+    assert epic_id == "10001"
 
 
 def test_find_epic_issue_type_id_returns_none_if_not_found(issues_mixin):
@@ -184,6 +187,38 @@ def test_find_epic_issue_type_id_returns_none_if_not_found(issues_mixin):
 
     epic_id = issues_mixin._find_epic_issue_type_id("PROJ")
     assert epic_id is None
+
+
+def test_find_subtask_issue_type_id_returns_id(issues_mixin):
+    """Verify _find_subtask_issue_type_id returns the correct ID."""
+    issues_mixin.get_project_issue_types.return_value = [
+        {"id": "10002", "name": "Sub-task", "subtask": True},
+    ]
+
+    subtask_id = issues_mixin._find_subtask_issue_type_id("PROJ")
+    assert subtask_id == "10002"
+
+
+def test_find_subtask_issue_type_id_prefers_subtask_name_match(issues_mixin):
+    """Verify Sub-task is preferred over other subtask-capable types."""
+    issues_mixin.get_project_issue_types.return_value = [
+        {"id": "24", "name": "Action Item", "subtask": True},
+        {"id": "5", "name": "Sub-task", "subtask": True},
+    ]
+
+    subtask_id = issues_mixin._find_subtask_issue_type_id("PROJ")
+    assert subtask_id == "5"
+
+
+def test_find_subtask_issue_type_id_falls_back_to_first_subtask(issues_mixin):
+    """Verify the first subtask-capable type is used as a fallback."""
+    issues_mixin.get_project_issue_types.return_value = [
+        {"id": "24", "name": "Action Item", "subtask": True},
+        {"id": "25", "name": "Custom Child", "subtask": True},
+    ]
+
+    subtask_id = issues_mixin._find_subtask_issue_type_id("PROJ")
+    assert subtask_id == "24"
 
 
 def test_find_subtask_issue_type_id_returns_none_if_not_found(issues_mixin):

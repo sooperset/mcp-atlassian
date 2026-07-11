@@ -5,30 +5,46 @@ This module provides utilities for converting between ADF and other formats.
 Supports both ADF → plain text (for reading) and Markdown → ADF (for writing).
 """
 
+import copy
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any
+
+_MEDIA_NODE_TYPES = frozenset({"media", "mediaSingle", "mediaGroup"})
 
 
 def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
     """Parse inline Markdown formatting into ADF inline nodes.
 
     Handles: bold (**), italic (*), inline code (`), links ([text](url)),
-    and strikethrough (~~).
+    strikethrough (~~), and Jira-flavored user mentions
+    ([~accountid:ACCOUNT_ID] or @[Display Name](accountid:ACCOUNT_ID)).
+
+    The [~accountid:...] mention syntax mirrors what Jira's v2 wiki text
+    returns when a real ADF mention is read back, so the read and write paths
+    are symmetric. The display-name syntax also includes the mention text in
+    the ADF node.
 
     Args:
         text: Raw text potentially containing inline Markdown formatting.
 
     Returns:
-        List of ADF inline nodes (text nodes with optional marks).
+        List of ADF inline nodes (text nodes with optional marks, plus
+        mention nodes when [~accountid:...] or
+        @[Display Name](accountid:...) is present).
     """
     if not text:
         return []
 
     nodes: list[dict[str, Any]] = []
-    # Pattern order matters: bold before italic, code before others
+    # Pattern order matters: mention before link, bold before italic,
+    # code before others.
     inline_re = re.compile(
-        r"`(?P<code_inner>[^`]+)`"
+        r"\[~accountid:(?P<wiki_mention_id>[^\]]+)\]"
+        r"|@\[(?P<display_mention_text>[^\]]+)\]"
+        r"\(accountid:(?P<display_mention_id>[^)]+)\)"
+        r"|`(?P<code_inner>[^`]+)`"
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
         r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
@@ -43,7 +59,24 @@ def _parse_inline_formatting(text: str) -> list[dict[str, Any]]:
             if plain:
                 nodes.append({"type": "text", "text": plain})
 
-        if m.group("code_inner") is not None:
+        if m.group("wiki_mention_id") is not None:
+            nodes.append(
+                {
+                    "type": "mention",
+                    "attrs": {"id": m.group("wiki_mention_id")},
+                }
+            )
+        elif m.group("display_mention_id") is not None:
+            nodes.append(
+                {
+                    "type": "mention",
+                    "attrs": {
+                        "id": m.group("display_mention_id"),
+                        "text": f"@{m.group('display_mention_text')}",
+                    },
+                }
+            )
+        elif m.group("code_inner") is not None:
             nodes.append(
                 {
                     "type": "text",
@@ -117,11 +150,21 @@ def _make_list_item(text: str) -> dict[str, Any]:
     return {"type": "listItem", "content": [_make_paragraph(text)]}
 
 
+def _make_task_item(text: str, checked: bool, local_id: str) -> dict[str, Any]:
+    """Create an ADF taskItem node."""
+    return {
+        "type": "taskItem",
+        "attrs": {"localId": local_id, "state": "DONE" if checked else "TODO"},
+        "content": _parse_inline_formatting(text) or [{"type": "text", "text": text}],
+    }
+
+
 def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
     """Convert Markdown text to ADF (Atlassian Document Format) document.
 
     Implements a line-by-line parser that handles common Markdown constructs.
-    No external dependencies required.
+    Jira Cloud expand blocks can be written as
+    ``{expand:Title}...{expand}``. No external dependencies required.
 
     Args:
         markdown_text: Markdown-formatted text to convert.
@@ -140,6 +183,29 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
 
     while i < len(lines):
         line = lines[i]
+
+        # --- Expand/collapse block ({expand:Title}...{expand}) ---
+        expand_match = re.match(r"^\{expand(?::(.+?))?\}\s*$", line)
+        if expand_match:
+            expand_title = expand_match.group(1) or ""
+            expand_lines: list[str] = []
+            i += 1
+            while i < len(lines) and not re.match(r"^\{expand\}\s*$", lines[i]):
+                expand_lines.append(lines[i])
+                i += 1
+            # Skip closing {expand}
+            if i < len(lines):
+                i += 1
+            # Recursively parse the inner content as ADF
+            inner_markdown = "\n".join(expand_lines)
+            inner_doc = markdown_to_adf(inner_markdown)
+            expand_node: dict[str, Any] = {
+                "type": "expand",
+                "attrs": {"title": expand_title},
+                "content": inner_doc.get("content", []),
+            }
+            doc["content"].append(expand_node)
+            continue
 
         # --- Fenced code block ---
         if line.startswith("```"):
@@ -196,6 +262,53 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
             bq_content = [_make_paragraph(ln) for ln in quote_lines]
             doc["content"].append({"type": "blockquote", "content": bq_content})
             continue
+
+        # --- Task list (- [ ] / - [x]) ---
+        if re.match(r"^[-*]\s+\[[ xX]\]\s+", line):
+            task_items: list[dict[str, Any]] = []
+            task_counter = 0
+            while i < len(lines) and re.match(r"^[-*]\s+\[[ xX]\]\s+", lines[i]):
+                checked = bool(re.match(r"^[-*]\s+\[[xX]\]\s+", lines[i]))
+                item_text = re.sub(r"^[-*]\s+\[[ xX]\]\s+", "", lines[i])
+                task_counter += 1
+                task_items.append(
+                    _make_task_item(
+                        item_text, checked, f"task-{id(doc)}-{task_counter}"
+                    )
+                )
+                i += 1
+            doc["content"].append(
+                {
+                    "type": "taskList",
+                    "attrs": {"localId": f"tasklist-{id(doc)}-{i}"},
+                    "content": task_items,
+                }
+            )
+            continue
+
+        # --- Panel block ---
+        panel_match = re.match(r"^:::(\w+)\s*$", line)
+        if panel_match:
+            panel_type = panel_match.group(1).lower()
+            valid_panel_types = {"note", "info", "warning", "success", "error"}
+            if panel_type in valid_panel_types:
+                panel_lines: list[str] = []
+                i += 1
+                while i < len(lines) and lines[i].strip() != ":::":
+                    panel_lines.append(lines[i])
+                    i += 1
+                # Skip closing :::
+                if i < len(lines):
+                    i += 1
+                # Recursively parse panel content
+                inner_doc = markdown_to_adf("\n".join(panel_lines))
+                panel_node: dict[str, Any] = {
+                    "type": "panel",
+                    "attrs": {"panelType": panel_type},
+                    "content": inner_doc["content"],
+                }
+                doc["content"].append(panel_node)
+                continue
 
         # --- Unordered list ---
         if re.match(r"^[-*]\s+", line):
@@ -272,6 +385,74 @@ def markdown_to_adf(markdown_text: str) -> dict[str, Any]:
         doc["content"].append({"type": "paragraph", "content": []})
 
     return doc
+
+
+def _adf_node_contains_media(node: dict[str, Any]) -> bool:
+    """Return True when an ADF node contains media content."""
+    if node.get("type") in _MEDIA_NODE_TYPES:
+        return True
+
+    content = node.get("content")
+    if isinstance(content, list):
+        return any(
+            _adf_node_contains_media(child)
+            for child in content
+            if isinstance(child, dict)
+        )
+
+    return False
+
+
+def extract_top_level_media_nodes(
+    adf_document: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Extract top-level ADF nodes that contain media content."""
+    if not isinstance(adf_document, dict):
+        return []
+
+    content = adf_document.get("content")
+    if not isinstance(content, list):
+        return []
+
+    return [
+        copy.deepcopy(node)
+        for node in content
+        if isinstance(node, dict) and _adf_node_contains_media(node)
+    ]
+
+
+def merge_adf_with_preserved_media(
+    target_adf: dict[str, Any],
+    source_adf: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Append existing media nodes from one ADF document into another.
+
+    This is intentionally narrow: it preserves existing media-bearing blocks
+    when a caller rewrites the surrounding description text, without attempting
+    to merge all prior formatting or layout.
+    """
+    preserved_media = extract_top_level_media_nodes(source_adf)
+    if not preserved_media:
+        return target_adf
+
+    merged = copy.deepcopy(target_adf)
+    content = merged.get("content")
+    if not isinstance(content, list):
+        content = []
+        merged["content"] = content
+
+    existing_signatures = {
+        json.dumps(node, sort_keys=True, separators=(",", ":"))
+        for node in extract_top_level_media_nodes(merged)
+    }
+    for media_node in preserved_media:
+        signature = json.dumps(media_node, sort_keys=True, separators=(",", ":"))
+        if signature in existing_signatures:
+            continue
+        content.append(media_node)
+        existing_signatures.add(signature)
+
+    return merged
 
 
 def adf_to_text(adf_content: dict | list | str | None) -> str | None:

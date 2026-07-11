@@ -191,15 +191,21 @@ class TestDevelopmentMixin:
             )
 
     def test_get_issue_development_info_auto_discovery(self, development_mixin):
-        """Test auto-discovery of application types when not specified."""
+        """Test empty discovery avoids unnecessary detail requests."""
         development_mixin.jira.get_issue.return_value = {
             "id": "12345",
             "key": "TEST-123",
         }
 
-        # Return empty for all combinations
         mock_response = MagicMock()
-        mock_response.json.return_value = {"detail": []}
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "summary": {
+                "pullrequest": {"byInstanceType": {}},
+                "branch": {"byInstanceType": {}},
+                "repository": {"byInstanceType": {}},
+            }
+        }
         mock_response.raise_for_status = MagicMock()
         development_mixin.jira._session.get.return_value = mock_response
 
@@ -207,6 +213,59 @@ class TestDevelopmentMixin:
 
         assert development_mixin.jira._session.get.call_count == 1
         assert result["issue_key"] == "TEST-123"
+        assert result["pullRequests"] == []
+
+    def test_get_issue_development_info_uses_discovered_types_and_data_filter(
+        self, development_mixin
+    ):
+        """Test discovery uses custom types, known casing, and the data filter."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        summary_response = MagicMock(status_code=200)
+        summary_response.json.return_value = {
+            "summary": {
+                "pullrequest": {
+                    "byInstanceType": {
+                        "github": {"count": 2},
+                        "githube": {"count": 1},
+                        "unused": {"count": 0},
+                    }
+                }
+            }
+        }
+        detail_response = MagicMock(status_code=200)
+        detail_response.json.return_value = {"detail": []}
+        development_mixin.jira._session.get.side_effect = [
+            summary_response,
+            detail_response,
+            detail_response,
+        ]
+
+        development_mixin.get_issue_development_info(
+            "TEST-123", data_type="pullrequest"
+        )
+
+        request_params = [
+            call.kwargs["params"]
+            for call in development_mixin.jira._session.get.call_args_list
+        ]
+
+        assert request_params == [
+            {"issueId": "12345"},
+            {
+                "issueId": "12345",
+                "applicationType": "GitHub",
+                "dataType": "pullrequest",
+            },
+            {
+                "issueId": "12345",
+                "applicationType": "githube",
+                "dataType": "pullrequest",
+            },
+        ]
 
     def test_get_issues_development_info_success(
         self, development_mixin, mock_dev_status_response
@@ -298,6 +357,113 @@ class TestDevelopmentMixin:
         assert result["branches"] == []
         assert result["commits"] == []
 
+    def test_get_issue_development_info_auto_discovery_404(self, development_mixin):
+        """Test a missing summary endpoint falls back to common types."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        development_mixin.jira._session.get.return_value = mock_response
+
+        result = development_mixin.get_issue_development_info("TEST-123")
+
+        assert "error" in result
+        assert "dev-status plugin" in result["error"]
+        # One summary request, then the first fallback detail request.
+        assert development_mixin.jira._session.get.call_count == 2
+
+    def test_discover_application_types_returns_sorted_list(self, development_mixin):
+        """Test discovery returns deterministic, case-correct application types."""
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {
+            "summary": {
+                "pullrequest": {
+                    "byInstanceType": {
+                        "githube": {"count": 1},
+                        "github": {"count": 2},
+                    }
+                },
+                "branch": {"byInstanceType": {"bitbucket": {"count": 1}}},
+                "repository": {"byInstanceType": {}},
+            }
+        }
+        development_mixin.jira._session.get.return_value = mock_response
+
+        result = development_mixin._discover_application_types("TEST-123", "12345")
+
+        assert result == ["GitHub", "bitbucket", "githube"]
+        assert isinstance(result, list)
+
+    def test_discover_application_types_limits_summary_to_data_type(
+        self, development_mixin
+    ):
+        """Test a data type filter excludes connectors from other sections."""
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {
+            "summary": {
+                "pullrequest": {"byInstanceType": {"githube": {"count": 1}}},
+                "branch": {"byInstanceType": {"bitbucket": {"count": 1}}},
+            }
+        }
+        development_mixin.jira._session.get.return_value = mock_response
+
+        result = development_mixin._discover_application_types(
+            "TEST-123", "12345", "pullrequest"
+        )
+
+        assert result == ["githube"]
+
+    @pytest.mark.parametrize("status_code", [403, 404])
+    def test_discover_application_types_falls_back_when_unavailable(
+        self, development_mixin, status_code
+    ):
+        """Test unsupported summary endpoints use common connector types."""
+        development_mixin.jira._session.get.return_value = MagicMock(
+            status_code=status_code
+        )
+
+        result = development_mixin._discover_application_types("TEST-123", "12345")
+
+        assert result == ["stash", "bitbucket", "GitHub", "GitLab"]
+
+    def test_discover_application_types_falls_back_on_request_error(
+        self, development_mixin
+    ):
+        """Test request failures use common connector types."""
+        mock_response = MagicMock(status_code=500)
+        mock_response.raise_for_status.side_effect = HTTPError("server error")
+        development_mixin.jira._session.get.return_value = mock_response
+
+        result = development_mixin._discover_application_types("TEST-123", "12345")
+
+        assert result == ["stash", "bitbucket", "GitHub", "GitLab"]
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            [],
+            {"detail": []},
+            {"summary": {"pullrequest": []}},
+            {"summary": {"pullrequest": {"byInstanceType": []}}},
+        ],
+    )
+    def test_discover_application_types_falls_back_on_malformed_response(
+        self, development_mixin, response
+    ):
+        """Test malformed summary payloads cannot suppress fallback queries."""
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = response
+        development_mixin.jira._session.get.return_value = mock_response
+
+        result = development_mixin._discover_application_types(
+            "TEST-123", "12345", "pullrequest"
+        )
+
+        assert result == ["stash", "bitbucket", "GitHub", "GitLab"]
+
     def test_parse_development_info_with_reviewers(self, development_mixin):
         """Test parsing of PR reviewers."""
         response = {
@@ -360,169 +526,3 @@ class TestDevelopmentMixin:
         assert pr["destination"] == ""
         assert pr["author"] == ""
         assert pr["reviewers"] == []
-
-    def test_discover_application_types_success(self, development_mixin):
-        """Test successful discovery of application types from summary endpoint."""
-        mock_issue = {"id": "12345", "key": "TEST-123"}
-        mock_summary = {
-            "summary": {
-                "pullrequest": {
-                    "byInstanceType": {
-                        "bitbucket": {"count": 2, "name": "Bitbucket Cloud"},
-                        "githube": {"count": 1, "name": "GitHub Enterprise"},
-                    }
-                },
-                "branch": {
-                    "byInstanceType": {
-                        "bitbucket": {"count": 1, "name": "Bitbucket Cloud"}
-                    }
-                },
-            }
-        }
-
-        development_mixin.jira.get_issue = Mock(return_value=mock_issue)
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_summary
-        mock_response.raise_for_status = MagicMock()
-        development_mixin.jira._session.get.return_value = mock_response
-
-        app_types = development_mixin._discover_application_types(
-            issue_key="TEST-123", issue_id="12345"
-        )
-
-        # Should find both bitbucket and githube, sorted alphabetically
-        assert app_types == {"bitbucket", "githube"}
-
-    def test_discover_application_types_fallback_on_404(self, development_mixin):
-        """Test fallback to common types when summary endpoint returns 404."""
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        development_mixin.jira._session.get.return_value = mock_response
-
-        app_types = development_mixin._discover_application_types(
-            issue_key="TEST-123", issue_id="12345"
-        )
-
-        # Should fallback to default list
-        assert app_types == ["stash", "bitbucket", "github", "gitlab"]
-
-    def test_discover_application_types_fallback_on_403(self, development_mixin):
-        """Test fallback to common types when summary endpoint returns 403."""
-        mock_response = MagicMock()
-        mock_response.status_code = 403
-        development_mixin.jira._session.get.return_value = mock_response
-
-        app_types = development_mixin._discover_application_types(
-            issue_key="TEST-123", issue_id="12345"
-        )
-
-        # Should fallback to default list
-        assert app_types == ["stash", "bitbucket", "github", "gitlab"]
-
-    def test_discover_application_types_with_data_type_filter(self, development_mixin):
-        """Test discovery with specific data type filter."""
-        mock_summary = {
-            "summary": {
-                "pullrequest": {
-                    "byInstanceType": {
-                        "githube": {"count": 3, "name": "GitHub Enterprise"}
-                    }
-                },
-                "branch": {
-                    "byInstanceType": {
-                        "bitbucket": {"count": 1, "name": "Bitbucket Cloud"}
-                    }
-                },
-            }
-        }
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_summary
-        mock_response.raise_for_status = MagicMock()
-        development_mixin.jira._session.get.return_value = mock_response
-
-        # Filter by pullrequest data type - should only find githube
-        app_types = development_mixin._discover_application_types(
-            issue_key="TEST-123", issue_id="12345", data_type="pullrequest"
-        )
-
-        assert app_types == {"githube"}
-
-    def test_discover_application_types_empty_summary(self, development_mixin):
-        """Test discovery when summary has no application types."""
-        mock_summary = {
-            "summary": {
-                "pullrequest": {"byInstanceType": {}},
-                "branch": {"byInstanceType": {}},
-            }
-        }
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_summary
-        mock_response.raise_for_status = MagicMock()
-        development_mixin.jira._session.get.return_value = mock_response
-
-        app_types = development_mixin._discover_application_types(
-            issue_key="TEST-123", issue_id="12345"
-        )
-
-        # Should fallback to default list
-        assert app_types == set()
-
-    def test_discover_application_types_exception_handling(self, development_mixin):
-        """Test discovery handles exceptions gracefully."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.side_effect = Exception("Network error")
-        development_mixin.jira._session.get.return_value = mock_response
-
-        app_types = development_mixin._discover_application_types(
-            issue_key="TEST-123", issue_id="12345"
-        )
-
-        # Should fallback to default list
-        assert app_types == ["stash", "bitbucket", "github", "gitlab"]
-
-    def test_get_issue_development_info_uses_discovery(
-        self, development_mixin, mock_dev_status_response
-    ):
-        """Test that auto-discovery uses the discovery method."""
-        mock_issue = {"id": "12345", "key": "TEST-123"}
-        mock_summary = {
-            "summary": {
-                "pullrequest": {
-                    "byInstanceType": {
-                        "githube": {"count": 1, "name": "GitHub Enterprise"}
-                    }
-                }
-            }
-        }
-
-        development_mixin.jira.get_issue = Mock(return_value=mock_issue)
-
-        # First call returns summary, second returns dev info
-        mock_summary_response = MagicMock()
-        mock_summary_response.status_code = 200
-        mock_summary_response.json.return_value = mock_summary
-        mock_summary_response.raise_for_status = MagicMock()
-
-        mock_detail_response = MagicMock()
-        mock_detail_response.status_code = 200
-        mock_detail_response.json.return_value = mock_dev_status_response
-        mock_detail_response.raise_for_status = MagicMock()
-
-        development_mixin.jira._session.get.side_effect = [
-            mock_summary_response,  # summary call
-            mock_detail_response,  # detail call for pullrequest
-            mock_detail_response,  # detail call for branch
-            mock_detail_response,  # detail call for repository
-        ]
-
-        result = development_mixin.get_issue_development_info(issue_key="TEST-123")
-
-        assert result["issue_key"] == "TEST-123"
-        # Should have made calls to both summary and detail endpoints
-        assert development_mixin.jira._session.get.call_count >= 2

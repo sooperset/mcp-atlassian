@@ -765,3 +765,60 @@ class TestEpicsMixin:
             match="Error getting epic issues: API error",
         ):
             epics_mixin.get_epic_issues("EPIC-123")
+
+
+class TestEpicFieldDynamicDetection:
+    """Regression tests for dynamic Epic Link field discovery."""
+
+    @pytest.fixture
+    def epics_mixin(self, jira_fetcher: JiraFetcher) -> EpicsMixin:
+        """Create an EpicsMixin instance with mocked dependencies."""
+        return jira_fetcher
+
+    def test_link_issue_to_epic_uses_dynamically_discovered_field(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Use the instance's Epic Link ID instead of a hardcoded fallback."""
+        epics_mixin.jira.get_issue.side_effect = [
+            {"key": "TEST-123"},
+            {
+                "key": "EPIC-456",
+                "fields": {"issuetype": {"name": "Epic"}},
+            },
+        ]
+        epics_mixin.jira.get_all_fields.return_value = [
+            {
+                "id": "customfield_10001",
+                "name": "Epic Link",
+                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+            }
+        ]
+        epics_mixin.jira.jql.return_value = {"issues": []}
+        epics_mixin.jira.update_issue.side_effect = [
+            Exception("Parent field is not supported"),
+            None,
+        ]
+        epics_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", id="123456")
+        )
+        epics_mixin._field_ids_cache = None
+        epics_mixin._field_name_to_id_map = None
+
+        result = epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
+
+        assert epics_mixin.jira.update_issue.call_args_list == [
+            call(
+                issue_key="TEST-123",
+                update={"fields": {"parent": {"key": "EPIC-456"}}},
+            ),
+            call(
+                issue_key="TEST-123",
+                update={"fields": {"customfield_10001": "EPIC-456"}},
+            ),
+        ]
+        epics_mixin.jira.get_all_fields.assert_called_once_with()
+        epics_mixin.get_issue.assert_called_once_with("TEST-123")
+        assert result == JiraIssue(
+            key="TEST-123",
+            id="123456",
+        )

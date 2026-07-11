@@ -3,9 +3,14 @@
 import logging
 from typing import Any
 
+from requests import RequestException
+
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
+
+_COMMON_APPLICATION_TYPES = ("stash", "bitbucket", "GitHub", "GitLab")
+_APPLICATION_TYPE_CASING = {"github": "GitHub", "gitlab": "GitLab"}
 
 
 class DevelopmentMixin(JiraClient):
@@ -26,8 +31,10 @@ class DevelopmentMixin(JiraClient):
         Args:
             issue_key: The issue key (e.g., PROJECT-123)
             application_type: Filter by application type
-                (e.g., 'stash', 'github', 'bitbucket').
-                If None, automatically discovers available types from the Jira instance.
+                (e.g., 'stash', 'GitHub', 'bitbucket').
+                Values are case-sensitive (the dev-status API
+                returns empty results or 500 errors on mismatch).
+                If None, discovers available types from Jira.
             data_type: Filter by data type
                 (e.g., 'pullrequest', 'branch', 'repository').
                 If None, returns all data types.
@@ -64,11 +71,12 @@ class DevelopmentMixin(JiraClient):
                     issue_key, issue_id, application_type, data_type
                 )
 
-            # Otherwise, discover available application types and merge results
-            # This automatically detects any custom integrations
             app_types = self._discover_application_types(issue_key, issue_id, data_type)
-            # Data types to try for each app type
-            data_types = ["pullrequest", "branch", "repository"]
+            data_types = (
+                [data_type]
+                if data_type is not None
+                else ["pullrequest", "branch", "repository"]
+            )
             merged_result: dict[str, Any] = {
                 "issue_key": issue_key,
                 "detail": [],
@@ -132,7 +140,8 @@ class DevelopmentMixin(JiraClient):
         Args:
             issue_key: The issue key
             issue_id: The numeric issue ID
-            application_type: The application type (stash, github, etc.)
+            application_type: The case-sensitive application type
+                (stash, GitHub, etc.)
             data_type: Optional data type filter
 
         Returns:
@@ -366,77 +375,112 @@ class DevelopmentMixin(JiraClient):
         issue_id: str,
         data_type: str | None = None,
     ) -> list[str]:
-        """
-        Discover available application types for an issue using the summary endpoint.
+        """Discover application types with development data for an issue.
 
-        This queries /rest/dev-status/1.0/issue/summary to determine which
-        application types (github, github, bitbucket, etc.) are actually
-        configured for this issue, avoiding unnecessary API calls.
+        Jira's dev-status summary endpoint reports the registered application
+        types for each data type. When the endpoint is unavailable, this falls
+        back to the common connector types for compatibility with older Jira
+        installations.
 
         Args:
-            issue_key: The issue key
-            issue_id: The numeric issue ID
-            data_type: Optional data type filter to narrow discovery
+            issue_key: The issue key used for logging.
+            issue_id: The numeric issue ID.
+            data_type: Optional data type to limit discovery to.
 
         Returns:
-            List of application type strings that have data for this issue
+            A deterministic list of case-sensitive application type values.
         """
-        try:
-            # Use /rest/dev-status/1.0/issue/summary to match the version used
-            # in _fetch_dev_info_for_app_type (which uses 1.0/issue/detail)
-            url = f"{self.config.url}/rest/dev-status/1.0/issue/summary"
-            params: dict[str, str] = {"issueId": str(issue_id)}
+        fallback_types = list(_COMMON_APPLICATION_TYPES)
+        url = f"{self.config.url}/rest/dev-status/1.0/issue/summary"
+        params = {"issueId": str(issue_id)}
 
+        try:
             http_response = self.jira._session.get(
                 url, params=params, verify=self.config.ssl_verify
             )
-
             if http_response.status_code in (403, 404):
                 logger.warning(
-                    f"Dev-status summary endpoint returned {http_response.status_code} "
-                    f"for {issue_key} — falling back to common application types"
+                    "Dev-status summary returned %s for %s; falling back to "
+                    "common application types",
+                    http_response.status_code,
+                    issue_key,
                 )
-                return ["stash", "bitbucket", "github", "gitlab"]
+                return fallback_types
 
             http_response.raise_for_status()
             response = http_response.json()
-
-            if not isinstance(response, dict):
-                logger.warning(
-                    f"Unexpected response type from dev-status summary API: "
-                    f"{type(response)} — falling back to common types"
-                )
-                return ["stash", "bitbucket", "github", "gitlab"]
-
-            # Extract application types from byInstanceType sections
-            summary = response.get("summary", {})
-            app_types_set: set[str] = set()
-
-            # Determine which data types to check
-            data_types_to_check = (
-                [data_type] if data_type else ["pullrequest", "branch", "repository"]
-            )
-
-            for dt in data_types_to_check:
-                section = summary.get(dt, {})
-                by_instance = section.get("byInstanceType", {})
-
-                # Keys in byInstanceType are the application type identifiers
-                for app_type in by_instance.keys():
-                    if by_instance[app_type].get("count", 0) > 0:
-                        app_types_set.add(app_type)
-
-            logger.debug(
-                f"Discovered application types for {issue_key}: {app_types_set}"
-            )
-            return app_types_set
-
-        except Exception as e:
+        except RequestException as e:
             logger.warning(
-                f"Error discovering application types for {issue_key}: {str(e)} — "
-                "falling back to common types"
+                "Could not discover application types for %s: %s; falling back "
+                "to common application types",
+                issue_key,
+                e,
             )
-            return ["stash", "bitbucket", "github", "gitlab"]
+            return fallback_types
+
+        if not isinstance(response, dict):
+            logger.warning(
+                "Unexpected dev-status summary response type for %s: %s; "
+                "falling back to common application types",
+                issue_key,
+                type(response),
+            )
+            return fallback_types
+
+        summary = response.get("summary")
+        if not isinstance(summary, dict):
+            logger.warning(
+                "Dev-status summary was missing for %s; falling back to common "
+                "application types",
+                issue_key,
+            )
+            return fallback_types
+
+        data_types = (
+            [data_type]
+            if data_type is not None
+            else ["pullrequest", "branch", "repository"]
+        )
+        application_types: set[str] = set()
+        for current_data_type in data_types:
+            section = summary.get(current_data_type, {})
+            if not isinstance(section, dict):
+                logger.warning(
+                    "Unexpected %s dev-status summary for %s; falling back to "
+                    "common application types",
+                    current_data_type,
+                    issue_key,
+                )
+                return fallback_types
+
+            by_instance_type = section.get("byInstanceType", {})
+            if not isinstance(by_instance_type, dict):
+                logger.warning(
+                    "Unexpected %s instance summary for %s; falling back to "
+                    "common application types",
+                    current_data_type,
+                    issue_key,
+                )
+                return fallback_types
+
+            for application_type, instance_summary in by_instance_type.items():
+                if not isinstance(application_type, str) or not isinstance(
+                    instance_summary, dict
+                ):
+                    continue
+                count = instance_summary.get("count", 0)
+                if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+                    application_types.add(
+                        _APPLICATION_TYPE_CASING.get(
+                            application_type.lower(), application_type
+                        )
+                    )
+
+        discovered_types = sorted(application_types)
+        logger.debug(
+            "Discovered application types for %s: %s", issue_key, discovered_types
+        )
+        return discovered_types
 
     def get_issues_development_info(
         self,
