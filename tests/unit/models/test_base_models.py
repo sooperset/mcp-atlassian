@@ -45,23 +45,23 @@ class TestApiModel:
 class TestTimestampMixin:
     """Tests for the TimestampMixin utility class."""
 
-    def test_format_timestamp_valid(self):
+    def test_format_timestamp_valid(self, pacific_timezone):
         """Test formatting a valid ISO 8601 timestamp."""
         timestamp = "2024-01-01T12:34:56.789+0000"
         formatter = TimestampMixin()
 
         result = formatter.format_timestamp(timestamp)
 
-        assert result == "2024-01-01 12:34:56"
+        assert result == "2024-01-01 04:34:56 PST"
 
-    def test_format_timestamp_with_z(self):
+    def test_format_timestamp_with_z(self, pacific_timezone):
         """Test formatting a timestamp with Z (UTC) timezone."""
-        timestamp = "2024-01-01T12:34:56.789Z"
+        timestamp = "2024-07-01T12:34:56.789Z"
         formatter = TimestampMixin()
 
         result = formatter.format_timestamp(timestamp)
 
-        assert result == "2024-01-01 12:34:56"
+        assert result == "2024-07-01 05:34:56 PDT"
 
     def test_format_timestamp_none(self):
         """Test formatting a None timestamp."""
