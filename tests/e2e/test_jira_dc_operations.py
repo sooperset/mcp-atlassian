@@ -271,7 +271,11 @@ class TestJiraDCTransitions:
         if target_id is None:
             target_id = transitions[0]["id"]
 
-        jira_fetcher.transition_issue(issue.key, target_id)
+        jira_fetcher.transition_issue(
+            issue.key,
+            target_id,
+            comment=f"Data Center transition comment {uid}",
+        )
 
         updated = jira_fetcher.get_issue(issue.key)
         assert updated.status is not None
