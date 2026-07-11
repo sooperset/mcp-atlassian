@@ -1,6 +1,6 @@
 ---
 title: "Jira Service Desk"
-description: "Service desk queues and queue issues"
+description: "Customer requests, service desks, and queues"
 ---
 
 ### Get Service Desk For Project
@@ -41,5 +41,52 @@ Get issues from a Jira Service Desk queue.
 | `queue_id` | `string` | Yes | Queue ID (e.g., '47') |
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
 | `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---
+
+### Get Request Types
+
+Get request types for a Jira Service Management service desk.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `service_desk_id` | `string` | Yes | Service desk ID (e.g., '4') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+
+---
+
+### Get Request Type Fields
+
+Get field definitions for a Jira Service Management request type.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `service_desk_id` | `string` | Yes | Service desk ID (e.g., '4') |
+| `request_type_id` | `string` | Yes | Request type ID (e.g., '23') |
+
+---
+
+### Create Customer Request
+
+Create a Jira Service Management customer request.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `service_desk_id` | `string` | Yes | Service desk ID (e.g., '4') |
+| `request_type_id` | `string` | Yes | Request type ID (e.g., '23') |
+| `request_field_values` | `string` | Yes | JSON string of request field values keyed by field ID. Examples: - Summary and description: `{"summary": "Access issue", "description": "Cannot log in"}` - Multi-value field: `{"customfield_10001": ["alice", "bob"]}` |
+| `raise_on_behalf_of` | `string` | No | (Optional) Jira user identifier for raiseOnBehalfOf. For Server/DC this is typically username or key; for Cloud use the identifier expected by your JSM instance. |
+| `request_participants` | `string` | No | (Optional) JSON array string or comma-separated list of request participants. Examples: ["user1","user2"] or "user1,user2" |
+| `attachments` | `string` | No | (Optional) JSON array string of files to attach to the created request. Each object must contain 'filename', 'mime_type', and base64-encoded 'base64' content. Example: `[{"filename": "log.txt", "mime_type": "text/plain", "base64": "aGVsbG8="}]` |
+| `strict_on_behalf` | `boolean` | No | If true, fail immediately when raiseOnBehalfOf cannot be applied. If false, retry without raiseOnBehalfOf and return a fallback warning. |
 
 ---

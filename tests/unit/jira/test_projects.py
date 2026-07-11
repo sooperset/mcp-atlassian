@@ -20,6 +20,7 @@ def mock_config():
     config.username = "test@example.com"
     config.api_token = "test-token"
     config.auth_type = "pat"
+    config.is_cloud = False
     return config
 
 
@@ -96,22 +97,51 @@ def mock_issue_types():
     ]
 
 
-def test_get_all_projects(projects_mixin: ProjectsMixin, mock_projects: list[dict]):
-    """Test get_all_projects method."""
-    projects_mixin.jira.projects.return_value = mock_projects
+def test_get_all_projects(projects_mixin: ProjectsMixin):
+    """Test get_all_projects returns simplified project dictionaries."""
+    raw_projects = [
+        {
+            "id": "10000",
+            "key": "PROJ1",
+            "name": "Project One",
+            "expand": "description,lead",
+            "projectCategory": {"name": "Engineering"},
+            "lead": {
+                "self": "https://test.atlassian.net/rest/api/2/user?accountId=abc",
+                "name": "user1",
+                "displayName": "User One",
+            },
+        }
+    ]
+    expected_projects = [
+        {
+            "key": "PROJ1",
+            "name": "Project One",
+            "category": "Engineering",
+            "lead": {
+                "account_id": None,
+                "display_name": "User One",
+                "name": "user1",
+                "email": None,
+                "avatar_url": None,
+            },
+        }
+    ]
+    projects_mixin.jira.projects.return_value = raw_projects
 
-    # Test with default value (include_archived=False)
     result = projects_mixin.get_all_projects()
-    assert result == mock_projects
-    projects_mixin.jira.projects.assert_called_once_with(included_archived=False)
+    assert result == expected_projects
+    projects_mixin.jira.projects.assert_called_once_with(
+        included_archived=False, expand="description"
+    )
 
-    # Reset mock and test with include_archived=True
     projects_mixin.jira.projects.reset_mock()
-    projects_mixin.jira.projects.return_value = mock_projects
 
     result = projects_mixin.get_all_projects(include_archived=True)
-    assert result == mock_projects
-    projects_mixin.jira.projects.assert_called_once_with(included_archived=True)
+    assert result == expected_projects
+    projects_mixin.jira.projects.assert_called_once_with(
+        included_archived=True, expand="description"
+    )
 
 
 def test_get_all_projects_exception(projects_mixin: ProjectsMixin):
@@ -432,7 +462,26 @@ def test_get_project_issue_types(
     result = projects_mixin.get_project_issue_types("PROJ1")
     assert result == mock_issue_types
     projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once_with(
-        project="PROJ1"
+        project="PROJ1", start=0, limit=50
+    )
+
+
+def test_get_project_issue_types_issue_types_format(
+    projects_mixin: ProjectsMixin, mock_issue_types: list[dict]
+):
+    """Test get_project_issue_types with Cloud issueTypes format."""
+    createmeta = {
+        "maxResults": 50,
+        "startAt": 0,
+        "total": len(mock_issue_types),
+        "issueTypes": mock_issue_types,
+    }
+    projects_mixin.jira.issue_createmeta_issuetypes.return_value = createmeta
+
+    result = projects_mixin.get_project_issue_types("PROJ1")
+    assert result == mock_issue_types
+    projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once_with(
+        project="PROJ1", start=0, limit=50
     )
 
 
@@ -478,6 +527,268 @@ def test_get_project_issue_types_exception(projects_mixin: ProjectsMixin):
     result = projects_mixin.get_project_issue_types("PROJ1")
     assert result == []
     projects_mixin.jira.issue_createmeta_issuetypes.assert_called_once()
+
+
+def test_get_project_issue_types_paginates(projects_mixin: ProjectsMixin):
+    """Test get_project_issue_types collects every response page."""
+    projects_mixin.jira.issue_createmeta_issuetypes.side_effect = [
+        {
+            "startAt": 0,
+            "total": 3,
+            "values": [
+                {"id": "10000", "name": "Bug"},
+                {"id": "10001", "name": "Task"},
+            ],
+        },
+        {
+            "startAt": 2,
+            "total": 3,
+            "values": [{"id": "10002", "name": "Story"}],
+        },
+    ]
+
+    result = projects_mixin.get_project_issue_types("PROJ1")
+
+    assert [item["id"] for item in result] == ["10000", "10001", "10002"]
+    projects_mixin.jira.issue_createmeta_issuetypes.assert_has_calls(
+        [
+            call(project="PROJ1", start=0, limit=50),
+            call(project="PROJ1", start=2, limit=50),
+        ]
+    )
+
+
+def test_get_create_fields_paginates(projects_mixin: ProjectsMixin):
+    """Test get_create_fields preserves metadata from every response page."""
+    projects_mixin.jira.issue_createmeta_fieldtypes.side_effect = [
+        {
+            "startAt": 0,
+            "total": 2,
+            "values": [
+                {
+                    "fieldId": "summary",
+                    "name": "Summary",
+                    "required": True,
+                    "schema": {"type": "string"},
+                }
+            ],
+        },
+        {
+            "startAt": 1,
+            "total": 2,
+            "values": [
+                {
+                    "fieldId": "customfield_10010",
+                    "name": "Severity",
+                    "required": False,
+                    "allowedValues": [{"id": "1", "value": "High"}],
+                    "schema": {"type": "option"},
+                }
+            ],
+        },
+    ]
+
+    result = projects_mixin.get_create_fields("PROJ1", "10000")
+
+    assert [field["fieldId"] for field in result] == [
+        "summary",
+        "customfield_10010",
+    ]
+    assert result[1]["allowedValues"] == [{"id": "1", "value": "High"}]
+    projects_mixin.jira.issue_createmeta_fieldtypes.assert_has_calls(
+        [
+            call(
+                project="PROJ1",
+                issue_type_id="10000",
+                start=0,
+                limit=50,
+            ),
+            call(
+                project="PROJ1",
+                issue_type_id="10000",
+                start=1,
+                limit=50,
+            ),
+        ]
+    )
+
+
+def test_get_create_fields_supports_legacy_mapping(projects_mixin: ProjectsMixin):
+    """Test get_create_fields converts legacy field mappings to a list."""
+    projects_mixin.jira.issue_createmeta_fieldtypes.return_value = {
+        "fields": {
+            "summary": {
+                "name": "Summary",
+                "required": True,
+                "schema": {"type": "string"},
+            }
+        }
+    }
+
+    result = projects_mixin.get_create_fields("PROJ1", "10000")
+
+    assert result == [
+        {
+            "fieldId": "summary",
+            "name": "Summary",
+            "required": True,
+            "schema": {"type": "string"},
+        }
+    ]
+
+
+def test_get_create_fields_exception(projects_mixin: ProjectsMixin):
+    """Test get_create_fields returns an empty list on API errors."""
+    projects_mixin.jira.issue_createmeta_fieldtypes.side_effect = Exception("API error")
+
+    result = projects_mixin.get_create_fields("PROJ1", "10000")
+
+    assert result == []
+
+
+def test_get_project_fields_merges_issue_type_fields(projects_mixin: ProjectsMixin):
+    """Test get_project_fields deduplicates fields across issue types."""
+    projects_mixin.get_project_issue_types = MagicMock(  # type: ignore[method-assign]
+        return_value=[
+            {"id": "10000", "name": "Bug"},
+            {"id": "10001", "name": "Task"},
+        ]
+    )
+    projects_mixin.jira.issue_createmeta_fieldtypes.side_effect = [
+        {
+            "startAt": 0,
+            "total": 3,
+            "values": [
+                {
+                    "fieldId": "summary",
+                    "name": "Summary",
+                    "required": True,
+                    "schema": {"type": "string"},
+                },
+                {
+                    "fieldId": "customfield_10010",
+                    "name": "Customer",
+                    "required": False,
+                    "schema": {"type": "user", "custom": "com.atlassian.user"},
+                },
+            ],
+        },
+        {
+            "startAt": 2,
+            "total": 3,
+            "values": [
+                {
+                    "fieldId": "priority",
+                    "name": "Priority",
+                    "required": False,
+                    "schema": {"type": "priority"},
+                }
+            ],
+        },
+        {
+            "startAt": 0,
+            "total": 1,
+            "values": [
+                {
+                    "fieldId": "summary",
+                    "name": "Summary",
+                    "required": False,
+                    "schema": {"type": "string"},
+                }
+            ],
+        },
+    ]
+
+    result = projects_mixin.get_project_fields("PROJ1")
+
+    assert result == [
+        {
+            "field_id": "summary",
+            "name": "Summary",
+            "required": True,
+            "schema_type": "string",
+            "custom": False,
+            "issue_types": ["Bug", "Task"],
+        },
+        {
+            "field_id": "customfield_10010",
+            "name": "Customer",
+            "required": False,
+            "schema_type": "user",
+            "custom": True,
+            "issue_types": ["Bug"],
+        },
+        {
+            "field_id": "priority",
+            "name": "Priority",
+            "required": False,
+            "schema_type": "priority",
+            "custom": False,
+            "issue_types": ["Bug"],
+        },
+    ]
+    projects_mixin.jira.issue_createmeta_fieldtypes.assert_has_calls(
+        [
+            call(project="PROJ1", issue_type_id="10000", start=0, limit=50),
+            call(project="PROJ1", issue_type_id="10000", start=2, limit=50),
+            call(project="PROJ1", issue_type_id="10001", start=0, limit=50),
+        ]
+    )
+
+
+def test_get_project_fields_uses_required_from_any_issue_type(
+    projects_mixin: ProjectsMixin,
+):
+    """Test merged fields are required if any issue type requires them."""
+    projects_mixin.get_project_issue_types = MagicMock(  # type: ignore[method-assign]
+        return_value=[
+            {"id": "10000", "name": "Bug"},
+            {"id": "10001", "name": "Task"},
+        ]
+    )
+    projects_mixin.jira.issue_createmeta_fieldtypes.side_effect = [
+        {
+            "startAt": 0,
+            "total": 1,
+            "values": [
+                {
+                    "fieldId": "customfield_10010",
+                    "name": "Customer",
+                    "required": False,
+                    "schema": {"type": "user"},
+                }
+            ],
+        },
+        {
+            "startAt": 0,
+            "total": 1,
+            "values": [
+                {
+                    "fieldId": "customfield_10010",
+                    "name": "Customer",
+                    "required": True,
+                    "schema": {"type": "user"},
+                }
+            ],
+        },
+    ]
+
+    result = projects_mixin.get_project_fields("PROJ1")
+
+    assert result[0]["required"] is True
+    assert result[0]["issue_types"] == ["Bug", "Task"]
+
+
+def test_get_project_fields_exception(projects_mixin: ProjectsMixin):
+    """Test get_project_fields returns empty list on API errors."""
+    projects_mixin.get_project_issue_types = MagicMock(  # type: ignore[method-assign]
+        return_value=[{"id": "10000", "name": "Bug"}]
+    )
+    projects_mixin.jira.issue_createmeta_fieldtypes.side_effect = Exception("API error")
+
+    result = projects_mixin.get_project_fields("PROJ1")
+
+    assert result == []
 
 
 def test_get_project_issues_count(projects_mixin: ProjectsMixin):
@@ -766,3 +1077,185 @@ def test_create_project_version_error(projects_mixin: ProjectsMixin) -> None:
     ):
         with pytest.raises(Exception):
             projects_mixin.create_project_version("PROJ4", "v6.0")
+
+
+def test_search_projects(projects_mixin: ProjectsMixin, mock_projects: list[dict]):
+    """Test search_projects returns matching projects from the picker endpoint."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.config.is_cloud = False
+    projects_mixin.jira.get.return_value = {"projects": mock_projects}
+
+    result = projects_mixin.search_projects("PROJ")
+    assert result == mock_projects
+    projects_mixin.jira.get.assert_called_once_with(
+        "rest/api/2/projects/picker",
+        params={"query": "PROJ", "maxResults": 20},
+    )
+
+
+def test_search_projects_cloud(
+    projects_mixin: ProjectsMixin, mock_projects: list[dict]
+):
+    """Test search_projects uses Cloud project search when configured for Cloud."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.config.is_cloud = True
+    projects_mixin.jira.get.return_value = {"values": mock_projects}
+
+    result = projects_mixin.search_projects("PROJ")
+    assert result == mock_projects
+    projects_mixin.jira.get.assert_called_once_with(
+        "rest/api/3/project/search",
+        params={"query": "PROJ", "maxResults": 20},
+    )
+
+
+def test_search_projects_with_max_results(projects_mixin: ProjectsMixin):
+    """Test search_projects passes max_results to the API."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.config.is_cloud = False
+    projects_mixin.jira.get.return_value = {"projects": []}
+
+    projects_mixin.search_projects("test", max_results=5)
+    projects_mixin.jira.get.assert_called_once_with(
+        "rest/api/2/projects/picker",
+        params={"query": "test", "maxResults": 5},
+    )
+
+
+def test_search_projects_with_current_project_ids(
+    projects_mixin: ProjectsMixin, mock_projects: list[dict]
+):
+    """Test search_projects passes currentProjectIds to the API."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.config.is_cloud = False
+    projects_mixin.jira.get.return_value = {"projects": mock_projects}
+
+    projects_mixin.search_projects("PROJ", current_project_ids=["10000", "10001"])
+    projects_mixin.jira.get.assert_called_once_with(
+        "rest/api/2/projects/picker",
+        params={
+            "query": "PROJ",
+            "maxResults": 20,
+            "currentProjectIds": "10000,10001",
+        },
+    )
+
+
+def test_search_projects_cloud_with_current_project_ids(
+    projects_mixin: ProjectsMixin, mock_projects: list[dict]
+):
+    """Test Cloud search_projects filters current_project_ids client-side."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.config.is_cloud = True
+    projects_mixin.jira.get.return_value = {"values": mock_projects}
+
+    result = projects_mixin.search_projects("PROJ", current_project_ids=["10000"])
+
+    assert result == [mock_projects[1]]
+    projects_mixin.jira.get.assert_called_once_with(
+        "rest/api/3/project/search",
+        params={"query": "PROJ", "maxResults": 20},
+    )
+
+
+def test_search_projects_with_projects_filter(
+    projects_mixin: ProjectsMixin, mock_projects: list[dict]
+):
+    """Test search_projects respects JIRA_PROJECTS_FILTER config."""
+    projects_mixin.config.is_cloud = False
+    projects_mixin.jira.get.return_value = {"projects": mock_projects}
+    projects_mixin.config.projects_filter = "PROJ1"
+
+    result = projects_mixin.search_projects("PROJ")
+    assert len(result) == 1
+    assert result[0]["key"] == "PROJ1"
+
+
+def test_search_projects_empty_results(projects_mixin: ProjectsMixin):
+    """Test search_projects with no matching projects."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.config.is_cloud = False
+    projects_mixin.jira.get.return_value = {"projects": []}
+
+    result = projects_mixin.search_projects("nonexistent")
+    assert result == []
+
+
+def test_search_projects_exception(projects_mixin: ProjectsMixin):
+    """Test search_projects returns empty list on API error."""
+    projects_mixin.jira.get.side_effect = Exception("API error")
+
+    result = projects_mixin.search_projects("PROJ")
+    assert result == []
+
+
+def test_search_projects_non_dict_response(projects_mixin: ProjectsMixin):
+    """Test search_projects handles non-dict response gracefully."""
+    projects_mixin.config.projects_filter = None
+    projects_mixin.jira.get.return_value = "not a dict"
+
+    result = projects_mixin.search_projects("PROJ")
+    assert result == []
+
+
+def test_update_project_version_single_field(projects_mixin: ProjectsMixin) -> None:
+    """Test update_project_version forwards a single field change."""
+    mock_response = {"id": "301", "name": "v4.0", "archived": False}
+    with patch.object(
+        projects_mixin, "update_version", return_value=mock_response
+    ) as mock_update_version:
+        result = projects_mixin.update_project_version(version_id="301", archived=False)
+        assert result == mock_response
+        mock_update_version.assert_called_once_with(
+            version_id="301",
+            name=None,
+            description=None,
+            start_date=None,
+            release_date=None,
+            archived=False,
+            released=None,
+        )
+
+
+def test_update_project_version_all_fields(projects_mixin: ProjectsMixin) -> None:
+    """Test update_project_version forwards every field when provided."""
+    mock_response = {
+        "id": "302",
+        "name": "v5.1",
+        "description": "Patched",
+        "startDate": "2025-09-01",
+        "releaseDate": "2025-09-15",
+        "archived": True,
+        "released": True,
+    }
+    with patch.object(
+        projects_mixin, "update_version", return_value=mock_response
+    ) as mock_update_version:
+        result = projects_mixin.update_project_version(
+            version_id="302",
+            name="v5.1",
+            description="Patched",
+            start_date="2025-09-01",
+            release_date="2025-09-15",
+            archived=True,
+            released=True,
+        )
+        assert result == mock_response
+        mock_update_version.assert_called_once_with(
+            version_id="302",
+            name="v5.1",
+            description="Patched",
+            start_date="2025-09-01",
+            release_date="2025-09-15",
+            archived=True,
+            released=True,
+        )
+
+
+def test_update_project_version_error(projects_mixin: ProjectsMixin) -> None:
+    """Test update_project_version propagates errors from the client."""
+    with patch.object(
+        projects_mixin, "update_version", side_effect=Exception("API failure")
+    ):
+        with pytest.raises(Exception):
+            projects_mixin.update_project_version("303", archived=True)

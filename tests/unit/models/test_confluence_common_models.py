@@ -254,10 +254,10 @@ class TestConfluenceUser:
         simplified = user.to_simplified_dict()
 
         assert isinstance(simplified, dict)
+        assert simplified["account_id"] == "user123"
         assert simplified["display_name"] == "Test User"
         assert simplified["email"] == "test@example.com"
         assert simplified["profile_picture"] == "/wiki/aa-avatar/user123"
-        assert "account_id" not in simplified  # Not included in simplified dict
         assert "locale" not in simplified  # Not included in simplified dict
 
 
@@ -343,7 +343,7 @@ class TestConfluenceVersion:
         assert version.message is None
         assert version.by is None
 
-    def test_to_simplified_dict(self):
+    def test_to_simplified_dict(self, pacific_timezone):
         """Test converting ConfluenceVersion to a simplified dictionary."""
         version = ConfluenceVersion(
             number=5,
@@ -356,7 +356,7 @@ class TestConfluenceVersion:
 
         assert isinstance(simplified, dict)
         assert simplified["number"] == 5
-        assert simplified["when"] == "2024-01-01 09:00:00"  # Formatted timestamp
+        assert simplified["when"] == "2024-01-01 01:00:00 PST"
         assert simplified["message"] == "Updated content"
         assert simplified["by"] == "Test User"
 
@@ -390,7 +390,7 @@ class TestConfluenceComment:
         assert comment.author is None
         assert comment.type == "comment"
 
-    def test_to_simplified_dict(self):
+    def test_to_simplified_dict(self, pacific_timezone):
         """Test converting ConfluenceComment to a simplified dictionary."""
         comment = ConfluenceComment(
             id="456789123",
@@ -408,8 +408,8 @@ class TestConfluenceComment:
         assert simplified["id"] == "456789123"
         assert simplified["title"] == "Test Comment"
         assert simplified["body"] == "This is a test comment"
-        assert simplified["created"] == "2024-01-01 10:00:00"  # Formatted timestamp
-        assert simplified["updated"] == "2024-01-01 10:00:00"  # Formatted timestamp
+        assert simplified["created"] == "2024-01-01 02:00:00 PST"
+        assert simplified["updated"] == "2024-01-01 02:00:00 PST"
         assert simplified["author"] == "Comment Author"
 
 
