@@ -1,17 +1,12 @@
 """Module for Jira project-level analysis operations."""
 
-import logging
 from collections import defaultdict
 from typing import Any
-
-from requests.exceptions import HTTPError
 
 from ..models.jira import JiraSearchResult
 from ..utils.decorators import handle_auth_errors
 from .client import JiraClient
 from .constants import CHILD_OF_PHRASES
-
-logger = logging.getLogger("mcp-jira")
 
 _SERVER_DC_PAGE_SIZE = 50
 
@@ -335,19 +330,14 @@ class ProjectAnalysisMixin(JiraClient):
         for i in range(0, len(keys_list), _SERVER_DC_PAGE_SIZE):
             chunk = keys_list[i : i + _SERVER_DC_PAGE_SIZE]
             jql = "key in ({})".format(",".join(chunk))
-            try:
-                search = self.search_issues(  # type: ignore[attr-defined]
-                    jql=jql,
-                    fields=["summary", "status"],
-                    limit=len(chunk),
-                )
-                for issue in search.issues:
-                    result[issue.key] = {
-                        "summary": issue.summary,
-                        "status": issue.status.name if issue.status else "",
-                    }
-            except HTTPError:
-                raise
-            except Exception:
-                logger.warning("Failed to resolve parent summaries for %s", chunk)
+            search = self.search_issues(  # type: ignore[attr-defined]
+                jql=jql,
+                fields=["summary", "status"],
+                limit=len(chunk),
+            )
+            for issue in search.issues:
+                result[issue.key] = {
+                    "summary": issue.summary,
+                    "status": issue.status.name if issue.status else "",
+                }
         return result

@@ -4,6 +4,7 @@ import pytest
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+from mcp_atlassian.jira.constants import _load_custom_hierarchy_phrases
 from mcp_atlassian.jira.project_analysis import _project_key_from_issue_key
 from mcp_atlassian.models.jira.common import JiraIssueType, JiraStatus
 from mcp_atlassian.models.jira.issue import JiraIssue
@@ -81,6 +82,32 @@ class TestProjectKeyFromIssueKey:
 
     def test_no_dash(self) -> None:
         assert _project_key_from_issue_key("NODASH") == "NODASH"
+
+
+class TestCustomHierarchyPhrases:
+    def test_loads_parent_and_child_phrases(self, monkeypatch) -> None:
+        monkeypatch.setenv(
+            "HIERARCHY_LINK_PHRASES",
+            "parent:Rolls Up To, child: Is Part Of",
+        )
+
+        parent_phrases, child_phrases = _load_custom_hierarchy_phrases()
+
+        assert parent_phrases == {"rolls up to"}
+        assert child_phrases == {"is part of"}
+
+    def test_ignores_malformed_phrases(self, monkeypatch, caplog) -> None:
+        monkeypatch.setenv(
+            "HIERARCHY_LINK_PHRASES",
+            "missing-role,other:phrase,parent:",
+        )
+
+        parent_phrases, child_phrases = _load_custom_hierarchy_phrases()
+
+        assert parent_phrases == set()
+        assert child_phrases == set()
+        assert "ignoring malformed entry 'missing-role'" in caplog.text
+        assert "unknown role 'other'" in caplog.text
 
 
 class TestProjectAnalysisMixin:
@@ -261,6 +288,24 @@ class TestProjectAnalysisMixin:
             side_effect=HTTPError(response=Mock(status_code=401))
         )
         with pytest.raises(MCPAtlassianAuthenticationError):
+            mixin.get_project_epic_hierarchy("PROJ")
+
+    def test_epic_hierarchy_parent_lookup_auth_error(self, mixin):
+        """Authentication errors resolving parents must not return partial data."""
+        epics = [
+            _epic(
+                "PROJ-10",
+                [_make_link(inward_key="INIT-1", link_type_name="Split from")],
+            )
+        ]
+        mixin.search_issues = MagicMock(
+            side_effect=[
+                _search_result(epics),
+                MCPAtlassianAuthenticationError("token expired"),
+            ]
+        )
+
+        with pytest.raises(MCPAtlassianAuthenticationError, match="token expired"):
             mixin.get_project_epic_hierarchy("PROJ")
 
     # ---- get_cross_project_dependencies ----

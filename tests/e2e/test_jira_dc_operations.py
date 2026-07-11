@@ -76,6 +76,31 @@ class TestJiraDCBehavior:
             )
 
 
+class TestJiraDCProjectAnalysis:
+    """Project analysis through Jira Data Center offset pagination."""
+
+    def test_project_analysis(
+        self,
+        jira_fetcher: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        hierarchy = jira_fetcher.get_project_epic_hierarchy(
+            dc_instance.project_key,
+            max_epics=10,
+        )
+        dependencies = jira_fetcher.get_cross_project_dependencies(
+            dc_instance.project_key,
+            max_issues=10,
+        )
+
+        assert hierarchy["project_key"] == dc_instance.project_key
+        assert hierarchy["total_epics"] <= 10
+        assert isinstance(hierarchy["groups"], list)
+        assert dependencies["project_key"] == dc_instance.project_key
+        assert dependencies["total_issues_scanned"] <= 10
+        assert isinstance(dependencies["by_project"], dict)
+
+
 class TestJiraDCEpicOperations:
     """Epic creation with DC custom fields."""
 
