@@ -145,7 +145,7 @@ class ConfluenceClient:
         self.confluence._session.hooks["response"].append(make_ssrf_redirect_hook())
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
-        mount_ssrf_pinning(self.confluence._session)
+        mount_ssrf_pinning(self.confluence._session, transport_url)
 
         # Apply opt-in HTTP hardening after SSL setup and after the pinning
         # adapter is mounted: these wrappers patch send() in place on whatever
