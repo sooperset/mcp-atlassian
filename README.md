@@ -28,23 +28,74 @@ Go to https://id.atlassian.com/manage-profile/security/api-tokens and create a t
 
 ### 2. Configure Your IDE
 
-Add to your Claude Desktop or Cursor MCP configuration:
+#### Add to your IntelliJ IDEA MCP configuration (mcp.json):
 
+##### Configure connection to remote Medhost MCP server:
+
+Example for InelliJ IDEA, add you your mcp.sjon (sometimes it requires restart of IDEA):
+```json
+        "mcp-atlassian-remote": {
+            "url": "https://mcp.mhdidevxasayd.com/atlassian",
+            "requestInit": {
+                "headers": {
+                    "X-Atlassian-Confluence-Personal-Token": "YOUR CONFLUENCE PAT TOKEN (Optional)",
+                    "X-Atlassian-Confluence-Url": "https://confluence.medhost.com:8443/",
+                    "X-Atlassian-Jira-Personal-Token": "YOUR JIRA PAT TOKEN (optional)",
+                    "X-Atlassian-Jira-Url": "https://jira.medhost.com:8443"
+                }
+            }
+        }
+```
+
+Example for AWS Kiro IDE:
+```json
+"mcp-atlassian-service": {
+      "url": "https://mcp.mhdidevxasayd.com/atlassian",
+      "headers": {
+        "X-Atlassian-Confluence-Personal-Token": "YOUR CONFLUENCE PAT TOKEN (Optional)",
+        "X-Atlassian-Confluence-Url": "https://confluence.medhost.com:8443/",
+        "X-Atlassian-Jira-Personal-Token": "YOUR JIRA PAT TOKEN (optional)",
+        "X-Atlassian-Jira-Url": "https://jira.medhost.com:8443"
+      },
+      "disabled": false,
+      "disabledTools": [],
+      "autoApprove": [
+        "bitbucket_bitbucket_get_pull_requests",
+        "jira_get_issue",
+        "jira_get_transitions",
+        "jira_transition_issue"
+      ]
+    }
+```
+
+
+##### Running MCP server in docker conainer on your PC:
+
+Example for IntelliJ IDEA:
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "mcp-atlassian": {
-      "command": "uvx",
-      "args": ["mcp-atlassian"],
-      "env": {
-        "JIRA_URL": "https://your-company.atlassian.net",
-        "JIRA_USERNAME": "your.email@company.com",
-        "JIRA_API_TOKEN": "your_api_token",
-        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@company.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token"
-      }
-    }
+            "command": "docker",
+            "type": "stdio",
+            "args": [
+                "run",
+                "--rm",
+                "-i",
+                "-e", "CONFLUENCE_URL",
+                "-e", "CONFLUENCE_PERSONAL_TOKEN",
+                "-e", "JIRA_URL",
+                "-e", "JIRA_PERSONAL_TOKEN",
+                "docker.test.yourcareuniverse.net/medhost/mcp-atlassian:latest"
+            ],
+            "env": {
+                "CONFLUENCE_URL": "https://confluence.medhost.com:8443",
+                "CONFLUENCE_PERSONAL_TOKEN": "YOUR CONFLUENCE PAT TOKEN",
+                "JIRA_URL": "https://jira.medhost.com:8443",
+                "JIRA_PERSONAL_TOKEN": "YOUR JIRA PAT TOKEN",
+                "MCP_VERBOSE": "true"
+            }
+        }
   }
 }
 ```
@@ -96,6 +147,59 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 | `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments |
 
 **93 tools total** — See [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) for the complete list.
+
+## Audit Logging
+
+The MCP Atlassian server includes built-in audit logging that records every tool call. Each log entry follows the format:
+
+```
+<source_ip> <tool_name> <username> <request_body>
+```
+
+For example:
+```
+192.168.1.100 jira_get_issue user@example.com {"issue_key": "PROJ-123"}
+```
+
+Audit logs are emitted to a dedicated `mcp-atlassian.audit` logger at the INFO level, allowing operators to route them independently of application logs.
+
+### Configuration
+
+| Environment Variable | Type | Default | Description |
+|---------------------|------|---------|-------------|
+| `MCP_AUDIT_LOG_ENABLED` | bool (`true`, `1`, `yes` / `false`, `0`, `no`) | `true` | Enable or disable audit middleware registration |
+| `MCP_AUDIT_SENSITIVE_FIELDS` | comma-separated string | _(none)_ | Additional field name substrings to mask in logged request bodies |
+| `MCP_AUDIT_MAX_BODY_LENGTH` | integer (≥ 64) | `2048` | Maximum characters for the serialized request body before truncation |
+
+### Sensitive Field Masking
+
+By default, any tool argument whose name contains one of the following substrings (case-insensitive) will have its value masked in the log output:
+
+- `token`
+- `password`
+- `secret`
+- `key`
+- `credential`
+- `auth`
+
+To add custom patterns, set `MCP_AUDIT_SENSITIVE_FIELDS` to a comma-separated list of additional substrings:
+
+```bash
+MCP_AUDIT_SENSITIVE_FIELDS=ssn,account_number,private
+```
+
+Custom patterns are combined with the defaults. Masking applies to top-level arguments and one level of nested dictionaries.
+
+### Username Resolution
+
+The `<username>` field in audit log entries is resolved based on the authentication method:
+
+| Auth Method | Username Source | Fallback |
+|-------------|---------------|----------|
+| Basic | Email from decoded `Authorization` header (portion before `:`) | `anonymous` |
+| PAT (Personal Access Token) | `user_atlassian_email` from request state | `pat-user` |
+| OAuth | `user_atlassian_email` from request state | `oauth-user` |
+| None (unauthenticated) | — | `anonymous` |
 
 ## Security
 

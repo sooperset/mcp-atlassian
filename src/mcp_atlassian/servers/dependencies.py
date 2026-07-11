@@ -62,18 +62,34 @@ def _jira_on_validated(
     auth_branch: str,
     user_email: str | None,
 ) -> None:
-    """Post-validation logging for Jira (user ID only)."""
+    """Post-validation logging + email backfill for Jira."""
+    # Extract email from validation_data dict (emailAddress key)
+    derived_email: str | None = None
+    if isinstance(validation_data, dict):
+        derived_email = validation_data.get("emailAddress")
+        display_id = (
+            validation_data.get("accountId")
+            or validation_data.get("key")
+            or validation_data.get("name")
+        )
+    else:
+        # Backward compat: validation_data may be a plain string
+        display_id = validation_data
+
     if auth_branch == "header_pat":
         logger.debug(
-            f"{fn_name}: Validated header-based Jira token "
-            f"for user ID: {validation_data}"
+            f"{fn_name}: Validated header-based Jira token for user ID: {display_id}"
         )
+        # Backfill email for header PAT branch
+        if derived_email and not user_email:
+            request.state.user_atlassian_email = derived_email
     elif auth_branch == "basic":
-        logger.debug(
-            f"{fn_name}: Validated Jira basic auth for user ID: {validation_data}"
-        )
+        logger.debug(f"{fn_name}: Validated Jira basic auth for user ID: {display_id}")
     else:  # oauth_pat
-        logger.debug(f"{fn_name}: Validated Jira token for user ID: {validation_data}")
+        logger.debug(f"{fn_name}: Validated Jira token for user ID: {display_id}")
+        # Backfill only when email not already known
+        if derived_email and not user_email:
+            request.state.user_atlassian_email = derived_email
 
 
 def _confluence_on_validated(
@@ -84,9 +100,21 @@ def _confluence_on_validated(
     user_email: str | None,
 ) -> None:
     """Post-validation logging + email backfill for Confluence."""
-    derived_email = (
-        validation_data.get("email") if isinstance(validation_data, dict) else None
-    )
+    derived_email: str | None = None
+    if isinstance(validation_data, dict):
+        # Confluence Cloud uses "email", Server/DC may use "emailAddress"
+        # Fall back to "username" if no email field exists
+        derived_email = (
+            validation_data.get("email")
+            or validation_data.get("emailAddress")
+            or validation_data.get("username")
+        )
+        # Use displayName only if it looks like a real identity
+        # (not "Anonymous" or empty)
+        if not derived_email:
+            display = validation_data.get("displayName", "")
+            if display and display.lower() not in ("anonymous", "unknown"):
+                derived_email = display
     display_name = (
         validation_data.get("displayName")
         if isinstance(validation_data, dict)
@@ -99,8 +127,8 @@ def _confluence_on_validated(
             f"DisplayName='{display_name}'"
         )
         # Always backfill email in PAT header branch
-        if derived_email and validation_data and isinstance(validation_data, dict):
-            request.state.user_atlassian_email = validation_data["email"]
+        if derived_email and not user_email:
+            request.state.user_atlassian_email = derived_email
     elif auth_branch == "basic":
         logger.debug(
             f"{fn_name}: Validated basic auth. "
@@ -114,14 +142,8 @@ def _confluence_on_validated(
             f"DisplayName='{display_name}'"
         )
         # Backfill only when email not already known
-        if (
-            not user_email
-            and derived_email
-            and validation_data
-            and isinstance(validation_data, dict)
-            and validation_data.get("email")
-        ):
-            request.state.user_atlassian_email = validation_data["email"]
+        if not user_email and derived_email:
+            request.state.user_atlassian_email = derived_email
 
 
 def _jira_spec() -> _ServiceSpec:
@@ -140,7 +162,7 @@ def _jira_spec() -> _ServiceSpec:
         token_header="X-Atlassian-Jira-Personal-Token",  # noqa: S106
         filter_kwargs={"projects_filter": None},
         get_session=lambda f: f.jira._session,
-        validate_fn=lambda f: f.get_current_user_account_id(),
+        validate_fn=lambda f: f.get_current_user_details(),
         on_validated=_jira_on_validated,
     )
 
