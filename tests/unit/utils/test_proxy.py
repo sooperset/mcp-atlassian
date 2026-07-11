@@ -6,6 +6,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pypac import get_pac
 from pypac.parser import MalformedPacError
 from requests import PreparedRequest
 from requests.exceptions import ProxyError
@@ -18,6 +19,7 @@ from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils.proxy import (
     DEFAULT_PROXY_WPAD_URL,
     _load_pac_file,
+    _NoProxyAwarePACSession,
     apply_proxy_configuration,
     get_proxy_settings_from_env,
 )
@@ -96,7 +98,7 @@ def test_confluence_client_passes_proxies_to_requests(monkeypatch):
 
 
 def test_jira_client_no_proxy_env(monkeypatch):
-    """Test that JiraClient sets NO_PROXY env var and requests to excluded hosts bypass proxy."""
+    """Test that JiraClient sets NO_PROXY in the process environment."""
     mock_jira = MagicMock()
     mock_session = MagicMock()
     mock_jira._session = mock_session
@@ -113,7 +115,7 @@ def test_jira_client_no_proxy_env(monkeypatch):
         http_proxy="http://proxy:8080",
         no_proxy="localhost,127.0.0.1",
     )
-    client = JiraClient(config=config)
+    _client = JiraClient(config=config)
     assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
 
 
@@ -122,7 +124,7 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
 
     def test_proxy_configuration_from_environment(self):
         """Test proxy configuration loaded from environment variables."""
-        with MockEnvironment.basic_auth_env() as env_vars:
+        with MockEnvironment.basic_auth_env():
             # Set proxy environment variables in os.environ directly
             proxy_vars = {
                 "HTTP_PROXY": "http://proxy.company.com:8080",
@@ -183,7 +185,7 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
             socks_proxy="socks5://socksuser:sockspass@socks.company.com:1080",
         )
 
-        client = JiraClient(config=config)
+        _client = JiraClient(config=config)
         assert (
             mock_session.proxies["socks"]
             == "socks5://socksuser:sockspass@socks.company.com:1080"
@@ -278,7 +280,7 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
             ssl_verify=False,
         )
 
-        client = ConfluenceClient(config=config)
+        _client = ConfluenceClient(config=config)
 
         # Both proxy and SSL settings should be applied
         assert mock_session.proxies["http"] == "http://proxy.company.com:8080"
@@ -427,6 +429,28 @@ def test_apply_proxy_configuration_wraps_session_for_wpad():
     assert pac_session.trust_env is False
 
 
+def test_pac_session_no_proxy_handles_empty_proxy_mapping() -> None:
+    """An empty caller proxy map must not disable the NO_PROXY bypass."""
+    pac = get_pac(
+        js=(
+            "function FindProxyForURL(url, host) { "
+            'return "PROXY proxy.example.com:8080"; }'
+        )
+    )
+    session = _NoProxyAwarePACSession(
+        pac=pac,
+        no_proxy="internal.example.com",
+    )
+
+    with patch.object(Session, "request", return_value=MagicMock()) as mock_request:
+        session.get("https://internal.example.com/api", proxies={})
+
+    assert mock_request.call_args.kwargs["proxies"] == {
+        "http": None,
+        "https": None,
+    }
+
+
 def test_apply_proxy_configuration_raises_for_malformed_pac():
     """Test malformed PAC files produce a clear service-specific error."""
     config = JiraConfig(
@@ -482,6 +506,20 @@ def test_load_pac_file_is_cached():
         assert mock_get_pac.call_count == 1
     finally:
         _load_pac_file.cache_clear()
+
+
+def test_load_pac_file_requires_optional_wpad_dependency(monkeypatch):
+    """PAC loading explains how to enable WPAD when the extra is absent."""
+    _load_pac_file.cache_clear()
+    monkeypatch.setattr("mcp_atlassian.utils.proxy.get_pac", None)
+
+    with pytest.raises(ValueError, match=r"mcp-atlassian\[wpad\]"):
+        _load_pac_file(
+            "http://wpad/wpad.dat",
+            verify=True,
+            cert=None,
+            trust_env=False,
+        )
 
 
 class TestNoProxyAdapter:

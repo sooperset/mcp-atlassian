@@ -8,10 +8,19 @@ from functools import lru_cache
 from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 
-from pypac import PACSession, get_pac
-from pypac.parser import MalformedPacError
 from requests import Session
 from requests.utils import should_bypass_proxies
+
+try:
+    from pypac import PACSession, get_pac
+    from pypac.parser import MalformedPacError
+except ImportError:  # pragma: no cover - exercised without the wpad extra
+    PACSession = Session  # type: ignore[assignment,misc]
+    get_pac: Any = None  # type: ignore[no-redef]
+
+    class MalformedPacError(ValueError):  # type: ignore[no-redef]
+        """Fallback exception when the optional PAC dependency is unavailable."""
+
 
 from .env import is_env_truthy
 from .logging import log_config_param
@@ -44,15 +53,20 @@ class _NoProxyAwarePACSession(PACSession):  # type: ignore[misc]
         super().__init__(pac=pac)
         self._no_proxy = no_proxy
 
-    def request(self, method: str, url: str, *args: Any, **kwargs: Any) -> Any:
+    def request(
+        self,
+        method: str,
+        url: str,
+        proxies: Any = None,
+        **kwargs: Any,
+    ) -> Any:
         if (
             self._no_proxy
-            and ("proxies" not in kwargs or kwargs["proxies"] is None)
+            and not proxies
             and should_bypass_proxies(url, no_proxy=self._no_proxy)
         ):
-            kwargs = dict(kwargs)
-            kwargs["proxies"] = {"http": None, "https": None}
-        return super().request(method, url, *args, **kwargs)
+            proxies = {"http": None, "https": None}
+        return super().request(method, url, proxies=proxies, **kwargs)
 
 
 @lru_cache(maxsize=16)
@@ -64,6 +78,13 @@ def _load_pac_file(
     trust_env: bool,
 ) -> Any:
     """Load and cache a PAC file for later session reuse."""
+    if get_pac is None:
+        msg = (
+            "PAC/WPAD support requires the optional 'wpad' dependency; "
+            "install mcp-atlassian[wpad] to enable it"
+        )
+        raise ValueError(msg)
+
     bootstrap_session = Session()
     bootstrap_session.verify = verify
     bootstrap_session.cert = cert

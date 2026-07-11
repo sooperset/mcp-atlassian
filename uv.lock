@@ -1495,7 +1495,6 @@ dependencies = [
     { name = "markdownify" },
     { name = "mcp" },
     { name = "pydantic" },
-    { name = "pypac" },
     { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "requests", extra = ["socks"] },
@@ -1511,6 +1510,11 @@ dependencies = [
     { name = "uvicorn" },
 ]
 
+[package.optional-dependencies]
+wpad = [
+    { name = "pypac" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "black" },
@@ -1518,6 +1522,7 @@ dev = [
     { name = "mcp", extra = ["cli"] },
     { name = "mypy" },
     { name = "pre-commit" },
+    { name = "pypac" },
     { name = "pytest" },
     { name = "pytest-anyio" },
     { name = "pytest-asyncio" },
@@ -1543,7 +1548,7 @@ requires-dist = [
     { name = "markdownify", specifier = ">=0.11.6" },
     { name = "mcp", specifier = ">=1.8.0,<2.0.0" },
     { name = "pydantic", specifier = ">=2.10.6,<3.0" },
-    { name = "pypac", specifier = ">=0.17.2" },
+    { name = "pypac", marker = "extra == 'wpad'", specifier = ">=0.17.2" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "requests", extras = ["socks"], specifier = ">=2.31.0" },
@@ -1558,6 +1563,7 @@ requires-dist = [
     { name = "urllib3", specifier = ">=2.6.3" },
     { name = "uvicorn", specifier = ">=0.27.1" },
 ]
+provides-extras = ["wpad"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1566,6 +1572,7 @@ dev = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.3.0" },
     { name = "mypy", specifier = ">=1.8.0" },
     { name = "pre-commit", specifier = ">=3.6.0" },
+    { name = "pypac", specifier = ">=0.17.2" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-anyio", specifier = ">=0.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
