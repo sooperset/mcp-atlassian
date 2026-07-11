@@ -122,6 +122,10 @@ class BasePreprocessor:
             self._process_user_mentions_in_soup(soup, confluence_client)
             self._process_user_profile_macros_in_soup(soup, confluence_client)
 
+            # Preserve Confluence date lozenges, whose value is stored only in
+            # the datetime attribute and would otherwise be dropped by markdownify.
+            self._process_date_elements_in_soup(soup)
+
             # Process Confluence image tags
             self._process_images_in_soup(soup, content_id, attachments)
 
@@ -134,6 +138,18 @@ class BasePreprocessor:
         except Exception as e:
             logger.error(f"Error in process_html_content: {str(e)}")
             raise
+
+    @staticmethod
+    def _process_date_elements_in_soup(soup: BeautifulSoup) -> None:
+        """Expose Confluence date-lozenge values as element text."""
+        for date_element in soup.find_all("time"):
+            datetime_value = date_element.get("datetime")
+            if (
+                isinstance(datetime_value, str)
+                and datetime_value
+                and not date_element.get_text(strip=True)
+            ):
+                date_element.string = datetime_value
 
     def _process_user_mentions_in_soup(
         self, soup: BeautifulSoup, confluence_client: ConfluenceClient | None = None

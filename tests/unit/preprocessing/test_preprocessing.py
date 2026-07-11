@@ -89,6 +89,20 @@ def test_process_html_content_basic(preprocessor_with_confluence):
     assert processed_markdown.strip() == "Simple text"
 
 
+def test_process_html_content_preserves_confluence_date_lozenge(
+    preprocessor_with_confluence,
+):
+    """Date lozenges retain values stored only in datetime attributes."""
+    html = '<p>Meeting date: <time datetime="2026-02-04" /></p>'
+
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(html)
+    )
+
+    assert '<time datetime="2026-02-04">2026-02-04</time>' in processed_html
+    assert processed_markdown.strip() == "Meeting date: 2026-02-04"
+
+
 def test_process_html_content_with_user_mentions(preprocessor_with_confluence):
     """Test HTML content processing with user mentions."""
     html = """
