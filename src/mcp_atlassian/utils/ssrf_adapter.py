@@ -21,6 +21,7 @@ caller-supplied URLs. The single-resolution pin still applies to every host.
 
 import os
 import socket
+from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlparse
 
@@ -128,6 +129,50 @@ class _PinnedHTTPSConnectionPool(HTTPSConnectionPool):
 class SsrfPinningAdapter(HTTPAdapter):
     """A requests adapter that validates and pins DNS resolution for every call."""
 
+    def __init__(
+        self, *args: Any, trusted_urls: Iterable[str] = (), **kwargs: Any
+    ) -> None:
+        self._trusted_hosts: set[str] = set()
+        self._trust_urls(trusted_urls)
+        super().__init__(*args, **kwargs)
+
+    def _trust_urls(self, urls: Iterable[str]) -> None:
+        for url in urls:
+            hostname = urlparse(url).hostname
+            if hostname:
+                self._trusted_hosts.add(hostname.lower())
+
+    def send(
+        self,
+        request: Any,
+        stream: bool = False,
+        timeout: Any = None,
+        verify: Any = True,
+        cert: Any = None,
+        proxies: Any = None,
+    ) -> Any:
+        """Keep caller-controlled destinations on the pinned direct path.
+
+        An HTTP proxy resolves the target itself, outside this process, so merely
+        installing pinned connection pools on ``ProxyManager`` would only pin the
+        proxy host. Operator-configured service and allowlisted hosts may use a
+        deployment proxy; other destinations connect directly through this
+        adapter's validating pool.
+        """
+        hostname = urlparse(request.url or "").hostname or ""
+        if proxies and not _hostname_matches_allowlist(
+            hostname, [*_operator_trusted_hosts(), *self._trusted_hosts]
+        ):
+            proxies = {}
+        return super().send(
+            request,
+            stream=stream,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            proxies=proxies,
+        )
+
     def init_poolmanager(
         self, connections: int, maxsize: int, block: bool = False, **pool_kwargs: Any
     ) -> None:
@@ -141,11 +186,15 @@ class SsrfPinningAdapter(HTTPAdapter):
         }
 
 
-def mount_ssrf_pinning(session: Session) -> None:
+def mount_ssrf_pinning(session: Session, *trusted_urls: str) -> None:
     """Mount the SSRF DNS-pinning adapter for http/https on ``session``.
 
     Preserves the retry policy of any adapter already mounted (e.g. the one the
     Atlassian client configures), so pinning does not silently drop retries.
+
+    Args:
+        session: Requests session to protect.
+        trusted_urls: Operator-controlled transport URLs that may use proxies.
     """
     for scheme in ("https://", "http://"):
         existing = session.adapters.get(scheme)
@@ -156,3 +205,7 @@ def mount_ssrf_pinning(session: Session) -> None:
             else SsrfPinningAdapter()
         )
         session.mount(scheme, adapter)
+
+    for adapter in session.adapters.values():
+        if isinstance(adapter, SsrfPinningAdapter):
+            adapter._trust_urls(trusted_urls)

@@ -352,6 +352,8 @@ def test_two_adapters_with_different_no_proxy_lists_stay_isolated(monkeypatch):
     later overwritten by the other client.
     """
     # Jira is configured first for jira.internal.
+    monkeypatch.setenv("JIRA_URL", "https://jira.internal")
+    monkeypatch.setenv("CONFLUENCE_URL", "https://confluence.internal")
     jira_adapter = NoProxyAdapter(no_proxy="jira.internal")
     # Confluence is configured later and overwrites the shared environment.
     confluence_adapter = NoProxyAdapter(no_proxy="confluence.internal")
