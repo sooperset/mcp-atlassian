@@ -34,11 +34,12 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             Exception: If there is an error getting transitions
         """
         try:
-            transitions_data = self.jira.get_issue_transitions(issue_key)
+            transitions_data: object = self.jira.get_issue_transitions(issue_key)
+            if not isinstance(transitions_data, list):
+                return []
             result: list[dict[str, Any]] = []
 
             for transition in transitions_data:
-                # Skip non-dict transitions
                 if not isinstance(transition, dict):
                     continue
 
@@ -72,7 +73,8 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         except Exception as e:
             error_msg = f"Error getting transitions for {issue_key}: {str(e)}"
             logger.error(error_msg)
-            raise Exception(f"Error getting transitions: {str(e)}") from e
+            public_error = f"Error getting transitions: {str(e)}"
+            raise Exception(public_error) from e
 
     def get_transitions(self, issue_key: str) -> list[dict[str, Any]]:
         """
@@ -90,7 +92,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         """
         response = self.jira.get_issue_transitions_full(issue_key)
         if isinstance(response, dict):
-            return response.get("transitions", [])
+            transitions = response.get("transitions", [])
+            if isinstance(transitions, list):
+                return [item for item in transitions if isinstance(item, dict)]
         return []
 
     def get_transitions_models(self, issue_key: str) -> list[JiraTransition]:
@@ -144,7 +148,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
             # Validate that this is a valid transition ID
             valid_transitions = self.get_transitions_models(issue_key)
-            valid_ids = [t.id for t in valid_transitions]
+            valid_ids: list[str | int] = [t.id for t in valid_transitions]
 
             # Convert string IDs to integers for proper comparison
             if isinstance(normalized_transition_id, int):
@@ -168,14 +172,6 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 )
                 # Continue anyway as Jira will validate
 
-            # Find the target status name for the transition ID
-            target_status_name = None
-            for transition in valid_transitions:
-                if str(transition.id) == str(normalized_transition_id):
-                    if transition.to_status and transition.to_status.name:
-                        target_status_name = transition.to_status.name
-                        break
-
             # Sanitize fields if provided
             fields_for_api = None
             if fields:
@@ -197,19 +193,6 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             )
             logger.debug(f"Fields: {fields_for_api}, Update: {update_for_api}")
 
-            # POST directly to the v2 transitions endpoint. atlassian-python-api
-            # defaults to v3 on Jira Cloud, but v3 requires update.comment[].add.body
-            # to be an Atlassian Document (ADF). _markdown_to_jira produces a
-            # wiki-markup string, which v2 accepts. Forcing v2 here avoids a
-            # markdown->ADF conversion path on the transitions endpoint
-            # specifically; other endpoints retain whatever version the client
-            # is configured for. See upstream issue #1262.
-            if (
-                isinstance(normalized_transition_id, str)
-                and normalized_transition_id.isdigit()
-            ):
-                normalized_transition_id = int(normalized_transition_id)
-
             payload: dict[str, Any] = {
                 "transition": {"id": str(normalized_transition_id)},
             }
@@ -218,9 +201,14 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             if update_for_api:
                 payload["update"] = update_for_api
 
-            base_url = self.jira.resource_url("issue").replace("/api/3/", "/api/2/")
-            url = f"{base_url}/{issue_key}/transitions"
-            self.jira.post(url, json=payload)
+            if self.config.is_cloud:
+                # Cloud comments are ADF and require the REST v3 endpoint.
+                self._post_api3(f"issue/{issue_key}/transitions", payload)
+            else:
+                # Server/DC comments use wiki markup on REST v2.
+                base_url = self.jira.resource_url("issue")
+                url = f"{base_url}/{issue_key}/transitions"
+                self.jira.post(url, data=payload)
 
             # Return the updated issue
             return self.get_issue(issue_key)
@@ -238,7 +226,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             logger.error(error_msg)
             raise ValueError(error_msg) from e
 
-    def _normalize_transition_id(self, transition_id: str | int | dict) -> str | int:
+    def _normalize_transition_id(self, transition_id: object) -> str | int:
         """
         Normalize the transition ID to a common format.
 
@@ -246,7 +234,8 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             transition_id: The transition ID, which can be a string, int, or dict
 
         Returns:
-            The normalized transition ID as an integer when possible, or string otherwise
+            The normalized transition ID as an integer when possible, or a string
+            otherwise
         """
         logger.debug(
             f"Normalizing transition_id: {transition_id}, type: {type(transition_id)}"
@@ -321,17 +310,13 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
         # For any other type, convert to string with warning
         logger.warning(
-            f"Unexpected type for transition_id: {type(transition_id)}, trying conversion"
+            f"Unexpected type for transition_id: {type(transition_id)}, "
+            "trying conversion"
         )
-        try:
-            str_value = str(transition_id)
-            if str_value.isdigit():
-                return int(str_value)
-            else:
-                return str_value
-        except Exception as e:
-            logger.error(f"Failed to convert transition_id: {str(e)}")
-            return 0
+        str_value = str(transition_id)
+        if str_value.isdigit():
+            return int(str_value)
+        return str_value
 
     def _sanitize_transition_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
         """
@@ -385,7 +370,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             comment_str = comment
 
         # Convert markdown to Jira format if _markdown_to_jira is available
-        jira_formatted_comment = comment_str
+        jira_formatted_comment: str | dict[str, Any] = comment_str
         if hasattr(self, "_markdown_to_jira"):
             jira_formatted_comment = self._markdown_to_jira(comment_str)
 
