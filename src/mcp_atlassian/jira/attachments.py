@@ -5,7 +5,7 @@ import mimetypes
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import ParseResult, parse_qs, unquote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -505,15 +505,11 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         """
         logger.info(f"Fetching embedded images for {issue_key}")
 
-        try:
-            issue_data = self.jira.issue(
-                issue_key,
-                fields="description,comment",
-                expand="renderedFields",
-            )
-        except Exception as e:
-            logger.error(f"Error fetching issue {issue_key}: {e}")
-            return {"success": False, "error": str(e)}
+        issue_data = self.jira.issue(
+            issue_key,
+            fields="description,comment",
+            expand="renderedFields",
+        )
 
         if not isinstance(issue_data, dict):
             msg = f"Unexpected return type from jira.issue: {type(issue_data)}"
@@ -521,13 +517,16 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             raise TypeError(msg)
 
         rendered = issue_data.get("renderedFields") or {}
+        if not isinstance(rendered, dict):
+            msg = "Unexpected renderedFields value from jira.issue"
+            logger.error(msg)
+            raise TypeError(msg)
         base_url = self.config.url
 
-        # Sammle URLs aus Description und Kommentaren
         image_urls: list[dict[str, str]] = []
 
         desc_html = rendered.get("description") or ""
-        if desc_html:
+        if isinstance(desc_html, str):
             for entry in _extract_embedded_image_urls(desc_html, base_url):
                 entry["source"] = "description"
                 image_urls.append(entry)
@@ -540,11 +539,14 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         else:
             comments_list = []
 
+        if not isinstance(comments_list, list):
+            comments_list = []
+
         for comment in comments_list:
             if not isinstance(comment, dict):
                 continue
             body_html = comment.get("body") or ""
-            if body_html:
+            if isinstance(body_html, str):
                 comment_id = comment.get("id", "")
                 for entry in _extract_embedded_image_urls(body_html, base_url):
                     entry["source"] = "comment"
@@ -561,7 +563,6 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 "message": "No embedded images found",
             }
 
-        # Lade jedes Bild herunter
         images: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
 
@@ -613,9 +614,9 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
 def _extract_embedded_image_urls(html: str, base_url: str) -> list[dict[str, str]]:
     """Extract embedded image URLs from rendered HTML.
 
-    Parses ``<img>`` tags, keeps only same-host URLs that are NOT formal
-    attachment paths (``/secure/attachment/``, ``/rest/api/``), and returns
-    a list of dicts with ``url`` and ``filename`` keys.
+    Parses ``<img>`` tags and keeps only Jira's editor-image servlet URLs on
+    the configured Jira origin. Both absolute and relative image URLs are
+    supported.
 
     Args:
         html: Rendered HTML string from Jira's ``renderedFields``.
@@ -628,7 +629,14 @@ def _extract_embedded_image_urls(html: str, base_url: str) -> list[dict[str, str
         return []
 
     parsed_base = urlparse(base_url)
-    base_host = parsed_base.hostname or ""
+    try:
+        base_origin = _url_origin(parsed_base)
+    except ValueError:
+        logger.warning("Configured Jira URL has an invalid port: %s", base_url)
+        return []
+
+    if base_origin is None:
+        return []
 
     soup = BeautifulSoup(html, "html.parser")
     results: list[dict[str, str]] = []
@@ -639,36 +647,68 @@ def _extract_embedded_image_urls(html: str, base_url: str) -> list[dict[str, str
         if not src or not isinstance(src, str):
             continue
 
-        parsed_src = urlparse(src)
-        src_host = parsed_src.hostname or ""
-
-        # Nur gleicher Host — verhindert SSRF
-        if src_host.lower() != base_host.lower():
+        src = src.strip()
+        if not src:
             continue
 
-        # Formale Attachment-URLs ausschliessen
+        absolute_url = urljoin(f"{base_url.rstrip('/')}/", src)
+        parsed_src = urlparse(absolute_url)
+        try:
+            src_origin = _url_origin(parsed_src)
+        except ValueError:
+            continue
+
+        if src_origin != base_origin or parsed_src.username or parsed_src.password:
+            continue
+
         path_lower = parsed_src.path.lower()
-        if "/secure/attachment/" in path_lower or "/rest/api/" in path_lower:
+        is_editor_image = (
+            path_lower.rstrip("/").endswith("/plugins/servlet/jeditor_file_provider")
+            or "/plugins/servlet/ckupload/" in path_lower
+        )
+        if not is_editor_image:
             continue
 
-        # Deduplizierung
-        if src in seen_urls:
+        if absolute_url in seen_urls:
             continue
-        seen_urls.add(src)
+        seen_urls.add(absolute_url)
 
-        # Dateiname extrahieren: fileName-Query-Param oder URL-Pfad-Basename
         query_params = parse_qs(parsed_src.query)
-        file_name_list = query_params.get("fileName", [])
+        file_name_list = next(
+            (
+                values
+                for key, values in query_params.items()
+                if key.lower() == "filename"
+            ),
+            [],
+        )
         if file_name_list:
             filename = file_name_list[0]
         else:
-            basename = os.path.basename(parsed_src.path)
-            # Nur verwenden wenn es eine Dateiendung hat
+            basename = os.path.basename(unquote(parsed_src.path))
             if basename and "." in basename:
                 filename = basename
             else:
                 filename = f"embedded_{len(results)}.png"
 
-        results.append({"url": src, "filename": filename})
+        filename = _safe_embedded_filename(filename, len(results))
+        results.append({"url": absolute_url, "filename": filename})
 
     return results
+
+
+def _url_origin(parsed_url: ParseResult) -> tuple[str, str, int] | None:
+    """Return a normalized HTTP origin for a parsed URL."""
+    scheme = parsed_url.scheme.lower()
+    hostname = (parsed_url.hostname or "").lower()
+    if scheme not in {"http", "https"} or not hostname:
+        return None
+    default_port = 443 if scheme == "https" else 80
+    return scheme, hostname, parsed_url.port or default_port
+
+
+def _safe_embedded_filename(filename: str, index: int) -> str:
+    """Return a display-safe filename derived from Jira-rendered HTML."""
+    basename = os.path.basename(filename.replace("\\", "/"))
+    cleaned = "".join(char for char in basename if char >= " " and char != "\x7f")
+    return cleaned[:255] or f"embedded_{index}.png"

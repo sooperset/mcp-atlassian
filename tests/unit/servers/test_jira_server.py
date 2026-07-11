@@ -473,6 +473,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_create_fields,
         get_field_options,
         get_issue,
+        get_issue_embedded_images,
         get_issue_images,
         get_link_types,
         get_project_components,
@@ -523,6 +524,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_transitions)
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
+    jira_sub_mcp.add_tool(get_issue_embedded_images)
     jira_sub_mcp.add_tool(get_issue_images)
     jira_sub_mcp.add_tool(get_field_options)
     jira_sub_mcp.add_tool(get_agile_boards)
@@ -2620,6 +2622,86 @@ async def test_get_issue_images_fetch_failure(jira_client, mock_jira_fetcher):
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
     assert "Fetch failed" in summary["failed"][0]["error"]
+
+
+# ── jira_get_issue_embedded_images tests ─────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_get_issue_embedded_images_basic(jira_client, mock_jira_fetcher):
+    """Return the summary followed by each downloaded embedded image."""
+    mock_jira_fetcher.get_embedded_images.return_value = {
+        "success": True,
+        "issue_key": "TEST-123",
+        "total": 1,
+        "images": [
+            {
+                "filename": "pasted.jpg",
+                "content_type": "image/jpeg",
+                "size": 4,
+                "data": b"jpeg",
+                "source": "description",
+            }
+        ],
+        "failed": [],
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue_embedded_images", {"issue_key": "TEST-123"}
+    )
+
+    mock_jira_fetcher.get_embedded_images.assert_called_once_with("TEST-123")
+    summary = json.loads(response.content[0].text)
+    assert summary == {
+        "success": True,
+        "issue_key": "TEST-123",
+        "total_embedded": 1,
+        "downloaded": 1,
+        "failed": [],
+    }
+    assert response.content[1].type == "image"
+    assert response.content[1].mimeType == "image/jpeg"
+
+
+@pytest.mark.anyio
+async def test_get_issue_embedded_images_no_images(jira_client, mock_jira_fetcher):
+    """Return a useful message when rendered fields contain no editor images."""
+    mock_jira_fetcher.get_embedded_images.return_value = {
+        "success": True,
+        "issue_key": "TEST-123",
+        "total": 0,
+        "images": [],
+        "failed": [],
+        "message": "No embedded images found",
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue_embedded_images", {"issue_key": "TEST-123"}
+    )
+
+    summary = json.loads(response.content[0].text)
+    assert summary["downloaded"] == 0
+    assert summary["message"] == "No embedded images found"
+    assert len(response.content) == 1
+
+
+@pytest.mark.anyio
+async def test_get_issue_embedded_images_failure(jira_client, mock_jira_fetcher):
+    """Pass a fetcher-level failure through as structured text."""
+    mock_jira_fetcher.get_embedded_images.return_value = {
+        "success": False,
+        "error": "Jira request failed",
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue_embedded_images", {"issue_key": "TEST-123"}
+    )
+
+    assert json.loads(response.content[0].text) == {
+        "success": False,
+        "error": "Jira request failed",
+    }
+    assert len(response.content) == 1
 
 
 # --- Tests for input/output parameter name alignment ---

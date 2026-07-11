@@ -1,6 +1,7 @@
 """E2E tests for image retrieval tools against Cloud instances.
 
-Tests jira_get_issue_images and confluence_get_page_images
+Tests jira_get_issue_images, jira_get_issue_embedded_images, and
+confluence_get_page_images
 via MCP tool calls with real Jira Cloud/Confluence Cloud instances.
 """
 
@@ -103,6 +104,23 @@ class TestJiraGetIssueImages:
             assert data["downloaded"] == 0
         else:
             assert "no image" in text.lower() or "No image" in text
+
+    async def test_jira_get_issue_embedded_images_no_images(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """An issue without editor images returns an empty summary."""
+        result = await call_tool(
+            mcp_client,
+            "jira_get_issue_embedded_images",
+            {"issue_key": cloud_instance.test_issue_key},
+        )
+        assert not result.is_error
+        assert isinstance(result.content[0], TextContent)
+        summary = json.loads(result.content[0].text)
+        assert summary["success"] is True
+        assert summary["downloaded"] == 0
 
 
 class TestConfluenceGetPageImages:

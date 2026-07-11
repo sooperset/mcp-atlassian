@@ -88,6 +88,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
     "jira-attachments": [
         "jira_download_attachments",
         "jira_get_issue_images",
+        "jira_get_issue_embedded_images",
     ],
     "jira-service-desk": [
         "jira_get_service_desk_for_project",

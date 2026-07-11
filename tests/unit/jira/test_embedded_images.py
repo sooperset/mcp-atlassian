@@ -93,6 +93,41 @@ class TestExtractEmbeddedImageUrls:
         assert len(result) == 1
         assert result[0]["filename"] == "local.png"
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://jira.example.com/plugins/servlet/jeditor_file_provider?imgId=1",
+            "https://jira.example.com:444/plugins/servlet/jeditor_file_provider?imgId=1",
+            "https://jira.example.com@evil.example/plugins/servlet/jeditor_file_provider?imgId=1",
+        ],
+    )
+    def test_different_origins_filtered(self, url: str) -> None:
+        assert _extract_embedded_image_urls(f'<img src="{url}">', self.BASE_URL) == []
+
+    def test_relative_editor_url_resolved(self) -> None:
+        html = (
+            '<img src="/plugins/servlet/jeditor_file_provider'
+            '?imgId=abc&amp;fileName=relative.png">'
+        )
+        result = _extract_embedded_image_urls(html, self.BASE_URL)
+        assert result == [
+            {
+                "url": (
+                    "https://jira.example.com/plugins/servlet/"
+                    "jeditor_file_provider?imgId=abc&fileName=relative.png"
+                ),
+                "filename": "relative.png",
+            }
+        ]
+
+    def test_unrelated_same_origin_image_filtered(self) -> None:
+        html = (
+            '<img src="https://jira.example.com/admin/secret.png">'
+            '<img src="https://jira.example.com/plugins/servlet/'
+            'jeditor_file_provider_other?imgId=abc">'
+        )
+        assert _extract_embedded_image_urls(html, self.BASE_URL) == []
+
     def test_formal_attachment_urls_excluded(self) -> None:
         html = (
             '<img src="https://jira.example.com/secure/attachment/'
@@ -148,6 +183,14 @@ class TestExtractEmbeddedImageUrls:
         result = _extract_embedded_image_urls(html, self.BASE_URL)
         assert result[0]["filename"] == "embedded_0.png"
 
+    def test_filename_is_sanitized(self) -> None:
+        html = (
+            '<img src="https://jira.example.com/plugins/servlet/'
+            'jeditor_file_provider?imgId=abc&amp;fileName=..%2Fbad%0Aname.png">'
+        )
+        result = _extract_embedded_image_urls(html, self.BASE_URL)
+        assert result[0]["filename"] == "badname.png"
+
     def test_img_without_src_skipped(self) -> None:
         html = '<img alt="no source">'
         assert _extract_embedded_image_urls(html, self.BASE_URL) == []
@@ -196,7 +239,6 @@ class TestGetEmbeddedImages:
                 "comment": {"comments": []},
             },
         }
-        # Simuliere erfolgreichen Download
         fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
         attachments_mixin.fetch_attachment_content = MagicMock(return_value=fake_png)
 
@@ -290,15 +332,11 @@ class TestGetEmbeddedImages:
         assert len(result["failed"]) == 1
         assert "50 MB" in result["failed"][0]["error"]
 
-    def test_api_error_returns_failure(
-        self, attachments_mixin: AttachmentsMixin
-    ) -> None:
-        attachments_mixin.jira.issue.side_effect = Exception("API down")
+    def test_api_error_propagates(self, attachments_mixin: AttachmentsMixin) -> None:
+        attachments_mixin.jira.issue.side_effect = RuntimeError("API down")
 
-        result = attachments_mixin.get_embedded_images("PROJ-5")
-
-        assert result["success"] is False
-        assert "API down" in result["error"]
+        with pytest.raises(RuntimeError, match="API down"):
+            attachments_mixin.get_embedded_images("PROJ-5")
 
     def test_jpeg_data_with_png_filename_detected_as_jpeg(
         self, attachments_mixin: AttachmentsMixin
