@@ -93,6 +93,43 @@ class TestExtractEmbeddedImageUrls:
         assert len(result) == 1
         assert result[0]["filename"] == "local.png"
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://jira.example.com/plugins/servlet/jeditor_file_provider?imgId=1",
+            "https://jira.example.com:8443/plugins/servlet/"
+            "jeditor_file_provider?imgId=1",
+            "https://jira.example.com/plugins/servlet/"
+            "jeditor_file_provider_other?imgId=1",
+            "https://jira.example.com/rest/api/2/myself",
+        ],
+    )
+    def test_non_embedded_or_different_origin_urls_filtered(self, url: str) -> None:
+        result = _extract_embedded_image_urls(f'<img src="{url}">', self.BASE_URL)
+        assert result == []
+
+    def test_relative_jeditor_url_resolved(self) -> None:
+        html = (
+            '<img src="plugins/servlet/jeditor_file_provider?'
+            'imgId=1&amp;fileName=relative.png">'
+        )
+        result = _extract_embedded_image_urls(html, self.BASE_URL)
+        assert result == [
+            {
+                "url": "https://jira.example.com/plugins/servlet/"
+                "jeditor_file_provider?imgId=1&fileName=relative.png",
+                "filename": "relative.png",
+            }
+        ]
+
+    def test_filename_is_reduced_to_basename(self) -> None:
+        html = (
+            '<img src="https://jira.example.com/plugins/servlet/'
+            'jeditor_file_provider?imgId=1&amp;fileName=../nested/image.png">'
+        )
+        result = _extract_embedded_image_urls(html, self.BASE_URL)
+        assert result[0]["filename"] == "image.png"
+
     def test_formal_attachment_urls_excluded(self) -> None:
         html = (
             '<img src="https://jira.example.com/secure/attachment/'
@@ -196,7 +233,7 @@ class TestGetEmbeddedImages:
                 "comment": {"comments": []},
             },
         }
-        # Simuliere erfolgreichen Download
+        # Simulate a successful download.
         fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
         attachments_mixin.fetch_attachment_content = MagicMock(return_value=fake_png)
 

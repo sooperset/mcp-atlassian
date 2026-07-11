@@ -5,7 +5,7 @@ import mimetypes
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -511,7 +511,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         rendered = issue_data.get("renderedFields") or {}
         base_url = self.config.url
 
-        # Sammle URLs aus Description und Kommentaren
+        # Collect URLs from the rendered description and comments.
         image_urls: list[dict[str, str]] = []
 
         desc_html = rendered.get("description") or ""
@@ -549,7 +549,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 "message": "No embedded images found",
             }
 
-        # Lade jedes Bild herunter
+        # Download each embedded image.
         images: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
 
@@ -601,9 +601,8 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
 def _extract_embedded_image_urls(html: str, base_url: str) -> list[dict[str, str]]:
     """Extract embedded image URLs from rendered HTML.
 
-    Parses ``<img>`` tags, keeps only same-host URLs that are NOT formal
-    attachment paths (``/secure/attachment/``, ``/rest/api/``), and returns
-    a list of dicts with ``url`` and ``filename`` keys.
+    Parses ``<img>`` tags and keeps only same-origin URLs for Jira's embedded
+    image servlets. Relative URLs are resolved against the configured Jira URL.
 
     Args:
         html: Rendered HTML string from Jira's ``renderedFields``.
@@ -616,7 +615,25 @@ def _extract_embedded_image_urls(html: str, base_url: str) -> list[dict[str, str
         return []
 
     parsed_base = urlparse(base_url)
-    base_host = parsed_base.hostname or ""
+
+    def origin(parsed_url: Any) -> tuple[str, str, int | None] | None:
+        """Return a normalized origin, or None for malformed URLs."""
+        if (
+            parsed_url.scheme.lower() not in {"http", "https"}
+            or not parsed_url.hostname
+        ):
+            return None
+        try:
+            port = parsed_url.port
+        except ValueError:
+            return None
+        if port is None:
+            port = 443 if parsed_url.scheme.lower() == "https" else 80
+        return parsed_url.scheme.lower(), parsed_url.hostname.lower(), port
+
+    base_origin = origin(parsed_base)
+    if base_origin is None:
+        return []
 
     soup = BeautifulSoup(html, "html.parser")
     results: list[dict[str, str]] = []
@@ -627,36 +644,41 @@ def _extract_embedded_image_urls(html: str, base_url: str) -> list[dict[str, str
         if not src or not isinstance(src, str):
             continue
 
-        parsed_src = urlparse(src)
-        src_host = parsed_src.hostname or ""
+        resolved_src = urljoin(base_url.rstrip("/") + "/", src)
+        parsed_src = urlparse(resolved_src)
 
-        # Nur gleicher Host — verhindert SSRF
-        if src_host.lower() != base_host.lower():
+        # Restrict downloads to the configured Jira origin. This also blocks
+        # scheme changes and alternate ports on the same hostname.
+        if origin(parsed_src) != base_origin:
             continue
 
-        # Formale Attachment-URLs ausschliessen
+        # Only Jira's editor-image servlet paths are in scope. Avoid turning
+        # arbitrary same-origin <img> URLs into authenticated GET requests.
         path_lower = parsed_src.path.lower()
-        if "/secure/attachment/" in path_lower or "/rest/api/" in path_lower:
+        if not (
+            path_lower.endswith("/plugins/servlet/jeditor_file_provider")
+            or "/plugins/servlet/ckupload/" in path_lower
+        ):
             continue
 
-        # Deduplizierung
-        if src in seen_urls:
+        if resolved_src in seen_urls:
             continue
-        seen_urls.add(src)
+        seen_urls.add(resolved_src)
 
-        # Dateiname extrahieren: fileName-Query-Param oder URL-Pfad-Basename
+        # Extract a display filename from fileName or the URL path.
         query_params = parse_qs(parsed_src.query)
         file_name_list = query_params.get("fileName", [])
         if file_name_list:
-            filename = file_name_list[0]
+            filename = os.path.basename(file_name_list[0].replace("\\", "/"))
+            if not filename:
+                filename = f"embedded_{len(results)}.png"
         else:
             basename = os.path.basename(parsed_src.path)
-            # Nur verwenden wenn es eine Dateiendung hat
             if basename and "." in basename:
                 filename = basename
             else:
                 filename = f"embedded_{len(results)}.png"
 
-        results.append({"url": src, "filename": filename})
+        results.append({"url": resolved_src, "filename": filename})
 
     return results

@@ -36,3 +36,15 @@ Get all images attached to a Jira issue as inline image content.
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123'). Returns image attachments as inline ImageContent for LLM vision. |
 
 ---
+
+### Get Embedded Images
+
+Get images embedded in the Jira rich text editor as inline image content.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123'). Returns images pasted directly into the Jira editor (description and comments) that are NOT formal attachments. |
+
+---
