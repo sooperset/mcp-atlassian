@@ -86,8 +86,13 @@ def _check_service_auth(
 def get_available_services(
     headers: dict[str, str] | None = None,
 ) -> dict[str, bool | None]:
-    """Determine which services are available based on environment variables and optional headers."""
+    """Determine available services from environment variables and headers."""
     headers = headers or {}
+    oauth_enabled = os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
 
     confluence_url = os.getenv("CONFLUENCE_URL")
     confluence_is_setup = False
@@ -109,13 +114,10 @@ def get_available_services(
             pat_env="CONFLUENCE_PERSONAL_TOKEN",
         )
 
-        # OAuth enable check with known URL — expecting user-provided tokens via headers
-        if not confluence_is_setup and os.getenv(
-            "ATLASSIAN_OAUTH_ENABLE", ""
-        ).lower() in ("true", "1", "yes"):
+        if not confluence_is_setup and oauth_enabled:
             confluence_is_setup = True
             logger.info(
-                "Using Confluence OAuth with CONFLUENCE_URL "
+                "Using Confluence minimal OAuth configuration with CONFLUENCE_URL "
                 "- expecting user-provided tokens via headers"
             )
 
@@ -147,15 +149,10 @@ def get_available_services(
             pat_env="JIRA_PERSONAL_TOKEN",
         )
 
-        # OAuth enable check with known URL — expecting user-provided tokens via headers
-        if not jira_is_setup and os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        ):
+        if not jira_is_setup and oauth_enabled:
             jira_is_setup = True
             logger.info(
-                "Using Jira OAuth with JIRA_URL "
+                "Using Jira minimal OAuth configuration with JIRA_URL "
                 "- expecting user-provided tokens via headers"
             )
 
@@ -169,7 +166,8 @@ def get_available_services(
 
     if not confluence_is_setup:
         logger.info(
-            "Confluence is not configured or required environment variables are missing."
+            "Confluence is not configured or required environment variables "
+            "are missing."
         )
     if not jira_is_setup:
         logger.info(
