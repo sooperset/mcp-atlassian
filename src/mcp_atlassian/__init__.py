@@ -195,7 +195,8 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
 @click.option(
     "--confluence-token",
     help=(
-        "DEPRECATED for secrets. Use CONFLUENCE_API_TOKEN environment variable instead."
+        "Confluence API token. DEPRECATED: use the CONFLUENCE_API_TOKEN "
+        "environment variable instead."
     ),
 )
 @click.option(
@@ -218,7 +219,10 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
 @click.option("--jira-username", help="Jira username/email (for Jira Cloud)")
 @click.option(
     "--jira-token",
-    help=("DEPRECATED for secrets. Use JIRA_API_TOKEN environment variable instead."),
+    help=(
+        "Jira API token (for Jira Cloud). DEPRECATED: use the JIRA_API_TOKEN "
+        "environment variable instead."
+    ),
 )
 @click.option(
     "--jira-personal-token",
@@ -253,8 +257,8 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
 @click.option(
     "--oauth-client-secret",
     help=(
-        "DEPRECATED for secrets. Use ATLASSIAN_OAUTH_CLIENT_SECRET "
-        "environment variable instead."
+        "OAuth 2.0 client secret for Atlassian Cloud. DEPRECATED: use the "
+        "ATLASSIAN_OAUTH_CLIENT_SECRET environment variable instead."
     ),
 )
 @click.option(
@@ -272,8 +276,8 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
 @click.option(
     "--oauth-access-token",
     help=(
-        "DEPRECATED for secrets. Use ATLASSIAN_OAUTH_ACCESS_TOKEN environment "
-        "variable instead."
+        "Atlassian Cloud OAuth 2.0 access token for this session. DEPRECATED: "
+        "use the ATLASSIAN_OAUTH_ACCESS_TOKEN environment variable instead."
     ),
 )
 def main(
