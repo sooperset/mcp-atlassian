@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from functools import lru_cache
-from typing import Any, Protocol
+from typing import Any, Protocol, TypedDict
 from urllib.parse import urlsplit
 
 from pypac import PACSession, get_pac
@@ -37,7 +37,18 @@ class ProxyConfigProtocol(Protocol):
     proxy_wpad_url: str | None
 
 
-class _NoProxyAwarePACSession(PACSession):
+class ProxySettings(TypedDict):
+    """Proxy settings parsed from the environment."""
+
+    http_proxy: str | None
+    https_proxy: str | None
+    no_proxy: str | None
+    socks_proxy: str | None
+    proxy_wpad_enable: bool
+    proxy_wpad_url: str | None
+
+
+class _NoProxyAwarePACSession(PACSession):  # type: ignore[misc]
     """PAC-enabled session that preserves explicit NO_PROXY bypasses."""
 
     def __init__(self, pac: Any, no_proxy: str | None) -> None:
@@ -81,7 +92,7 @@ def _load_pac_file(
     return pac
 
 
-def get_proxy_settings_from_env(service_prefix: str) -> dict[str, str | bool | None]:
+def get_proxy_settings_from_env(service_prefix: str) -> ProxySettings:
     """Load proxy settings with service-specific overrides."""
     service_http = f"{service_prefix}_HTTP_PROXY"
     service_https = f"{service_prefix}_HTTPS_PROXY"
@@ -203,7 +214,7 @@ def _copy_session_state(source: Session, target: Session) -> None:
     target.cert = source.cert
     target.proxies.update(source.proxies)
     target.hooks = source.hooks
-    target.params = dict(source.params)
+    target.params = dict(source.params)  # type: ignore[arg-type]
     target.stream = source.stream
     target.trust_env = source.trust_env
     target.max_redirects = source.max_redirects

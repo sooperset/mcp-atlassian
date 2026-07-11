@@ -441,9 +441,7 @@ class TestConfluenceClientOAuth:
             patch(
                 "mcp_atlassian.confluence.client.apply_proxy_configuration"
             ) as mock_apply_proxy,
-            patch(
-                "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
-            ),
+            patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
         ):
             mock_apply_proxy.side_effect = lambda **kwargs: kwargs["session"]
 
@@ -484,9 +482,7 @@ class TestConfluenceClientOAuth:
             patch(
                 "mcp_atlassian.confluence.client.apply_proxy_configuration"
             ) as mock_apply_proxy,
-            patch(
-                "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
-            ),
+            patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
         ):
             mock_apply_proxy.side_effect = lambda **kwargs: kwargs["session"]
 
