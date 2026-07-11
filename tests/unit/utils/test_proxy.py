@@ -332,10 +332,7 @@ def test_get_proxy_settings_from_env_service_specific_disable_overrides_global()
         proxy_settings = get_proxy_settings_from_env("CONFLUENCE")
 
     assert proxy_settings["proxy_wpad_enable"] is False
-    assert (
-        proxy_settings["proxy_wpad_url"]
-        == "http://global-wpad.example.com/wpad.dat"
-    )
+    assert proxy_settings["proxy_wpad_url"] == "http://global-wpad.example.com/wpad.dat"
 
 
 def test_apply_proxy_configuration_returns_same_session_for_explicit_proxies(
