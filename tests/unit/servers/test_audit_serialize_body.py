@@ -87,6 +87,19 @@ class TestSerializeBodyTruncation:
         result = middleware._serialize_body(args)
         assert "...truncated" not in result
 
+    def test_original_content_length_can_include_masked_values(
+        self, middleware_short: ToolCallLoggingMiddleware
+    ):
+        """Truncation can use the incoming length after masking a secret."""
+        masked_args = {"api_token": "abcd********wxyz"}
+
+        result = middleware_short._serialize_body(
+            masked_args,
+            original_length=100,
+        )
+
+        assert result.endswith("...truncated")
+
 
 class TestSerializeBodyNonSerializable:
     """Tests for non-serializable values using default=repr."""

@@ -12,6 +12,7 @@ import os
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -319,6 +320,23 @@ class TestProperty2SourceIPExtraction:
         assert not result.endswith((" ", "\t")), (
             f"Result has trailing whitespace: {result!r}"
         )
+
+    def test_empty_xff_falls_back_to_client(self) -> None:
+        """An empty first forwarded address falls back to the socket IP."""
+        scope: dict[str, Any] = {
+            "headers": [(b"x-forwarded-for", b" , 198.51.100.10")],
+            "client": ("192.0.2.10", 12345),
+        }
+        mock_request = _make_mock_request(scope)
+        middleware = ToolCallLoggingMiddleware()
+
+        with patch(
+            "mcp_atlassian.servers.audit.get_http_request",
+            return_value=mock_request,
+        ):
+            result = middleware._extract_source_ip(MagicMock())
+
+        assert result == "192.0.2.10"
 
 
 # --- Strategies for Property 3: Username extraction ---
@@ -1944,6 +1962,30 @@ class TestProperty8TransparentDelegation:
             f"Original: {original_arguments!r}, "
             f"After: {context.message.arguments!r}"
         )
+
+    def test_audit_is_emitted_when_downstream_is_cancelled(self) -> None:
+        """Cancellation still emits the audit record before propagating."""
+        context = _make_tool_call_context({"issue_key": "TEST-1"})
+        middleware = ToolCallLoggingMiddleware()
+        mock_request = MagicMock()
+        mock_request.scope = {"headers": [], "client": ("127.0.0.1", 8080)}
+        mock_request.state = MagicMock()
+        del mock_request.state.user_atlassian_auth_type
+
+        async def cancelled_call_next(ctx: Any) -> list[Any]:
+            raise asyncio.CancelledError
+
+        with (
+            patch(
+                "mcp_atlassian.servers.audit.get_http_request",
+                return_value=mock_request,
+            ),
+            patch("mcp_atlassian.servers.audit.audit_logger.info") as info,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                asyncio.run(middleware.on_call_tool(context, cancelled_call_next))
+
+        info.assert_called_once()
 
 
 # --- Strategies for Property 9: Graceful degradation on logging failure ---

@@ -44,7 +44,7 @@ class ToolCallLoggingMiddleware(Middleware):
     """Audit logging middleware for MCP tool calls.
 
     Intercepts tool invocations via the ``on_call_tool`` hook and emits
-    structured audit log entries before delegating to the next handler.
+    structured audit log entries after the downstream handler completes.
 
     Args:
         sensitive_patterns: Additional field name substrings to treat as
@@ -115,7 +115,9 @@ class ToolCallLoggingMiddleware(Middleware):
                 # Use the first comma-separated IP
                 forwarded_ips = header_value.decode("latin-1")
                 first_ip = forwarded_ips.split(",")[0]
-                return first_ip.strip()
+                first_ip = first_ip.strip()
+                if first_ip:
+                    return first_ip
 
         # Fall back to scope client tuple
         client = scope.get("client")
@@ -123,6 +125,25 @@ class ToolCallLoggingMiddleware(Middleware):
             return str(client[0]).strip()
 
         return "unknown"
+
+    @staticmethod
+    def _sanitize_log_field(value: str) -> str:
+        """Keep a structured log field on one line.
+
+        Source and identity values come from request-controlled data. Replace
+        whitespace and control characters so they can't create additional log
+        lines or shift the space-delimited fields.
+
+        Args:
+            value: The field value to sanitize.
+
+        Returns:
+            A single-line field value.
+        """
+        return "".join(
+            character if character.isprintable() and not character.isspace() else "_"
+            for character in value
+        )
 
     def _extract_username(
         self, context: MiddlewareContext[mt.CallToolRequestParams]
@@ -216,7 +237,12 @@ class ToolCallLoggingMiddleware(Middleware):
                 masked[key] = value
         return masked
 
-    def _serialize_body(self, arguments: dict | None) -> str:
+    def _serialize_body(
+        self,
+        arguments: dict[str, Any] | None,
+        *,
+        original_length: int | None = None,
+    ) -> str:
         """JSON-serialize arguments as a single-line string.
 
         Serializes the masked arguments dictionary to JSON. If the
@@ -225,6 +251,9 @@ class ToolCallLoggingMiddleware(Middleware):
 
         Args:
             arguments: The tool call arguments to serialize, or None.
+            original_length: Optional length of the unmasked arguments before
+                serialization. When omitted, the length of ``arguments`` is
+                used.
 
         Returns:
             A single-line JSON string, or ``{}`` for empty/None args.
@@ -232,9 +261,10 @@ class ToolCallLoggingMiddleware(Middleware):
         if not arguments:
             return "{}"
 
-        # Measure original content length before JSON serialization
-        original_content = str(arguments)
-        original_length = len(original_content)
+        # Measure the unmasked content when the caller provides it. This keeps
+        # truncation based on the request body rather than its masked copy.
+        if original_length is None:
+            original_length = len(str(arguments))
 
         # JSON-serialize with repr fallback for non-serializable values
         serialized = json.dumps(arguments, default=repr, ensure_ascii=False)
@@ -259,7 +289,8 @@ class ToolCallLoggingMiddleware(Middleware):
         delegating to the downstream handler. After the tool executes
         (triggering dependency injection / email backfill), extracts
         the username and emits the audit log entry. If ``call_next``
-        raises, the audit entry is still emitted before re-raising.
+        raises, the audit entry is still emitted before the exception
+        propagates.
 
         Args:
             context: The middleware context containing the tool call
@@ -278,8 +309,12 @@ class ToolCallLoggingMiddleware(Middleware):
             source_ip = self._extract_source_ip(context)
             tool_name = context.message.name
             arguments = context.message.arguments or {}
+            original_length = len(str(arguments))
             masked_arguments = self._mask_arguments(arguments)
-            body = self._serialize_body(masked_arguments)
+            body = self._serialize_body(
+                masked_arguments,
+                original_length=original_length,
+            )
         except Exception:  # noqa: BLE001
             app_logger = logging.getLogger("mcp-atlassian")
             app_logger.warning(
@@ -289,33 +324,33 @@ class ToolCallLoggingMiddleware(Middleware):
             for handler in app_logger.handlers:
                 handler.flush()
 
-        # Execute the tool (triggers DI / email backfill)
-        call_next_error: Exception | None = None
-        result: ToolResult | None = None
+        # Execute the tool (triggers DI / email backfill). Keep audit emission
+        # in a finally block so cancellation and all other exceptions are
+        # still recorded before the original outcome propagates.
         try:
-            result = await call_next(context)
-        except Exception as exc:  # noqa: BLE001
-            call_next_error = exc
-
-        # Extract username AFTER call_next (email now available)
-        if source_ip is not None and body is not None:
-            try:
-                username = self._extract_username(context)
-                audit_logger.info(f"{source_ip} {tool_name} {username} {body}")
-            except Exception:  # noqa: BLE001
-                app_logger = logging.getLogger("mcp-atlassian")
-                app_logger.warning(
-                    "Audit logging failed for tool call",
-                    exc_info=True,
-                )
-                for handler in app_logger.handlers:
-                    handler.flush()
-
-        # Re-raise if call_next failed
-        if call_next_error is not None:
-            raise call_next_error
-
-        return result  # type: ignore[return-value]
+            return await call_next(context)
+        finally:
+            # Extract username AFTER call_next (email now available).
+            if source_ip is not None and tool_name is not None and body is not None:
+                try:
+                    username = self._extract_username(context)
+                    log_entry = " ".join(
+                        (
+                            self._sanitize_log_field(source_ip),
+                            self._sanitize_log_field(tool_name),
+                            self._sanitize_log_field(username),
+                            body,
+                        )
+                    )
+                    audit_logger.info(log_entry)
+                except Exception:  # noqa: BLE001
+                    app_logger = logging.getLogger("mcp-atlassian")
+                    app_logger.warning(
+                        "Audit logging failed for tool call",
+                        exc_info=True,
+                    )
+                    for handler in app_logger.handlers:
+                        handler.flush()
 
 
 # Values considered falsy for MCP_AUDIT_LOG_ENABLED (case-insensitive)
