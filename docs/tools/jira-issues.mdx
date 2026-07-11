@@ -56,7 +56,7 @@ Create a new Jira issue with optional Epic link or parent for subtasks.
 | `summary` | `string` | Yes | Summary/title of the issue |
 | `issue_type` | `string` | Yes | Issue type (e.g. 'Task', 'Bug', 'Story', 'Epic', 'Subtask'). The available types depend on your project configuration. For subtasks, use 'Subtask' (not 'Sub-task') and include parent in additional_fields. |
 | `assignee` | `string` | No | (Optional) Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...') |
-| `description` | `string` | No | Issue description in Markdown format |
+| `description` | `string` | No | Issue description in Markdown format. On Jira Cloud, use `{expand:Title}...{expand}` for a collapsible section. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names to assign (e.g., 'Frontend,API') |
 | `additional_fields` | `string` | No | (Optional) JSON string of additional fields to set. Examples: - Set priority: `{"priority": {"name": "High"}}` - Add labels: `{"labels": ["frontend", "urgent"]}` - Link to parent (for any issue type): `{"parent": "PROJ-123"}` - Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}` - Set Fix Version/s: `{"fixVersions": [{"id": "10020"}]}` - Custom fields: `{"customfield_10010": "value"}` |
 **Example:**
@@ -69,6 +69,8 @@ Create a new Jira issue with optional Epic link or parent for subtasks.
 Use Markdown in the description - it's automatically converted to ADF (Cloud)
 or wiki markup (Server/DC). On Jira Cloud, mention users with
 `[~accountid:ACCOUNT_ID]` or `@[Display Name](accountid:ACCOUNT_ID)`.
+Use `{expand:Title}` and `{expand}` around content to create a collapsible
+section on Jira Cloud.
 For epics, provide `epic_name` parameter.
 </Tip>
 
@@ -91,7 +93,7 @@ Update an existing Jira issue including changing status, adding Epic links, upda
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `fields` | `string` | Yes | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format. Example: `'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}'` |
+| `fields` | `string` | Yes | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format; on Jira Cloud, use `{expand:Title}...{expand}` for a collapsible section. Example: `'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}'` |
 | `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}`. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names (e.g., 'Frontend,API') |
 | `attachments` | `string` | No | (Optional) JSON string array or comma-separated list of file paths to attach to the issue. Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt'] |
