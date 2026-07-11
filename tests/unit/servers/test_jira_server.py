@@ -462,6 +462,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         create_customer_request,
         create_issue,
         create_issue_link,
+        create_remote_issue_link,
         create_sprint,
         delete_issue,
         download_attachments,
@@ -544,6 +545,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(add_worklog)
     jira_sub_mcp.add_tool(link_to_epic)
     jira_sub_mcp.add_tool(create_issue_link)
+    jira_sub_mcp.add_tool(create_remote_issue_link)
     jira_sub_mcp.add_tool(remove_issue_link)
     jira_sub_mcp.add_tool(transition_issue)
     jira_sub_mcp.add_tool(create_sprint)
@@ -934,6 +936,73 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
         assignee=None,
         components=["Frontend", "API"],
         priority={"name": "Medium"},
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool_arguments", "expected_link_data"),
+    [
+        pytest.param(
+            {
+                "issue_key": "TEST-123",
+                "url": "https://example.com/documentation",
+                "title": "Project documentation",
+            },
+            {
+                "object": {
+                    "url": "https://example.com/documentation",
+                    "title": "Project documentation",
+                }
+            },
+            id="web-link",
+        ),
+        pytest.param(
+            {
+                "issue_key": "TEST-123",
+                "url": (
+                    "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456/Plan"
+                ),
+                "title": "Team plan",
+                "summary": "Planning notes",
+                "relationship": "documentation",
+                "icon_url": "https://example.atlassian.net/favicon.ico",
+            },
+            {
+                "object": {
+                    "url": (
+                        "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456/Plan"
+                    ),
+                    "title": "Team plan",
+                    "summary": "Planning notes",
+                    "icon": {
+                        "url16x16": "https://example.atlassian.net/favicon.ico",
+                        "title": "Team plan",
+                    },
+                },
+                "relationship": "documentation",
+            },
+            id="confluence-link",
+        ),
+    ],
+)
+async def test_create_remote_issue_link(
+    jira_client,
+    mock_jira_fetcher,
+    tool_arguments: dict[str, str],
+    expected_link_data: dict[str, Any],
+) -> None:
+    """Regression test for creating web and Confluence links (#240)."""
+    mock_jira_fetcher.create_remote_issue_link.return_value = {"success": True}
+
+    response = await jira_client.call_tool(
+        "jira_create_remote_issue_link",
+        tool_arguments,
+    )
+
+    assert json.loads(response.content[0].text) == {"success": True}
+    mock_jira_fetcher.create_remote_issue_link.assert_called_once_with(
+        "TEST-123", expected_link_data
     )
 
 
