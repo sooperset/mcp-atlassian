@@ -101,7 +101,6 @@ async def test_tool_registration_issue_dates_name():
         "jira_create_issue",
         "jira_batch_create_issues",
         "jira_add_comment",
-        "jira_add_worklog",
         "jira_create_issue_link",
         "jira_create_remote_issue_link",
         "jira_create_sprint",
@@ -122,6 +121,7 @@ async def test_additive_write_tools_are_non_destructive(tool_name: str) -> None:
     [
         "jira_remove_watcher",
         "jira_add_issues_to_sprint",
+        "jira_add_worklog",
     ],
 )
 async def test_state_changing_write_tools_are_destructive(tool_name: str) -> None:

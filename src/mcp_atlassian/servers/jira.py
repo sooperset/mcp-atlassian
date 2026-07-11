@@ -2345,7 +2345,7 @@ async def edit_comment(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_worklog"},
-    annotations={"title": "Add Worklog", "destructiveHint": False},
+    annotations={"title": "Add Worklog", "destructiveHint": True},
 )
 @check_write_access
 async def add_worklog(
