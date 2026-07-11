@@ -1,6 +1,7 @@
 """Module for Jira filter operations."""
 
 import logging
+from typing import Any
 
 from requests.exceptions import HTTPError
 
@@ -27,7 +28,7 @@ class FiltersMixin(JiraClient):
             Exception: If there is an error retrieving filters.
         """
         try:
-            response = self.jira.get("rest/api/2/filter/my")
+            response: Any = self.jira.get("rest/api/2/filter/my")
 
             if not isinstance(response, list):
                 msg = f"Unexpected response type from filter/my: {type(response)}"
@@ -58,7 +59,7 @@ class FiltersMixin(JiraClient):
             Exception: If there is an error retrieving filters.
         """
         try:
-            response = self.jira.get("rest/api/2/filter/favourite")
+            response: Any = self.jira.get("rest/api/2/filter/favourite")
 
             if not isinstance(response, list):
                 msg = (
@@ -95,7 +96,7 @@ class FiltersMixin(JiraClient):
             Exception: If there is an error retrieving the filter.
         """
         try:
-            response = self.jira.get(f"rest/api/2/filter/{filter_id}")
+            response: Any = self.jira.get(f"rest/api/2/filter/{filter_id}")
 
             if not isinstance(response, dict):
                 msg = (

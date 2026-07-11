@@ -3136,7 +3136,9 @@ async def get_my_filters(
     name_filter: Annotated[
         str | None,
         Field(
-            description="(Optional) Filter results by name substring (case-insensitive)",
+            description=(
+                "(Optional) Filter results by name substring (case-insensitive)"
+            ),
         ),
     ] = None,
 ) -> str:
@@ -3188,7 +3190,9 @@ async def get_favourite_filters(
     name_filter: Annotated[
         str | None,
         Field(
-            description="(Optional) Filter results by name substring (case-insensitive)",
+            description=(
+                "(Optional) Filter results by name substring (case-insensitive)"
+            ),
         ),
     ] = None,
 ) -> str:

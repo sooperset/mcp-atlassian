@@ -28,7 +28,7 @@ class JiraFilter(ApiModel):
     favourite: bool = False
 
     @classmethod
-    def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "JiraFilter":
+    def from_api_response(cls, data: Any, **kwargs: Any) -> "JiraFilter":
         """
         Create a JiraFilter from a Jira API response.
 
@@ -50,15 +50,11 @@ class JiraFilter(ApiModel):
         if owner_data:
             owner = JiraUser.from_api_response(owner_data)
 
-        filter_id = data.get("id", EMPTY_STRING)
-        if filter_id is not None:
-            filter_id = str(filter_id)
-
         return cls(
-            id=filter_id,
-            name=str(data.get("name", EMPTY_STRING)),
+            id=str(data.get("id") or EMPTY_STRING),
+            name=str(data.get("name") or EMPTY_STRING),
             description=data.get("description"),
-            jql=str(data.get("jql", EMPTY_STRING)),
+            jql=str(data.get("jql") or EMPTY_STRING),
             owner=owner,
             url=data.get("self"),
             favourite=bool(data.get("favourite", False)),

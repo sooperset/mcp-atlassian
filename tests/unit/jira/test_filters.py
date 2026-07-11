@@ -205,6 +205,14 @@ class TestJiraFilterModel:
         assert f.id == ""
         assert f.name == ""
 
+    def test_from_api_response_null_required_fields(self):
+        """Test null required fields fall back to empty strings."""
+        f = JiraFilter.from_api_response({"id": None, "name": None, "jql": None})
+
+        assert f.id == ""
+        assert f.name == ""
+        assert f.jql == ""
+
     def test_to_simplified_dict(self):
         """Test converting a JiraFilter to a simplified dict."""
         f = JiraFilter.from_api_response(MOCK_FILTER_RESPONSE)
