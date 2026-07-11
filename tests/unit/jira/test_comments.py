@@ -206,6 +206,29 @@ class TestCommentsMixin:
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
         assert result["body"] == "Heading and content"
 
+    def test_add_comment_with_accountid_mention_uses_adf_node(
+        self, comments_mixin: CommentsMixin
+    ) -> None:
+        """Test [~accountid:...] comments become ADF mention nodes on Cloud."""
+        mock_response = {
+            "id": "10001",
+            "body": "Mention comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+        comments_mixin._post_api3 = Mock(return_value=mock_response)
+
+        account_id = "712020:1cfc6d16-950f-4096-8e57-f2c6c60d8ffa"
+        comments_mixin.add_comment("TEST-123", f"Hello [~accountid:{account_id}]")
+
+        call_args = comments_mixin._post_api3.call_args
+        adf_body = call_args[0][1]["body"]
+        assert adf_body["content"][0]["content"] == [
+            {"type": "text", "text": "Hello "},
+            {"type": "mention", "attrs": {"id": account_id}},
+        ]
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+
     def test_add_comment_with_empty_comment(self, comments_mixin):
         """Test add_comment with an empty comment (Cloud → minimal ADF)."""
         # Setup mock response for v3 API path
@@ -256,6 +279,34 @@ class TestCommentsMixin:
         assert result["body"] == "This is a comment"
         assert result["created"] == "2024-01-01 10:00:00+00:00"
         assert result["author"] == "John Doe"
+
+    def test_add_comment_with_role_visibility(self, comments_mixin):
+        """Test add_comment with role visibility set (Cloud → ADF via v3)."""
+        mock_response = {
+            "id": "10002",
+            "body": "Admin-only comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "Jane Smith"},
+        }
+        comments_mixin._post_api3 = Mock(return_value=mock_response)
+
+        result = comments_mixin.add_comment(
+            "TEST-456",
+            "Admin-only comment",
+            visibility={"type": "role", "value": "Administrators"},
+        )
+
+        call_args = comments_mixin._post_api3.call_args
+        assert call_args[0][0] == "issue/TEST-456/comment"
+        payload = call_args[0][1]
+        assert isinstance(payload["body"], dict)
+        assert payload["body"]["version"] == 1
+        assert payload["visibility"] == {"type": "role", "value": "Administrators"}
+        comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+        assert result["id"] == "10002"
+        assert result["body"] == "Admin-only comment"
+        assert result["created"] == "2024-01-01 10:00:00+00:00"
+        assert result["author"] == "Jane Smith"
 
     def test_add_comment_with_error(self, comments_mixin):
         """Test add_comment with an error response."""
@@ -551,3 +602,97 @@ class TestCommentsMixin:
         # ServiceDesk post should NOT be called
         comments_mixin.jira.post.assert_not_called()
         assert result["id"] == "10001"
+
+
+class TestInternalCommentPublicParam:
+    """Regression tests for add_comment public parameter (internal comments).
+
+    Regression for https://github.com/sooperset/mcp-atlassian/issues/716
+    Feature was requested: make comment internal (public: false) via JSM API.
+    Already implemented: add_comment(public=False) routes through
+    _add_servicedesk_comment which posts to rest/servicedeskapi/request/.../comment.
+    """
+
+    SERVICEDESK_COMMENT_RESPONSE = {
+        "id": 10001,
+        "body": "Test comment",
+        "public": True,
+        "created": {
+            "iso8601": "2024-01-01T10:00:00.000+0000",
+            "jira": "2024-01-01T10:00:00.000+0000",
+            "friendly": "Today 10:00 AM",
+            "epochMillis": 1704099600000,
+        },
+        "author": {
+            "accountId": "test-id",
+            "displayName": "Test User",
+        },
+    }
+
+    @pytest.fixture
+    def comments_mixin(self, jira_client):
+        """Create a CommentsMixin instance with mocked dependencies."""
+        mixin = CommentsMixin(config=jira_client.config)
+        mixin.jira = jira_client.jira
+        mixin.preprocessor = Mock()
+        mixin.preprocessor.markdown_to_jira = Mock(
+            return_value="*This* is _Jira_ formatted"
+        )
+        mixin._clean_text = Mock(side_effect=lambda x: x)
+        return mixin
+
+    def test_public_false_calls_servicedesk_comment(self, comments_mixin):
+        """add_comment(public=False) routes through _add_servicedesk_comment."""
+        captured: list[tuple] = []
+        original = comments_mixin._add_servicedesk_comment
+
+        def spy(*args, **kwargs):
+            captured.append((args, kwargs))
+            return original(*args, **kwargs)
+
+        comments_mixin._add_servicedesk_comment = spy
+        response = {**self.SERVICEDESK_COMMENT_RESPONSE, "public": False}
+        comments_mixin.jira.post.return_value = response
+
+        comments_mixin.add_comment("ISSUE-1", "Internal note", public=False)
+
+        assert len(captured) == 1
+        assert captured[0][0] == ("ISSUE-1", "Internal note", False)  # noqa: FBT003
+
+    def test_public_true_calls_servicedesk_comment(self, comments_mixin):
+        """add_comment(public=True) routes through _add_servicedesk_comment."""
+        captured: list[tuple] = []
+        original = comments_mixin._add_servicedesk_comment
+
+        def spy(*args, **kwargs):
+            captured.append((args, kwargs))
+            return original(*args, **kwargs)
+
+        comments_mixin._add_servicedesk_comment = spy
+        response = {**self.SERVICEDESK_COMMENT_RESPONSE, "public": True}
+        comments_mixin.jira.post.return_value = response
+
+        comments_mixin.add_comment("ISSUE-1", "Customer reply", public=True)
+
+        assert len(captured) == 1
+        assert captured[0][0] == ("ISSUE-1", "Customer reply", True)  # noqa: FBT003
+
+    def test_public_none_does_not_call_servicedesk_comment(self, comments_mixin):
+        """add_comment(public=None default) does NOT call _add_servicedesk_comment."""
+        captured: list[tuple] = []
+
+        def spy(*args, **kwargs):
+            captured.append((args, kwargs))
+
+        comments_mixin._add_servicedesk_comment = spy
+        mock_response = {
+            "id": "10001",
+            "body": "Normal comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+        comments_mixin._post_api3 = Mock(return_value=mock_response)
+
+        comments_mixin.add_comment("ISSUE-1", "text")
+
+        assert len(captured) == 0

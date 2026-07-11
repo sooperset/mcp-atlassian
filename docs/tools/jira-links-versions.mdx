@@ -137,3 +137,23 @@ Batch create multiple versions in a Jira project.
 | `versions` | `string` | Yes | JSON array of version objects. Each object should contain: - name (required): Name of the version - startDate (optional): Start date (YYYY-MM-DD) - releaseDate (optional): Release date (YYYY-MM-DD) - description (optional): Description of the version Example: `[{"name": "v1.0", "startDate": "2025-01-01", "releaseDate": "2025-02-01", "description": "First release"}, {"name": "v2.0"}]` |
 
 ---
+
+### Update Version
+
+Update an existing fix version in a Jira project.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `version_id` | `string` | Yes | Numeric ID of the version to update (e.g., '10001') |
+| `name` | `string` | No | New name for the version |
+| `description` | `string` | No | New description for the version |
+| `start_date` | `string` | No | New start date (YYYY-MM-DD) |
+| `release_date` | `string` | No | New release date (YYYY-MM-DD) |
+| `archived` | `boolean` | No | Set archived flag (true to archive) |
+| `released` | `boolean` | No | Set released flag (true to mark released) |
+
+---
