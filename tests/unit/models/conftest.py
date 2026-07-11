@@ -7,6 +7,8 @@ reusable fixtures for model validation and serialization testing.
 """
 
 import os
+import time
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -32,6 +34,22 @@ from tests.utils.factories import (
 # ============================================================================
 # Factory-Based Data Fixtures
 # ============================================================================
+
+
+@pytest.fixture
+def pacific_timezone() -> Iterator[None]:
+    """Set the process timezone to America/Los_Angeles for a test."""
+    original_timezone = os.environ.get("TZ")
+    os.environ["TZ"] = "America/Los_Angeles"
+    time.tzset()
+    try:
+        yield
+    finally:
+        if original_timezone is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_timezone
+        time.tzset()
 
 
 @pytest.fixture
