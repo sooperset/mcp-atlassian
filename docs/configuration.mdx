@@ -196,6 +196,9 @@ with optional PAC/WPAD auto-configuration.
 
 Service-specific variables override global ones. PAC/WPAD is opt-in and is
 only evaluated when no explicit proxy is configured for that service.
+PAC/WPAD support is provided by the optional `wpad` extra. Install it with
+`pip install "mcp-atlassian[wpad]"` or `uv add "mcp-atlassian[wpad]"` before
+enabling the feature. The published Docker image includes this extra.
 
 ## Custom HTTP Headers
 

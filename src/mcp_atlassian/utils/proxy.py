@@ -8,10 +8,19 @@ from functools import lru_cache
 from typing import Any, Protocol, TypedDict
 from urllib.parse import urlsplit
 
-from pypac import PACSession, get_pac
-from pypac.parser import MalformedPacError
 from requests import Session
 from requests.utils import should_bypass_proxies
+
+try:
+    from pypac import PACSession, get_pac
+    from pypac.parser import MalformedPacError
+except ModuleNotFoundError:  # pragma: no cover - exercised without the wpad extra
+    PACSession = Session  # type: ignore[assignment]
+    get_pac: Any = None  # type: ignore[no-redef]
+
+    class MalformedPacError(ValueError):  # type: ignore[no-redef]
+        """Fallback exception when the optional PAC dependency is unavailable."""
+
 
 from .env import is_env_truthy
 from .logging import log_config_param
@@ -75,6 +84,13 @@ def _load_pac_file(
     trust_env: bool,
 ) -> Any:
     """Load and cache a PAC file for later session reuse."""
+    if get_pac is None:
+        msg = (
+            "PAC/WPAD support requires the optional 'wpad' dependency; "
+            "install mcp-atlassian[wpad] to enable it"
+        )
+        raise ValueError(msg)
+
     bootstrap_session = Session()
     bootstrap_session.verify = verify
     bootstrap_session.cert = cert

@@ -549,3 +549,17 @@ def test_load_pac_file_is_cached():
         assert mock_get_pac.call_count == 1
     finally:
         _load_pac_file.cache_clear()
+
+
+def test_load_pac_file_requires_optional_wpad_dependency(monkeypatch):
+    """PAC loading reports how to enable WPAD when its extra is absent."""
+    _load_pac_file.cache_clear()
+    monkeypatch.setattr("mcp_atlassian.utils.proxy.get_pac", None)
+
+    with pytest.raises(ValueError, match=r"mcp-atlassian\[wpad\]"):
+        _load_pac_file(
+            "http://wpad/wpad.dat",
+            verify=True,
+            cert=None,
+            trust_env=False,
+        )

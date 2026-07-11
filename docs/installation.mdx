@@ -105,6 +105,9 @@ Install directly with pip for development or when you need the package in your P
 ```bash
 pip install mcp-atlassian
 
+# Include this extra when PAC/WPAD proxy routing is enabled
+pip install "mcp-atlassian[wpad]"
+
 # Run the server
 mcp-atlassian --help
 ```
@@ -116,6 +119,9 @@ If you're using [uv](https://docs.astral.sh/uv/) for package management:
 ```bash
 # Add to your project
 uv add mcp-atlassian
+
+# Include this extra when PAC/WPAD proxy routing is enabled
+uv add "mcp-atlassian[wpad]"
 
 # Run
 uv run mcp-atlassian --help

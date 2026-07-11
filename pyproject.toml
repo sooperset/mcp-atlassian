@@ -7,7 +7,6 @@ requires-python = ">=3.10"
 dependencies = [
     "atlassian-python-api>=4.0.0",
     "requests[socks]>=2.31.0",
-    "pypac>=0.17.2",
     "beautifulsoup4>=4.12.3",
     "httpx>=0.28.0",
     "mcp>=1.8.0,<2.0.0",
@@ -33,6 +32,10 @@ dependencies = [
     "truststore>=0.10.0",
     "tzdata>=2024.1; platform_system=='Windows'",
 ]
+
+[project.optional-dependencies]
+wpad = ["pypac>=0.17.2"]
+
 [[project.authors]]
 name = "sooperset"
 email = "soomiles.dev@gmail.com"
@@ -58,7 +61,8 @@ dev = [
     "mcp[cli]>=1.3.0",
     "jinja2>=3.1.0",
     "pyyaml>=6.0",
-    "types-pyyaml>=6.0"
+    "types-pyyaml>=6.0",
+    "pypac>=0.17.2",
 ]
 
 [tool.pytest.ini_options]
