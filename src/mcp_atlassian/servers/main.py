@@ -26,7 +26,7 @@ from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.config import JiraConfig
-from mcp_atlassian.utils.env import is_env_truthy
+from mcp_atlassian.utils.env import is_env_truthy, is_url_only_multi_user_mode
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
@@ -122,6 +122,13 @@ async def health_check(request: Request) -> JSONResponse:
 @asynccontextmanager
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
+    if is_url_only_multi_user_mode():
+        logger.info(
+            "Multi-user mode enabled: server expects per-request credentials "
+            "via the 'Authorization' header. Cloud OAuth tenant information "
+            "is resolved from the configured URL. URL override headers are "
+            "ignored; HTTP transport (sse / streamable-http) is required."
+        )
     services = get_available_services()
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
@@ -523,9 +530,12 @@ class UserTokenMiddleware:
             return False
 
         try:
-            mcp_path = self.mcp_server_ref.get_streamable_http_path()
             request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
-            return request_path == mcp_path
+            auth_paths = {
+                self.mcp_server_ref.get_streamable_http_path(),
+                AtlassianMCP._normalize_http_path(fastmcp_settings.message_path),
+            }
+            return request_path in auth_paths
         except (AttributeError, ValueError) as e:
             logger.warning(f"Error checking auth path: {e}")
             return False
@@ -569,6 +579,18 @@ class UserTokenMiddleware:
                 if confluence_url_header
                 else None
             )
+
+            # In multi-user mode, the server enforces JIRA_URL/CONFLUENCE_URL
+            # for SSRF protection. URL override headers are ignored so a client
+            # cannot redirect the server to an arbitrary Atlassian instance.
+            if is_url_only_multi_user_mode() and (jira_url_str or confluence_url_str):
+                logger.warning(
+                    "Multi-user mode: ignoring URL override headers "
+                    "(X-Atlassian-Jira-Url / X-Atlassian-Confluence-Url). "
+                    "Server uses configured JIRA_URL / CONFLUENCE_URL."
+                )
+                jira_url_str = None
+                confluence_url_str = None
 
             # Validate URLs to prevent SSRF
             if jira_url_str:

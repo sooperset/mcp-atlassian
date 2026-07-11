@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from mcp_atlassian.utils import oauth as oauth_module
 from mcp_atlassian.utils.oauth import (
     CLOUD_AUTHORIZE_URL,
     CLOUD_TOKEN_URL,
@@ -19,6 +20,7 @@ from mcp_atlassian.utils.oauth import (
     OAuthConfig,
     configure_oauth_session,
     get_oauth_config_from_env,
+    resolve_cloud_id_for_url,
 )
 
 
@@ -1256,3 +1258,80 @@ class TestTokenFilePermissionsRegression:
             "OAuth token file must not be group/world-readable (expected 0o600); "
             f"got {oct(mode)}"
         )
+
+
+class TestResolveCloudIdForUrl:
+    """Tests for resolve_cloud_id_for_url (URL-only multi-user tenant pinning)."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        """Keep the module-level Cloud ID cache from leaking across tests."""
+        oauth_module._CLOUD_ID_CACHE.clear()
+        yield
+        oauth_module._CLOUD_ID_CACHE.clear()
+
+    def test_env_pin_takes_precedence_without_network(self, monkeypatch):
+        """An explicit ATLASSIAN_OAUTH_CLOUD_ID pin skips the network lookup."""
+        monkeypatch.setenv("ATLASSIAN_OAUTH_CLOUD_ID", "env-cloud-id")
+
+        with patch("mcp_atlassian.utils.oauth.requests.get") as mock_get:
+            result = resolve_cloud_id_for_url("https://test.atlassian.net")
+
+        assert result == "env-cloud-id"
+        mock_get.assert_not_called()
+
+    def test_resolves_from_tenant_info_endpoint(self, monkeypatch):
+        """Falls back to the site's /_edge/tenant_info endpoint."""
+        monkeypatch.delenv("ATLASSIAN_OAUTH_CLOUD_ID", raising=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {"cloudId": "resolved-cloud-id"}
+
+        with patch(
+            "mcp_atlassian.utils.oauth.requests.get", return_value=mock_response
+        ) as mock_get:
+            result = resolve_cloud_id_for_url("https://test.atlassian.net")
+
+        assert result == "resolved-cloud-id"
+        mock_get.assert_called_once()
+        assert (
+            mock_get.call_args[0][0] == "https://test.atlassian.net/_edge/tenant_info"
+        )
+
+    def test_caches_resolved_cloud_id(self, monkeypatch):
+        """A resolved Cloud ID is cached so the endpoint is hit only once."""
+        monkeypatch.delenv("ATLASSIAN_OAUTH_CLOUD_ID", raising=False)
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {"cloudId": "resolved-cloud-id"}
+
+        with patch(
+            "mcp_atlassian.utils.oauth.requests.get", return_value=mock_response
+        ) as mock_get:
+            first = resolve_cloud_id_for_url("https://test.atlassian.net")
+            second = resolve_cloud_id_for_url("https://test.atlassian.net")
+
+        assert first == second == "resolved-cloud-id"
+        mock_get.assert_called_once()
+
+    def test_returns_none_for_non_cloud_url(self, monkeypatch):
+        """Server/Data Center URLs have no Cloud ID; no network call is made."""
+        monkeypatch.delenv("ATLASSIAN_OAUTH_CLOUD_ID", raising=False)
+
+        with patch("mcp_atlassian.utils.oauth.requests.get") as mock_get:
+            result = resolve_cloud_id_for_url("https://jira.internal.example.com")
+
+        assert result is None
+        mock_get.assert_not_called()
+
+    def test_returns_none_on_lookup_failure(self, monkeypatch):
+        """Network/parse failures resolve to None (caller then refuses)."""
+        monkeypatch.delenv("ATLASSIAN_OAUTH_CLOUD_ID", raising=False)
+
+        with patch(
+            "mcp_atlassian.utils.oauth.requests.get",
+            side_effect=requests.RequestException("boom"),
+        ):
+            result = resolve_cloud_id_for_url("https://test.atlassian.net")
+
+        assert result is None

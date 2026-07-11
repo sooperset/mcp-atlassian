@@ -103,6 +103,28 @@ class TestMainTransportSelection:
                 # Should exit with code 1 (error)
                 assert exc_info.value.code == 1
 
+    @pytest.mark.parametrize(
+        ("environment", "argv"),
+        [
+            ({"TRANSPORT": "stdio"}, ["mcp-atlassian", "--multi-user"]),
+            (
+                {
+                    "TRANSPORT": "stdio",
+                    "MCP_ATLASSIAN_MULTI_USER_MODE": "true",
+                },
+                ["mcp-atlassian"],
+            ),
+        ],
+    )
+    def test_multi_user_rejects_stdio(self, environment, argv):
+        """URL-only multi-user mode requires an HTTP transport."""
+        with patch.dict("os.environ", environment, clear=True):
+            with patch("sys.argv", argv):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+
+        assert exc_info.value.code == 1
+
     def test_cli_overrides_env_transport(self, mock_server, mock_asyncio_run):
         """Test that CLI transport argument overrides environment variable."""
         with patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=mock_server):

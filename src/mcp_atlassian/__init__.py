@@ -232,6 +232,13 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     help="Atlassian Cloud OAuth 2.0 access token (if you have your own you'd like to "
     "use for the session.)",
 )
+@click.option(
+    "--multi-user",
+    is_flag=True,
+    help="Multi-user mode: server only needs JIRA_URL/CONFLUENCE_URL; each MCP "
+    "client supplies its own credentials per request via the 'Authorization' "
+    "header. Requires HTTP transport.",
+)
 def main(
     verbose: int,
     env_file: str | None,
@@ -262,6 +269,7 @@ def main(
     oauth_scope: str | None,
     oauth_cloud_id: str | None,
     oauth_access_token: str | None,
+    multi_user: bool,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
@@ -335,6 +343,13 @@ def main(
         final_transport = "stdio"
     logger.debug(f"Final transport determined: {final_transport}")
 
+    final_multi_user = is_env_truthy("MCP_ATLASSIAN_MULTI_USER_MODE") or bool(
+        click_ctx and was_option_provided(click_ctx, "multi_user") and multi_user
+    )
+    if final_multi_user and final_transport == "stdio":
+        logger.error("Multi-user mode requires sse or streamable-http transport")
+        sys.exit(1)
+
     # Stateless precedence
     final_stateless = is_env_truthy("STATELESS", "false")
     if click_ctx and was_option_provided(click_ctx, "stateless"):
@@ -403,6 +418,8 @@ def main(
         os.environ["ATLASSIAN_OAUTH_CLOUD_ID"] = oauth_cloud_id
     if click_ctx and was_option_provided(click_ctx, "oauth_access_token"):
         os.environ["ATLASSIAN_OAUTH_ACCESS_TOKEN"] = oauth_access_token
+    if click_ctx and was_option_provided(click_ctx, "multi_user") and multi_user:
+        os.environ["MCP_ATLASSIAN_MULTI_USER_MODE"] = "true"
     if click_ctx and was_option_provided(click_ctx, "read_only"):
         os.environ["READ_ONLY_MODE"] = str(read_only).lower()
     if click_ctx and was_option_provided(click_ctx, "confluence_ssl_verify"):

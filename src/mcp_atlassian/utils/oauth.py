@@ -48,6 +48,71 @@ HTTP_READ_TIMEOUT = 20
 HTTP_TIMEOUT = (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
 KEYRING_SERVICE_NAME = "mcp-atlassian-oauth"
 
+# Unauthenticated endpoint on an Atlassian Cloud site that returns the site's
+# tenant (Cloud) ID: ``GET https://<site>/_edge/tenant_info`` -> ``{"cloudId": ...}``.
+TENANT_INFO_PATH = "/_edge/tenant_info"
+
+# Cache resolved Cloud IDs per site origin so the request path avoids repeat
+# lookups. URL-only multi-user deployments pin a single site, so this stays tiny.
+_CLOUD_ID_CACHE: dict[str, str] = {}
+
+
+def resolve_cloud_id_for_url(url: str) -> str | None:
+    """Resolve the authoritative Atlassian Cloud ID for a configured site URL.
+
+    In URL-only multi-user mode the operator pins the Atlassian site via
+    ``JIRA_URL`` / ``CONFLUENCE_URL``. Cloud OAuth clients ultimately call
+    ``https://api.atlassian.com/ex/<service>/<cloud_id>``, so the server must
+    determine the Cloud ID for its *configured* site rather than trusting a
+    client-supplied ``X-Atlassian-Cloud-Id`` header, which could otherwise
+    redirect requests to a different tenant.
+
+    Resolution order:
+
+    1. ``ATLASSIAN_OAUTH_CLOUD_ID`` environment variable — an explicit
+       server-side pin (no network call).
+    2. The site's unauthenticated ``/_edge/tenant_info`` endpoint (cached).
+
+    Args:
+        url: The configured Atlassian site base URL.
+
+    Returns:
+        The Cloud ID string, or ``None`` if the URL is not an Atlassian Cloud
+        site or the Cloud ID could not be resolved.
+    """
+    env_cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
+    if env_cloud_id:
+        return env_cloud_id
+
+    if not url or not is_atlassian_cloud_url(url):
+        return None
+
+    parsed = urllib.parse.urlparse(url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    if origin in _CLOUD_ID_CACHE:
+        return _CLOUD_ID_CACHE[origin]
+
+    tenant_info_url = f"{origin}{TENANT_INFO_PATH}"
+    try:
+        response = requests.get(tenant_info_url, timeout=HTTP_TIMEOUT)
+        response.raise_for_status()
+        cloud_id = response.json().get("cloudId")
+    except (requests.RequestException, ValueError) as e:
+        logger.warning(
+            "Failed to resolve Cloud ID for %s via %s: %s",
+            origin,
+            TENANT_INFO_PATH,
+            e,
+        )
+        return None
+
+    if cloud_id:
+        _CLOUD_ID_CACHE[origin] = cloud_id
+        return cloud_id
+
+    logger.warning("No cloudId returned by %s", tenant_info_url)
+    return None
+
 
 @dataclass
 class OAuthConfig:

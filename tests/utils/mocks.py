@@ -86,6 +86,7 @@ class MockEnvironment:
             "ATLASSIAN_OAUTH_SCOPE",
             "ATLASSIAN_OAUTH_CLOUD_ID",
             "ATLASSIAN_OAUTH_ENABLE",
+            "MCP_ATLASSIAN_MULTI_USER_MODE",
         ]
 
         # Remove auth vars from environment

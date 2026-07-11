@@ -198,6 +198,104 @@ For multi-tenant applications where each user connects to their own Atlassian cl
    - `Authorization: Bearer <user_oauth_token>`
    - `X-Atlassian-Cloud-Id: <user_cloud_id>`
 
+### Multi-User Mode (URL-only Server)
+
+For deployments where the server holds **no Atlassian credentials at all** and
+every MCP client supplies its own username + API token (or PAT, or OAuth
+token), enable multi-user mode. This is the recommended setup when multiple
+people share one remote MCP service and each must act under their own
+Atlassian permissions.
+
+<Steps>
+  <Step title="Start the server with only URLs">
+    ```bash
+    JIRA_URL=https://your-company.atlassian.net \
+    CONFLUENCE_URL=https://your-company.atlassian.net/wiki \
+    uvx mcp-atlassian --transport streamable-http --multi-user --port 9000
+    ```
+
+    Equivalent environment variable form:
+
+    ```bash
+    JIRA_URL=https://your-company.atlassian.net \
+    CONFLUENCE_URL=https://your-company.atlassian.net/wiki \
+    MCP_ATLASSIAN_MULTI_USER_MODE=true uvx mcp-atlassian \
+      --transport streamable-http --port 9000
+    ```
+
+    Existing `ATLASSIAN_OAUTH_ENABLE=true` deployments remain supported. They
+    retain their legacy per-request URL-header behavior; use the new flag when
+    the server must pin all requests to its configured URLs.
+  </Step>
+  <Step title="Configure each MCP client to send credentials per request">
+    <Tabs>
+      <Tab title="Cursor / VS Code">
+        ```json
+        {
+          "mcpServers": {
+            "atlassian": {
+              "url": "https://mcp.example.com/mcp",
+              "headers": {
+                "Authorization": "Basic <base64(email:api_token)>"
+              }
+            }
+          }
+        }
+        ```
+      </Tab>
+      <Tab title="Claude Desktop (mcp-remote)">
+        ```json
+        {
+          "mcpServers": {
+            "atlassian": {
+              "command": "npx",
+              "args": [
+                "mcp-remote",
+                "https://mcp.example.com/mcp",
+                "--header",
+                "Authorization: Basic <base64(email:api_token)>"
+              ]
+            }
+          }
+        }
+        ```
+      </Tab>
+      <Tab title="Server/DC PAT">
+        ```json
+        {
+          "mcpServers": {
+            "atlassian": {
+              "url": "https://mcp.example.com/mcp",
+              "headers": {
+                "Authorization": "Token <USER_PERSONAL_ACCESS_TOKEN>"
+              }
+            }
+          }
+        }
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+</Steps>
+
+<Note>
+- Multi-user mode requires HTTP transport (`sse` or `streamable-http`); `stdio`
+  has no per-request headers.
+- For SSRF protection, the server **ignores** `X-Atlassian-Jira-Url` and
+  `X-Atlassian-Confluence-Url` headers in this mode and always uses the
+  configured `JIRA_URL` / `CONFLUENCE_URL`.
+- **Cloud OAuth:** the tenant (Cloud ID) is **pinned to the configured URL**.
+  The server resolves it from the site itself (or from `ATLASSIAN_OAUTH_CLOUD_ID`
+  if set), so clients need only send `Authorization: Bearer <oauth_token>`. If a
+  client also sends `X-Atlassian-Cloud-Id`, it must match the configured site —
+  requests targeting a different tenant are rejected. This guarantees a client
+  cannot redirect the server to another Atlassian instance.
+- Requests without recognised credential headers are rejected with a clear
+  message instructing the client to add an `Authorization` header.
+- Each request runs under its sender's own Atlassian permissions; the server
+  stores no credentials.
+</Note>
+
 ### Python Example
 
 ```python
@@ -206,14 +304,11 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp import ClientSession
 
 user_token = "user-specific-oauth-token"
-user_cloud_id = "user-specific-cloud-id"
-
 async def main():
     async with streamablehttp_client(
         "http://localhost:9000/mcp",
         headers={
-            "Authorization": f"Bearer {user_token}",
-            "X-Atlassian-Cloud-Id": user_cloud_id
+            "Authorization": f"Bearer {user_token}"
         }
     ) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
@@ -228,7 +323,8 @@ asyncio.run(main())
 ```
 
 <Note>
-- The server uses fallback authentication when requests don't include user-specific credentials
+- Requests without user-specific credentials are rejected.
 - User tokens are isolated per request - no cross-tenant data leakage
-- Falls back to global `ATLASSIAN_OAUTH_CLOUD_ID` if header not provided
+- The server resolves the Cloud ID from the configured URL, or uses the
+  operator-provided `ATLASSIAN_OAUTH_CLOUD_ID` pin.
 </Note>
