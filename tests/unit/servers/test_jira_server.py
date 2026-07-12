@@ -1316,16 +1316,16 @@ async def test_get_all_projects_tool_api_error_handling(jira_client, mock_jira_f
 
     mock_jira_fetcher.get_all_projects.side_effect = HTTPError("API Error")
 
-    response = await jira_client.call_tool("jira_get_all_projects", {})
+    response = await jira_client.call_tool(
+        "jira_get_all_projects", {}, raise_on_error=False
+    )
 
     assert hasattr(response, "content")
+    assert response.is_error is True
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
-
-    data = json.loads(msg.text)
-    assert data["success"] is False
-    assert "API Error" in data["error"]
+    assert "Network or API Error: API Error" in msg.text
 
 
 @pytest.mark.anyio
@@ -1339,16 +1339,16 @@ async def test_get_all_projects_tool_authentication_error_handling(
         "Authentication failed"
     )
 
-    response = await jira_client.call_tool("jira_get_all_projects", {})
+    response = await jira_client.call_tool(
+        "jira_get_all_projects", {}, raise_on_error=False
+    )
 
     assert hasattr(response, "content")
+    assert response.is_error is True
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
-
-    data = json.loads(msg.text)
-    assert data["success"] is False
-    assert "Authentication/Permission Error" in data["error"]
+    assert "Authentication/Permission Error: Authentication failed" in msg.text
 
 
 @pytest.mark.anyio
@@ -1360,16 +1360,16 @@ async def test_get_all_projects_tool_configuration_error_handling(
         "Jira client not configured"
     )
 
-    response = await jira_client.call_tool("jira_get_all_projects", {})
+    response = await jira_client.call_tool(
+        "jira_get_all_projects", {}, raise_on_error=False
+    )
 
     assert hasattr(response, "content")
+    assert response.is_error is True
     assert len(response.content) == 1
     msg = response.content[0]
     assert msg.type == "text"
-
-    data = json.loads(msg.text)
-    assert data["success"] is False
-    assert "Configuration Error" in data["error"]
+    assert "Configuration Error: Jira client not configured" in msg.text
 
 
 @pytest.mark.anyio

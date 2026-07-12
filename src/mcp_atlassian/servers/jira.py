@@ -2439,13 +2439,15 @@ async def get_all_projects(
         If JIRA_PROJECTS_FILTER is configured, only returns projects matching those keys.
 
     Raises:
-        ValueError: If the Jira client is not configured or available.
+        MCPAtlassianError: If fetching projects fails.
     """
     try:
         jira = await get_jira_fetcher(ctx)
         projects = jira.get_all_projects(include_archived=include_archived)
-    except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
-        error_message = ""
+    # Convert every handler failure, including unexpected client exceptions,
+    # to an MCP error so FastMCP marks the tool result as an error.
+    except Exception as e:
+        error_message = str(e)
         log_level = logging.ERROR
         if isinstance(e, MCPAtlassianAuthenticationError):
             error_message = f"Authentication/Permission Error: {str(e)}"
@@ -2453,11 +2455,8 @@ async def get_all_projects(
             error_message = f"Network or API Error: {str(e)}"
         elif isinstance(e, ValueError):
             error_message = f"Configuration Error: {str(e)}"
-
-        error_result = {
-            "success": False,
-            "error": error_message,
-        }
+        else:
+            logger.exception("Unexpected error in get_all_projects")
         logger.log(log_level, f"get_all_projects failed: {error_message}")
         raise MCPAtlassianError(error_message) from e
 
@@ -3068,7 +3067,6 @@ async def get_issue_dates(
         return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error getting issue dates for {issue_key}: {str(e)}")
-        error_result = {"success": False, "error": str(e), "issue_key": issue_key}
         raise MCPAtlassianError(str(e)) from e
 
 
@@ -3149,7 +3147,6 @@ async def get_issue_sla(
         return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error calculating SLA for {issue_key}: {str(e)}")
-        error_result = {"success": False, "error": str(e), "issue_key": issue_key}
         raise MCPAtlassianError(str(e)) from e
 
 
@@ -3209,7 +3206,6 @@ async def get_issue_development_info(
         return json.dumps(result, indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error getting development info for {issue_key}: {str(e)}")
-        error_result = {"success": False, "error": str(e), "issue_key": issue_key}
         raise MCPAtlassianError(str(e)) from e
 
 
@@ -3271,5 +3267,4 @@ async def get_issues_development_info(
         return json.dumps(results, indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Error getting development info for issues: {str(e)}")
-        error_result = {"success": False, "error": str(e)}
         raise MCPAtlassianError(str(e)) from e
