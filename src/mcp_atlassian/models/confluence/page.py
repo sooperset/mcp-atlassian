@@ -83,6 +83,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
     id: str = CONFLUENCE_DEFAULT_ID
     title: str = EMPTY_STRING
     type: str = "page"  # "page", "blogpost", etc.
+    subtype: str | None = None
     status: str = "current"
     space: ConfluenceSpace | None = None
     content: str = EMPTY_STRING
@@ -242,6 +243,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
             id=str(data.get("id", CONFLUENCE_DEFAULT_ID)),
             title=data.get("title", EMPTY_STRING),
             type=data.get("type", "page"),
+            subtype=data.get("subtype"),
             status=data.get("status", "current"),
             space=space,
             content=content,
@@ -268,6 +270,9 @@ class ConfluencePage(ApiModel, TimestampMixin):
             "updated": self.format_timestamp(self.updated),
             "url": self.url,
         }
+
+        if self.subtype:
+            result["subtype"] = self.subtype
 
         # Add space information if available
         if self.space:

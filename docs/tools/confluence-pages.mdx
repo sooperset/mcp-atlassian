@@ -48,16 +48,17 @@ Create a new Confluence page.
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
 | `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at create time. |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
+| `subtype` | `string` | No | (Optional) Confluence page subtype. Use 'live' to create a Confluence Live Doc. Only supported for Confluence Cloud. |
 | `page_width` | `string` | No | Page layout width. Options: 'full-width', 'default'. |
 | `table_layout` | `string` | No | Table width preset for Markdown tables. Options: 'full-width', 'wide', 'default'. |
 **Example:**
 
 ```json
-{"space_key": "DEV", "title": "Architecture Decision Record", "content": "## Context\n\nWe need to decide...", "parent_id": "98765432"}
+{"space_key": "DEV", "title": "Architecture Decision Record", "content": "## Context\n\nWe need to decide...", "parent_id": "98765432", "subtype": "live"}
 ```
 
 <Tip>
-Use Markdown for content — it's auto-converted to Confluence storage format. Specify `parent_id` to create as a child page.
+Use Markdown for content — it's auto-converted to Confluence storage format. Specify `parent_id` to create as a child page. Set `subtype` to `live` on Confluence Cloud to create a Live Doc.
 </Tip>
 
 <Note>Exactly one of `content` or `content_file` must be provided.</Note>

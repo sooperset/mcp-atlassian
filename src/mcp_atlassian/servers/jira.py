@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
@@ -16,6 +16,7 @@ from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
 from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
+from mcp_atlassian.servers.async_utils import run_jira_fetcher_call
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.media import (
@@ -30,8 +31,10 @@ logger = logging.getLogger(__name__)
 # Regex patterns for Jira key validation.
 # Per Atlassian docs, Cloud project keys are 2-10 chars. Server/Data Center
 # allows longer keys (configurable). We accept any length to support both.
-# Underscores are also allowed to support non-standard project key formats
-ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d+$"
+# Underscores are also allowed to support non-standard project key formats.
+# Server/Data Center may use hyphens between numeric suffix segments
+# (e.g., B7-214-68901), but every segment must contain digits.
+ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*$"
 PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+$"
 
 jira_mcp = FastMCP(
@@ -678,8 +681,9 @@ async def get_issue(
         expand_additions.append("names")
     expand = _merge_expand(expand, expand_additions)
 
-    # Fetch the issue (with augmented expand)
-    issue = jira.get_issue(
+    # Fetch the issue (with augmented expand) without blocking the event loop.
+    issue = await run_jira_fetcher_call(
+        jira.get_issue,
         issue_key=issue_key,
         fields=fields_list,
         expand=expand,
@@ -835,7 +839,8 @@ async def search(
     if use_display_names:
         expand = _merge_expand(expand, ["names"])
 
-    search_result = jira.search_issues(
+    search_result = await run_jira_fetcher_call(
+        jira.search_issues,
         jql=jql,
         fields=fields_list,
         limit=limit,
@@ -1184,17 +1189,22 @@ async def download_attachments(
 ) -> list[TextContent | EmbeddedResource]:
     """Download attachments from a Jira issue.
 
-    Returns attachment contents as base64-encoded embedded resources so that
-    they are available over the MCP protocol without requiring filesystem
-    access on the server.
+    Returns attachment contents as base64-encoded content so that they are
+    available over the MCP protocol without requiring filesystem access on
+    the server. Image attachments are returned as ``EmbeddedResource`` blobs;
+    all other attachments (documents, archives, etc.) are returned as
+    ``TextContent`` carrying a base64 payload, since many MCP clients only
+    forward ``EmbeddedResource`` blobs for recognized image MIME types and
+    otherwise drop the attachment (#1419).
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
 
     Returns:
-        A list containing a text summary and one EmbeddedResource per
-        successfully downloaded attachment.
+        A list containing a text summary, one EmbeddedResource per
+        downloaded image attachment, and one TextContent (base64 payload)
+        per downloaded non-image attachment.
     """
     jira = await get_jira_fetcher(ctx)
     result = jira.get_issue_attachment_contents(issue_key=issue_key)
@@ -1235,16 +1245,42 @@ async def download_attachments(
         mime_type = attachment.get("content_type", "application/octet-stream")
         downloaded += 1
 
-        contents.append(
-            EmbeddedResource(
-                type="resource",
-                resource=BlobResourceContents(
-                    uri=f"attachment:///{issue_key}/{filename}",
-                    mimeType=mime_type,
-                    blob=encoded,
-                ),
+        is_image, resolved_mime_type = is_image_attachment(mime_type, filename)
+        if is_image:
+            contents.append(
+                EmbeddedResource(
+                    type="resource",
+                    resource=BlobResourceContents(
+                        uri=f"attachment:///{issue_key}/{filename}",
+                        mimeType=resolved_mime_type,
+                        blob=encoded,
+                    ),
+                )
             )
-        )
+        else:
+            # Many MCP clients only forward EmbeddedResource blobs whose
+            # mimeType is a recognized image format, rejecting anything
+            # else (e.g. .zip) with "returned an image in an unsupported
+            # format" and dropping the attachment (#1419). TextContent is
+            # reliably forwarded, so non-image attachments carry their
+            # base64 payload there instead.
+            contents.append(
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "success": True,
+                            "issue_key": issue_key,
+                            "filename": filename,
+                            "mime_type": mime_type,
+                            "encoding": "base64",
+                            "content": encoded,
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
+            )
 
     summary: dict[str, Any] = {
         "success": True,
@@ -2337,7 +2373,13 @@ async def add_comment(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
-    body: Annotated[str, Field(description="Comment text in Markdown format")],
+    body: Annotated[
+        str,
+        Field(
+            description="Comment text in Markdown format",
+            validation_alias=AliasChoices("body", "comment"),
+        ),
+    ],
     visibility: Annotated[
         str | None,
         Field(

@@ -809,6 +809,28 @@ async def test_create_page_with_string_parent_id(client, mock_confluence_fetcher
 
 
 @pytest.mark.anyio
+async def test_create_page_with_subtype(client, mock_confluence_fetcher):
+    """Test creating a page forwards the optional subtype argument."""
+    response = await client.call_tool(
+        "confluence_create_page",
+        {
+            "space_key": "TEST",
+            "title": "Live Doc",
+            "content": "Test content",
+            "subtype": "live",
+        },
+    )
+
+    mock_confluence_fetcher.create_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.create_page.call_args.kwargs
+    assert call_kwargs["subtype"] == "live"
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Page created successfully"
+    assert result_data["page"]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
 async def test_create_page_include_content(client, mock_confluence_fetcher):
     """Test create_page can include content when requested."""
     response = await client.call_tool(
@@ -1056,6 +1078,7 @@ def test_page_content_file_parameters_preserve_positional_order():
         "content_file",
         "page_width",
         "table_layout",
+        "subtype",
     ]
 
     update_params = list(inspect.signature(confluence_server.update_page.fn).parameters)

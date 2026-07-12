@@ -74,6 +74,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     attachments: list[JiraAttachment] = Field(default_factory=list)
     timetracking: JiraTimetracking | None = None
     url: str | None = None
+    browse_url: str | None = None
     epic_key: str | None = None
     epic_name: str | None = None
     fix_versions: list[str] = Field(default_factory=list)
@@ -240,6 +241,14 @@ class JiraIssue(ApiModel, TimestampMixin):
             return fields[custom_field_id]
 
         return None
+
+    @staticmethod
+    def _build_browse_url(base_url: Any, key: str) -> str | None:
+        if not isinstance(base_url, str) or not base_url.strip():
+            return None
+        if key == JIRA_DEFAULT_KEY:
+            return None
+        return f"{base_url.strip().rstrip('/')}/browse/{key}"
 
     @classmethod
     def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "JiraIssue":
@@ -424,6 +433,7 @@ class JiraIssue(ApiModel, TimestampMixin):
 
         # URL
         url = data.get("self")  # API URL for the issue
+        browse_url = cls._build_browse_url(kwargs.get("base_url"), key)
 
         # Try to find epic fields (varies by Jira instance)
         epic_key = None
@@ -488,6 +498,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             attachments=attachments,
             timetracking=timetracking,
             url=url,
+            browse_url=browse_url,
             epic_key=epic_key,
             epic_name=epic_name,
             fix_versions=fix_versions,
@@ -520,6 +531,9 @@ class JiraIssue(ApiModel, TimestampMixin):
         # Add URL if available and requested
         if self.url and should_include_field("url"):
             result["url"] = self.url
+
+        if self.browse_url:
+            result["browse_url"] = self.browse_url
 
         # Add description if available and requested
         if self.description and should_include_field("description"):
