@@ -9,6 +9,7 @@ import dataclasses
 import hashlib
 import logging
 import os
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -88,12 +89,14 @@ def _validation_cache_maxsize() -> int:
 
 
 _CACHE_TTL = _validation_cache_ttl()
+_CACHE_MAXSIZE = _validation_cache_maxsize()
 _validation_cache: TTLCache[tuple[str, str], Any] | None = (
-    TTLCache(maxsize=_validation_cache_maxsize(), ttl=_CACHE_TTL)
-    if _CACHE_TTL > 0
+    TTLCache(maxsize=_CACHE_MAXSIZE, ttl=_CACHE_TTL)
+    if _CACHE_TTL > 0 and _CACHE_MAXSIZE > 0
     else None
 )
 _CACHE_MISS = object()  # sentinel distinguishing "not cached" from a cached None
+_validation_cache_lock = threading.RLock()
 
 
 def _credential_for_cache(config: JiraConfig | ConfluenceConfig) -> str | None:
@@ -349,21 +352,24 @@ def _create_and_validate(
             session.hooks["response"].append(
                 _make_ssrf_safe_hook(validate_url_for_ssrf)
             )
-        cached_validation = (
-            _validation_cache.get(cache_key, _CACHE_MISS)  # type: ignore[union-attr]
-            if cache_key is not None
-            else _CACHE_MISS
-        )
-        if cached_validation is not _CACHE_MISS:
-            validation_data = cached_validation
-            logger.debug(
-                f"{fn_name}: Reusing cached {spec.name} credential validation "
-                "(skipped network call)."
-            )
+        validation_cache = _validation_cache
+        if cache_key is not None and validation_cache is not None:
+            # TTLCache isn't thread-safe. Keep the lookup and validation in one
+            # critical section so concurrent requests don't duplicate the
+            # upstream validation call for the same credential.
+            with _validation_cache_lock:
+                cached_validation = validation_cache.get(cache_key, _CACHE_MISS)
+                if cached_validation is not _CACHE_MISS:
+                    validation_data = cached_validation
+                    logger.debug(
+                        f"{fn_name}: Reusing cached {spec.name} credential "
+                        "validation (skipped network call)."
+                    )
+                else:
+                    validation_data = spec.validate_fn(fetcher)
+                    validation_cache[cache_key] = validation_data
         else:
             validation_data = spec.validate_fn(fetcher)
-            if cache_key is not None:
-                _validation_cache[cache_key] = validation_data  # type: ignore[index]
         spec.on_validated(
             fn_name,
             request,
