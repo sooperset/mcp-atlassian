@@ -12,7 +12,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 _MEDIA_NODE_TYPES = frozenset({"media", "mediaSingle", "mediaGroup"})
-_JIRA_ISSUE_KEY_RE = re.compile(r"(?<![A-Z0-9_/])([A-Z][A-Z0-9_]+-\d+)(?![A-Z0-9_])")
+_JIRA_ISSUE_KEY_RE = re.compile(
+    r"(?<![A-Za-z0-9_/-])"
+    r"([A-Z][A-Z0-9_]+-\d+(?:-\d+)*)"
+    r"(?![A-Za-z0-9_/-])"
+)
 
 
 def _append_text_nodes(
