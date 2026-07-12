@@ -7,6 +7,7 @@ import pytest
 
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils.oauth import OAuthConfig
+from mcp_atlassian.utils.proxy import DEFAULT_PROXY_WPAD_URL
 
 
 def test_from_env_basic_auth():
@@ -152,6 +153,7 @@ def test_from_env_proxy_settings():
             "HTTPS_PROXY": "https://proxy.example.com:8443",
             "SOCKS_PROXY": "socks5://user:pass@proxy.example.com:1080",
             "NO_PROXY": "localhost,127.0.0.1",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
         },
         clear=True,
     ):
@@ -160,6 +162,8 @@ def test_from_env_proxy_settings():
         assert config.https_proxy == "https://proxy.example.com:8443"
         assert config.socks_proxy == "socks5://user:pass@proxy.example.com:1080"
         assert config.no_proxy == "localhost,127.0.0.1"
+        assert config.proxy_wpad_enable is True
+        assert config.proxy_wpad_url == DEFAULT_PROXY_WPAD_URL
 
     # Service-specific overrides
     with patch.dict(
@@ -172,6 +176,9 @@ def test_from_env_proxy_settings():
             "JIRA_HTTPS_PROXY": "https://jira-proxy.example.com:8443",
             "JIRA_SOCKS_PROXY": "socks5://user:pass@jira-proxy.example.com:1080",
             "JIRA_NO_PROXY": "localhost,127.0.0.1,.internal.example.com",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
+            "ATLASSIAN_PROXY_WPAD_URL": "http://global-wpad.example.com/wpad.dat",
+            "JIRA_PROXY_WPAD_URL": "http://jira-wpad.example.com/wpad.dat",
         },
         clear=True,
     ):
@@ -180,6 +187,27 @@ def test_from_env_proxy_settings():
         assert config.https_proxy == "https://jira-proxy.example.com:8443"
         assert config.socks_proxy == "socks5://user:pass@jira-proxy.example.com:1080"
         assert config.no_proxy == "localhost,127.0.0.1,.internal.example.com"
+        assert config.proxy_wpad_enable is True
+        assert config.proxy_wpad_url == "http://jira-wpad.example.com/wpad.dat"
+
+
+def test_from_env_service_specific_wpad_disable_overrides_global():
+    """Test Jira can opt out of globally enabled WPAD/PAC."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
+            "JIRA_PROXY_WPAD_ENABLE": "false",
+            "ATLASSIAN_PROXY_WPAD_URL": "http://global-wpad.example.com/wpad.dat",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.proxy_wpad_enable is False
+        assert config.proxy_wpad_url == "http://global-wpad.example.com/wpad.dat"
 
 
 def test_is_cloud_oauth_with_cloud_id():

@@ -77,8 +77,14 @@ class SearchMixin(ConfluenceClient):
             if filter_str:
                 cql = self._and_spaces_filter(cql, filter_str)
 
-        # Execute the CQL search query
-        results = self.confluence.cql(cql=cql, limit=limit)
+        # Execute the CQL search query. Expand content.history and
+        # content.version so each result carries created/updated/author and
+        # version metadata; on the /rest/api/search endpoint these nested
+        # properties require the "content." prefix (a bare "history,version"
+        # is silently ignored).
+        results = self.confluence.cql(
+            cql=cql, limit=limit, expand="content.history,content.version"
+        )
 
         # Convert the response to a search result model
         search_result = ConfluenceSearchResult.from_api_response(
