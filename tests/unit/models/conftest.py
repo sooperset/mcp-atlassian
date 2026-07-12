@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from mcp_atlassian.utils import parse_date as parse_date_utility
 from tests.fixtures.confluence_mocks import (
     MOCK_COMMENTS_RESPONSE,
     MOCK_CQL_SEARCH_RESPONSE,
@@ -62,8 +63,28 @@ def pacific_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
             converted = super().astimezone(tz or ZoneInfo("America/Los_Angeles"))
             return self.fromtimestamp(converted.timestamp(), converted.tzinfo)
 
-    monkeypatch.setattr("mcp_atlassian.models.base.datetime", PacificDatetime)
-    monkeypatch.setattr("src.mcp_atlassian.models.base.datetime", PacificDatetime)
+    def parse_date_in_pacific(
+        date_str: str | int | None,
+    ) -> datetime | None:
+        parsed = parse_date_utility(date_str)
+        if parsed is None:
+            return None
+        return PacificDatetime(
+            parsed.year,
+            parsed.month,
+            parsed.day,
+            parsed.hour,
+            parsed.minute,
+            parsed.second,
+            parsed.microsecond,
+            parsed.tzinfo,
+            fold=parsed.fold,
+        )
+
+    monkeypatch.setattr("mcp_atlassian.models.base.parse_date", parse_date_in_pacific)
+    monkeypatch.setattr(
+        "src.mcp_atlassian.models.base.parse_date", parse_date_in_pacific
+    )
 
 
 @pytest.fixture
@@ -274,11 +295,17 @@ def complete_confluence_page_data():
         space={"key": "COMPLETE", "name": "Complete Test Space", "type": "global"},
         body={
             "storage": {
-                "value": "<h1>Complete Test Page</h1><p>This page has all fields populated.</p>",
+                "value": (
+                    "<h1>Complete Test Page</h1>"
+                    "<p>This page has all fields populated.</p>"
+                ),
                 "representation": "storage",
             },
             "view": {
-                "value": "<h1>Complete Test Page</h1><p>This page has all fields populated.</p>",
+                "value": (
+                    "<h1>Complete Test Page</h1>"
+                    "<p>This page has all fields populated.</p>"
+                ),
                 "representation": "view",
             },
         },
