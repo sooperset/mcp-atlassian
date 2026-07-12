@@ -85,6 +85,7 @@ class ConfluenceV2Adapter:
         parent_id: str | None = None,
         representation: str = "storage",
         status: str = "current",
+        subtype: str | None = None,
     ) -> dict[str, Any]:
         """Create a page using the v2 API.
 
@@ -95,6 +96,7 @@ class ConfluenceV2Adapter:
             parent_id: Optional parent page ID
             representation: Content representation format (default: "storage")
             status: Page status (default: "current")
+            subtype: Optional page subtype. Use "live" to create a Live Doc.
 
         Returns:
             The created page data from the API response
@@ -120,6 +122,8 @@ class ConfluenceV2Adapter:
             # Add parent if specified
             if parent_id:
                 data["parentId"] = parent_id
+            if subtype:
+                data["subtype"] = subtype
 
             # Make the v2 API call
             url = f"{self.base_url}/api/v2/pages"
@@ -554,6 +558,9 @@ class ConfluenceV2Adapter:
                     "representation": "storage",
                 }
             }
+
+        if "subtype" in v2_response:
+            v1_compatible["subtype"] = v2_response["subtype"]
 
         return v1_compatible
 

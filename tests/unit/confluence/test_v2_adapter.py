@@ -124,6 +124,47 @@ class TestConfluenceV2Adapter:
         with pytest.raises(ValueError, match="Failed to get page '123456'"):
             v2_adapter.get_page("123456")
 
+    def test_create_page_with_live_subtype(self, v2_adapter, mock_session):
+        """Test creating a Live Doc page passes subtype to the v2 API."""
+        space_response = Mock()
+        space_response.json.return_value = {"results": [{"id": "space-123"}]}
+        create_response = Mock()
+        create_response.json.return_value = {
+            "id": "page-123",
+            "status": "current",
+            "title": "Live Agenda",
+            "spaceId": "space-123",
+            "subtype": "live",
+            "version": {"number": 1},
+        }
+        mock_session.get.return_value = space_response
+        mock_session.post.return_value = create_response
+
+        result = v2_adapter.create_page(
+            space_key="TEAM",
+            title="Live Agenda",
+            body="<p>Agenda</p>",
+            parent_id="parent-123",
+            subtype="live",
+        )
+
+        mock_session.post.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/pages",
+            json={
+                "spaceId": "space-123",
+                "status": "current",
+                "title": "Live Agenda",
+                "body": {
+                    "representation": "storage",
+                    "value": "<p>Agenda</p>",
+                },
+                "parentId": "parent-123",
+                "subtype": "live",
+            },
+        )
+        assert result["id"] == "page-123"
+        assert result["subtype"] == "live"
+
     def test_get_page_with_expand_parameter(self, v2_adapter, mock_session):
         """Test that expand parameter is accepted but not used."""
         # Mock the v2 API response

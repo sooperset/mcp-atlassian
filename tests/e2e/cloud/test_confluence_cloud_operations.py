@@ -122,6 +122,31 @@ class TestConfluenceCloudStorageFormat:
         resource_tracker.add_confluence_page(page.id)
         assert page.id is not None
 
+
+class TestConfluenceCloudPageSubtype:
+    """Cloud page subtype operations."""
+
+    def test_create_live_doc_page(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        """Create a Live Doc and expose its subtype in the returned model."""
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Live Doc Test {uid}",
+            body="<p>Created as a Live Doc.</p>",
+            is_markdown=False,
+            content_representation="storage",
+            subtype="live",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        assert page.subtype == "live"
+        assert page.to_simplified_dict()["subtype"] == "live"
+
     def test_markdown_task_lists_use_confluence_storage_macros(
         self,
         confluence_fetcher: ConfluenceFetcher,
