@@ -4507,7 +4507,8 @@ async def compare_issue_sets(
     if compare_fields:
         fields_list = [f.strip() for f in compare_fields.split(",") if f.strip()]
 
-    result = jira.compare_issue_sets(
+    result = await run_jira_fetcher_call(
+        jira.compare_issue_sets,
         jql_a=jql_a,
         jql_b=jql_b,
         compare_fields=fields_list,

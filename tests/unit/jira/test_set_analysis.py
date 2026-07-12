@@ -65,6 +65,14 @@ class TestNormalizeFieldValue:
         result = _normalize_field_value([{"name": "B"}, {"name": "A"}])
         assert result == ["A", "B"]
 
+    def test_list_of_value_dicts(self) -> None:
+        result = _normalize_field_value([{"value": "B"}, {"value": "A"}])
+        assert result == ["A", "B"]
+
+    @pytest.mark.parametrize("value", ["", 0, False])
+    def test_falsy_values(self, value: object) -> None:
+        assert _normalize_field_value(value) == str(value)
+
 
 class TestSetAnalysisMixin:
     @pytest.fixture

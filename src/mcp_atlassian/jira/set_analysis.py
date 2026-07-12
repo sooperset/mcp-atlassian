@@ -38,16 +38,13 @@ def _normalize_field_value(value: Any) -> str | list[str] | None:
                 return _normalize_field_value(v)
         return None
     if isinstance(value, list):
-        normalized = []
+        normalized: list[str] = []
         for item in value:
-            if isinstance(item, dict):
-                for key in ("display_name", "name"):
-                    v = item.get(key)
-                    if v is not None:
-                        normalized.append(str(v))
-                        break
-                else:
-                    normalized.append(str(item))
+            normalized_item = _normalize_field_value(item)
+            if isinstance(normalized_item, list):
+                normalized.extend(normalized_item)
+            elif normalized_item is not None:
+                normalized.append(normalized_item)
             else:
                 normalized.append(str(item))
         return sorted(normalized)
@@ -69,16 +66,23 @@ def _get_field_value(issue: dict[str, Any], field: str) -> Any:
     """
     field_aliases = {
         "attachment": "attachments",
+        "attachments": "attachments",
         "comment": "comments",
-        "fixVersions": "fix_versions",
+        "comments": "comments",
+        "fixversions": "fix_versions",
+        "fix_versions": "fix_versions",
         "issuetype": "issue_type",
+        "issue_type": "issue_type",
+        "issue type": "issue_type",
     }
-    key = field_aliases.get(field, field)
+    normalized_field = field.strip().casefold()
+    key = field_aliases.get(normalized_field, field.strip())
     if key in issue:
         return issue[key]
 
-    normalized_field = field.casefold()
-    for value in issue.values():
+    for issue_key, value in issue.items():
+        if issue_key.casefold() == key.casefold():
+            return value
         if (
             isinstance(value, dict)
             and str(value.get("name", "")).casefold() == normalized_field

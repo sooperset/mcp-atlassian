@@ -109,6 +109,22 @@ def mock_jira_fetcher():
         return mock_search_result
 
     mock_fetcher.search_issues.side_effect = mock_search_issues
+    mock_fetcher.compare_issue_sets.return_value = {
+        "jql_a": "project = TEST",
+        "jql_b": "project = DEMO",
+        "set_a_count": 1,
+        "set_b_count": 1,
+        "only_in_a": [],
+        "only_in_b": [],
+        "changed": [],
+        "unchanged_count": 1,
+        "summary": {
+            "only_in_a_count": 0,
+            "only_in_b_count": 0,
+            "changed_count": 0,
+            "unchanged_count": 1,
+        },
+    }
 
     # Configure create_issue
     def mock_create_issue(
@@ -459,6 +475,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         batch_create_issues,
         batch_create_versions,
         batch_get_changelogs,
+        compare_issue_sets,
         create_customer_request,
         create_issue,
         create_issue_link,
@@ -536,6 +553,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(create_customer_request)
     jira_sub_mcp.add_tool(batch_create_issues)
     jira_sub_mcp.add_tool(batch_get_changelogs)
+    jira_sub_mcp.add_tool(compare_issue_sets)
     jira_sub_mcp.add_tool(update_issue)
     jira_sub_mcp.add_tool(assign_issue)
     jira_sub_mcp.add_tool(delete_issue)
@@ -681,6 +699,29 @@ async def test_search(jira_client, mock_jira_fetcher):
         expand=None,
         projects_filter=None,
         page_token=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_compare_issue_sets(jira_client, mock_jira_fetcher):
+    """Test the set comparison tool delegates to the fetcher."""
+    response = await jira_client.call_tool(
+        "jira_compare_issue_sets",
+        {
+            "jql_a": "project = TEST",
+            "jql_b": "project = DEMO",
+            "compare_fields": "status, assignee",
+            "max_issues": 25,
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["summary"]["unchanged_count"] == 1
+    mock_jira_fetcher.compare_issue_sets.assert_called_once_with(
+        jql_a="project = TEST",
+        jql_b="project = DEMO",
+        compare_fields=["status", "assignee"],
+        max_issues=25,
     )
 
 
