@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.jira.users import UsersMixin, normalize_text
 
@@ -91,6 +92,20 @@ class TestUsersMixin:
 
         # Verify self.jira.myself was called
         users_mixin.jira.myself.assert_called_once()
+
+    def test_get_current_user_account_id_http_error_429(self, users_mixin):
+        """Test that HTTP 429 is reported as a rate-limit validation error."""
+        users_mixin._current_user_account_id = None
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        http_error = requests.HTTPError(response=mock_response)
+        users_mixin.jira.myself = MagicMock(side_effect=http_error)
+
+        with pytest.raises(
+            MCPAtlassianAuthenticationError,
+            match=r"Jira token validation was rate-limited \(429\)",
+        ):
+            users_mixin.get_current_user_account_id()
 
     def test_get_current_user_account_id_jira_data_center_key(self, users_mixin):
         """Test that get_current_user_account_id falls back to 'key' for Jira Data Center."""
