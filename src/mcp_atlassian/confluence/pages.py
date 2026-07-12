@@ -3,12 +3,15 @@
 import difflib
 import logging
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import requests
+from bs4 import BeautifulSoup, Tag
 from requests.exceptions import HTTPError
 
 from ..models.confluence import ConfluencePage
 from ..utils.decorators import handle_auth_errors
+from ..utils.pagination import clamp_limit
 from .client import ConfluenceClient
 from .utils import emoji_to_hex_id, extract_emoji_from_property
 from .v2_adapter import ConfluenceV2Adapter
@@ -31,6 +34,148 @@ class PagesMixin(ConfluenceClient):
                 session=self.confluence._session, base_url=self.confluence.url
             )
         return None
+
+    def _cloud_v2_adapter(self) -> ConfluenceV2Adapter | None:
+        """Get a v2 API adapter for any Confluence Cloud auth mode."""
+        if not self.config.is_cloud:
+            return None
+
+        if self.config.auth_type == "oauth":
+            base_url = self.confluence.url
+        else:
+            base_url = self.config.url
+        return ConfluenceV2Adapter(
+            session=self.confluence._session,
+            base_url=base_url,
+        )
+
+    @property
+    def _page_children_v2_adapter(self) -> ConfluenceV2Adapter | None:
+        """Get v2 API adapter for Cloud page-children lookups.
+
+        Returns:
+            ConfluenceV2Adapter instance for Cloud, None for Server/Data Center.
+        """
+        if self.config.is_cloud:
+            return ConfluenceV2Adapter(
+                session=self.confluence._session, base_url=self.confluence.url
+            )
+        return None
+
+    @staticmethod
+    def _v2_next_cursor(response: dict[str, Any]) -> str | None:
+        """Extract the next cursor from a Confluence v2 paginated response."""
+        links = response.get("_links", {})
+        if not isinstance(links, dict):
+            return None
+
+        next_link = links.get("next")
+        if not isinstance(next_link, str) or not next_link:
+            return None
+
+        cursor = parse_qs(urlparse(next_link).query).get("cursor", [None])[0]
+        return cursor or None
+
+    @staticmethod
+    def _is_requested_child_type(
+        item: dict[str, Any], *, include_folders: bool
+    ) -> bool:
+        """Return whether a v2 direct-child item matches the tool contract."""
+        item_type = item.get("type", "page")
+        return item_type == "page" or (include_folders and item_type == "folder")
+
+    def _get_v2_page_children_items(
+        self,
+        v2_adapter: ConfluenceV2Adapter,
+        page_id: str,
+        start: int,
+        limit: int,
+        expand: str,
+        *,
+        include_folders: bool,
+    ) -> list[dict[str, Any]]:
+        """Fetch v2 direct children while preserving the v1 start/limit contract."""
+        if limit <= 0:
+            return []
+
+        child_items: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str | None] = set()
+        items_to_skip = max(start, 0)
+
+        while len(child_items) < limit:
+            if cursor in seen_cursors:
+                logger.warning(
+                    "Stopping v2 child pagination for page '%s' after repeated "
+                    "cursor '%s'",
+                    page_id,
+                    cursor,
+                )
+                break
+            seen_cursors.add(cursor)
+
+            page_results = v2_adapter.get_page_direct_children(
+                page_id=page_id,
+                limit=limit,
+                cursor=cursor,
+            )
+            raw_items = page_results.get("results", [])
+            if not isinstance(raw_items, list):
+                break
+
+            requested_items = [
+                item
+                for item in raw_items
+                if isinstance(item, dict)
+                and self._is_requested_child_type(item, include_folders=include_folders)
+            ]
+
+            if items_to_skip:
+                if len(requested_items) <= items_to_skip:
+                    items_to_skip -= len(requested_items)
+                    cursor = self._v2_next_cursor(page_results)
+                    if not cursor:
+                        break
+                    continue
+
+                requested_items = requested_items[items_to_skip:]
+                items_to_skip = 0
+
+            remaining = limit - len(child_items)
+            child_items.extend(requested_items[:remaining])
+
+            if len(child_items) >= limit:
+                break
+
+            cursor = self._v2_next_cursor(page_results)
+            if not cursor:
+                break
+
+        if "body" in expand:
+            return self._enrich_v2_child_pages_with_content(v2_adapter, child_items)
+
+        return child_items
+
+    def _enrich_v2_child_pages_with_content(
+        self,
+        v2_adapter: ConfluenceV2Adapter,
+        child_items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Fetch page details for v2 direct-child page items when body is requested."""
+        enriched_items: list[dict[str, Any]] = []
+
+        for item in child_items:
+            if item.get("type", "page") != "page" or not item.get("id"):
+                enriched_items.append(item)
+                continue
+
+            page = v2_adapter.get_page(
+                page_id=str(item["id"]),
+                expand="body.storage,version,space",
+            )
+            enriched_items.append({**item, **page})
+
+        return enriched_items
 
     @handle_auth_errors("Confluence API")
     def get_page_content(
@@ -63,7 +208,7 @@ class PagesMixin(ConfluenceClient):
                 )
                 page = v2_adapter.get_page(
                     page_id=page_id,
-                    expand="body.storage,version,space,children.attachment",
+                    expand="body.storage,version,space,children.attachment,history",
                 )
             else:
                 logger.debug(
@@ -72,7 +217,7 @@ class PagesMixin(ConfluenceClient):
                 )
                 page = self.confluence.get_page_by_id(
                     page_id=page_id,
-                    expand="body.storage,version,space,children.attachment",
+                    expand="body.storage,version,space,children.attachment,history",
                 )
 
             # Check if API returned an error string
@@ -534,6 +679,8 @@ class PagesMixin(ConfluenceClient):
         content_representation: str | None = None,
         emoji: str | None = None,
         page_width: str | None = None,
+        subtype: str | None = None,
+        table_layout: str | None = None,
     ) -> ConfluencePage:
         """
         Create a new page in a Confluence space.
@@ -548,6 +695,8 @@ class PagesMixin(ConfluenceClient):
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
             emoji: Optional emoji character for the page title icon (keyword-only)
             page_width: Optional page layout width ('full-width', 'max', or 'default', keyword-only)
+            subtype: Optional Confluence page subtype. Use "live" to create a Live Doc.
+            table_layout: Optional table width preset for markdown tables ('full-width', 'wide', 'default', keyword-only)
 
         Returns:
             ConfluencePage model containing the new page's data
@@ -560,7 +709,9 @@ class PagesMixin(ConfluenceClient):
             if is_markdown:
                 # Convert markdown to Confluence storage format
                 final_body = self.preprocessor.markdown_to_confluence_storage(
-                    body, enable_heading_anchors=enable_heading_anchors
+                    body,
+                    enable_heading_anchors=enable_heading_anchors,
+                    table_layout=table_layout,
                 )
                 representation = "storage"
             else:
@@ -568,19 +719,29 @@ class PagesMixin(ConfluenceClient):
                 final_body = body
                 representation = content_representation or "storage"
 
-            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            # Use v2 API for OAuth authentication and for Cloud page subtypes
+            # such as Live Docs. The v1 API/client does not expose subtype.
             v2_adapter = self._v2_adapter
+            if subtype:
+                v2_adapter = self._cloud_v2_adapter()
+                if not v2_adapter:
+                    raise ValueError(
+                        "Confluence page subtype is only supported for Confluence Cloud"
+                    )
             if v2_adapter:
                 logger.debug(
                     f"Using v2 API for OAuth authentication to create page '{title}'"
                 )
-                result = v2_adapter.create_page(
-                    space_key=space_key,
-                    title=title,
-                    body=final_body,
-                    parent_id=parent_id,
-                    representation=representation,
-                )
+                create_kwargs = {
+                    "space_key": space_key,
+                    "title": title,
+                    "body": final_body,
+                    "parent_id": parent_id,
+                    "representation": representation,
+                }
+                if subtype:
+                    create_kwargs["subtype"] = subtype
+                result = v2_adapter.create_page(**create_kwargs)
             else:
                 logger.debug(
                     f"Using v1 API for token/basic authentication to create page '{title}'"
@@ -629,6 +790,7 @@ class PagesMixin(ConfluenceClient):
         content_representation: str | None = None,
         emoji: str | None = None,
         page_width: str | None = None,
+        table_layout: str | None = None,
     ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
@@ -645,6 +807,7 @@ class PagesMixin(ConfluenceClient):
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
             emoji: Optional emoji character for the page title icon (keyword-only). Pass empty string to remove emoji.
             page_width: Optional page layout width ('full-width', 'max', or 'default', keyword-only). Pass empty string to reset to default.
+            table_layout: Optional table width preset for markdown tables ('full-width', 'wide', 'default', keyword-only)
 
         Returns:
             ConfluencePage model containing the updated page's data
@@ -657,7 +820,9 @@ class PagesMixin(ConfluenceClient):
             if is_markdown:
                 # Convert markdown to Confluence storage format
                 final_body = self.preprocessor.markdown_to_confluence_storage(
-                    body, enable_heading_anchors=enable_heading_anchors
+                    body,
+                    enable_heading_anchors=enable_heading_anchors,
+                    table_layout=table_layout,
                 )
                 representation = "storage"
             else:
@@ -717,6 +882,138 @@ class PagesMixin(ConfluenceClient):
             logger.error(f"Error updating page {page_id}: {str(e)}")
             raise Exception(f"Failed to update page {page_id}: {str(e)}") from e
 
+    def update_page_section(
+        self,
+        page_id: str,
+        heading_text: str,
+        new_content: str,
+        *,
+        content_format: str = "markdown",
+        is_minor_edit: bool = False,
+        version_comment: str = "",
+    ) -> ConfluencePage:
+        """Update a single section of a Confluence page without affecting the rest.
+
+        Fetches the page in raw storage format, locates the section identified by
+        its heading text, replaces only the content between that heading and the
+        next heading of the same or higher level, and writes the modified storage
+        XML back. This is lossless: macros, layouts, mentions, and all other
+        Confluence-specific elements outside the target section are preserved.
+
+        Args:
+            page_id: The ID of the page to update.
+            heading_text: Exact text of the heading that starts the section to
+                replace. Matching is case-sensitive and whitespace-normalised.
+            new_content: Replacement content for the section body (excluding the
+                heading itself).
+            content_format: Format of new_content — ``'markdown'`` (default) or
+                ``'storage'``. When ``'markdown'``, the content is
+                converted to Confluence storage format before insertion.
+                (keyword-only)
+            is_minor_edit: Whether to flag the page version as a minor edit.
+                (keyword-only)
+            version_comment: Optional version comment. (keyword-only)
+
+        Returns:
+            Updated ``ConfluencePage`` with the section replaced.
+
+        Raises:
+            ValueError: If ``heading_text`` is not found on the page, or if
+                ``content_format`` is not one of the accepted values.
+            Exception: If retrieving or updating the page fails.
+        """
+        if content_format not in ("markdown", "storage"):
+            error_msg = (
+                f"Invalid content_format '{content_format}'. Must be "
+                "'markdown' or 'storage'."
+            )
+            raise ValueError(error_msg)
+
+        # 1. Fetch raw storage XML — no markdown conversion so nothing is lost.
+        page = self.get_page_content(page_id, convert_to_markdown=False)
+        raw_storage = page.content or ""
+
+        # 2. Convert new_content to storage format when necessary.
+        if content_format == "markdown":
+            new_storage_fragment = self.preprocessor.markdown_to_confluence_storage(
+                new_content
+            )
+        else:
+            new_storage_fragment = new_content
+
+        # 3. Parse the full storage XML with BeautifulSoup.
+        soup = BeautifulSoup(raw_storage, "html.parser")
+
+        heading_tags = ["h1", "h2", "h3", "h4", "h5", "h6"]
+        target_heading: Tag | None = None
+        for tag in soup.find_all(heading_tags):
+            if (
+                isinstance(tag, Tag)
+                and tag.get_text(strip=True) == heading_text.strip()
+            ):
+                target_heading = tag
+                break
+
+        if target_heading is None:
+            error_msg = (
+                f"Heading '{heading_text.strip()}' not found in page {page_id}. "
+                "Heading text must match exactly (case-sensitive)."
+            )
+            raise ValueError(error_msg)
+
+        heading_level = int(target_heading.name[1])  # e.g. "h2" → 2
+
+        # 4. Collect all sibling nodes that belong to this section (between
+        #    this heading and the next heading of the same or higher level).
+        #    NavigableString nodes (whitespace, text) are included alongside
+        #    Tag nodes, so we type the list broadly.
+        siblings_to_remove: list[Any] = []
+        current = target_heading.next_sibling
+        while current is not None:
+            if isinstance(current, Tag) and current.name in heading_tags:
+                if int(current.name[1]) <= heading_level:
+                    break
+            siblings_to_remove.append(current)
+            current = current.next_sibling
+
+        # 5. Capture heading HTML, remove old section nodes, then splice in the
+        #    new fragment via string operations — avoids moving nodes between
+        #    BS4 trees which causes type and mutation issues.
+        heading_html = str(target_heading)
+        for node in siblings_to_remove:
+            node.extract()
+
+        pruned_html = str(soup)
+        heading_pos = pruned_html.find(heading_html)
+        if heading_pos == -1:
+            # Should not happen: heading was found by BS4 and serialised above.
+            # Guard against unexpected BS4 serialisation edge cases.
+            error_msg = (
+                f"Internal error: could not locate heading '{heading_text.strip()}' "
+                "in serialised page HTML. Please report this as a bug."
+            )
+            raise ValueError(error_msg)
+        insert_at = heading_pos + len(heading_html)
+        final_html = (
+            pruned_html[:insert_at] + new_storage_fragment + pruned_html[insert_at:]
+        )
+
+        # 7. Write the full modified storage XML back — no format conversion,
+        #    so every macro and element outside the section is untouched.
+        logger.debug(
+            f"Updating section '{heading_text}' on page {page_id} "
+            "using lossless storage-format write-back."
+        )
+        return self.update_page(
+            page_id=page_id,
+            title=page.title or "",
+            body=final_html,
+            is_markdown=False,
+            content_representation="storage",
+            is_minor_edit=is_minor_edit,
+            version_comment=version_comment,
+        )
+
     def get_page_children(
         self,
         page_id: str,
@@ -743,51 +1040,79 @@ class PagesMixin(ConfluenceClient):
             List of ConfluencePage models containing the child pages and folders
         """
         try:
-            # Use the Atlassian Python API's get_page_child_by_type method
-            # First, get child pages
-            page_results = self.confluence.get_page_child_by_type(
-                page_id=page_id, type="page", start=start, limit=limit, expand=expand
-            )
+            limit = clamp_limit(limit, context="confluence.get_page_children")
 
-            # Handle both pagination modes for pages
-            if isinstance(page_results, dict) and "results" in page_results:
-                child_items = page_results.get("results", [])
+            v2_adapter = self._page_children_v2_adapter
+            if v2_adapter:
+                logger.debug(f"Using v2 API to get children for Cloud page '{page_id}'")
+                child_items = self._get_v2_page_children_items(
+                    v2_adapter=v2_adapter,
+                    page_id=page_id,
+                    start=start,
+                    limit=limit,
+                    expand=expand,
+                    include_folders=include_folders,
+                )
             else:
-                child_items = page_results or []
+                # Use the Atlassian Python API's get_page_child_by_type method
+                # First, get child pages
+                page_results = self.confluence.get_page_child_by_type(
+                    page_id=page_id,
+                    type="page",
+                    start=start,
+                    limit=limit,
+                    expand=expand,
+                )
 
-            # Also get child folders if requested
-            if include_folders:
-                try:
-                    folder_results = self.confluence.get_page_child_by_type(
-                        page_id=page_id,
-                        type="folder",
-                        start=start,
-                        limit=limit,
-                        expand=expand,
-                    )
+                # Handle both pagination modes for pages
+                if isinstance(page_results, dict) and "results" in page_results:
+                    child_items = page_results.get("results", [])
+                else:
+                    child_items = page_results or []
 
-                    # Handle both pagination modes for folders
-                    if isinstance(folder_results, dict) and "results" in folder_results:
-                        child_folders = folder_results.get("results", [])
-                    else:
-                        child_folders = folder_results or []
+                # Also get child folders if requested
+                if include_folders:
+                    try:
+                        folder_results = self.confluence.get_page_child_by_type(
+                            page_id=page_id,
+                            type="folder",
+                            start=start,
+                            limit=limit,
+                            expand=expand,
+                        )
 
-                    # Combine pages and folders
-                    child_items = child_items + child_folders
-                except Exception as folder_err:
-                    # Log but don't fail if folder fetching fails
-                    # (e.g., older Confluence versions might not support folders)
-                    logger.debug(
-                        f"Could not fetch child folders for page {page_id}: {folder_err}"
-                    )
+                        # Handle both pagination modes for folders
+                        if (
+                            isinstance(folder_results, dict)
+                            and "results" in folder_results
+                        ):
+                            child_folders = folder_results.get("results", [])
+                        else:
+                            child_folders = folder_results or []
+
+                        # Combine pages and folders
+                        child_items = child_items + child_folders
+                    except Exception as folder_err:
+                        # Log but don't fail if folder fetching fails
+                        # (e.g., older Confluence versions might not support folders)
+                        logger.debug(
+                            "Could not fetch child folders for page "
+                            f"{page_id}: {folder_err}"
+                        )
+
+            # Get space key from the first result if available
+            space_key = ""
+            if child_items:
+                first_item = child_items[0]
+                if "space" in first_item:
+                    space_key = first_item.get("space", {}).get("key", "")
+                elif expandable := first_item.get("_expandable", {}):
+                    if space_path := expandable.get("space"):
+                        if space_path.startswith("/rest/api/space/"):
+                            space_key = space_path.split("/rest/api/space/")[1]
 
             # Process results
             page_models = []
-            space_key = ""
-
-            # Get space key from the first result if available
-            if child_items and "space" in child_items[0]:
-                space_key = child_items[0].get("space", {}).get("key", "")
 
             # Process each child item (page or folder)
             for item in child_items:
@@ -811,6 +1136,7 @@ class PagesMixin(ConfluenceClient):
                     include_body=True,
                     content_override=content_override,
                     content_format="markdown" if convert_to_markdown else "storage",
+                    is_cloud=self.config.is_cloud,
                 )
 
                 page_models.append(page_model)
@@ -820,7 +1146,7 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error fetching child pages for page {page_id}: {str(e)}")
             logger.debug("Full exception details:", exc_info=True)
-            return []
+            raise
 
     @handle_auth_errors("Confluence API")
     def get_space_page_tree(
@@ -854,6 +1180,8 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error fetching pages
         """
         try:
+            limit = clamp_limit(limit, context="confluence.get_space_page_tree")
+
             # Paginate using the raw API to access _links.next for reliable
             # truncation detection. The higher-level get_all_pages_from_space()
             # has a broken termination condition when limit > server-side cap.
@@ -895,8 +1223,20 @@ class PagesMixin(ConfluenceClient):
                 page_id = page.get("id")
                 title = page.get("title", "Untitled")
 
-                # Position is auto-included via extensions in the v1 API
-                position = page.get("extensions", {}).get("position")
+                # Position is auto-included via extensions in the v1 API.
+                # Confluence DC/Server can return position as the string
+                # "none" (or other non-numeric strings) instead of int/null.
+                # Normalize to int | None so sorting never mixes types.
+                raw_position = page.get("extensions", {}).get("position")
+                if raw_position is None:
+                    position = None
+                elif isinstance(raw_position, int):
+                    position = raw_position
+                else:
+                    try:
+                        position = int(str(raw_position))
+                    except (TypeError, ValueError):
+                        position = None
 
                 # Determine parent and depth from ancestors
                 ancestors = page.get("ancestors", [])
@@ -917,13 +1257,13 @@ class PagesMixin(ConfluenceClient):
                     }
                 )
 
-            # Sort by depth first (breadth-first), then by position
-            # Note: position can be 0 (valid), so check for None explicitly
+            # Sort by depth first (breadth-first), then by position.
+            # Position is now always int | None after normalization above.
             result_pages.sort(
                 key=lambda p: (
                     p["depth"],
                     p["position"] if p["position"] is not None else 999999,
-                    p["title"],
+                    p["title"] or "",
                 )
             )
 
@@ -1031,7 +1371,7 @@ class PagesMixin(ConfluenceClient):
                 page = v2_adapter.get_page_by_version(
                     page_id=page_id,
                     version=version,
-                    expand="body.storage,version,space,children.attachment",
+                    expand="body.storage,version,space,children.attachment,history",
                 )
             else:
                 logger.debug(
@@ -1043,7 +1383,7 @@ class PagesMixin(ConfluenceClient):
                     page_id=page_id,
                     status="historical",
                     version=version,
-                    expand="body.storage,version,space,children.attachment",
+                    expand="body.storage,version,space,children.attachment,history",
                 )
 
             if isinstance(page, str):
@@ -1200,3 +1540,81 @@ class PagesMixin(ConfluenceClient):
             "to_version": to_version,
             "diff": diff_string,
         }
+
+    @handle_auth_errors("Confluence API")
+    def copy_page(
+        self,
+        source_page_id: str,
+        destination_space_key: str,
+        new_title: str,
+        destination_parent_id: str | None = None,
+        *,
+        copy_attachments: bool = True,
+    ) -> ConfluencePage:
+        """Copy a Confluence page to a new location.
+
+        On Confluence Cloud the native copy endpoint is used
+        (``POST /wiki/rest/api/content/{id}/copy``).  On Server/Data Center
+        the page body and title are fetched and a new page is created manually
+        (attachments are not copied in the Server/DC fallback path).
+
+        Args:
+            source_page_id: The ID of the page to copy.
+            destination_space_key: Space key for the new page.
+            new_title: Title of the new page.
+            destination_parent_id: Optional parent page ID in the destination space.
+                When omitted the new page is created at the space root.
+            copy_attachments: Whether to copy attachments (Cloud only, keyword-only).
+
+        Returns:
+            ConfluencePage model for the newly created copy.
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails.
+            Exception: If the copy operation fails.
+        """
+        try:
+            if self.config.is_cloud:
+                payload: dict[str, object] = {
+                    "copyAttachments": copy_attachments,
+                    "copyPermissions": False,
+                    "copyProperties": False,
+                    "copyLabels": False,
+                    "pageTitle": new_title,
+                    "destination": {
+                        "type": "parent_page" if destination_parent_id else "space",
+                        "value": destination_parent_id or destination_space_key,
+                    },
+                }
+                result = self.confluence.post(
+                    f"{self._v1_rest_base_url()}/rest/api/content/"
+                    f"{source_page_id}/copy",
+                    data=payload,
+                    absolute=True,
+                )
+            else:
+                # Server/DC: manual GET + POST (no native copy endpoint)
+                source = self.confluence.get_page_by_id(
+                    source_page_id, expand="body.storage,version,space"
+                )
+                body = source.get("body", {}).get("storage", {}).get("value", "")
+                create_kwargs: dict[str, object] = {
+                    "space": destination_space_key,
+                    "title": new_title,
+                    "body": body,
+                    "representation": "storage",
+                }
+                if destination_parent_id:
+                    create_kwargs["parent_id"] = destination_parent_id
+                result = self.confluence.create_page(**create_kwargs)
+
+            new_page_id = result.get("id")
+            if not new_page_id:
+                raise ValueError("Copy response did not contain a page ID")
+
+            return self.get_page_content(new_page_id)
+        except HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"Error copying page {source_page_id}: {str(e)}")
+            raise Exception(f"Failed to copy page {source_page_id}: {str(e)}") from e

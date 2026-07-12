@@ -138,6 +138,24 @@ class TestADFCreateIssue:
         finally:
             await _delete_issue(mcp_client, key)
 
+    async def test_create_issue_task_list(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Task-list markdown is accepted by Jira Cloud and survives readback."""
+        key = await _create_issue_with_description(
+            mcp_client,
+            cloud_instance.project_key,
+            "- [x] completed cloud task\n- [ ] pending cloud task",
+        )
+        try:
+            desc = await _read_issue_description(mcp_client, key)
+            assert "completed cloud task" in desc
+            assert "pending cloud task" in desc
+        finally:
+            await _delete_issue(mcp_client, key)
+
     async def test_create_issue_code_block(
         self,
         mcp_client: Client,
@@ -187,6 +205,48 @@ class TestADFCreateIssue:
         try:
             desc = await _read_issue_description(mcp_client, key)
             assert "quoted text here" in desc
+        finally:
+            await _delete_issue(mcp_client, key)
+
+    async def test_create_issue_panel(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Panel markdown is accepted by Jira Cloud and survives readback."""
+        key = await _create_issue_with_description(
+            mcp_client,
+            cloud_instance.project_key,
+            ":::warning\nPanel body survives Cloud write.\n- panel bullet\n:::",
+        )
+        try:
+            desc = await _read_issue_description(mcp_client, key)
+            assert "Panel body survives Cloud write." in desc
+            assert "panel bullet" in desc
+        finally:
+            await _delete_issue(mcp_client, key)
+
+    async def test_create_issue_expand(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Expand syntax creates content accepted and returned by Jira Cloud."""
+        key = await _create_issue_with_description(
+            mcp_client,
+            cloud_instance.project_key,
+            (
+                "{expand:Deployment details}\n"
+                "Expand body survives Cloud write.\n"
+                "- first step\n"
+                "- second step\n"
+                "{expand}"
+            ),
+        )
+        try:
+            desc = await _read_issue_description(mcp_client, key)
+            assert "Expand body survives Cloud write." in desc
+            assert "first step" in desc
         finally:
             await _delete_issue(mcp_client, key)
 
@@ -276,5 +336,74 @@ class TestADFUpdateAndComment:
             comment_data = json.loads(comment_result.content[0].text)
             # Verify comment was created (has an id or body)
             assert comment_data.get("id") or comment_data.get("body")
+        finally:
+            await _delete_issue(mcp_client, key)
+
+    @pytest.mark.parametrize(
+        "mention_template",
+        [
+            "[~accountid:{account_id}]",
+            "@[Current User](accountid:{account_id})",
+        ],
+        ids=["wiki-accountid", "display-name-accountid"],
+    )
+    async def test_add_comment_accountid_mention(
+        self,
+        mention_template: str,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Account-id comment syntaxes create real Cloud mentions."""
+        profile_result = await call_tool(
+            mcp_client,
+            "jira_get_user_profile",
+            {"user_identifier": "me"},
+        )
+        assert not profile_result.is_error
+        assert isinstance(profile_result.content[0], TextContent)
+        profile_data = json.loads(profile_result.content[0].text)
+        account_id = profile_data["user"]["account_id"]
+        assert account_id
+
+        key = await _create_issue_with_description(
+            mcp_client,
+            cloud_instance.project_key,
+            "issue for mention comment test",
+        )
+        try:
+            mention_token = mention_template.format(account_id=account_id)
+            comment_result = await call_tool(
+                mcp_client,
+                "jira_add_comment",
+                {
+                    "issue_key": key,
+                    "body": f"Hello {mention_token}",
+                },
+            )
+            assert not comment_result.is_error
+            assert isinstance(comment_result.content[0], TextContent)
+            comment_data = json.loads(comment_result.content[0].text)
+            assert comment_data.get("id")
+            comment_body = comment_data.get("body", "")
+            assert mention_token not in comment_body
+            assert "Hello" in comment_body
+            assert "@" in comment_body or account_id in comment_body
+
+            issue_result = await call_tool(
+                mcp_client,
+                "jira_get_issue",
+                {"issue_key": key, "fields": "comment", "comment_limit": 10},
+            )
+            assert not issue_result.is_error
+            assert isinstance(issue_result.content[0], TextContent)
+            issue_data = json.loads(issue_result.content[0].text)
+            stored_comment = next(
+                comment
+                for comment in issue_data["comments"]
+                if comment["id"] == comment_data["id"]
+            )
+            assert mention_token not in stored_comment["body"]
+            assert "Hello" in stored_comment["body"]
+            assert "@" in stored_comment["body"] or account_id in stored_comment["body"]
         finally:
             await _delete_issue(mcp_client, key)

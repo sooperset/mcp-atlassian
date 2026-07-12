@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.proxy import DEFAULT_PROXY_WPAD_URL
 
 
 def test_from_env_success():
@@ -24,6 +25,37 @@ def test_from_env_success():
         assert config.url == "https://test.atlassian.net/wiki"
         assert config.username == "test_username"
         assert config.api_token == "test_token"
+
+
+def test_from_env_attachment_download_use_v1_tristate():
+    """unset/empty -> None (auto); only an explicit value forces True/False."""
+    base = {
+        "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "test_username",
+        "CONFLUENCE_API_TOKEN": "test_token",
+    }
+    with patch.dict("os.environ", base, clear=True):
+        assert ConfluenceConfig.from_env().attachment_download_use_v1 is None
+    # Present-but-empty (e.g. injected as "") must stay auto, not force legacy.
+    for empty in ("", "   "):
+        with patch.dict(
+            "os.environ",
+            {**base, "CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1": empty},
+            clear=True,
+        ):
+            assert ConfluenceConfig.from_env().attachment_download_use_v1 is None
+    with patch.dict(
+        "os.environ",
+        {**base, "CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1": "true"},
+        clear=True,
+    ):
+        assert ConfluenceConfig.from_env().attachment_download_use_v1 is True
+    with patch.dict(
+        "os.environ",
+        {**base, "CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1": "false"},
+        clear=True,
+    ):
+        assert ConfluenceConfig.from_env().attachment_download_use_v1 is False
 
 
 def test_from_env_missing_url():
@@ -129,6 +161,7 @@ def test_from_env_proxy_settings():
             "HTTPS_PROXY": "https://proxy.example.com:8443",
             "SOCKS_PROXY": "socks5://user:pass@proxy.example.com:1080",
             "NO_PROXY": "localhost,127.0.0.1",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
         },
         clear=True,
     ):
@@ -137,6 +170,8 @@ def test_from_env_proxy_settings():
         assert config.https_proxy == "https://proxy.example.com:8443"
         assert config.socks_proxy == "socks5://user:pass@proxy.example.com:1080"
         assert config.no_proxy == "localhost,127.0.0.1"
+        assert config.proxy_wpad_enable is True
+        assert config.proxy_wpad_url == DEFAULT_PROXY_WPAD_URL
 
     # Service-specific overrides
     with patch.dict(
@@ -149,6 +184,9 @@ def test_from_env_proxy_settings():
             "CONFLUENCE_HTTPS_PROXY": "https://confluence-proxy.example.com:8443",
             "CONFLUENCE_SOCKS_PROXY": "socks5://user:pass@confluence-proxy.example.com:1080",
             "CONFLUENCE_NO_PROXY": "localhost,127.0.0.1,.internal.example.com",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
+            "ATLASSIAN_PROXY_WPAD_URL": "http://global-wpad.example.com/wpad.dat",
+            "CONFLUENCE_PROXY_WPAD_URL": "http://confluence-wpad.example.com/wpad.dat",
         },
         clear=True,
     ):
@@ -159,6 +197,27 @@ def test_from_env_proxy_settings():
             config.socks_proxy == "socks5://user:pass@confluence-proxy.example.com:1080"
         )
         assert config.no_proxy == "localhost,127.0.0.1,.internal.example.com"
+        assert config.proxy_wpad_enable is True
+        assert config.proxy_wpad_url == "http://confluence-wpad.example.com/wpad.dat"
+
+
+def test_from_env_service_specific_wpad_disable_overrides_global():
+    """Test Confluence can opt out of globally enabled WPAD/PAC."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "test_username",
+            "CONFLUENCE_API_TOKEN": "test_token",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
+            "CONFLUENCE_PROXY_WPAD_ENABLE": "false",
+            "ATLASSIAN_PROXY_WPAD_URL": "http://global-wpad.example.com/wpad.dat",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.proxy_wpad_enable is False
+        assert config.proxy_wpad_url == "http://global-wpad.example.com/wpad.dat"
 
 
 def test_is_cloud_oauth_with_cloud_id():

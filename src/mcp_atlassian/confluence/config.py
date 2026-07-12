@@ -5,12 +5,13 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import get_custom_headers, is_env_ssl_verify
+from ..utils.env import get_custom_headers, is_env_ssl_verify, is_env_truthy
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
     get_oauth_config_from_env,
 )
+from ..utils.proxy import get_proxy_settings_from_env
 from ..utils.urls import is_atlassian_cloud_url
 
 
@@ -35,11 +36,21 @@ class ConfluenceConfig:
     https_proxy: str | None = None  # HTTPS proxy URL
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
+    proxy_wpad_enable: bool = False  # Whether to load PAC/WPAD configuration
+    proxy_wpad_url: str | None = None  # PAC URL used when WPAD is enabled
     custom_headers: dict[str, str] | None = None  # Custom HTTP headers
     client_cert: str | None = None  # Client certificate file path (.pem)
     client_key: str | None = None  # Client private key file path (.pem)
     client_key_password: str | None = None  # Password for encrypted private key
     timeout: int = 75  # Connection timeout in seconds
+    # Cloud removed the legacy /download/attachments/... endpoint (CHANGE-2735);
+    # it now 401s for API-token / scoped-token auth. Controls whether attachment
+    # downloads use the v1 REST endpoint
+    # (/rest/api/content/{id}/child/attachment/{aid}/download) instead:
+    #   None  -> auto: v1 on Cloud, legacy link on Server/DC (default)
+    #   True  -> always v1
+    #   False -> always the legacy link
+    attachment_download_use_v1: bool | None = None
 
     @property
     def is_cloud(self) -> bool:
@@ -166,10 +177,7 @@ class ConfluenceConfig:
         spaces_filter = os.getenv("CONFLUENCE_SPACES_FILTER")
 
         # Proxy settings
-        http_proxy = os.getenv("CONFLUENCE_HTTP_PROXY", os.getenv("HTTP_PROXY"))
-        https_proxy = os.getenv("CONFLUENCE_HTTPS_PROXY", os.getenv("HTTPS_PROXY"))
-        no_proxy = os.getenv("CONFLUENCE_NO_PROXY", os.getenv("NO_PROXY"))
-        socks_proxy = os.getenv("CONFLUENCE_SOCKS_PROXY", os.getenv("SOCKS_PROXY"))
+        proxy_settings = get_proxy_settings_from_env("CONFLUENCE")
 
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("CONFLUENCE_CUSTOM_HEADERS")
@@ -187,6 +195,14 @@ class ConfluenceConfig:
         ):
             timeout = int(os.getenv("CONFLUENCE_TIMEOUT", "75"))
 
+        # Unset or empty/whitespace -> None (auto); only an explicit value forces.
+        _use_v1_raw = os.getenv("CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1")
+        attachment_download_use_v1 = (
+            None
+            if _use_v1_raw is None or not _use_v1_raw.strip()
+            else is_env_truthy("CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1")
+        )
+
         return cls(
             url=url or "",
             auth_type=auth_type,
@@ -196,15 +212,18 @@ class ConfluenceConfig:
             oauth_config=oauth_config,
             ssl_verify=ssl_verify,
             spaces_filter=spaces_filter,
-            http_proxy=http_proxy,
-            https_proxy=https_proxy,
-            no_proxy=no_proxy,
-            socks_proxy=socks_proxy,
+            http_proxy=proxy_settings["http_proxy"],
+            https_proxy=proxy_settings["https_proxy"],
+            no_proxy=proxy_settings["no_proxy"],
+            socks_proxy=proxy_settings["socks_proxy"],
+            proxy_wpad_enable=bool(proxy_settings["proxy_wpad_enable"]),
+            proxy_wpad_url=proxy_settings["proxy_wpad_url"],
             custom_headers=custom_headers,
             client_cert=client_cert,
             client_key=client_key,
             client_key_password=client_key_password,
             timeout=timeout,
+            attachment_download_use_v1=attachment_download_use_v1,
         )
 
     def is_auth_configured(self) -> bool:

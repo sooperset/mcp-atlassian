@@ -1,8 +1,7 @@
-"""Confluence REST API v2 adapter for OAuth authentication.
+"""Confluence REST API v2 adapter.
 
-This module provides direct v2 API calls to handle the deprecated v1 endpoints
-when using OAuth authentication. The v1 endpoints have been removed for OAuth
-but still work for API token authentication.
+This module provides direct v2 API calls for Cloud endpoints where the
+corresponding v1 endpoints are deprecated or unavailable.
 """
 
 import logging
@@ -17,7 +16,7 @@ logger = logging.getLogger("mcp-atlassian")
 
 
 class ConfluenceV2Adapter:
-    """Adapter for Confluence REST API v2 operations when using OAuth."""
+    """Adapter for Confluence REST API v2 operations."""
 
     def __init__(self, session: requests.Session, base_url: str) -> None:
         """Initialize the v2 adapter.
@@ -28,6 +27,13 @@ class ConfluenceV2Adapter:
         """
         self.session = session
         self.base_url = base_url
+
+    @staticmethod
+    def _user_ref_from_account_id(account_id: str | None) -> dict[str, str] | None:
+        """Build a v1-compatible user reference from a v2 account ID."""
+        if not account_id:
+            return None
+        return {"accountId": account_id, "displayName": account_id}
 
     def _get_space_id(self, space_key: str) -> str:
         """Get space ID from space key using v2 API.
@@ -79,6 +85,7 @@ class ConfluenceV2Adapter:
         parent_id: str | None = None,
         representation: str = "storage",
         status: str = "current",
+        subtype: str | None = None,
     ) -> dict[str, Any]:
         """Create a page using the v2 API.
 
@@ -89,6 +96,7 @@ class ConfluenceV2Adapter:
             parent_id: Optional parent page ID
             representation: Content representation format (default: "storage")
             status: Page status (default: "current")
+            subtype: Optional page subtype. Use "live" to create a Live Doc.
 
         Returns:
             The created page data from the API response
@@ -114,6 +122,8 @@ class ConfluenceV2Adapter:
             # Add parent if specified
             if parent_id:
                 data["parentId"] = parent_id
+            if subtype:
+                data["subtype"] = subtype
 
             # Make the v2 API call
             url = f"{self.base_url}/api/v2/pages"
@@ -246,14 +256,14 @@ class ConfluenceV2Adapter:
                 logger.error(f"Error updating page '{page_id}': {e}")
             raise ValueError(f"Failed to update page '{page_id}': {e}") from e
 
-    def _get_space_key_from_id(self, space_id: str) -> str:
-        """Get space key from space ID using v2 API.
+    def _get_space_from_id(self, space_id: str) -> dict[str, str]:
+        """Get space metadata from space ID using v2 API.
 
         Args:
             space_id: The space ID to look up
 
         Returns:
-            The space key
+            Space metadata containing at least ``id`` and ``key``.
 
         Raises:
             ValueError: If space not found or API error
@@ -265,13 +275,17 @@ class ConfluenceV2Adapter:
             response = self.session.get(url)
             response.raise_for_status()
 
-            data = response.json()
+            data: dict[str, Any] = response.json()
             space_key = data.get("key")
 
             if not space_key:
                 raise ValueError(f"No key found for space ID '{space_id}'")
 
-            return space_key
+            return {
+                "id": space_id,
+                "key": str(space_key),
+                "name": str(data.get("name") or f"Space {space_key}"),
+            }
 
         except Exception as e:
             if isinstance(e, HTTPError) and e.response is not None:
@@ -282,7 +296,11 @@ class ConfluenceV2Adapter:
             else:
                 logger.error(f"Error getting space key for ID '{space_id}': {e}")
             # Return the space_id as fallback
-            return space_id
+            return {"id": space_id, "key": space_id, "name": f"Space {space_id}"}
+
+    def _get_space_key_from_id(self, space_id: str) -> str:
+        """Get space key from space ID using v2 API."""
+        return self._get_space_from_id(space_id)["key"]
 
     def get_page(
         self,
@@ -335,12 +353,6 @@ class ConfluenceV2Adapter:
                     "id": space_id,
                 }
 
-            # Add version information
-            if "version" in v2_response:
-                v1_compatible["version"] = {
-                    "number": v2_response["version"].get("number", 1)
-                }
-
             return v1_compatible
 
         except Exception as e:
@@ -352,6 +364,97 @@ class ConfluenceV2Adapter:
             else:
                 logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
+
+    def get_page_direct_children(
+        self,
+        page_id: str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """Get a page's direct children using the v2 API.
+
+        Args:
+            page_id: The ID of the page whose direct children to retrieve.
+            limit: Optional maximum number of direct children to return.
+            cursor: Optional pagination cursor.
+
+        Returns:
+            The direct-children response from the v2 API.
+
+        Raises:
+            ValueError: If the request fails.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/direct-children"
+            params: dict[str, Any] = {}
+
+            if limit is not None:
+                params["limit"] = limit
+            if cursor is not None:
+                params["cursor"] = cursor
+
+            response = self.session.get(url, params=params or None)
+            response.raise_for_status()
+
+            logger.debug(
+                "Successfully retrieved direct children for page "
+                f"'{page_id}' with v2 API"
+            )
+
+            data: dict[str, Any] = response.json()
+            response_links = getattr(response, "links", None)
+            if isinstance(response_links, dict):
+                next_link_data = response_links.get("next", {})
+                next_link = (
+                    next_link_data.get("url")
+                    if isinstance(next_link_data, dict)
+                    else None
+                )
+                if next_link:
+                    links = data.get("_links", {})
+                    if not isinstance(links, dict):
+                        links = {}
+                    links.setdefault("next", next_link)
+                    data["_links"] = links
+
+            results = data.get("results", [])
+            if isinstance(results, list):
+                spaces_by_id: dict[str, dict[str, str]] = {}
+                normalized_results: list[dict[str, Any]] = []
+
+                for item in results:
+                    if not isinstance(item, dict):
+                        continue
+
+                    normalized_item = dict(item)
+                    space_id = normalized_item.get("spaceId")
+
+                    if space_id is not None and str(space_id):
+                        space_id_str = str(space_id)
+                        if space_id_str not in spaces_by_id:
+                            spaces_by_id[space_id_str] = self._get_space_from_id(
+                                space_id_str
+                            )
+
+                        normalized_item["space"] = spaces_by_id[space_id_str]
+
+                    normalized_results.append(normalized_item)
+
+                data["results"] = normalized_results
+
+            return data
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting direct children for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting direct children for page '{page_id}': {e}")
+            error_msg = f"Failed to get direct children for page '{page_id}': {e}"
+            raise ValueError(error_msg) from e
 
     def delete_page(self, page_id: str) -> bool:
         """Delete a page using the v2 API.
@@ -407,6 +510,18 @@ class ConfluenceV2Adapter:
         Returns:
             Response formatted like v1 API for compatibility
         """
+        version = v2_response.get("version") or {}
+        version_author = self._user_ref_from_account_id(version.get("authorId"))
+        version_data: dict[str, Any] = {
+            "number": version.get("number", 1),
+        }
+        if version_created_at := version.get("createdAt"):
+            version_data["when"] = version_created_at
+        if version_message := version.get("message"):
+            version_data["message"] = version_message
+        if version_author:
+            version_data["by"] = version_author
+
         # Map v2 response fields to v1 format
         v1_compatible = {
             "id": v2_response.get("id"),
@@ -417,11 +532,23 @@ class ConfluenceV2Adapter:
                 "key": space_key,
                 "id": v2_response.get("spaceId"),
             },
-            "version": {
-                "number": v2_response.get("version", {}).get("number", 1),
-            },
+            "version": version_data,
             "_links": v2_response.get("_links", {}),
         }
+
+        history: dict[str, Any] = {}
+        if created_at := v2_response.get("createdAt"):
+            history["createdDate"] = created_at
+        if created_by := self._user_ref_from_account_id(v2_response.get("authorId")):
+            history["createdBy"] = created_by
+        if version_created_at or version_author:
+            history["lastUpdated"] = {}
+            if version_created_at:
+                history["lastUpdated"]["when"] = version_created_at
+            if version_author:
+                history["lastUpdated"]["by"] = version_author
+        if history:
+            v1_compatible["history"] = history
 
         # Add body if present in v2 response
         if "body" in v2_response:
@@ -431,6 +558,9 @@ class ConfluenceV2Adapter:
                     "representation": "storage",
                 }
             }
+
+        if "subtype" in v2_response:
+            v1_compatible["subtype"] = v2_response["subtype"]
 
         return v1_compatible
 
@@ -492,6 +622,161 @@ class ConfluenceV2Adapter:
             logger.error(f"Error creating footer comment: {e}")
             raise ValueError(f"Failed to create footer comment: {e}") from e
 
+    def get_inline_comments(
+        self,
+        page_id: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get inline comments for a page using the v2 API.
+
+        Args:
+            page_id: The ID of the page to get inline comments from
+            status: Optional filter - "open" or "resolved"
+
+        Returns:
+            List of inline comments in v1-compatible format
+
+        Raises:
+            ValueError: If the API request fails
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/inline-comments"
+            params: dict[str, Any] = {"body-format": "storage"}
+            if status:
+                params["status"] = status
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            data = response.json()
+            results = data.get("results", [])
+            return [self._convert_v2_inline_comment_to_v1_format(r) for r in results]
+
+        except HTTPError as e:
+            if e.response is not None:
+                logger.error(
+                    f"HTTP error getting inline comments for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting inline comments for page '{page_id}': {e}")
+            msg = f"Failed to get inline comments for page '{page_id}': {e}"
+            raise ValueError(msg) from e
+        except (
+            requests.RequestException,
+            ValueError,
+            TypeError,
+            AttributeError,
+        ) as e:
+            logger.error(f"Error getting inline comments for page '{page_id}': {e}")
+            msg = f"Failed to get inline comments for page '{page_id}': {e}"
+            raise ValueError(msg) from e
+
+    def create_inline_comment(
+        self,
+        *,
+        page_id: str,
+        body: str,
+        text_selection: str,
+        text_selection_match_count: int = 1,
+        text_selection_match_index: int = 0,
+        representation: str = "storage",
+    ) -> dict[str, Any]:
+        """Create an inline comment anchored to a text selection using the v2 API.
+
+        Args:
+            page_id: The ID of the page to add the inline comment to
+            body: The comment content
+            text_selection: The text on the page to anchor the comment to
+            text_selection_match_count: Total number of times the text
+                appears on the page
+            text_selection_match_index: Zero-based index of which occurrence
+                to anchor to
+            representation: Content representation format (default: "storage")
+
+        Returns:
+            The created inline comment data in v1-compatible format
+
+        Raises:
+            ValueError: If creation fails
+        """
+        try:
+            data: dict[str, Any] = {
+                "pageId": page_id,
+                "body": {
+                    "representation": representation,
+                    "value": body,
+                },
+                "inlineCommentProperties": {
+                    "textSelection": text_selection,
+                    "textSelectionMatchCount": text_selection_match_count,
+                    "textSelectionMatchIndex": text_selection_match_index,
+                },
+            }
+
+            url = f"{self.base_url}/api/v2/inline-comments"
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+
+            result = response.json()
+            logger.debug("Successfully created inline comment with v2 API")
+
+            return self._convert_v2_inline_comment_to_v1_format(result)
+
+        except HTTPError as e:
+            if e.response is not None:
+                logger.error(
+                    f"HTTP error creating inline comment: {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error creating inline comment: {e}")
+            msg = f"Failed to create inline comment: {e}"
+            raise ValueError(msg) from e
+        except (requests.RequestException, ValueError, TypeError) as e:
+            logger.error(f"Error creating inline comment: {e}")
+            msg = f"Failed to create inline comment: {e}"
+            raise ValueError(msg) from e
+
+    def _convert_v2_inline_comment_to_v1_format(
+        self, v2_response: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert v2 inline comment response to v1-compatible format.
+
+        Args:
+            v2_response: The response from the v2 inline-comments API
+
+        Returns:
+            Response formatted like v1 API for compatibility
+        """
+        body_value = v2_response.get("body", {}).get("storage", {}).get("value", "")
+
+        v1_compatible: dict[str, Any] = {
+            "id": v2_response.get("id"),
+            "type": "comment",
+            "status": v2_response.get("status"),
+            "title": v2_response.get("title"),
+            "body": {
+                "view": {
+                    "value": body_value,
+                    "representation": "view",
+                },
+            },
+            "version": v2_response.get("version", {}),
+            "_links": v2_response.get("_links", {}),
+            "extensions": {"location": "inline"},
+            "created": v2_response.get("version", {}).get("createdAt", ""),
+            "updated": v2_response.get("version", {}).get("createdAt", ""),
+        }
+
+        if author := v2_response.get("author"):
+            v1_compatible["author"] = author
+
+        if inline_props := v2_response.get("inlineCommentProperties"):
+            v1_compatible["inlineCommentProperties"] = inline_props
+
+        return v1_compatible
+
     def _convert_v2_comment_to_v1_format(
         self, v2_response: dict[str, Any]
     ) -> dict[str, Any]:
@@ -521,6 +806,8 @@ class ConfluenceV2Adapter:
             },
             "version": v2_response.get("version", {}),
             "_links": v2_response.get("_links", {}),
+            "created": v2_response.get("version", {}).get("createdAt", ""),
+            "updated": v2_response.get("version", {}).get("createdAt", ""),
         }
 
         # Map v2 author to v1 format
@@ -854,13 +1141,22 @@ class ConfluenceV2Adapter:
             # Add version information from version response
             # In versions API, version info is at the top level
             if "number" in v2_response:
-                v1_compatible["version"] = {
+                version_data: dict[str, Any] = {
                     "number": v2_response.get("number"),
                 }
+                if created_at := v2_response.get("createdAt"):
+                    version_data["when"] = created_at
+                if message := v2_response.get("message"):
+                    version_data["message"] = message
+                if author := self._user_ref_from_account_id(
+                    v2_response.get("authorId")
+                ):
+                    version_data["by"] = author
+                v1_compatible["version"] = version_data
             elif "version" in v2_response and "number" in v2_response["version"]:
-                v1_compatible["version"] = {
-                    "number": v2_response["version"].get("number"),
-                }
+                v1_compatible["version"] = self._convert_v2_to_v1_format(
+                    v2_response, space_key
+                )["version"]
 
             # Add space information
             if space_id:
