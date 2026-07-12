@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +19,7 @@ from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.utils.env import is_env_ssl_verify, is_env_truthy
 from mcp_atlassian.utils.oauth import OAuthConfig
+from mcp_atlassian.utils.proxy import get_proxy_settings_from_env
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 if TYPE_CHECKING:
@@ -214,18 +214,10 @@ def _get_header_pat_network_config(ctx: Context, spec: _ServiceSpec) -> dict[str
         global_config = _get_global_config(ctx, spec)
     except ValueError:
         env_prefix = spec.name.upper()
+        proxy_settings = get_proxy_settings_from_env(env_prefix)
         return {
             "ssl_verify": is_env_ssl_verify(f"{env_prefix}_SSL_VERIFY"),
-            "http_proxy": os.getenv(
-                f"{env_prefix}_HTTP_PROXY", os.getenv("HTTP_PROXY")
-            ),
-            "https_proxy": os.getenv(
-                f"{env_prefix}_HTTPS_PROXY", os.getenv("HTTPS_PROXY")
-            ),
-            "no_proxy": os.getenv(f"{env_prefix}_NO_PROXY", os.getenv("NO_PROXY")),
-            "socks_proxy": os.getenv(
-                f"{env_prefix}_SOCKS_PROXY", os.getenv("SOCKS_PROXY")
-            ),
+            **proxy_settings,
         }
 
     return {
@@ -234,6 +226,8 @@ def _get_header_pat_network_config(ctx: Context, spec: _ServiceSpec) -> dict[str
         "https_proxy": global_config.https_proxy,
         "no_proxy": global_config.no_proxy,
         "socks_proxy": global_config.socks_proxy,
+        "proxy_wpad_enable": global_config.proxy_wpad_enable,
+        "proxy_wpad_url": global_config.proxy_wpad_url,
     }
 
 
@@ -427,6 +421,8 @@ def _create_user_config_for_fetcher(
         "https_proxy": base_config.https_proxy,
         "no_proxy": base_config.no_proxy,
         "socks_proxy": base_config.socks_proxy,
+        "proxy_wpad_enable": base_config.proxy_wpad_enable,
+        "proxy_wpad_url": base_config.proxy_wpad_url,
     }
 
     if auth_type == "oauth":

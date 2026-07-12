@@ -354,3 +354,53 @@ class TestNarrowedParameterRegression:
         csv = "./file1.pdf, ./file2.png"
         result = [p.strip() for p in csv.split(",") if p.strip()]
         assert result == ["./file1.pdf", "./file2.png"]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for set_page_restrictions array-parameter schema (issue #1455)
+# ---------------------------------------------------------------------------
+
+
+class TestSetPageRestrictionsArraySchema:
+    """Regression: VS Code Agent mode rejects tools whose array-typed parameters
+    lack an ``items`` definition in the JSON schema (issue #1455).
+
+    These tests guard the fix in
+    ``src.mcp_atlassian.servers.confluence.set_page_restrictions`` which
+    adds ``json_schema_extra={"items": {"type": "string"}}`` to each of the
+    four list parameters (read_users, read_groups, edit_users, edit_groups).
+    """
+
+    TOOL_NAME = "confluence_set_page_restrictions"
+    LIST_PARAM_NAMES = ("read_users", "read_groups", "edit_users", "edit_groups")
+
+    def test_tool_present(self, all_tool_schemas: dict[str, dict]) -> None:
+        """The tool must be discoverable in the main MCP server."""
+        assert self.TOOL_NAME in all_tool_schemas, (
+            f"Tool {self.TOOL_NAME!r} is missing from the registered tools"
+        )
+
+    @pytest.mark.parametrize("param_name", LIST_PARAM_NAMES)
+    def test_list_param_has_items_definition(
+        self, param_name: str, all_tool_schemas: dict[str, dict]
+    ) -> None:
+        """Each list-typed parameter must declare an ``items`` schema.
+
+        VS Code's MCP tool validator refuses to register a tool whose array
+        parameter is missing ``items`` (``tool parameters array type must
+        have items``).  Without this, the entire ``confluence_set_page_restrictions``
+        tool is rejected and VS Code cannot enter Agent mode.
+        """
+        schema = all_tool_schemas[self.TOOL_NAME]
+        properties = schema.get("properties", {})
+        assert param_name in properties, (
+            f"Parameter {param_name!r} is missing from the tool schema"
+        )
+        prop = properties[param_name]
+        assert "items" in prop, (
+            f"Parameter {param_name!r} is missing required 'items' field "
+            f"(regression of issue #1455: VS Code Agent mode cannot start)"
+        )
+        assert prop["items"] == {"type": "string"}, (
+            f"Parameter {param_name!r} has unexpected 'items' schema: {prop['items']!r}"
+        )

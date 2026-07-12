@@ -903,6 +903,16 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    subtype: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Confluence page subtype. Use 'live' to create a "
+                "Confluence Live Doc. Only supported for Confluence Cloud."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -923,6 +933,7 @@ async def create_page(
         emoji: Optional page title emoji (icon shown in navigation).
         page_width: Optional page layout width ('full-width' or 'default').
         table_layout: Optional table width preset ('full-width', 'wide', 'default').
+        subtype: Optional page subtype. Use "live" to create a Confluence Live Doc.
 
     Returns:
         JSON string representing the created page object.
@@ -963,6 +974,7 @@ async def create_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        subtype=subtype,
         page_width=page_width,
         table_layout=table_layout if content_format == "markdown" else None,
     )
@@ -2989,6 +3001,7 @@ async def set_page_restrictions(
                 "allowed to view the page. Empty list = unrestricted."
             ),
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     read_groups: Annotated[
@@ -2996,6 +3009,7 @@ async def set_page_restrictions(
         Field(
             description="(Optional) Group names allowed to view the page.",
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     edit_users: Annotated[
@@ -3006,6 +3020,7 @@ async def set_page_restrictions(
                 "allowed to edit the page."
             ),
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     edit_groups: Annotated[
@@ -3013,6 +3028,7 @@ async def set_page_restrictions(
         Field(
             description="(Optional) Group names allowed to edit the page.",
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
 ) -> str:
