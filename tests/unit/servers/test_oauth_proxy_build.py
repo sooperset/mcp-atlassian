@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from mcp.shared.auth import OAuthClientInformationFull
 
+from mcp_atlassian.servers import client_storage
 from mcp_atlassian.servers.main import _build_auth_provider
 from mcp_atlassian.utils.oauth import CLOUD_AUTHORIZE_URL, CLOUD_TOKEN_URL
 
@@ -254,6 +255,14 @@ def test_build_auth_provider_supports_custom_client_storage_factory(monkeypatch)
     monkeypatch.setenv("JIRA_URL", "https://jira.example.com")
     _set_required_oauth_env(monkeypatch, redirect_uri="http://localhost:3000/callback")
     monkeypatch.setenv("ATLASSIAN_OAUTH_CLIENT_STORAGE_MODE", "factory")
+    monkeypatch.setattr(
+        client_storage,
+        "ALLOWED_STORAGE_FACTORIES",
+        {
+            *client_storage.ALLOWED_STORAGE_FACTORIES,
+            "tests.unit.servers.test_oauth_proxy_build:_dummy_provider_storage_factory",
+        },
+    )
     monkeypatch.setenv(
         "ATLASSIAN_OAUTH_CLIENT_STORAGE_FACTORY",
         "tests.unit.servers.test_oauth_proxy_build:_dummy_provider_storage_factory",
