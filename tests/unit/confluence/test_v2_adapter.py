@@ -422,6 +422,74 @@ class TestConfluenceV2AdapterComments:
         assert result["id"] == "222333444"
         assert result["body"]["view"]["value"] == "<p>Reply content</p>"
         assert result["extensions"]["location"] == "footer"
+        mock_session.get.assert_not_called()
+
+    def test_create_footer_comment_refreshes_missing_body(
+        self, v2_adapter, mock_session
+    ):
+        """A create response without body content is refreshed once."""
+        create_response = Mock()
+        create_response.json.return_value = {
+            "id": "222333444",
+            "status": "current",
+            "title": "Re: Comment",
+            "parentCommentId": "456789123",
+            "version": {"number": 1},
+            "_links": {},
+        }
+        refresh_response = Mock()
+        refresh_response.json.return_value = {
+            "id": "222333444",
+            "status": "current",
+            "title": "Re: Comment",
+            "parentCommentId": "456789123",
+            "body": {
+                "storage": {
+                    "value": "<p>Refreshed reply</p>",
+                    "representation": "storage",
+                },
+            },
+            "version": {"number": 1},
+            "_links": {},
+        }
+        mock_session.post.return_value = create_response
+        mock_session.get.return_value = refresh_response
+
+        result = v2_adapter.create_footer_comment(
+            parent_comment_id="456789123",
+            body="<p>Reply content</p>",
+        )
+
+        mock_session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/footer-comments/222333444",
+            params={"body-format": "storage"},
+        )
+        assert result["body"]["view"]["value"] == "<p>Refreshed reply</p>"
+
+    def test_create_footer_comment_keeps_create_response_when_refresh_fails(
+        self, v2_adapter, mock_session
+    ):
+        """A refresh failure doesn't discard a successful create response."""
+        create_response = Mock()
+        create_response.json.return_value = {
+            "id": "222333444",
+            "status": "current",
+            "title": "Re: Comment",
+            "parentCommentId": "456789123",
+            "version": {"number": 1},
+            "_links": {},
+        }
+        mock_session.post.return_value = create_response
+        mock_session.get.side_effect = requests.RequestException("refresh failed")
+
+        result = v2_adapter.create_footer_comment(
+            parent_comment_id="456789123",
+            body="<p>Reply content</p>",
+        )
+
+        assert result["id"] == "222333444"
+        assert result["body"]["view"]["value"] == ""
+        mock_session.get.assert_called_once()
 
     def test_create_footer_comment_top_level(self, v2_adapter, mock_session):
         """Create top-level comment with pageId sends correct payload."""
