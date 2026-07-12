@@ -853,12 +853,15 @@ class TestInternalOnlyProjectsGuard:
         with pytest.raises(Exception, match="Could not verify"):
             guarded_mixin.edit_comment("CC-1", "5", "Updated text")
 
-    def test_edit_comment_internal_only_missing_public_field_defaults_public(
-        self, guarded_mixin
+    @pytest.mark.parametrize("public", [None, 0, 1, "false", []])
+    def test_edit_comment_internal_only_non_boolean_visibility_fails_closed(
+        self, guarded_mixin, public
     ):
-        """A ServiceDesk response missing the 'public' field is treated as
-        public (fail closed) rather than internal."""
-        guarded_mixin.jira.get.return_value = {"id": "5"}
+        """Only a real boolean false proves that a comment is internal."""
+        response = {"id": "5"}
+        if public is not None:
+            response["public"] = public
+        guarded_mixin.jira.get.return_value = response
         with pytest.raises(ValueError, match="PUBLIC"):
             guarded_mixin.edit_comment("CC-1", "5", "Updated text")
 

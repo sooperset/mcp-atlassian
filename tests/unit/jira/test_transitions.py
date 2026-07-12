@@ -212,8 +212,7 @@ class TestTransitionsMixin:
         with pytest.raises(ValueError, match="internal-only"):
             transitions_mixin.transition_issue("CC-1", "10", comment="Client update")
 
-        transitions_mixin.jira.set_issue_status.assert_not_called()
-        transitions_mixin.jira.set_issue_status_by_transition_id.assert_not_called()
+        transitions_mixin._post_api3.assert_not_called()
 
     def test_transition_comment_internal_only_whitespace_padded_key_rejected(
         self, transitions_mixin: TransitionsMixin
@@ -233,7 +232,7 @@ class TestTransitionsMixin:
 
         transitions_mixin.transition_issue("TEST-123", "10", comment="Test comment")
 
-        transitions_mixin.jira.set_issue_status.assert_called_once()
+        transitions_mixin._post_api3.assert_called_once()
 
     def test_transition_without_comment_internal_only_project_unaffected(
         self, transitions_mixin: TransitionsMixin
@@ -244,8 +243,9 @@ class TestTransitionsMixin:
 
         transitions_mixin.transition_issue("CC-1", "10")
 
-        transitions_mixin.jira.set_issue_status.assert_called_once_with(
-            issue_key="CC-1", status_name="In Progress", fields=None, update=None
+        transitions_mixin._post_api3.assert_called_once_with(
+            "issue/CC-1/transitions",
+            {"transition": {"id": "10"}},
         )
 
     def test_transition_issue_with_error(self, transitions_mixin: TransitionsMixin):

@@ -142,7 +142,11 @@ class CommentsMixin(JiraClient):
                 )
                 logger.error(msg)
                 raise TypeError(msg)
-            return bool(response.get("public", True))
+            public = response.get("public")
+            # Only an actual boolean False proves that the comment is
+            # internal. Treat missing, null, string, and numeric values as
+            # public so malformed responses fail closed.
+            return public is not False
         except Exception as e:
             raise Exception(
                 f"Could not verify the visibility of comment {comment_id} "
@@ -179,37 +183,6 @@ class CommentsMixin(JiraClient):
                 "new internal note (public=False) instead if you need to "
                 "add information."
             )
-
-    def _build_comment_payload(
-        self,
-        comment: str,
-        visibility: dict[str, str] | None,
-    ) -> tuple[str | dict[str, Any], dict[str, Any], bool]:
-        """Convert a Markdown comment once and build the request payload.
-
-        This is the single, shared conversion path used by both
-        ``add_comment`` and ``edit_comment`` so the two can never drift
-        (the historical bug applied an extra markdown→wiki transform on
-        the ADD path only, double-converting the input before
-        ``markdown_to_adf``).
-
-        Args:
-            comment: Comment text in Markdown.
-            visibility: Optional visibility restriction.
-
-        Returns:
-            A tuple ``(body, data, use_adf_v3)`` where ``body`` is the
-            converted comment (ADF dict on Cloud, wiki string on
-            Server/DC), ``data`` is the v3 request payload (body +
-            optional visibility) and ``use_adf_v3`` indicates whether the
-            Cloud ADF/v3 path should be used.
-        """
-        body = self._markdown_to_jira(comment)
-        use_adf_v3 = isinstance(body, dict) and self.config.is_cloud
-        data: dict[str, Any] = {"body": body}
-        if visibility:
-            data["visibility"] = visibility
-        return body, data, use_adf_v3
 
     def add_comment(
         self,
