@@ -47,6 +47,7 @@ def _issue(
     key: str,
     links: list[JiraIssueLink] | None = None,
     subtasks: list[dict] | None = None,
+    parent: str | None = None,
 ) -> JiraIssue:
     return JiraIssue(
         key=key,
@@ -55,6 +56,7 @@ def _issue(
         issue_type=JiraIssueType(name="Task"),
         issuelinks=links or [],
         subtasks=subtasks or [],
+        parent={"key": parent} if parent else None,
     )
 
 
@@ -212,6 +214,19 @@ class TestTraceIssueLinks:
         with pytest.raises(RuntimeError, match="API unavailable"):
             mixin.trace_issue_links("A-1")
 
+    def test_missing_root_raises(self, mixin):
+        self._setup_issues(mixin, {})
+
+        with pytest.raises(ValueError, match="A-1"):
+            mixin.trace_issue_links("A-1")
+
+    def test_missing_linked_issue_raises(self, mixin):
+        a = _issue("A-1", [_link(outward_key="MISSING-1")])
+        self._setup_issues(mixin, _issue_store(a))
+
+        with pytest.raises(ValueError, match="MISSING-1"):
+            mixin.trace_issue_links("A-1")
+
 
 class TestGetIssueTree:
     @pytest.fixture
@@ -220,6 +235,15 @@ class TestGetIssueTree:
 
     def _setup_issues(self, mixin, store: dict[str, JiraIssue]) -> None:
         def fake_search(jql, fields=None, start=0, limit=50, **kw):
+            if jql.startswith("parent = "):
+                parent_key = jql.split('"')[1]
+                return _search(
+                    [
+                        issue
+                        for issue in store.values()
+                        if issue.parent and issue.parent.get("key") == parent_key
+                    ]
+                )
             keys = jql.removeprefix("key in (").removesuffix(")").split(",")
             return _search([store[key] for key in keys if key in store])
 
@@ -268,6 +292,29 @@ class TestGetIssueTree:
 
         child_keys = [ch["key"] for ch in result["root"]["children"]]
         assert "A-2" in child_keys
+
+    def test_native_parent_relationship_as_children(self, mixin):
+        """Tree follows native parent fields through a shared JQL query."""
+        a = _issue("A-1")
+        b = _issue("B-1", parent="A-1")
+        self._setup_issues(mixin, _issue_store(a, b))
+
+        result = mixin.get_issue_tree("A-1", max_depth=1)
+
+        assert [child["key"] for child in result["root"]["children"]] == ["B-1"]
+
+    def test_missing_root_raises(self, mixin):
+        self._setup_issues(mixin, {})
+
+        with pytest.raises(ValueError, match="A-1"):
+            mixin.get_issue_tree("A-1")
+
+    def test_missing_containment_child_raises(self, mixin):
+        a = _issue("A-1", [_link(outward_key="MISSING-1", name="is parent of")])
+        self._setup_issues(mixin, _issue_store(a))
+
+        with pytest.raises(ValueError, match="MISSING-1"):
+            mixin.get_issue_tree("A-1")
 
     def test_max_depth_respected(self, mixin):
         """Tree doesn't recurse past max_depth."""
@@ -406,6 +453,24 @@ class TestGetIssueTree:
 
         assert result["root"]["children"][0]["key"] == "B-1"
         assert result["cross_links"] == []
+
+    def test_mirrored_lateral_link_is_deduplicated(self, mixin):
+        """A lateral link reported from both endpoints appears once."""
+        a = _issue(
+            "A-1",
+            [
+                _link(outward_key="B-1", name="is parent of"),
+                _link(outward_key="B-1", name="Related"),
+            ],
+        )
+        b = _issue("B-1", [_link(inward_key="A-1", name="Related")])
+        self._setup_issues(mixin, _issue_store(a, b))
+
+        result = mixin.get_issue_tree("A-1", max_depth=1)
+
+        assert len(result["cross_links"]) == 1
+        assert result["cross_links"][0]["source"] == "A-1"
+        assert result["cross_links"][0]["target"] == "B-1"
 
     def test_auth_error(self, mixin):
         mixin.search_issues = MagicMock(

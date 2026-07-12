@@ -128,7 +128,51 @@ class LinkAnalysisMixin(JiraClient):
             )
             for issue in search.issues:
                 result[issue.key] = issue.to_simplified_dict()
+
+        missing_keys = sorted(set(keys) - set(result))
+        if missing_keys:
+            missing = ", ".join(missing_keys)
+            message = f"Jira did not return requested issue(s): {missing}"
+            raise ValueError(message)
+
         return result
+
+    def _fetch_native_child_keys(
+        self,
+        parent_key: str,
+        max_issues: int,
+    ) -> list[str]:
+        """Fetch issue keys whose native Jira parent is *parent_key*.
+
+        The ``parent`` JQL field is available in both Jira Cloud and
+        Server/Data Center.  Cloud search handles its own continuation
+        tokens; Server/Data Center requires explicit paging.
+        """
+        if max_issues <= 0:
+            return []
+
+        jql = f'parent = "{parent_key}"'
+        child_keys: list[str] = []
+        start = 0
+
+        while len(child_keys) < max_issues:
+            result: JiraSearchResult = self.search_issues(  # type: ignore[attr-defined]
+                jql=jql,
+                fields=_LINK_FIELDS,
+                start=start,
+                limit=max_issues - len(child_keys),
+            )
+
+            page_keys = [issue.key for issue in result.issues if issue.key]
+            for child_key in page_keys:
+                if child_key not in child_keys:
+                    child_keys.append(child_key)
+
+            if self.config.is_cloud or len(result.issues) < _SERVER_DC_PAGE_SIZE:
+                break
+            start += len(result.issues)
+
+        return child_keys[:max_issues]
 
     @staticmethod
     def _extract_links(
@@ -204,6 +248,7 @@ class LinkAnalysisMixin(JiraClient):
 
         Raises:
             ValueError: If direction_filter is invalid.
+            ValueError: If Jira does not return a requested issue.
             MCPAtlassianAuthenticationError: If authentication fails.
             Exception: On API errors.
         """
@@ -326,6 +371,7 @@ class LinkAnalysisMixin(JiraClient):
             list, and ``total_nodes``.
 
         Raises:
+            ValueError: If Jira does not return a requested issue.
             MCPAtlassianAuthenticationError: If authentication fails.
             Exception: On API errors.
         """
@@ -357,16 +403,29 @@ class LinkAnalysisMixin(JiraClient):
                     if target not in visited:
                         child_keys.add(target)
                 elif not link["is_hierarchy"]:
-                    cross_links.append(
-                        {
-                            "source": key,
-                            "target": target,
-                            "link_type": link["link_type"],
-                            "direction": link["direction"],
-                        }
+                    cross_link_id = (
+                        min(key, target),
+                        max(key, target),
+                        link["link_type"].casefold(),
                     )
+                    if cross_link_id not in seen_cross_links:
+                        seen_cross_links.add(cross_link_id)
+                        cross_links.append(
+                            {
+                                "source": key,
+                                "target": target,
+                                "link_type": link["link_type"],
+                                "direction": link["direction"],
+                            }
+                        )
 
             if depth < max_depth:
+                child_keys.update(
+                    self._fetch_native_child_keys(
+                        key,
+                        max_issues - len(visited),
+                    )
+                )
                 for ck in sorted(child_keys):
                     child_node = _build(ck, depth + 1)
                     if child_node is not None:
@@ -375,16 +434,11 @@ class LinkAnalysisMixin(JiraClient):
             node["children"] = children
             return node
 
+        seen_cross_links: set[tuple[str, str, str]] = set()
         root = _build(issue_key, 0)
         if root is None:
-            root = {
-                "key": issue_key,
-                "summary": "",
-                "status": "Unknown",
-                "issue_type": "Unknown",
-                "depth": 0,
-                "children": [],
-            }
+            message = f"Jira did not return requested issue: {issue_key}"
+            raise ValueError(message)
 
         return {
             "root": root,
