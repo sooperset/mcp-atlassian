@@ -8,6 +8,8 @@ from .base import BasePreprocessor, _extract_blocks, _restore_blocks
 
 logger = logging.getLogger("mcp-atlassian")
 
+_ISSUE_KEY_PATTERN = r"[A-Z][A-Z0-9_]+-\d+(?:-\d+)*"
+
 
 def _convert_panel(params: str | None, content: str) -> str:
     """Convert a Jira {panel} block to markdown."""
@@ -181,7 +183,9 @@ class JiraPreprocessor(BasePreprocessor):
             link_url = match.group(2)
 
             # Extract issue key if it's a Jira issue link
-            issue_key_match = re.search(r"browse/([A-Z][A-Z0-9_]+-\d+)", link_url)
+            issue_key_match = re.search(
+                rf"browse/({_ISSUE_KEY_PATTERN})(?=$|[/?#])", link_url
+            )
             # Check if it's a Confluence wiki link
             confluence_match = re.search(
                 r"wiki/spaces/.+?/pages/\d+/(.+?)(?:\?|$)", link_url
@@ -194,7 +198,9 @@ class JiraPreprocessor(BasePreprocessor):
             elif confluence_match:
                 url_title = confluence_match.group(1)
                 readable_title = url_title.replace("+", " ")
-                readable_title = re.sub(r"^[A-Z][A-Z0-9_]+-\d+\s+", "", readable_title)
+                readable_title = re.sub(
+                    rf"^{_ISSUE_KEY_PATTERN}\s+", "", readable_title
+                )
                 text = text.replace(full_match, f"[{readable_title}]({link_url})")
             else:
                 clean_url = link_url.split("?")[0]
@@ -269,9 +275,11 @@ class JiraPreprocessor(BasePreprocessor):
         # Text formatting (bold, italic)
         output = re.sub(
             r"([*_])(.*?)\1",
-            lambda match: ("**" if match.group(1) == "*" else "*")
-            + match.group(2)
-            + ("**" if match.group(1) == "*" else "*"),
+            lambda match: (
+                ("**" if match.group(1) == "*" else "*")
+                + match.group(2)
+                + ("**" if match.group(1) == "*" else "*")
+            ),
             output,
         )
 
@@ -464,9 +472,7 @@ class JiraPreprocessor(BasePreprocessor):
         # Headers with = or - underlines
         output = re.sub(
             r"^(.*?)\n([=-])+$",
-            lambda match: (
-                f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}"
-            ),
+            lambda match: f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}",
             output,
             flags=re.MULTILINE,
         )
@@ -480,21 +486,68 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
+        markdown_url_targets: list[str] = []
+
+        def store_markdown_url_target(target: str) -> str:
+            placeholder = f"\x00MARKDOWNURL{len(markdown_url_targets)}\x00"
+            markdown_url_targets.append(target)
+            return placeholder
+
+        def protect_markdown_link_target(match: re.Match[str]) -> str:
+            return (
+                match.group(1)
+                + store_markdown_url_target(match.group(2))
+                + match.group(3)
+            )
+
+        def protect_markdown_autolink_target(match: re.Match[str]) -> str:
+            return "<" + store_markdown_url_target(match.group(1)) + ">"
+
+        output = re.sub(
+            r"(!?\[[^\]\n]*\]\()([^)]+)(\))",
+            protect_markdown_link_target,
+            output,
+        )
+        output = re.sub(
+            r"<((?:[A-Za-z][A-Za-z0-9+.-]*:[^>\s]+|[^<>\s@]+@[^<>\s@]+))>",
+            protect_markdown_autolink_target,
+            output,
+        )
+
         # Bold and italic - skip lines starting with
         # asterisks+space (Jira list syntax, issue #786)
+        def escape_intraword_underscore_runs(match: re.Match[str]) -> str:
+            return r"\_" * len(match.group(0))
+
         def convert_bold_italic_line(line: str) -> str:
+            # CommonMark treats underscores between two word characters as
+            # literal text, not emphasis. The Jira wiki renderer does not:
+            # it italicizes any ``_word_`` span, so identifiers such as
+            # snake_case, customfield_10101 or foo_bar_baz would render with
+            # spurious italics (and adjacent identifiers can pair into a
+            # cross-token italic span). Escape intraword underscore runs as
+            # ``\_`` so Jira renders them literally; genuine word-boundary
+            # ``_emphasis_``/``__strong__`` is left intact for conversion below.
+            line = re.sub(
+                r"(?<=[^\W_])_+(?=[^\W_])",
+                escape_intraword_underscore_runs,
+                line,
+            )
             if re.match(r"^[*_]+\s", line):
                 return line
             return re.sub(
                 r"([*_]+)(.*?)\1",
-                lambda m: ("_" if len(m.group(1)) == 1 else "*")
-                + m.group(2)
-                + ("_" if len(m.group(1)) == 1 else "*"),
+                lambda m: (
+                    ("_" if len(m.group(1)) == 1 else "*")
+                    + m.group(2)
+                    + ("_" if len(m.group(1)) == 1 else "*")
+                ),
                 line,
             )
 
         lines = output.split("\n")
         output = "\n".join(convert_bold_italic_line(line) for line in lines)
+        output = _restore_blocks(output, markdown_url_targets, "MARKDOWNURL")
 
         # Multi-level bulleted list
         def bulleted_list_fn(match: re.Match[str]) -> str:
@@ -567,12 +620,32 @@ class JiraPreprocessor(BasePreprocessor):
         output = re.sub(r"<([^>]+)>", r"[\1]", output)
 
         # Convert markdown tables to Jira table format
+        # Issue #1343: parse full table blocks (header + separator + data rows),
+        # strip whitespace from each cell, convert header to ||cell|| and data
+        # rows to |cell|.
         lines = output.split("\n")
         i = 0
         while i < len(lines):
-            if i < len(lines) - 1 and re.match(r"\|[-\s|]+\|", lines[i + 1]):
-                lines[i] = lines[i].replace("|", "||")
-                lines.pop(i + 1)
+            # Look for a header row followed by a markdown separator line
+            if (
+                i < len(lines) - 1
+                and re.match(r"^\|[-\s|:]+\|$", lines[i + 1])
+                and re.match(r"^\|.*\|$", lines[i])
+            ):
+                # Header row
+                header_cells = [cell.strip() for cell in lines[i].split("|")[1:-1]]
+                lines[i] = "||" + "||".join(header_cells) + "||"
+                lines.pop(i + 1)  # drop separator
+
+                # Consume data rows while they look like table rows
+                while i < len(lines) and re.match(
+                    r"^\|.*\|$", lines[i + 1] if i + 1 < len(lines) else ""
+                ):
+                    data_cells = [
+                        cell.strip() for cell in lines[i + 1].split("|")[1:-1]
+                    ]
+                    lines[i + 1] = "|" + "|".join(data_cells) + "|"
+                    i += 1
             i += 1
 
         # Rejoin the lines

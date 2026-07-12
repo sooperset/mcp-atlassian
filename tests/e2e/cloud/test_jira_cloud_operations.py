@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import requests
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.jira import JiraFetcher
@@ -31,6 +32,61 @@ class TestJiraCloudBehavior:
             # Check the model field directly — to_simplified_dict()
             # does NOT expose accountId
             assert issue.assignee.account_id is not None
+
+    def test_search_assignable_users_by_project(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Cloud assignable-user search accepts query= with project scope."""
+        users = jira_fetcher.search_assignable_users(
+            query=cloud_instance.username.split("@", maxsplit=1)[0],
+            project_key=cloud_instance.project_key,
+            limit=5,
+        )
+
+        assert isinstance(users, list)
+
+    def test_search_projects_by_key(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Cloud project search returns the configured test project."""
+        projects = jira_fetcher.search_projects(
+            query=cloud_instance.project_key,
+            max_results=10,
+        )
+
+        assert any(
+            project.get("key", "").upper() == cloud_instance.project_key
+            for project in projects
+        )
+
+
+class TestJiraCloudProjectAnalysis:
+    """Project analysis through Jira Cloud search pagination."""
+
+    def test_project_analysis(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        hierarchy = jira_fetcher.get_project_epic_hierarchy(
+            cloud_instance.project_key,
+            max_epics=10,
+        )
+        dependencies = jira_fetcher.get_cross_project_dependencies(
+            cloud_instance.project_key,
+            max_issues=10,
+        )
+
+        assert hierarchy["project_key"] == cloud_instance.project_key
+        assert hierarchy["total_epics"] <= 10
+        assert isinstance(hierarchy["groups"], list)
+        assert dependencies["project_key"] == cloud_instance.project_key
+        assert dependencies["total_issues_scanned"] <= 10
+        assert isinstance(dependencies["by_project"], dict)
 
 
 class TestJiraCloudEpicOperations:
@@ -59,6 +115,70 @@ class TestJiraCloudEpicOperations:
             raise
         resource_tracker.add_jira_issue(epic.key)
         assert epic.key.startswith(cloud_instance.project_key)
+
+
+class TestJiraCloudMoveOperations:
+    """Issue move operations on Cloud."""
+
+    def test_move_issue_same_project(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        issue = jira_fetcher.create_issue(
+            project_key=cloud_instance.project_key,
+            summary=f"Cloud E2E Move Test {uid}",
+            issue_type="Task",
+            description="Issue for Cloud move testing.",
+        )
+        resource_tracker.add_jira_issue(issue.key)
+
+        moved = jira_fetcher.move_issue(issue.key, cloud_instance.project_key)
+        if moved.key != issue.key:
+            resource_tracker.add_jira_issue(moved.key)
+
+        assert moved.key.startswith(cloud_instance.project_key)
+
+
+class TestJiraCloudVersionOperations:
+    """Version creation and updates on Cloud."""
+
+    def test_create_and_update_project_version(
+        self,
+        jira_fetcher: JiraFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        name = f"cloud-e2e-version-{uid}"
+        version: dict[str, object] | None = None
+
+        try:
+            version = jira_fetcher.create_project_version(
+                project_key=cloud_instance.project_key,
+                name=name,
+                description="Auto-created for Cloud version endpoint testing.",
+            )
+
+            assert version["name"] == name
+            assert version.get("id")
+
+            updated_name = f"{name}-updated"
+            updated_version = jira_fetcher.update_project_version(
+                version_id=str(version["id"]),
+                name=updated_name,
+            )
+
+            assert updated_version["name"] == updated_name
+            assert str(updated_version["id"]) == str(version["id"])
+        finally:
+            if version and version.get("id"):
+                requests.delete(
+                    f"{cloud_instance.jira_url}/rest/api/3/version/{version['id']}",
+                    auth=(cloud_instance.username, cloud_instance.api_token),
+                    timeout=30,
+                ).raise_for_status()
 
 
 class TestJiraCloudSubtask:
@@ -195,7 +315,11 @@ class TestJiraCloudTransitions:
         if target_id is None:
             target_id = transitions[0]["id"]
 
-        jira_fetcher.transition_issue(issue.key, target_id)
+        jira_fetcher.transition_issue(
+            issue.key,
+            target_id,
+            comment=f"Cloud transition comment {uid}",
+        )
 
         updated = jira_fetcher.get_issue(issue.key)
         assert updated.status is not None

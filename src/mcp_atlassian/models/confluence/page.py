@@ -83,6 +83,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
     id: str = CONFLUENCE_DEFAULT_ID
     title: str = EMPTY_STRING
     type: str = "page"  # "page", "blogpost", etc.
+    subtype: str | None = None
     status: str = "current"
     space: ConfluenceSpace | None = None
     content: str = EMPTY_STRING
@@ -136,14 +137,22 @@ class ConfluencePage(ApiModel, TimestampMixin):
 
         # Extract space information first to ensure it's available for URL construction
         space_data = data.get("space", {})
-        if not space_data:
-            # Try to extract space info from _expandable if available
+        if not isinstance(space_data, dict):
+            space_data = {}
+
+        # Some child/list endpoints return partial space objects, such as
+        # {"id": "123"}, which would otherwise suppress the _expandable fallback.
+        if not space_data.get("key"):
             if expandable := data.get("_expandable", {}):
                 if space_path := expandable.get("space"):
                     # Extract space key from REST API path
                     if space_path.startswith("/rest/api/space/"):
                         space_key = space_path.split("/rest/api/space/")[1]
-                        space_data = {"key": space_key, "name": f"Space {space_key}"}
+                        space_data = {
+                            **space_data,
+                            "key": space_key,
+                            "name": space_data.get("name") or f"Space {space_key}",
+                        }
 
         # Create space model
         space = ConfluenceSpace.from_api_response(space_data)
@@ -200,6 +209,11 @@ class ConfluencePage(ApiModel, TimestampMixin):
             if not updated and version and version.when:
                 updated = version.when
 
+            # Fall back to history.createdBy if no top-level author
+            if not author:
+                if created_by := history.get("createdBy"):
+                    author = ConfluenceUser.from_api_response(created_by)
+
         # Construct URL if base_url is provided
         url = None
         if base_url := kwargs.get("base_url"):
@@ -229,6 +243,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
             id=str(data.get("id", CONFLUENCE_DEFAULT_ID)),
             title=data.get("title", EMPTY_STRING),
             type=data.get("type", "page"),
+            subtype=data.get("subtype"),
             status=data.get("status", "current"),
             space=space,
             content=content,
@@ -255,6 +270,9 @@ class ConfluencePage(ApiModel, TimestampMixin):
             "updated": self.format_timestamp(self.updated),
             "url": self.url,
         }
+
+        if self.subtype:
+            result["subtype"] = self.subtype
 
         # Add space information if available
         if self.space:

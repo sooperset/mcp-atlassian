@@ -13,6 +13,7 @@ from .boards import BoardsMixin
 from .client import JiraClient
 from .comments import CommentsMixin
 from .config import JiraConfig
+from .customer_requests import CustomerRequestsMixin
 from .development import DevelopmentMixin
 from .epics import EpicsMixin
 from .field_options import FieldOptionsMixin
@@ -22,6 +23,7 @@ from .formatting import FormattingMixin
 from .issues import IssuesMixin
 from .links import LinksMixin
 from .metrics import MetricsMixin
+from .project_analysis import ProjectAnalysisMixin
 from .projects import ProjectsMixin
 from .queues import QueuesMixin
 from .sla import SLAMixin
@@ -43,6 +45,7 @@ class JiraFetcher(
     WorklogMixin,
     EpicsMixin,
     CommentsMixin,
+    CustomerRequestsMixin,
     SearchMixin,
     IssuesMixin,
     UsersMixin,
@@ -55,6 +58,7 @@ class JiraFetcher(
     MetricsMixin,
     SLAMixin,
     DevelopmentMixin,
+    ProjectAnalysisMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.

@@ -34,6 +34,8 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_create_issue",
         "jira_update_issue",
         "jira_delete_issue",
+        "jira_assign_issue",
+        "jira_move_issue",
         "jira_batch_create_issues",
         "jira_transition_issue",
         "jira_get_transitions",
@@ -44,6 +46,10 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_search",
         "jira_search_fields",
         "jira_get_field_options",
+        "jira_get_project_issue_types",
+        "jira_get_create_fields",
+        "jira_get_project_fields",
+        "jira_search_projects",
     ],
     "jira-agile": [
         "jira_get_agile_boards",
@@ -53,6 +59,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_create_sprint",
         "jira_update_sprint",
         "jira_add_issues_to_sprint",
+        "jira_move_issues_to_backlog",
     ],
     "jira-comments-worklogs": [
         "jira_add_comment",
@@ -61,6 +68,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_add_worklog",
         "jira_batch_get_changelogs",
         "jira_get_user_profile",
+        "jira_search_assignable_users",
         "jira_get_issue_watchers",
         "jira_add_watcher",
         "jira_remove_watcher",
@@ -75,6 +83,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_project_components",
         "jira_create_version",
         "jira_batch_create_versions",
+        "jira_update_version",
     ],
     "jira-attachments": [
         "jira_download_attachments",
@@ -84,6 +93,9 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_service_desk_for_project",
         "jira_get_service_desk_queues",
         "jira_get_queue_issues",
+        "jira_get_request_types",
+        "jira_get_request_type_fields",
+        "jira_create_customer_request",
     ],
     "jira-forms-metrics": [
         "jira_get_issue_proforma_forms",
@@ -100,8 +112,13 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_update_page",
         "confluence_delete_page",
         "confluence_get_page_children",
+        "confluence_get_space_page_tree",
         "confluence_get_page_history",
+        "confluence_update_page_section",
         "confluence_move_page",
+        "confluence_copy_page",
+        "confluence_get_page_restrictions",
+        "confluence_set_page_restrictions",
         "confluence_get_page_diff",
     ],
     "confluence-search": [
@@ -121,9 +138,20 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_add_comment",
         "confluence_get_comments",
         "confluence_reply_to_comment",
+        "confluence_get_inline_comments",
+        "confluence_add_inline_comment",
         "confluence_get_labels",
         "confluence_add_label",
         "confluence_get_page_views",
+    ],
+    "confluence-permissions": [
+        "confluence_check_content_permissions",
+        "confluence_get_space_permissions",
+    ],
+    "confluence-templates": [
+        "confluence_list_page_templates",
+        "confluence_get_page_template",
+        "confluence_create_page_from_template",
     ],
 }
 
@@ -156,7 +184,7 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     },
     "jira-service-desk": {
         "title": "Jira Service Desk",
-        "description": "Service desk queues and queue issues",
+        "description": "Customer requests, service desks, and queues",
     },
     "jira-forms-metrics": {
         "title": "Jira Forms & Metrics",
@@ -177,6 +205,14 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     "confluence-comments": {
         "title": "Confluence Comments & Labels",
         "description": "Comments, labels, and page analytics",
+    },
+    "confluence-permissions": {
+        "title": "Confluence Permissions",
+        "description": "Inspect content and space permissions",
+    },
+    "confluence-templates": {
+        "title": "Confluence Templates",
+        "description": "List page templates and create pages from them",
     },
 }
 

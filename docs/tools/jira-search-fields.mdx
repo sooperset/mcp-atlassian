@@ -18,6 +18,7 @@ Search Jira issues using JQL (Jira Query Language).
 | `projects_filter` | `string` | No | (Optional) Comma-separated list of project keys to filter results by. Overrides the environment variable JIRA_PROJECTS_FILTER if provided. |
 | `expand` | `string` | No | (Optional) fields to expand. Examples: 'renderedFields', 'transitions', 'changelog' |
 | `page_token` | `string` | No | Pagination token from a previous search result. Cloud only — Server/DC uses `start_at` for pagination. |
+| `use_display_names` | `boolean` | No | When true, custom field keys in the output use human-readable display names (e.g. 'Story Points') instead of opaque IDs (e.g. 'customfield_10243'). The `names` expansion is added automatically. Standard fields are unaffected. Default: false. |
 **Example:**
 
 ```json
@@ -26,6 +27,11 @@ Search Jira issues using JQL (Jira Query Language).
 
 <Tip>
 Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
+</Tip>
+
+<Tip>
+Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`.
+If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
 </Tip>
 
 
@@ -89,5 +95,48 @@ Get allowed option values for a custom field.
 <Tip>
 Use `contains` to filter large option lists (e.g., hundreds of values). Combine with `values_only: true` for a compact response.
 </Tip>
+
+---
+
+### Get Project Issue Types
+
+List the issue types that can be created in a Jira project.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (for example, `PROJ`) |
+
+The response includes each type's ID, name, description, subtask flag, and
+untranslated name when Jira provides one.
+
+**Example:**
+
+```json
+{"project_key": "PROJ"}
+```
+
+---
+
+### Get Create Fields
+
+List the fields available when creating one issue type in a Jira project.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (for example, `PROJ`) |
+| `issue_type_id` | `string` | Yes | Issue type ID returned by `jira_get_project_issue_types` |
+
+Each field includes its ID, name, required flag, and schema. Use
+`jira_get_field_options` to retrieve allowed values for a field.
+
+**Example:**
+
+```json
+{"project_key": "PROJ", "issue_type_id": "10002"}
+```
 
 ---

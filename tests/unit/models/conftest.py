@@ -7,7 +7,9 @@ reusable fixtures for model validation and serialization testing.
 """
 
 import os
+from datetime import datetime, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -32,6 +34,36 @@ from tests.utils.factories import (
 # ============================================================================
 # Factory-Based Data Fixtures
 # ============================================================================
+
+
+@pytest.fixture
+def pacific_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use America/Los_Angeles when converting datetimes to local time."""
+
+    class PacificDatetime(datetime):
+        @classmethod
+        def fromisoformat(
+            cls: type["PacificDatetime"], date_string: str
+        ) -> "PacificDatetime":
+            parsed = datetime.fromisoformat(date_string)
+            return cls(
+                parsed.year,
+                parsed.month,
+                parsed.day,
+                parsed.hour,
+                parsed.minute,
+                parsed.second,
+                parsed.microsecond,
+                parsed.tzinfo,
+                fold=parsed.fold,
+            )
+
+        def astimezone(self, tz: tzinfo | None = None) -> "PacificDatetime":
+            converted = super().astimezone(tz or ZoneInfo("America/Los_Angeles"))
+            return self.fromtimestamp(converted.timestamp(), converted.tzinfo)
+
+    monkeypatch.setattr("mcp_atlassian.models.base.datetime", PacificDatetime)
+    monkeypatch.setattr("src.mcp_atlassian.models.base.datetime", PacificDatetime)
 
 
 @pytest.fixture

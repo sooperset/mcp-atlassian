@@ -1,5 +1,6 @@
 """Unit tests for the Confluence users module."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -223,6 +224,64 @@ class TestUsersMixin:
         )
         assert result == mock_user_data_server
 
+    def test_get_user_details_by_userkey_success(
+        self, users_mixin: Any, mock_user_data_server: dict[str, Any]
+    ) -> None:
+        """Test successfully getting user details by userkey."""
+        # Arrange
+        userkey = "testuser-key-12345"
+        users_mixin.confluence.get_user_details_by_userkey.return_value = (
+            mock_user_data_server
+        )
+
+        # Act
+        result = users_mixin.get_user_details_by_userkey(userkey)
+
+        # Assert
+        users_mixin.confluence.get_user_details_by_userkey.assert_called_once_with(
+            userkey, None
+        )
+        assert result == mock_user_data_server
+        assert result["userKey"] == userkey
+        assert result["displayName"] == "Test User"
+
+    def test_get_user_details_by_userkey_with_expand(
+        self, users_mixin: Any, mock_user_data_server: dict[str, Any]
+    ) -> None:
+        """Test getting user details by userkey with status expansion."""
+        # Arrange
+        userkey = "testuser-key-12345"
+        expand = "status"
+        mock_data_with_status = mock_user_data_server.copy()
+        mock_data_with_status["status"] = "Active"
+        users_mixin.confluence.get_user_details_by_userkey.return_value = (
+            mock_data_with_status
+        )
+
+        # Act
+        result = users_mixin.get_user_details_by_userkey(userkey, expand=expand)
+
+        # Assert
+        users_mixin.confluence.get_user_details_by_userkey.assert_called_once_with(
+            userkey, expand
+        )
+        assert result == mock_data_with_status
+        assert result["status"] == "Active"
+
+    def test_get_user_details_by_userkey_invalid_userkey(
+        self, users_mixin: Any
+    ) -> None:
+        """Test getting user details with invalid userkey."""
+        # Arrange
+        invalid_userkey = "nonexistent-user-key"
+        users_mixin.confluence.get_user_details_by_userkey.side_effect = Exception(
+            "User not found"
+        )
+
+        # Act/Assert
+        with pytest.raises(Exception, match="User not found"):
+            users_mixin.get_user_details_by_userkey(invalid_userkey)
+
     def test_get_current_user_info_success(self, users_mixin, mock_current_user_data):
         """Test successfully getting current user info."""
         # Arrange
@@ -394,6 +453,38 @@ class TestUsersMixin:
         )
         assert result == expected_data
 
+    @pytest.mark.parametrize(
+        "expand_param",
+        [
+            None,
+            "status",
+            "",  # Empty string
+        ],
+    )
+    def test_get_user_details_by_userkey_expand_parameter_handling(
+        self,
+        users_mixin: Any,
+        mock_user_data_server: dict[str, Any],
+        expand_param: str | None,
+    ) -> None:
+        """Test that expand parameter is properly handled for userkey lookup."""
+        # Arrange
+        userkey = "testuser-key-12345"
+        expected_data = mock_user_data_server.copy()
+        if expand_param == "status":
+            expected_data["status"] = "Active"
+
+        users_mixin.confluence.get_user_details_by_userkey.return_value = expected_data
+
+        # Act
+        result = users_mixin.get_user_details_by_userkey(userkey, expand_param)
+
+        # Assert
+        users_mixin.confluence.get_user_details_by_userkey.assert_called_once_with(
+            userkey, expand_param
+        )
+        assert result == expected_data
+
     def test_users_mixin_inheritance(self, users_mixin):
         """Test that UsersMixin properly inherits from ConfluenceClient."""
         # Verify that UsersMixin is indeed a ConfluenceClient
@@ -410,6 +501,7 @@ class TestUsersMixin:
         # Verify the mixin has the expected methods
         assert hasattr(UsersMixin, "get_user_details_by_accountid")
         assert hasattr(UsersMixin, "get_user_details_by_username")
+        assert hasattr(UsersMixin, "get_user_details_by_userkey")
         assert hasattr(UsersMixin, "get_current_user_info")
 
         # Verify method signatures
@@ -428,6 +520,14 @@ class TestUsersMixin:
         params = list(sig.parameters.keys())
         assert "self" in params
         assert "username" in params
+        assert "expand" in params
+        assert sig.parameters["expand"].default is None
+
+        # Check get_user_details_by_userkey signature
+        sig = inspect.signature(UsersMixin.get_user_details_by_userkey)
+        params = list(sig.parameters.keys())
+        assert "self" in params
+        assert "userkey" in params
         assert "expand" in params
         assert sig.parameters["expand"].default is None
 
@@ -560,6 +660,13 @@ class TestUsersMixin:
         users_mixin.get_user_details_by_username(username, expand)
         users_mixin.confluence.get_user_details_by_username.assert_called_with(
             username, expand
+        )
+
+        # Test userkey method delegation
+        userkey = "test-user-key"
+        users_mixin.get_user_details_by_userkey(userkey, expand)
+        users_mixin.confluence.get_user_details_by_userkey.assert_called_with(
+            userkey, expand
         )
 
         # Test current user method delegation - need to mock the return value
