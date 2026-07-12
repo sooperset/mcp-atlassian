@@ -2875,6 +2875,7 @@ async def set_page_restrictions(
                 "allowed to view the page. Empty list = unrestricted."
             ),
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     read_groups: Annotated[
@@ -2882,6 +2883,7 @@ async def set_page_restrictions(
         Field(
             description="(Optional) Group names allowed to view the page.",
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     edit_users: Annotated[
@@ -2892,6 +2894,7 @@ async def set_page_restrictions(
                 "allowed to edit the page."
             ),
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     edit_groups: Annotated[
@@ -2899,6 +2902,7 @@ async def set_page_restrictions(
         Field(
             description="(Optional) Group names allowed to edit the page.",
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
 ) -> str:
