@@ -50,6 +50,24 @@ class TestUsersMixin:
         # Verify self.jira.myself was called
         users_mixin.jira.myself.assert_called_once()
 
+    def test_get_current_user_account_id_rate_limit_error(self, users_mixin):
+        """Expose Jira 429 diagnostics without retrying validation."""
+        users_mixin._current_user_account_id = None
+        response = MagicMock()
+        response.status_code = 429
+        response.headers = {"Retry-After": "7"}
+        users_mixin.jira.myself = MagicMock(
+            side_effect=requests.exceptions.HTTPError(response=response)
+        )
+
+        with pytest.raises(
+            Exception,
+            match=r"Jira API rate limit hit \(429\).*7 seconds",
+        ):
+            users_mixin.get_current_user_account_id()
+
+        users_mixin.jira.myself.assert_called_once()
+
     def test_get_current_user_account_id_data_center_timestamp_issue(self, users_mixin):
         """Test that get_current_user_account_id handles Jira Data Center with problematic timestamps."""
         # Ensure no cached value

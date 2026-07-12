@@ -151,6 +151,8 @@ This guide covers IDE integration, environment variables, and advanced configura
 | `MCP_VERY_VERBOSE` | Enable debug logging (`true`/`false`) |
 | `MCP_LOGGING_STDOUT` | Log to stdout instead of stderr (`true`/`false`) |
 | `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1` | Download Confluence attachments via the v1 REST endpoint instead of the legacy `/download/` link (removed on Cloud). Unset = auto (v1 on Cloud, legacy on Server/DC); `true`/`false` to force. |
+| `MCP_ATLASSIAN_VALIDATION_CACHE_TTL` | Seconds to reuse successful multi-user credential validation (default `300`; `0` disables) |
+| `MCP_ATLASSIAN_VALIDATION_CACHE_MAXSIZE` | Maximum number of successful validation results to retain (default `100`; `0` disables) |
 | `ATLASSIAN_OAUTH_PROXY_ENABLE` | Enable OAuth proxy + DCR + `/.well-known/*` routes (`true`/`false`) |
 | `PUBLIC_BASE_URL` | Public base URL for OAuth discovery metadata |
 | `ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS` | Comma-separated allowed redirect URI patterns for DCR clients |
@@ -159,6 +161,13 @@ This guide covers IDE integration, environment variables, and advanced configura
 | `IGNORE_HEADER_AUTH` | Bypass proxy-injected auth headers. For GCP Cloud Run, AWS ALB deployments where load balancers inject Authorization headers (`true`/`false`) |
 
 See [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) for all available options.
+
+The validation cache stores only successful validation data. It is scoped by
+service, target URL, tenant, and a digest of the authentication material; raw
+credentials and fetchers are not cached. If an upstream credential is revoked,
+the server may continue to accept it for up to the configured TTL. Set the TTL
+or maximum size to `0` when immediate revocation visibility is more important
+than reducing repeated validation calls.
 
 ### HTTP Hardening
 

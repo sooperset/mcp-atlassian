@@ -6,6 +6,7 @@ from typing import Any
 from requests.exceptions import HTTPError
 
 from ..exceptions import MCPAtlassianAuthenticationError
+from ..utils.http import format_rate_limit_error
 from .client import ConfluenceClient
 
 logger = logging.getLogger("mcp-atlassian")
@@ -94,15 +95,23 @@ class UsersMixin(ConfluenceClient):
                 )
             return user_data
         except HTTPError as http_err:
-            if http_err.response is not None and http_err.response.status_code in [
-                401,
-                403,
-            ]:
+            status_code = (
+                http_err.response.status_code if http_err.response is not None else None
+            )
+            if status_code == 429:
+                rate_limit_message = format_rate_limit_error(
+                    http_err, service="Confluence"
+                )
+                logger.warning(rate_limit_message)
+                raise MCPAtlassianAuthenticationError(rate_limit_message) from http_err
+            if status_code in [401, 403]:
                 logger.warning(
-                    f"Confluence token validation failed with HTTP {http_err.response.status_code} for /rest/api/user/current."
+                    f"Confluence token validation failed with HTTP {status_code} "
+                    "for /rest/api/user/current."
                 )
                 raise MCPAtlassianAuthenticationError(
-                    f"Confluence token validation failed: {http_err.response.status_code} from /rest/api/user/current"
+                    f"Confluence token validation failed: {status_code} "
+                    "from /rest/api/user/current"
                 ) from http_err
             logger.error(
                 f"HTTPError when calling Confluence /rest/api/user/current: {http_err}",

@@ -6,10 +6,15 @@ Provides get_jira_fetcher and get_confluence_fetcher for use in tool functions.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
+import math
+import os
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
 from fastmcp import Context
 from fastmcp.server.dependencies import get_access_token, get_http_request
 from starlette.requests import Request
@@ -29,6 +34,174 @@ if TYPE_CHECKING:
     from mcp_atlassian.jira.config import JiraConfig as UserJiraConfigType
 
 logger = logging.getLogger("mcp-atlassian.servers.dependencies")
+
+
+# ---------------------------------------------------------------------------
+# Cross-request credential validation cache
+# ---------------------------------------------------------------------------
+
+
+_VALIDATION_CACHE_TTL_ENV = "MCP_ATLASSIAN_VALIDATION_CACHE_TTL"
+_VALIDATION_CACHE_MAXSIZE_ENV = "MCP_ATLASSIAN_VALIDATION_CACHE_MAXSIZE"
+_DEFAULT_VALIDATION_CACHE_TTL = 300.0
+_DEFAULT_VALIDATION_CACHE_MAXSIZE = 100
+_CACHE_MISS = object()
+_ValidationCacheKey = tuple[str, str, str, str | None]
+_ValidationCacheSettings = tuple[float, int]
+
+_validation_cache: TTLCache[_ValidationCacheKey, Any] | None = None
+_validation_cache_settings: _ValidationCacheSettings | None = None
+_validation_cache_lock = threading.RLock()
+
+
+def _read_validation_cache_settings() -> _ValidationCacheSettings:
+    """Read and normalize validation-cache settings from the environment.
+
+    A non-positive TTL or maximum size disables caching. Settings are read for
+    every validation, allowing a long-running server to apply environment
+    changes made by its process supervisor without retaining old entries.
+    """
+    ttl_raw = os.getenv(_VALIDATION_CACHE_TTL_ENV)
+    if ttl_raw is None or not ttl_raw.strip():
+        ttl = _DEFAULT_VALIDATION_CACHE_TTL
+    else:
+        try:
+            ttl = float(ttl_raw)
+            if not math.isfinite(ttl):
+                raise ValueError
+        except ValueError:
+            logger.warning(
+                "Invalid %s value %r; using %.1f seconds",
+                _VALIDATION_CACHE_TTL_ENV,
+                ttl_raw,
+                _DEFAULT_VALIDATION_CACHE_TTL,
+            )
+            ttl = _DEFAULT_VALIDATION_CACHE_TTL
+
+    maxsize_raw = os.getenv(_VALIDATION_CACHE_MAXSIZE_ENV)
+    if maxsize_raw is None or not maxsize_raw.strip():
+        maxsize = _DEFAULT_VALIDATION_CACHE_MAXSIZE
+    else:
+        try:
+            maxsize = int(maxsize_raw)
+        except ValueError:
+            logger.warning(
+                "Invalid %s value %r; using %d entries",
+                _VALIDATION_CACHE_MAXSIZE_ENV,
+                maxsize_raw,
+                _DEFAULT_VALIDATION_CACHE_MAXSIZE,
+            )
+            maxsize = _DEFAULT_VALIDATION_CACHE_MAXSIZE
+
+    return max(ttl, 0.0), max(maxsize, 0)
+
+
+def _get_validation_cache() -> TTLCache[_ValidationCacheKey, Any] | None:
+    """Return the configured validation cache, rebuilding it when settings change."""
+    global _validation_cache, _validation_cache_settings
+
+    settings = _read_validation_cache_settings()
+    with _validation_cache_lock:
+        if settings != _validation_cache_settings:
+            ttl, maxsize = settings
+            _validation_cache = (
+                TTLCache(maxsize=maxsize, ttl=ttl) if ttl > 0 and maxsize > 0 else None
+            )
+            _validation_cache_settings = settings
+        return _validation_cache
+
+
+def _clear_validation_cache() -> None:
+    """Clear validation entries and forget the active runtime configuration."""
+    global _validation_cache, _validation_cache_settings
+
+    with _validation_cache_lock:
+        if _validation_cache is not None:
+            _validation_cache.clear()
+        _validation_cache = None
+        _validation_cache_settings = None
+
+
+def _validation_cache_get(key: _ValidationCacheKey) -> Any:
+    """Read one validation result without exposing cachetools race conditions."""
+    with _validation_cache_lock:
+        cache = _get_validation_cache()
+        if cache is None:
+            return _CACHE_MISS
+        return cache.get(key, _CACHE_MISS)
+
+
+def _validation_cache_put(key: _ValidationCacheKey, value: Any) -> None:
+    """Store one successful validation result in the current cache."""
+    with _validation_cache_lock:
+        cache = _get_validation_cache()
+        if cache is None:
+            return
+        cache[key] = value
+
+
+def _auth_material_digest(config: JiraConfig | ConfluenceConfig) -> str | None:
+    """Hash the credential material used by ``config`` for cache keying.
+
+    Raw credentials never enter the cache key. Username is included with a
+    basic-auth token because the same token may be valid for different users.
+    """
+    auth_type = config.auth_type
+    material: tuple[str, ...]
+    if auth_type == "basic":
+        username = config.username or ""
+        api_token = config.api_token or ""
+        material = (
+            auth_type,
+            username,
+            api_token,
+        )
+        if not api_token:
+            return None
+    elif auth_type == "pat":
+        token = config.personal_token or ""
+        if not token:
+            return None
+        material = (auth_type, token)
+    elif auth_type == "oauth":
+        oauth_config = getattr(config, "oauth_config", None)
+        token = getattr(oauth_config, "access_token", None) or ""
+        if not isinstance(token, str) or not token:
+            return None
+        material = (auth_type, token)
+    else:
+        return None
+
+    return hashlib.sha256("\x00".join(material).encode("utf-8")).hexdigest()
+
+
+def _validation_tenant_identifier(
+    config: JiraConfig | ConfluenceConfig,
+) -> str | None:
+    """Return the tenant discriminator required by the authentication flow."""
+    oauth_config = getattr(config, "oauth_config", None)
+    cloud_id = getattr(oauth_config, "cloud_id", None)
+    if cloud_id:
+        return f"cloud:{cloud_id}"
+    base_url = getattr(oauth_config, "base_url", None)
+    if base_url:
+        return f"dc:{base_url}"
+    return None
+
+
+def _validation_cache_key(
+    spec: _ServiceSpec, config: JiraConfig | ConfluenceConfig
+) -> _ValidationCacheKey | None:
+    """Build a service, URL, tenant, and digest-scoped validation key."""
+    auth_digest = _auth_material_digest(config)
+    if auth_digest is None:
+        return None
+    return (
+        spec.name,
+        getattr(config, "url", "") or "",
+        auth_digest,
+        _validation_tenant_identifier(config),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +413,10 @@ def _create_and_validate(
     *,
     attach_ssrf_hook: bool = False,
 ) -> Any:
-    """Create a fetcher, validate credentials, cache on request.state.
+    """Create a fetcher, validate credentials, and cache it on request.state.
+
+    Only successful validation data is shared across requests. Fetchers remain
+    request-local so their sessions and request state cannot leak between users.
 
     Args:
         request: The current Starlette request.
@@ -258,6 +434,7 @@ def _create_and_validate(
     """
     fn_name = f"get_{spec.name.lower()}_fetcher"
     auth_desc = "header-based" if auth_branch == "header_pat" else "user"
+    cache_key = _validation_cache_key(spec, config)
     try:
         fetcher = spec.fetcher_class(config=config)
         if attach_ssrf_hook:
@@ -265,7 +442,18 @@ def _create_and_validate(
             session.hooks["response"].append(
                 _make_ssrf_safe_hook(validate_url_for_ssrf)
             )
-        validation_data = spec.validate_fn(fetcher)
+        validation_data = _validation_cache_get(cache_key) if cache_key else _CACHE_MISS
+        if validation_data is _CACHE_MISS:
+            validation_data = spec.validate_fn(fetcher)
+            if cache_key:
+                _validation_cache_put(cache_key, validation_data)
+        else:
+            logger.debug(
+                "%s: Reusing cached %s credential validation; "
+                "skipping upstream validation call.",
+                fn_name,
+                spec.name,
+            )
         spec.on_validated(
             fn_name,
             request,

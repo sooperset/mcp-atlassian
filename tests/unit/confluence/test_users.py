@@ -352,6 +352,21 @@ class TestUsersMixin:
         ):
             users_mixin.get_current_user_info()
 
+    def test_get_current_user_info_http_error_429(self, users_mixin):
+        """Expose Confluence 429 diagnostics without retrying validation."""
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {"Retry-After": "11"}
+        users_mixin.confluence.get.side_effect = HTTPError(response=mock_response)
+
+        with pytest.raises(
+            MCPAtlassianAuthenticationError,
+            match=r"Confluence API rate limit hit \(429\).*11 seconds",
+        ):
+            users_mixin.get_current_user_info()
+
+        users_mixin.confluence.get.assert_called_once_with("rest/api/user/current")
+
     def test_get_current_user_info_http_error_other(self, users_mixin):
         """Test get_current_user_info with other HTTP error codes."""
         # Arrange

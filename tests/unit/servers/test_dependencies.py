@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +12,7 @@ from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.servers.dependencies import (
+    _clear_validation_cache,
     _create_user_config_for_fetcher,
     _resolve_bearer_auth_type,
     get_confluence_fetcher,
@@ -23,6 +25,14 @@ from tests.utils.mocks import MockFastMCP
 
 # Configure pytest for async tests
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+def clear_validation_cache():
+    """Keep module-level validation entries isolated between tests."""
+    _clear_validation_cache()
+    yield
+    _clear_validation_cache()
 
 
 @pytest.fixture
@@ -1609,6 +1619,390 @@ class TestGetConfluenceFetcher:
 
         with pytest.raises(ValueError, match=expected_error_match):
             await get_confluence_fetcher(mock_context)
+
+
+class TestValidationCache:
+    """Regression tests for cross-request validation caching."""
+
+    @staticmethod
+    def _header_pat_request(service: str, url: str, token: str):
+        header_prefix = f"X-Atlassian-{service}"
+        service_headers = {
+            f"{header_prefix}-Url": url,
+            f"{header_prefix}-Personal-Token": token,
+        }
+
+        class MockState:
+            def __init__(self):
+                self.jira_fetcher = None
+                self.confluence_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(name)
+                return None
+
+        request = MockFastMCP.create_request()
+        request.state = MockState()
+        return request
+
+    @staticmethod
+    def _basic_request(email: str, api_token: str):
+        request = MockFastMCP.create_request()
+        request.state.jira_fetcher = None
+        request.state.user_atlassian_auth_type = "basic"
+        request.state.user_atlassian_email = email
+        request.state.user_atlassian_api_token = api_token
+        request.state.atlassian_service_headers = {}
+        return request
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_same_credential_reuses_validation_but_not_fetcher_or_state(
+        self, mock_confluence_fetcher_class, mock_get_http_request, mock_context
+    ):
+        """Independent requests share data, never the request-local fetcher."""
+        request1 = self._header_pat_request(
+            "Confluence", "https://test.atlassian.net", "shared-token"
+        )
+        request2 = self._header_pat_request(
+            "Confluence", "https://test.atlassian.net", "shared-token"
+        )
+        fetcher1 = _create_mock_fetcher(
+            ConfluenceFetcher,
+            validation_return={"email": "derived@example.com", "displayName": "User"},
+        )
+        fetcher2 = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.side_effect = [fetcher1, fetcher2]
+        _setup_mock_context(
+            mock_context,
+            MainAppContext(
+                full_jira_config=JiraConfig(
+                    url="https://test.atlassian.net", auth_type="basic"
+                ),
+                full_confluence_config=ConfluenceConfig(
+                    url="https://test.atlassian.net", auth_type="basic"
+                ),
+                read_only=False,
+                enabled_tools=[],
+            ),
+        )
+
+        mock_get_http_request.return_value = request1
+        result1 = await get_confluence_fetcher(mock_context)
+        mock_get_http_request.return_value = request2
+        result2 = await get_confluence_fetcher(mock_context)
+
+        assert result1 is fetcher1
+        assert result2 is fetcher2
+        fetcher1.get_current_user_info.assert_called_once()
+        fetcher2.get_current_user_info.assert_not_called()
+        assert request2.state.confluence_fetcher is fetcher2
+        assert request2.state.user_atlassian_email == "derived@example.com"
+
+    @pytest.mark.parametrize(
+        "url", ["https://test.atlassian.net", "https://jira.example.test"]
+    )
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_basic_auth_cache_supports_cloud_and_server_dc_urls(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        config_factory,
+        url,
+    ):
+        """Cloud and Server/DC basic-auth requests use the same safe flow."""
+        request1 = self._basic_request("user@example.com", "api-token")
+        request2 = self._basic_request("user@example.com", "api-token")
+        fetcher1 = _create_mock_fetcher(JiraFetcher)
+        fetcher2 = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.side_effect = [fetcher1, fetcher2]
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(
+                auth_type="basic",
+                url=url,
+                username="operator@example.com",
+                api_token="operator-token",
+            )
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_get_http_request.return_value = request1
+        await get_jira_fetcher(mock_context)
+        mock_get_http_request.return_value = request2
+        await get_jira_fetcher(mock_context)
+
+        fetcher1.get_current_user_account_id.assert_called_once()
+        fetcher2.get_current_user_account_id.assert_not_called()
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_different_credentials_and_urls_are_isolated(
+        self, mock_confluence_fetcher_class, mock_get_http_request, mock_context
+    ):
+        """Credential and target-instance changes both require validation."""
+        requests = [
+            self._header_pat_request(
+                "Confluence", "https://instance-a.example", "same-token"
+            ),
+            self._header_pat_request(
+                "Confluence", "https://instance-a.example", "different-token"
+            ),
+            self._header_pat_request(
+                "Confluence", "https://instance-b.example", "same-token"
+            ),
+        ]
+        fetchers = [_create_mock_fetcher(ConfluenceFetcher) for _ in requests]
+        mock_confluence_fetcher_class.side_effect = fetchers
+        _setup_mock_context(
+            mock_context,
+            MainAppContext(
+                full_jira_config=JiraConfig(
+                    url="https://instance-a.example", auth_type="basic"
+                ),
+                full_confluence_config=ConfluenceConfig(
+                    url="https://instance-a.example", auth_type="basic"
+                ),
+                read_only=False,
+                enabled_tools=[],
+            ),
+        )
+
+        for request in requests:
+            mock_get_http_request.return_value = request
+            await get_confluence_fetcher(mock_context)
+
+        for fetcher in fetchers:
+            fetcher.get_current_user_info.assert_called_once()
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_failed_validation_is_not_cached(
+        self, mock_confluence_fetcher_class, mock_get_http_request, mock_context
+    ):
+        """A failed validation never makes a later request appear valid."""
+        request1 = self._header_pat_request(
+            "Confluence", "https://test.atlassian.net", "shared-token"
+        )
+        request2 = self._header_pat_request(
+            "Confluence", "https://test.atlassian.net", "shared-token"
+        )
+        failing_fetcher = _create_mock_fetcher(
+            ConfluenceFetcher, validation_error=Exception("invalid")
+        )
+        succeeding_fetcher = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.side_effect = [
+            failing_fetcher,
+            succeeding_fetcher,
+        ]
+        _setup_mock_context(
+            mock_context,
+            MainAppContext(
+                full_jira_config=JiraConfig(
+                    url="https://test.atlassian.net", auth_type="basic"
+                ),
+                full_confluence_config=ConfluenceConfig(
+                    url="https://test.atlassian.net", auth_type="basic"
+                ),
+                read_only=False,
+                enabled_tools=[],
+            ),
+        )
+
+        mock_get_http_request.return_value = request1
+        with pytest.raises(ValueError):
+            await get_confluence_fetcher(mock_context)
+        mock_get_http_request.return_value = request2
+        await get_confluence_fetcher(mock_context)
+
+        succeeding_fetcher.get_current_user_info.assert_called_once()
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_ttl_expiry_revalidates(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        monkeypatch,
+    ):
+        """Expired successful entries do not suppress a new validation call."""
+        monkeypatch.setenv("MCP_ATLASSIAN_VALIDATION_CACHE_TTL", "0.01")
+        request1 = self._header_pat_request(
+            "Confluence", "https://test.atlassian.net", "shared-token"
+        )
+        request2 = self._header_pat_request(
+            "Confluence", "https://test.atlassian.net", "shared-token"
+        )
+        fetcher1 = _create_mock_fetcher(ConfluenceFetcher)
+        fetcher2 = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.side_effect = [fetcher1, fetcher2]
+        _setup_mock_context(
+            mock_context,
+            MainAppContext(
+                full_jira_config=JiraConfig(
+                    url="https://test.atlassian.net", auth_type="basic"
+                ),
+                full_confluence_config=ConfluenceConfig(
+                    url="https://test.atlassian.net", auth_type="basic"
+                ),
+                read_only=False,
+                enabled_tools=[],
+            ),
+        )
+
+        mock_get_http_request.return_value = request1
+        await get_confluence_fetcher(mock_context)
+        time.sleep(0.03)
+        mock_get_http_request.return_value = request2
+        await get_confluence_fetcher(mock_context)
+
+        fetcher1.get_current_user_info.assert_called_once()
+        fetcher2.get_current_user_info.assert_called_once()
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_maxsize_evicts_oldest_successful_validation(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        monkeypatch,
+    ):
+        """The configured maximum bounds retained validation results."""
+        monkeypatch.setenv("MCP_ATLASSIAN_VALIDATION_CACHE_TTL", "300")
+        monkeypatch.setenv("MCP_ATLASSIAN_VALIDATION_CACHE_MAXSIZE", "1")
+        requests = [
+            self._header_pat_request("Confluence", "https://test.atlassian.net", token)
+            for token in ("token-a", "token-b", "token-a")
+        ]
+        fetchers = [_create_mock_fetcher(ConfluenceFetcher) for _ in requests]
+        mock_confluence_fetcher_class.side_effect = fetchers
+        _setup_mock_context(
+            mock_context,
+            MainAppContext(
+                full_jira_config=JiraConfig(
+                    url="https://test.atlassian.net", auth_type="basic"
+                ),
+                full_confluence_config=ConfluenceConfig(
+                    url="https://test.atlassian.net", auth_type="basic"
+                ),
+                read_only=False,
+                enabled_tools=[],
+            ),
+        )
+
+        for request in requests:
+            mock_get_http_request.return_value = request
+            await get_confluence_fetcher(mock_context)
+
+        for fetcher in fetchers:
+            fetcher.get_current_user_info.assert_called_once()
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_runtime_changes_and_disabled_cache_are_honored(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        monkeypatch,
+    ):
+        """Changing TTL at runtime resets entries, including when disabled."""
+        monkeypatch.setenv("MCP_ATLASSIAN_VALIDATION_CACHE_TTL", "300")
+        requests = [
+            self._header_pat_request(
+                "Confluence", "https://test.atlassian.net", "shared-token"
+            )
+            for _ in range(3)
+        ]
+        fetchers = [_create_mock_fetcher(ConfluenceFetcher) for _ in requests]
+        mock_confluence_fetcher_class.side_effect = fetchers
+        _setup_mock_context(
+            mock_context,
+            MainAppContext(
+                full_jira_config=JiraConfig(
+                    url="https://test.atlassian.net", auth_type="basic"
+                ),
+                full_confluence_config=ConfluenceConfig(
+                    url="https://test.atlassian.net", auth_type="basic"
+                ),
+                read_only=False,
+                enabled_tools=[],
+            ),
+        )
+
+        mock_get_http_request.return_value = requests[0]
+        await get_confluence_fetcher(mock_context)
+        monkeypatch.setenv("MCP_ATLASSIAN_VALIDATION_CACHE_TTL", "0")
+        mock_get_http_request.return_value = requests[1]
+        await get_confluence_fetcher(mock_context)
+        monkeypatch.setenv("MCP_ATLASSIAN_VALIDATION_CACHE_TTL", "300")
+        mock_get_http_request.return_value = requests[2]
+        await get_confluence_fetcher(mock_context)
+
+        for fetcher in fetchers:
+            fetcher.get_current_user_info.assert_called_once()
+
+    def test_cache_key_contains_digest_but_not_raw_credentials(self, config_factory):
+        """Cache key material is scoped without retaining a secret."""
+        from mcp_atlassian.servers.dependencies import (
+            _confluence_spec,
+            _jira_spec,
+            _validation_cache_key,
+        )
+
+        token = "do-not-store-this-token"
+        config = config_factory.create_jira_config(
+            auth_type="pat", personal_token=token
+        )
+        key = _validation_cache_key(_jira_spec(), config)
+
+        assert key is not None
+        assert key[0] == "Jira"
+        assert key[1] == config.url
+        assert len(key[2]) == 64
+        assert token not in repr(key)
+
+        cloud_config_a = config_factory.create_jira_config(
+            auth_type="oauth",
+            oauth_config=OAuthConfig(
+                client_id="",
+                client_secret="",
+                redirect_uri="",
+                scope="",
+                cloud_id="cloud-a",
+                access_token="shared-oauth-token",
+            ),
+        )
+        cloud_config_b = config_factory.create_jira_config(
+            auth_type="oauth",
+            oauth_config=OAuthConfig(
+                client_id="",
+                client_secret="",
+                redirect_uri="",
+                scope="",
+                cloud_id="cloud-b",
+                access_token="shared-oauth-token",
+            ),
+        )
+        cloud_key_a = _validation_cache_key(_jira_spec(), cloud_config_a)
+        cloud_key_b = _validation_cache_key(_jira_spec(), cloud_config_b)
+        assert cloud_key_a is not None
+        assert cloud_key_b is not None
+        assert cloud_key_a[3] == "cloud:cloud-a"
+        assert cloud_key_b[3] == "cloud:cloud-b"
+        assert cloud_key_a != cloud_key_b
+
+        confluence_key = _validation_cache_key(_confluence_spec(), config)
+        assert confluence_key is not None
+        assert confluence_key[0] == "Confluence"
+        assert confluence_key != key
 
 
 class TestBasicAuthMultiUser:

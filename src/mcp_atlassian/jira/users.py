@@ -10,6 +10,7 @@ from unidecode import unidecode
 
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.utils.decorators import handle_auth_errors
+from mcp_atlassian.utils.http import format_rate_limit_error
 
 from .client import JiraClient
 
@@ -91,6 +92,10 @@ class UsersMixin(JiraClient):
             self._current_user_account_id = account_id
             return account_id
         except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code == 429:
+                rate_limit_message = format_rate_limit_error(http_err, service="Jira")
+                logger.warning(rate_limit_message)
+                raise Exception(rate_limit_message) from http_err
             response_content = ""
             if http_err.response is not None:
                 try:
