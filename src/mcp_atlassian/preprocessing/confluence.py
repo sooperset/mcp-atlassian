@@ -27,6 +27,9 @@ logger = logging.getLogger("mcp-atlassian")
 class ConfluencePreprocessor(BasePreprocessor):
     """Handles text preprocessing for Confluence content."""
 
+    _TASK_MARKER_PREFIX = "\u200b"
+    _TASK_MARKER_PATTERN = re.compile(r"(<li\b[^>]*>)(\[[ xX]\])")
+
     def __init__(self, base_url: str) -> None:
         """
         Initialize the Confluence text preprocessor.
@@ -79,6 +82,8 @@ class ConfluencePreprocessor(BasePreprocessor):
             html_content = self._fix_attachment_images(
                 markdown_to_html(markdown_content)
             )
+            if not apply_task_lists:
+                html_content = self._protect_task_list_markers(html_content)
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 root_dir = Path(temp_dir)
@@ -89,6 +94,9 @@ class ConfluencePreprocessor(BasePreprocessor):
                 root = elements_from_strings([html_content])
 
                 parsed_url = urlparse(self.base_url)
+                base_path = parsed_url.path or "/wiki/"
+                if not base_path.endswith("/"):
+                    base_path += "/"
 
                 # Create converter options
                 options = ConverterOptions(
@@ -104,7 +112,7 @@ class ConfluencePreprocessor(BasePreprocessor):
                     root_dir=root_dir,
                     site_metadata=ConfluenceSiteMetadata(
                         domain=parsed_url.netloc,
-                        base_path=parsed_url.path or "/wiki",
+                        base_path=base_path,
                         space_key=None,
                     ),
                     page_metadata=ConfluencePageCollection(),
@@ -118,6 +126,9 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = self._fix_attachment_images(
                     str(elements_to_string(root))
                 )
+                storage_format = self._restore_task_list_markers(storage_format)
+                if apply_task_lists:
+                    storage_format = self._normalize_task_list_bodies(storage_format)
 
                 if apply_task_lists:
                     storage_format = self._apply_task_lists(storage_format)
@@ -142,6 +153,23 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = self._apply_table_layout(storage_format, table_layout)
 
             return storage_format
+
+    @classmethod
+    def _protect_task_list_markers(cls, html_content: str) -> str:
+        """Prevent md2conf from converting task lists when requested."""
+        return cls._TASK_MARKER_PATTERN.sub(
+            rf"\1{cls._TASK_MARKER_PREFIX}\2", html_content
+        )
+
+    @classmethod
+    def _restore_task_list_markers(cls, storage_html: str) -> str:
+        """Remove task-list conversion sentinels from converted HTML."""
+        return storage_html.replace(cls._TASK_MARKER_PREFIX, "")
+
+    @staticmethod
+    def _normalize_task_list_bodies(storage_html: str) -> str:
+        """Match legacy task-body whitespace after md2conf 0.6 conversion."""
+        return re.sub(r"(<ac:task-body>)[ \t]+", r"\1", storage_html)
 
     @classmethod
     def _apply_task_lists(cls, storage_html: str) -> str:
