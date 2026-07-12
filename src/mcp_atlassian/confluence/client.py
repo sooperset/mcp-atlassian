@@ -42,7 +42,9 @@ class ConfluenceClient:
             MCPAtlassianAuthenticationError: If OAuth authentication fails
         """
         self.config = config or ConfluenceConfig.from_env()
-        transport_url = self.config.url
+        transport_url = self.config.api_url
+        if not isinstance(transport_url, str):
+            transport_url = self.config.url
 
         # Initialize the Confluence client based on auth type
         if self.config.auth_type == "oauth":
@@ -88,11 +90,11 @@ class ConfluenceClient:
         elif self.config.auth_type == "pat":
             logger.debug(
                 f"Initializing Confluence client with Token (PAT) auth. "
-                f"URL: {self.config.url}, "
+                f"URL: {self.config.api_url}, "
                 f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
             )
             self.confluence = Confluence(
-                url=self.config.url,
+                url=self.config.api_url,
                 token=self.config.personal_token,
                 cloud=self.config.is_cloud,
                 verify_ssl=self.config.ssl_verify,
@@ -101,12 +103,12 @@ class ConfluenceClient:
         else:  # basic auth
             logger.debug(
                 f"Initializing Confluence client with Basic auth. "
-                f"URL: {self.config.url}, Username: {self.config.username}, "
+                f"URL: {self.config.api_url}, Username: {self.config.username}, "
                 f"API Token present: {bool(self.config.api_token)}, "
                 f"Is Cloud: {self.config.is_cloud}"
             )
             self.confluence = Confluence(
-                url=self.config.url,
+                url=self.config.api_url,
                 username=self.config.username,
                 password=self.config.api_token,  # API token is used as password
                 cloud=self.config.is_cloud,
@@ -202,7 +204,7 @@ class ConfluenceClient:
         if self.config.auth_type == "oauth" and self.config.is_cloud:
             base_url = self.confluence.url.rstrip("/")
         else:
-            base_url = self.config.url.rstrip("/")
+            base_url = self.config.api_url.rstrip("/")
 
         if self.config.is_cloud and not base_url.endswith("/wiki"):
             base_url = f"{base_url}/wiki"

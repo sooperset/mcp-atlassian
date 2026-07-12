@@ -43,6 +43,7 @@ class ConfluenceConfig:
     client_key: str | None = None  # Client private key file path (.pem)
     client_key_password: str | None = None  # Password for encrypted private key
     timeout: int = 75  # Connection timeout in seconds
+    cloud_id: str | None = None  # Atlassian Cloud ID (for service accounts)
     # Cloud removed the legacy /download/attachments/... endpoint (CHANGE-2735);
     # it now 401s for API-token / scoped-token auth. Controls whether attachment
     # downloads use the v1 REST endpoint
@@ -52,6 +53,13 @@ class ConfluenceConfig:
     #   False -> always the legacy link
     attachment_download_use_v1: bool | None = None
 
+    def __post_init__(self) -> None:
+        """Normalize Cloud ID settings and derive a gateway URL when needed."""
+        if self.cloud_id is not None:
+            self.cloud_id = self.cloud_id.strip() or None
+        if (not self.url or not self.url.strip()) and self.cloud_id:
+            self.url = self.api_url
+
     @property
     def is_cloud(self) -> bool:
         """Check if this is a cloud instance.
@@ -60,6 +68,10 @@ class ConfluenceConfig:
             True if this is a cloud instance (atlassian.net), False otherwise.
             Localhost URLs are always considered non-cloud (Server/Data Center).
         """
+        # cloud_id set directly on config means Cloud (service account or explicit)
+        if self.cloud_id:
+            return True
+
         # OAuth with cloud_id uses api.atlassian.com which is always Cloud
         if (
             self.auth_type == "oauth"
@@ -82,6 +94,18 @@ class ConfluenceConfig:
         return is_atlassian_cloud_url(self.url) if self.url else False
 
     @property
+    def api_url(self) -> str:
+        """Get the effective API URL, using the Cloud gateway when cloud_id is set.
+
+        Returns:
+            The api.atlassian.com gateway URL if cloud_id is set, otherwise the
+            base URL.
+        """
+        if self.cloud_id:
+            return f"https://api.atlassian.com/ex/confluence/{self.cloud_id}/wiki"
+        return self.url
+
+    @property
     def verify_ssl(self) -> bool:
         """Compatibility property for old code.
 
@@ -101,7 +125,12 @@ class ConfluenceConfig:
             ValueError: If any required environment variable is missing
         """
         url = os.getenv("CONFLUENCE_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        cloud_id = (
+            os.getenv("CONFLUENCE_CLOUD_ID") or os.getenv("ATLASSIAN_CLOUD_ID") or ""
+        ).strip() or None
+        # cloud_id can substitute for URL (service accounts use api.atlassian.com)
+        has_cloud_id = cloud_id is not None
+        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE") and not has_cloud_id:
             error_msg = (
                 "Missing required CONFLUENCE_URL environment variable. "
                 "Set CONFLUENCE_URL to your Confluence base URL, for example "
@@ -121,7 +150,7 @@ class ConfluenceConfig:
         auth_type = None
 
         # Use the shared utility function directly
-        is_cloud = is_atlassian_cloud_url(url) if url else False
+        is_cloud = has_cloud_id or (is_atlassian_cloud_url(url) if url else False)
 
         if is_cloud:
             # Cloud: OAuth takes priority, then basic auth
@@ -223,6 +252,7 @@ class ConfluenceConfig:
             client_key=client_key,
             client_key_password=client_key_password,
             timeout=timeout,
+            cloud_id=cloud_id,
             attachment_download_use_v1=attachment_download_use_v1,
         )
 

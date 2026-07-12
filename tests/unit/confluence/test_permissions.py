@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from requests.exceptions import HTTPError
 
+from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.confluence.permissions import PermissionsMixin
 
 
@@ -17,10 +18,10 @@ class TestPermissionsMixin:
         mixin = MagicMock(spec=PermissionsMixin)
         mixin.confluence = MagicMock()
         mixin.confluence.url = "https://company.atlassian.net/wiki"
-        mixin.config = MagicMock()
-        mixin.config.auth_type = "basic"
-        mixin.config.is_cloud = True
-        mixin.config.url = "https://company.atlassian.net"
+        mixin.config = ConfluenceConfig(
+            url="https://company.atlassian.net",
+            auth_type="basic",
+        )
 
         mixin._require_cloud_permissions_api = lambda *args, **kwargs: (
             PermissionsMixin._require_cloud_permissions_api(mixin, *args, **kwargs)
@@ -40,7 +41,7 @@ class TestPermissionsMixin:
 
     def test_check_content_permissions_requires_cloud(self, permissions_mixin):
         """Test that content permission checks require a Cloud instance."""
-        permissions_mixin.config.is_cloud = False
+        permissions_mixin.config.url = "https://confluence.example.com"
 
         with pytest.raises(ValueError, match="only available for Confluence Cloud"):
             permissions_mixin.check_content_permissions(
@@ -140,7 +141,7 @@ class TestPermissionsMixin:
 
     def test_get_space_permissions_requires_cloud(self, permissions_mixin):
         """Test that space permission checks require a Cloud instance."""
-        permissions_mixin.config.is_cloud = False
+        permissions_mixin.config.url = "https://confluence.example.com"
 
         with pytest.raises(ValueError, match="only available for Confluence Cloud"):
             permissions_mixin.get_space_permissions(space_id="1")
@@ -236,4 +237,14 @@ class TestPermissionsMixin:
 
         assert permissions_mixin._permissions_rest_base_url() == (
             "https://api.atlassian.com/ex/confluence/cloud-id"
+        )
+
+    def test_permissions_rest_base_url_uses_service_account_gateway(
+        self, permissions_mixin
+    ) -> None:
+        """Scoped service-account calls use the Cloud gateway URL."""
+        permissions_mixin.config.cloud_id = "cloud-id"
+
+        assert permissions_mixin._permissions_rest_base_url() == (
+            "https://api.atlassian.com/ex/confluence/cloud-id/wiki"
         )

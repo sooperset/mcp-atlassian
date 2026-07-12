@@ -51,6 +51,7 @@ class CloudInstanceInfo:
     test_page_id: str = ""
     oauth_access_token: str = ""
     oauth_cloud_id: str = ""
+    cloud_id: str = ""
 
     @classmethod
     def from_env(cls) -> CloudInstanceInfo:
@@ -348,6 +349,16 @@ def _make_jira_byo_oauth_config(info: CloudInstanceInfo) -> JiraConfig:
     )
 
 
+def _make_jira_cloud_id_config(info: CloudInstanceInfo) -> JiraConfig:
+    return JiraConfig(
+        url=info.jira_url,
+        auth_type="basic",
+        username=info.username,
+        api_token=info.api_token,
+        cloud_id=info.cloud_id,
+    )
+
+
 def _make_confluence_basic_config(
     info: CloudInstanceInfo,
 ) -> ConfluenceConfig:
@@ -369,6 +380,18 @@ def _make_confluence_byo_oauth_config(
             access_token=info.oauth_access_token,
             cloud_id=info.oauth_cloud_id,
         ),
+    )
+
+
+def _make_confluence_cloud_id_config(
+    info: CloudInstanceInfo,
+) -> ConfluenceConfig:
+    return ConfluenceConfig(
+        url=info.confluence_url,
+        auth_type="basic",
+        username=info.username,
+        api_token=info.api_token,
+        cloud_id=info.cloud_id,
     )
 
 
@@ -396,6 +419,15 @@ def cloud_instance() -> CloudInstanceInfo:
     if not _check_cloud_health(info):
         pytest.skip("Cloud instances not reachable or credentials invalid")
 
+    tenant_info = requests.get(
+        f"{info.jira_url.rstrip('/')}/_edge/tenant_info",
+        timeout=15,
+    )
+    tenant_info.raise_for_status()
+    info.cloud_id = str(tenant_info.json().get("cloudId", ""))
+    if not info.cloud_id:
+        raise RuntimeError("Cloud tenant info response did not include cloudId")
+
     info.test_issue_key = _find_or_create_test_issue(info)
     info.test_page_id = _find_or_create_test_page(info)
 
@@ -414,13 +446,19 @@ def auth_variants(
 ) -> list[AuthVariant]:
     """Session-scoped list of auth variants to test.
 
-    Always includes basic. Adds byo_oauth if OAuth env vars present.
+    Always includes direct basic auth and Cloud-ID gateway basic auth. Adds
+    byo_oauth if OAuth env vars are present.
     """
     variants = [
         AuthVariant(
             name="basic",
             jira_config=_make_jira_basic_config(cloud_instance),
             confluence_config=_make_confluence_basic_config(cloud_instance),
+        ),
+        AuthVariant(
+            name="cloud_id_gateway",
+            jira_config=_make_jira_cloud_id_config(cloud_instance),
+            confluence_config=_make_confluence_cloud_id_config(cloud_instance),
         ),
     ]
 

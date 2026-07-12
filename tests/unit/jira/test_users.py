@@ -508,6 +508,23 @@ class TestUsersMixin:
             # Verify result
             assert account_id is None
 
+    def test_lookup_user_by_permissions_uses_service_account_gateway(
+        self, users_mixin
+    ) -> None:
+        """Scoped service-account requests use the Cloud API gateway."""
+        users_mixin.config.cloud_id = "cloud-123"
+        with patch("requests.get") as mock_get:
+            mock_response = MagicMock(status_code=200)
+            mock_response.json.return_value = {"users": []}
+            mock_get.return_value = mock_response
+
+            users_mixin._lookup_user_by_permissions("username")
+
+        assert mock_get.call_args.args[0] == (
+            "https://api.atlassian.com/ex/jira/cloud-123"
+            "/rest/api/2/user/permission/search"
+        )
+
     def test_lookup_user_by_permissions_jira_data_center(self, users_mixin):
         """Test _lookup_user_by_permissions when both 'key' and 'name' are available (Data Center)."""
         # Mock requests.get

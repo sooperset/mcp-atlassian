@@ -1,4 +1,4 @@
-"""Jira Cloud auth matrix tests -- read/write ops x 2 auth methods."""
+"""Jira Cloud auth matrix tests across direct and gateway authentication."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from .conftest import AuthVariant, CloudInstanceInfo, CloudResourceTracker
 pytestmark = pytest.mark.cloud_e2e
 
 
-@pytest.fixture(params=["basic", "byo_oauth"])
+@pytest.fixture(params=["basic", "cloud_id_gateway", "byo_oauth"])
 def jira_auth(
     request: pytest.FixtureRequest,
     auth_variants: list[AuthVariant],

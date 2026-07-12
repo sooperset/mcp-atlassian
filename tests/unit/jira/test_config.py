@@ -429,3 +429,101 @@ def test_from_env_oauth_enable_with_server_url():
         assert config.url == "https://jira.example.com"
         assert config.auth_type == "oauth"
         assert config.is_cloud is False
+
+
+# ---------------------------------------------------------------------------
+# Service account (cloud_id) tests
+# ---------------------------------------------------------------------------
+
+
+def test_from_env_service_account_with_cloud_id() -> None:
+    """Test service account config with ATLASSIAN_CLOUD_ID and basic auth."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_CLOUD_ID": "test-cloud-uuid",
+            "JIRA_USERNAME": "svc@company.atlassian.net",
+            "JIRA_API_TOKEN": "svc_token",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.cloud_id == "test-cloud-uuid"
+        assert config.auth_type == "basic"
+        assert config.is_cloud is True
+        assert config.username == "svc@company.atlassian.net"
+        assert config.url == "https://api.atlassian.com/ex/jira/test-cloud-uuid"
+
+
+def test_from_env_service_account_with_jira_cloud_id() -> None:
+    """Test JIRA_CLOUD_ID takes priority over ATLASSIAN_CLOUD_ID."""
+    with patch.dict(
+        os.environ,
+        {
+            "ATLASSIAN_CLOUD_ID": "global-cloud-id",
+            "JIRA_CLOUD_ID": "jira-specific-cloud-id",
+            "JIRA_USERNAME": "svc@company.atlassian.net",
+            "JIRA_API_TOKEN": "svc_token",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.cloud_id == "jira-specific-cloud-id"
+        assert config.api_url.endswith("/jira/jira-specific-cloud-id")
+
+
+def test_from_env_service_account_no_url_required() -> None:
+    """Test that cloud_id derives the Jira gateway when JIRA_URL is absent."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_CLOUD_ID": "test-cloud-uuid",
+            "JIRA_USERNAME": "svc@company.atlassian.net",
+            "JIRA_API_TOKEN": "svc_token",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.cloud_id == "test-cloud-uuid"
+        assert config.url == "https://api.atlassian.com/ex/jira/test-cloud-uuid"
+
+
+def test_from_env_service_account_with_url() -> None:
+    """Test service account config with both cloud_id and URL."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://company.atlassian.net",
+            "JIRA_CLOUD_ID": "test-cloud-uuid",
+            "JIRA_USERNAME": "svc@company.atlassian.net",
+            "JIRA_API_TOKEN": "svc_token",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.cloud_id == "test-cloud-uuid"
+        assert config.url == "https://company.atlassian.net"
+        assert config.is_cloud is True
+
+
+def test_is_cloud_with_cloud_id_basic_auth() -> None:
+    """Test is_cloud returns True when cloud_id is set, regardless of URL."""
+    config = JiraConfig(
+        url="",
+        auth_type="basic",
+        username="svc@company.atlassian.net",
+        api_token="token",
+        cloud_id="test-cloud-uuid",
+    )
+    assert config.is_cloud is True
+    assert config.url == "https://api.atlassian.com/ex/jira/test-cloud-uuid"
+
+    # Even with a server-like URL, cloud_id means Cloud
+    config = JiraConfig(
+        url="https://jira.example.com",
+        auth_type="basic",
+        username="svc@company.atlassian.net",
+        api_token="token",
+        cloud_id="test-cloud-uuid",
+    )
+    assert config.is_cloud is True
