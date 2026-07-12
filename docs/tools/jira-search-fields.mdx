@@ -46,6 +46,32 @@ Cloud supports cursor-based pagination via `page_token` for deterministic result
 
 ---
 
+### Compare Issue Sets
+
+Compare two JQL result sets and report issues that were added, removed, changed, or unchanged.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `jql_a` | `string` | Yes | JQL query defining the first issue set |
+| `jql_b` | `string` | Yes | JQL query defining the second issue set |
+| `compare_fields` | `string` | No | Comma-separated field names to compare; defaults to `status,assignee,priority,labels` |
+| `max_issues` | `integer` | No | Maximum issues to fetch per query (1-500); default: 200 |
+
+**Example:**
+
+```json
+{"jql_a": "project = PROJ AND sprint = 13", "jql_b": "project = PROJ AND sprint = 14", "compare_fields": "status,assignee,priority"}
+```
+
+<Tip>
+Enable the opt-in `jira_set_analysis` toolset to expose this tool.
+</Tip>
+
+
+---
+
 ### Search Fields
 
 Search Jira fields by keyword with fuzzy match.

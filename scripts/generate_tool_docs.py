@@ -50,6 +50,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_create_fields",
         "jira_get_project_fields",
         "jira_search_projects",
+        "jira_compare_issue_sets",
     ],
     "jira-agile": [
         "jira_get_agile_boards",

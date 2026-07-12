@@ -33,9 +33,8 @@ def _normalize_field_value(value: Any) -> str | list[str] | None:
         return None
     if isinstance(value, dict):
         for key in ("display_name", "value", "name"):
-            v = value.get(key)
-            if v is not None:
-                return _normalize_field_value(v)
+            if key in value:
+                return _normalize_field_value(value[key])
         return None
     if isinstance(value, list):
         normalized: list[str] = []

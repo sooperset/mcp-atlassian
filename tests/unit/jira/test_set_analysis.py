@@ -57,6 +57,10 @@ class TestNormalizeFieldValue:
         value = {"name": "Deployment region", "value": "eu-central"}
         assert _normalize_field_value(value) == "eu-central"
 
+    def test_dict_preserves_explicit_none_value(self) -> None:
+        value = {"name": "Deployment region", "value": None}
+        assert _normalize_field_value(value) is None
+
     def test_list_of_strings_sorted(self) -> None:
         result = _normalize_field_value(["z", "a", "m"])
         assert result == ["a", "m", "z"]
