@@ -399,9 +399,8 @@ class TestSetPageRestrictionsArraySchema:
         prop = properties[param_name]
         assert "items" in prop, (
             f"Parameter {param_name!r} is missing required 'items' field "
-            f"(regression of issue #1455 — VS Code Agent mode cannot start)"
+            f"(regression of issue #1455: VS Code Agent mode cannot start)"
         )
         assert prop["items"] == {"type": "string"}, (
-            f"Parameter {param_name!r} has unexpected 'items' schema: "
-            f"{prop['items']!r}"
+            f"Parameter {param_name!r} has unexpected 'items' schema: {prop['items']!r}"
         )
