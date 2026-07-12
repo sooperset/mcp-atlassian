@@ -90,6 +90,48 @@ async def test_tool_registration_issue_dates_name():
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "confluence_add_label",
+        "confluence_create_page",
+        "confluence_add_comment",
+        "confluence_reply_to_comment",
+        "jira_add_watcher",
+        "jira_create_issue",
+        "jira_batch_create_issues",
+        "jira_add_comment",
+        "jira_create_issue_link",
+        "jira_create_remote_issue_link",
+        "jira_create_sprint",
+        "jira_create_version",
+        "jira_batch_create_versions",
+    ],
+)
+async def test_additive_write_tools_are_non_destructive(tool_name: str) -> None:
+    """Ensure additive write tools advertise that they preserve existing state."""
+    tools = await main_mcp.get_tools()
+
+    assert tools[tool_name].annotations.destructiveHint is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "jira_remove_watcher",
+        "jira_add_issues_to_sprint",
+        "jira_add_worklog",
+    ],
+)
+async def test_state_changing_write_tools_are_destructive(tool_name: str) -> None:
+    """Ensure tools that remove or reassign state advertise destructive behavior."""
+    tools = await main_mcp.get_tools()
+
+    assert tools[tool_name].annotations.destructiveHint is True
+
+
+@pytest.mark.anyio
 async def test_health_check_endpoint():
     """Test the health check endpoint returns 200 and correct JSON response."""
     app = main_mcp.http_app(transport="sse")

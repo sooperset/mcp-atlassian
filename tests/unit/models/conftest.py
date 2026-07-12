@@ -7,10 +7,13 @@ reusable fixtures for model validation and serialization testing.
 """
 
 import os
+from datetime import datetime, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from mcp_atlassian.utils import parse_date as parse_date_utility
 from tests.fixtures.confluence_mocks import (
     MOCK_COMMENTS_RESPONSE,
     MOCK_CQL_SEARCH_RESPONSE,
@@ -32,6 +35,56 @@ from tests.utils.factories import (
 # ============================================================================
 # Factory-Based Data Fixtures
 # ============================================================================
+
+
+@pytest.fixture
+def pacific_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use America/Los_Angeles when converting datetimes to local time."""
+
+    class PacificDatetime(datetime):
+        @classmethod
+        def fromisoformat(
+            cls: type["PacificDatetime"], date_string: str
+        ) -> "PacificDatetime":
+            parsed = datetime.fromisoformat(date_string)
+            return cls(
+                parsed.year,
+                parsed.month,
+                parsed.day,
+                parsed.hour,
+                parsed.minute,
+                parsed.second,
+                parsed.microsecond,
+                parsed.tzinfo,
+                fold=parsed.fold,
+            )
+
+        def astimezone(self, tz: tzinfo | None = None) -> "PacificDatetime":
+            converted = super().astimezone(tz or ZoneInfo("America/Los_Angeles"))
+            return self.fromtimestamp(converted.timestamp(), converted.tzinfo)
+
+    def parse_date_in_pacific(
+        date_str: str | int | None,
+    ) -> datetime | None:
+        parsed = parse_date_utility(date_str)
+        if parsed is None:
+            return None
+        return PacificDatetime(
+            parsed.year,
+            parsed.month,
+            parsed.day,
+            parsed.hour,
+            parsed.minute,
+            parsed.second,
+            parsed.microsecond,
+            parsed.tzinfo,
+            fold=parsed.fold,
+        )
+
+    monkeypatch.setattr("mcp_atlassian.models.base.parse_date", parse_date_in_pacific)
+    monkeypatch.setattr(
+        "src.mcp_atlassian.models.base.parse_date", parse_date_in_pacific
+    )
 
 
 @pytest.fixture
@@ -242,11 +295,17 @@ def complete_confluence_page_data():
         space={"key": "COMPLETE", "name": "Complete Test Space", "type": "global"},
         body={
             "storage": {
-                "value": "<h1>Complete Test Page</h1><p>This page has all fields populated.</p>",
+                "value": (
+                    "<h1>Complete Test Page</h1>"
+                    "<p>This page has all fields populated.</p>"
+                ),
                 "representation": "storage",
             },
             "view": {
-                "value": "<h1>Complete Test Page</h1><p>This page has all fields populated.</p>",
+                "value": (
+                    "<h1>Complete Test Page</h1>"
+                    "<p>This page has all fields populated.</p>"
+                ),
                 "representation": "view",
             },
         },

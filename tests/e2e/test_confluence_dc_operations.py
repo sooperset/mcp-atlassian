@@ -348,6 +348,36 @@ class TestConfluenceDCComments:
         comments = confluence_fetcher.get_page_comments(page.id)
         assert len(comments) > 0
 
+    def test_reply_to_comment_preserves_body(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        """Server/DC replies retain their body in the page comment thread."""
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=dc_instance.space_key,
+            title=f"E2E Reply Test {uid}",
+            body="<p>For reply testing.</p>",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        parent = confluence_fetcher.add_comment(
+            page_id=page.id,
+            content=f"E2E parent comment {uid}",
+        )
+        assert parent is not None
+
+        reply = confluence_fetcher.reply_to_comment(
+            comment_id=parent.id,
+            content=f"E2E reply body {uid}",
+        )
+        assert reply is not None
+
+        comments = confluence_fetcher.get_page_comments(page.id)
+        assert any(f"E2E reply body {uid}" in comment.body for comment in comments)
+
     def test_add_and_get_inline_comments(
         self,
         confluence_fetcher: ConfluenceFetcher,

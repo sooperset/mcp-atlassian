@@ -22,6 +22,7 @@ from mcp_atlassian.utils.logging import (
     mask_sensitive,
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
+from mcp_atlassian.utils.proxy import apply_proxy_configuration
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 from mcp_atlassian.utils.ssrf_adapter import mount_ssrf_pinning
 from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
@@ -169,20 +170,13 @@ class JiraClient:
         configure_rate_limit(self.jira._session, service="Jira")
         configure_circuit_breaker(self.jira._session, service="Jira")
 
-        # Proxy configuration
-        proxies = {}
-        if self.config.http_proxy:
-            proxies["http"] = self.config.http_proxy
-        if self.config.https_proxy:
-            proxies["https"] = self.config.https_proxy
-        if self.config.socks_proxy:
-            proxies["socks"] = self.config.socks_proxy
-        if proxies:
-            self.jira._session.proxies.update(proxies)
-            for k, v in proxies.items():
-                log_config_param(
-                    logger, "Jira", f"{k.upper()}_PROXY", v, sensitive=True
-                )
+        self.jira._session = apply_proxy_configuration(
+            logger=logger,
+            service_name="Jira",
+            session=self.jira._session,
+            config=self.config,
+            target_url=transport_url,
+        )
 
         # Set an explicit User-Agent so requests aren't blocked by WAFs that
         # reject the default ``python-requests/X.Y`` header. User-supplied

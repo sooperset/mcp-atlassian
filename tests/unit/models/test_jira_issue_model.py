@@ -258,7 +258,29 @@ class TestJiraIssue:
         assert issue.security is None
         assert issue.worklog is None
 
-    def test_to_simplified_dict(self, jira_issue_data):
+    def test_from_api_response_builds_browse_url(self, jira_issue_data):
+        """Test creating a browser URL from the configured Jira base URL."""
+        issue = JiraIssue.from_api_response(
+            jira_issue_data,
+            base_url="https://example.atlassian.net/",
+            requested_fields="summary",
+        )
+        simplified = issue.to_simplified_dict()
+
+        assert issue.url == "https://example.atlassian.net/rest/api/2/issue/12345"
+        assert issue.browse_url == "https://example.atlassian.net/browse/PROJ-123"
+        expected_browse_url = "https://example.atlassian.net/browse/PROJ-123"
+        assert simplified["browse_url"] == expected_browse_url
+        assert "url" not in simplified
+
+    def test_from_api_response_omits_browse_url_without_base_url(self, jira_issue_data):
+        """Test browser URL is absent when no Jira base URL is provided."""
+        issue = JiraIssue.from_api_response(jira_issue_data)
+
+        assert issue.browse_url is None
+        assert "browse_url" not in issue.to_simplified_dict()
+
+    def test_to_simplified_dict(self, jira_issue_data, pacific_timezone):
         """Test converting a JiraIssue to a simplified dictionary."""
         issue = JiraIssue.from_api_response(jira_issue_data)
         simplified = issue.to_simplified_dict()
@@ -270,10 +292,8 @@ class TestJiraIssue:
         assert "summary" in simplified
         assert simplified["summary"] == "Test Issue Summary"
 
-        assert "created" in simplified
-        assert isinstance(simplified["created"], str)
-        assert "updated" in simplified
-        assert isinstance(simplified["updated"], str)
+        assert simplified["created"] == "2024-01-01 02:00:00 PST"
+        assert simplified["updated"] == "2024-01-02 07:30:00 PST"
 
         if isinstance(simplified["status"], str):
             assert simplified["status"] == "In Progress"

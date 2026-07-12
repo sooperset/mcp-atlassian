@@ -84,6 +84,18 @@ class TestJiraSearchResult:
         assert "created" in issue
         assert "updated" in issue
 
+    def test_to_simplified_dict_includes_issue_browse_url(self, jira_search_data):
+        """Test search results include browser URLs for returned issues."""
+        search_result = JiraSearchResult.from_api_response(
+            jira_search_data,
+            base_url="https://example.atlassian.net/",
+        )
+        simplified = search_result.to_simplified_dict()
+
+        issue = simplified["issues"][0]
+        assert issue["key"] == "PROJ-123"
+        assert issue["browse_url"] == "https://example.atlassian.net/browse/PROJ-123"
+
     def test_to_simplified_dict_empty_result(self):
         """Test converting an empty JiraSearchResult to a simplified dictionary."""
         search_result = JiraSearchResult()

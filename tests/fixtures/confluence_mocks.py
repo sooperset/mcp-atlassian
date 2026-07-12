@@ -538,6 +538,19 @@ MOCK_PAGES_FROM_SPACE_RESPONSE = [
 # Comment Reply Mock Data
 # ============================================================================
 
+MOCK_PARENT_COMMENT_V1_RESPONSE = {
+    "id": "456789123",
+    "type": "comment",
+    "status": "current",
+    "title": "Original Comment",
+    "container": {
+        "id": "987654321",
+        "type": "page",
+        "status": "current",
+        "title": "Example Page",
+    },
+}
+
 MOCK_COMMENT_REPLY_V1_RESPONSE = {
     "id": "111222333",
     "type": "comment",

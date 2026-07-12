@@ -624,7 +624,7 @@ async def get_labels(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_labels"},
-    annotations={"title": "Add Label", "destructiveHint": True},
+    annotations={"title": "Add Label", "destructiveHint": False},
 )
 @check_write_access
 async def add_label(
@@ -677,7 +677,7 @@ async def add_label(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_pages"},
-    annotations={"title": "Create Page", "destructiveHint": True},
+    annotations={"title": "Create Page", "destructiveHint": False},
 )
 @check_write_access
 async def create_page(
@@ -777,6 +777,16 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    subtype: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Confluence page subtype. Use 'live' to create a "
+                "Confluence Live Doc. Only supported for Confluence Cloud."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -797,6 +807,7 @@ async def create_page(
         emoji: Optional page title emoji (icon shown in navigation).
         page_width: Optional page layout width ('full-width' or 'default').
         table_layout: Optional table width preset ('full-width', 'wide', 'default').
+        subtype: Optional page subtype. Use "live" to create a Confluence Live Doc.
 
     Returns:
         JSON string representing the created page object.
@@ -837,6 +848,7 @@ async def create_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        subtype=subtype,
         page_width=page_width,
         table_layout=table_layout if content_format == "markdown" else None,
     )
@@ -1256,7 +1268,7 @@ async def move_page(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_comments"},
-    annotations={"title": "Add Comment", "destructiveHint": True},
+    annotations={"title": "Add Comment", "destructiveHint": False},
 )
 @check_write_access
 async def add_comment(
@@ -1307,7 +1319,7 @@ async def add_comment(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_comments"},
-    annotations={"title": "Reply to Comment", "destructiveHint": True},
+    annotations={"title": "Reply to Comment", "destructiveHint": False},
 )
 @check_write_access
 async def reply_to_comment(
