@@ -276,6 +276,11 @@ Header values containing sensitive information are automatically masked in logs.
     ```bash
     HTTPS_PROXY=https://proxy.example.com:8443
     ```
+    - If your network uses PAC/WPAD, enable it explicitly:
+    ```bash
+    ATLASSIAN_PROXY_WPAD_ENABLE=true
+    ATLASSIAN_PROXY_WPAD_URL=http://wpad/wpad.dat
+    ```
   </Accordion>
 </AccordionGroup>
 

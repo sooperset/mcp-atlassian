@@ -84,6 +84,36 @@ confluence:
 For dynamic service URLs, add `MCP_ALLOWED_URL_DOMAINS` through `extraEnv`. The
 server rejects dynamic external-auth destinations without this allowlist.
 
+### Proxy + PAC/WPAD
+
+Proxy values can also enable optional PAC/WPAD auto-configuration.
+
+```yaml
+proxy:
+  enabled: true
+  https: "https://proxy.example.com:8443"
+  noProxy: "localhost,127.0.0.1,.internal.example.com"
+  wpad:
+    enabled: true
+    url: "http://wpad/wpad.dat"
+  jira:
+    wpad:
+      enabled: false
+  confluence:
+    wpad:
+      enabled: true
+      url: "http://confluence-wpad.example.com/wpad.dat"
+```
+
+This configures the related proxy environment variables when set, including:
+
+- `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `SOCKS_PROXY`
+- `ATLASSIAN_PROXY_WPAD_ENABLE`, `ATLASSIAN_PROXY_WPAD_URL`
+- `JIRA_PROXY_WPAD_ENABLE`, `JIRA_PROXY_WPAD_URL`
+- `CONFLUENCE_PROXY_WPAD_ENABLE`, `CONFLUENCE_PROXY_WPAD_URL`
+
+PAC/WPAD remains opt-in and is only used when no explicit proxy is configured.
+
 ### OAuth Proxy + DCR (opt-in)
 
 Enable OAuth proxy/DCR endpoints:

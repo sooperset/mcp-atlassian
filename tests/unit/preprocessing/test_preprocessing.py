@@ -153,6 +153,53 @@ def test_clean_jira_text_smart_links(preprocessor_with_jira):
     assert cleaned == f"[Example Meeting Notes]({processed_url})"
 
 
+@pytest.mark.parametrize(
+    ("issue_key", "expected"),
+    [
+        (
+            "B7-214-68901",
+            "[B7-214-68901](https://example.atlassian.net/browse/B7-214-68901)",
+        ),
+        (
+            "B7-214--68901",
+            "[Issue](https://example.atlassian.net/browse/B7-214--68901)",
+        ),
+        (
+            "B7-214-",
+            "[Issue](https://example.atlassian.net/browse/B7-214-)",
+        ),
+        (
+            "B7-214-68901A",
+            "[Issue](https://example.atlassian.net/browse/B7-214-68901A)",
+        ),
+    ],
+)
+def test_clean_jira_text_smart_links_validate_hyphenated_issue_keys(
+    preprocessor_with_jira, issue_key, expected
+):
+    """Smart links preserve valid keys and reject malformed suffix segments."""
+    base_url = "https://example.atlassian.net"
+    text = f"[Issue|{base_url}/browse/{issue_key}|smart-link]"
+
+    assert preprocessor_with_jira.clean_jira_text(text) == expected
+
+
+def test_clean_jira_text_smart_links_strip_complete_hyphenated_issue_key(
+    preprocessor_with_jira,
+):
+    """Confluence smart-link titles strip the complete issue key."""
+    base_url = "https://example.atlassian.net"
+    confluence_url = (
+        f"{base_url}/wiki/spaces/PROJ/pages/987654321/"
+        "B7-214-68901+Example+Meeting+Notes"
+    )
+    text = f"[Meeting Notes|{confluence_url}|smart-link]"
+
+    assert preprocessor_with_jira._process_smart_links(text) == (
+        f"[Example Meeting Notes]({confluence_url})"
+    )
+
+
 def test_clean_jira_text_html_content(preprocessor_with_jira):
     """Test cleaning Jira text with HTML content."""
     text = "<p>This is <b>bold</b> text</p>"

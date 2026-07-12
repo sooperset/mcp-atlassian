@@ -42,6 +42,8 @@ def config_factory():
                 "https_proxy": None,
                 "no_proxy": None,
                 "socks_proxy": None,
+                "proxy_wpad_enable": False,
+                "proxy_wpad_url": None,
                 "projects_filter": ["TEST"],
             }
 
@@ -67,6 +69,8 @@ def config_factory():
                 "https_proxy": None,
                 "no_proxy": None,
                 "socks_proxy": None,
+                "proxy_wpad_enable": False,
+                "proxy_wpad_url": None,
                 "spaces_filter": ["TEST"],
             }
 
@@ -251,6 +255,41 @@ class TestCreateUserConfigForFetcher:
             result_config.oauth_config.client_secret == ""
         )  # Should preserve minimal config
 
+    @pytest.mark.parametrize("config_type", ["jira", "confluence"])
+    def test_create_user_config_preserves_proxy_and_wpad_fields(
+        self, config_factory, config_type
+    ):
+        """Test cloned user configs preserve inherited proxy and WPAD settings."""
+        proxy_kwargs = {
+            "http_proxy": "http://proxy.example.com:8080",
+            "https_proxy": "https://proxy.example.com:8443",
+            "no_proxy": "localhost,127.0.0.1",
+            "socks_proxy": "socks5://proxy.example.com:1080",
+            "proxy_wpad_enable": True,
+            "proxy_wpad_url": "http://wpad.example.com/wpad.dat",
+        }
+        if config_type == "jira":
+            base_config = config_factory.create_jira_config(
+                auth_type="pat", **proxy_kwargs
+            )
+        else:
+            base_config = config_factory.create_confluence_config(
+                auth_type="pat", **proxy_kwargs
+            )
+
+        result = _create_user_config_for_fetcher(
+            base_config=base_config,
+            auth_type="pat",
+            credentials={"personal_access_token": "user-pat-token"},
+        )
+
+        assert result.http_proxy == proxy_kwargs["http_proxy"]
+        assert result.https_proxy == proxy_kwargs["https_proxy"]
+        assert result.no_proxy == proxy_kwargs["no_proxy"]
+        assert result.socks_proxy == proxy_kwargs["socks_proxy"]
+        assert result.proxy_wpad_enable is True
+        assert result.proxy_wpad_url == proxy_kwargs["proxy_wpad_url"]
+
     @pytest.mark.parametrize(
         "byo_config,cloud_id_arg,expected_cloud_id,expected_base_url",
         [
@@ -424,6 +463,8 @@ class TestCreateUserConfigForFetcher:
                 self.https_proxy = None
                 self.no_proxy = None
                 self.socks_proxy = None
+                self.proxy_wpad_enable = False
+                self.proxy_wpad_url = None
 
         base_config = UnsupportedConfig()
         credentials = _create_user_credentials("pat", "test-token")
@@ -552,6 +593,19 @@ class TestGetJiraFetcher:
         mock_request.state = MockState()
         mock_get_http_request.return_value = mock_request
 
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(
+                ssl_verify=False,
+                http_proxy="http://proxy.example.com:8080",
+                no_proxy="localhost,127.0.0.1",
+                proxy_wpad_enable=True,
+                proxy_wpad_url="http://wpad.example.com/wpad.dat",
+                custom_headers={"X-Global": "should-not-inherit"},
+                projects_filter=["GLOBAL"],
+            )
+        )
+        _setup_mock_context(mock_context, app_context)
+
         mock_fetcher = _create_mock_fetcher(JiraFetcher)
         mock_jira_fetcher_class.return_value = mock_fetcher
 
@@ -565,6 +619,138 @@ class TestGetJiraFetcher:
         assert called_config.auth_type == "pat"
         assert called_config.url == "https://test.atlassian.net"
         assert called_config.personal_token == "test-pat-token"
+        assert called_config.ssl_verify is False
+        assert called_config.http_proxy == "http://proxy.example.com:8080"
+        assert called_config.https_proxy is None
+        assert called_config.no_proxy == "localhost,127.0.0.1"
+        assert called_config.socks_proxy is None
+        assert called_config.custom_headers is None
+        assert called_config.projects_filter is None
+        assert called_config.proxy_wpad_enable is True
+        assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_header_based_jira_fetcher_inherits_network_when_wpad_disabled(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Test header PAT inherits network settings while WPAD stays disabled."""
+        service_headers = {
+            "X-Atlassian-Jira-Url": "https://test.atlassian.net",
+            "X-Atlassian-Jira-Personal-Token": "test-pat-token",
+        }
+
+        class MockState:
+            def __init__(self):
+                self.jira_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_request.state = MockState()
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(
+                ssl_verify=False,
+                http_proxy="http://proxy.example.com:8080",
+                https_proxy="https://proxy.example.com:8443",
+                no_proxy="localhost,127.0.0.1",
+                socks_proxy="socks5://proxy.example.com:1080",
+                proxy_wpad_enable=False,
+                custom_headers={"X-Global": "should-not-inherit"},
+                projects_filter=["GLOBAL"],
+            )
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.ssl_verify is False
+        assert called_config.http_proxy == "http://proxy.example.com:8080"
+        assert called_config.https_proxy == "https://proxy.example.com:8443"
+        assert called_config.no_proxy == "localhost,127.0.0.1"
+        assert called_config.socks_proxy == "socks5://proxy.example.com:1080"
+        assert called_config.custom_headers is None
+        assert called_config.projects_filter is None
+        assert called_config.proxy_wpad_enable is False
+        assert called_config.proxy_wpad_url is None
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_header_based_jira_fetcher_without_lifespan_context(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        monkeypatch,
+    ):
+        """Test header PAT still works without global config context."""
+        for env_var in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+            "SOCKS_PROXY",
+            "JIRA_HTTP_PROXY",
+            "JIRA_HTTPS_PROXY",
+            "JIRA_NO_PROXY",
+            "JIRA_SOCKS_PROXY",
+            "ATLASSIAN_PROXY_WPAD_ENABLE",
+            "JIRA_PROXY_WPAD_ENABLE",
+            "ATLASSIAN_PROXY_WPAD_URL",
+            "JIRA_PROXY_WPAD_URL",
+        ):
+            monkeypatch.delenv(env_var, raising=False)
+        service_headers = {
+            "X-Atlassian-Jira-Url": "https://test.atlassian.net",
+            "X-Atlassian-Jira-Personal-Token": "test-pat-token",
+        }
+
+        class MockState:
+            def __init__(self):
+                self.jira_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(
+                        f"'{type(self).__name__}' object has no attribute '{name}'"
+                    )
+                return None
+
+        mock_context.request_context.lifespan_context = {}
+        mock_request.state = MockState()
+        mock_get_http_request.return_value = mock_request
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.proxy_wpad_enable is False
+        assert called_config.proxy_wpad_url is None
+        assert called_config.no_proxy is None
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
@@ -624,7 +810,12 @@ class TestGetJiraFetcher:
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
     async def test_header_based_jira_fetcher_validation_failure(
-        self, mock_jira_fetcher_class, mock_get_http_request, mock_context, mock_request
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
     ):
         """Test header-based JiraFetcher creation failure when validation fails."""
 
@@ -649,6 +840,15 @@ class TestGetJiraFetcher:
 
         mock_request.state = MockState()
         mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(
+                http_proxy="http://proxy.example.com:8080",
+                proxy_wpad_enable=True,
+                proxy_wpad_url="http://wpad.example.com/wpad.dat",
+            )
+        )
+        _setup_mock_context(mock_context, app_context)
 
         mock_fetcher = _create_mock_fetcher(
             JiraFetcher, validation_error=Exception("Invalid token")
@@ -1031,6 +1231,7 @@ class TestGetConfluenceFetcher:
         mock_get_http_request,
         mock_context,
         mock_request,
+        config_factory,
     ):
         """Test creating header-based ConfluenceFetcher with PAT token from headers."""
         service_headers = {
@@ -1056,6 +1257,19 @@ class TestGetConfluenceFetcher:
         mock_request.state = MockState()
         mock_get_http_request.return_value = mock_request
 
+        app_context = config_factory.create_app_context(
+            confluence_config=config_factory.create_confluence_config(
+                ssl_verify=False,
+                http_proxy="http://proxy.example.com:8080",
+                no_proxy="localhost,127.0.0.1",
+                proxy_wpad_enable=True,
+                proxy_wpad_url="http://wpad.example.com/wpad.dat",
+                custom_headers={"X-Global": "should-not-inherit"},
+                spaces_filter=["GLOBAL"],
+            )
+        )
+        _setup_mock_context(mock_context, app_context)
+
         user_info = {"email": "user@example.com", "displayName": "Test User"}
         mock_fetcher = _create_mock_fetcher(
             ConfluenceFetcher, validation_return=user_info
@@ -1073,6 +1287,15 @@ class TestGetConfluenceFetcher:
         assert called_config.auth_type == "pat"
         assert called_config.url == "https://test.atlassian.net"
         assert called_config.personal_token == "test-confluence-pat-token"
+        assert called_config.ssl_verify is False
+        assert called_config.http_proxy == "http://proxy.example.com:8080"
+        assert called_config.https_proxy is None
+        assert called_config.no_proxy == "localhost,127.0.0.1"
+        assert called_config.socks_proxy is None
+        assert called_config.custom_headers is None
+        assert called_config.spaces_filter is None
+        assert called_config.proxy_wpad_enable is True
+        assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
@@ -1184,6 +1407,7 @@ class TestGetConfluenceFetcher:
         mock_get_http_request,
         mock_context,
         mock_request,
+        config_factory,
     ):
         """Test header-based ConfluenceFetcher creation failure when validation fails."""
         # Setup service headers for header-based auth
@@ -1208,6 +1432,15 @@ class TestGetConfluenceFetcher:
 
         mock_request.state = MockState()
         mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context(
+            confluence_config=config_factory.create_confluence_config(
+                http_proxy="http://proxy.example.com:8080",
+                proxy_wpad_enable=True,
+                proxy_wpad_url="http://wpad.example.com/wpad.dat",
+            )
+        )
+        _setup_mock_context(mock_context, app_context)
 
         # Setup mock fetcher to fail validation
         mock_fetcher = _create_mock_fetcher(
