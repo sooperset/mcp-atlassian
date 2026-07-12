@@ -39,7 +39,9 @@ def _get_cloud_space_id(cloud_instance: CloudInstanceInfo) -> str:
     for space in response.json().get("results", []):
         if space.get("key") == cloud_instance.space_key:
             return str(space["id"])
-    raise AssertionError(f"Space {cloud_instance.space_key} not found")
+    space_key = cloud_instance.space_key
+    message = f"Space {space_key} not found"
+    raise AssertionError(message)
 
 
 class TestConfluenceCloudBehavior:
@@ -464,6 +466,37 @@ class TestConfluenceCloudComments:
 
         comments = confluence_fetcher.get_page_comments(page.id)
         assert len(comments) > 0
+
+    def test_reply_to_comment_preserves_body(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Reply Test {uid}",
+            body="<p>For reply testing.</p>",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        parent = confluence_fetcher.add_comment(
+            page_id=page.id,
+            content=f"Cloud E2E parent comment {uid}",
+        )
+        assert parent is not None
+
+        reply = confluence_fetcher.reply_to_comment(
+            comment_id=parent.id,
+            content=f"Cloud E2E reply body {uid}",
+        )
+        assert reply is not None
+
+        comments = confluence_fetcher.get_page_comments(page.id)
+        assert any(
+            f"Cloud E2E reply body {uid}" in comment.body for comment in comments
+        )
 
     def test_add_and_get_inline_comments(
         self,

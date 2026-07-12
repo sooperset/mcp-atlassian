@@ -197,9 +197,10 @@ class CommentsMixin(ConfluenceClient):
                 )
                 space_key = ""
             else:
-                # v1 API (Server/DC): thread replies under the parent page with
-                # ancestors, not as a direct child of the parent comment.
-                # Using container.type="comment" creates an empty stub on Server/DC.
+                # v1 API (Cloud Basic and Server/DC): thread replies under the
+                # parent page with ancestors, not as a direct child of the
+                # parent comment. Using container.type="comment" creates an
+                # empty stub on Server/DC.
                 parent_comment = self.confluence.get_page_by_id(
                     page_id=comment_id, expand="container"
                 )
