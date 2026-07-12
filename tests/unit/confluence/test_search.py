@@ -59,13 +59,78 @@ class TestSearchMixin:
         result = search_mixin.search("test query")
 
         # Verify API call
-        search_mixin.confluence.cql.assert_called_once_with(cql="test query", limit=10)
+        search_mixin.confluence.cql.assert_called_once_with(
+            cql="test query", limit=10, expand="content.history,content.version"
+        )
 
         # Verify result
         assert len(result) == 1
         assert result[0].id == "123456789"
         assert result[0].title == "Test Page"
         assert result[0].content == "Processed content"
+
+    def test_search_expands_content_metadata(self, search_mixin):
+        """Search results should carry created/updated/author and version metadata.
+
+        Regression guard: on the ``/rest/api/search`` endpoint these live under
+        the nested ``content`` object, so the query must expand
+        ``content.history`` and ``content.version``. Without it every result's
+        ``created``/``updated``/``author`` comes back empty.
+        """
+        search_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "content": {
+                        "id": "123456789",
+                        "title": "Test Page",
+                        "type": "page",
+                        "space": {"key": "SPACE", "name": "Test Space"},
+                        "history": {
+                            "createdDate": "2026-07-07T17:56:30.079+08:00",
+                            "createdBy": {"displayName": "Alice Author"},
+                        },
+                        "version": {
+                            "number": 3,
+                            "when": "2026-07-09T17:22:07.533+08:00",
+                            "by": {"displayName": "Bob Editor"},
+                        },
+                    },
+                    "excerpt": "Test content excerpt",
+                    "url": "https://confluence.example.com/pages/123456789",
+                }
+            ]
+        }
+        search_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed content",
+        )
+
+        result = search_mixin.search("test query")
+
+        # The nested content properties must be requested with the
+        # "content." prefix, otherwise /rest/api/search ignores them.
+        search_mixin.confluence.cql.assert_called_once_with(
+            cql="test query", limit=10, expand="content.history,content.version"
+        )
+
+        assert len(result) == 1
+        page = result[0]
+        assert page.created == "2026-07-07T17:56:30.079+08:00"
+        # No history.lastUpdated in the payload, so updated falls back to the
+        # version timestamp.
+        assert page.updated == "2026-07-09T17:22:07.533+08:00"
+        assert page.author is not None
+        assert page.author.display_name == "Alice Author"
+        assert page.version is not None
+        assert page.version.number == 3
+        assert page.version.by is not None
+        assert page.version.by.display_name == "Bob Editor"
+
+        simplified = page.to_simplified_dict()
+        assert simplified["created"]
+        assert simplified["updated"]
+        assert simplified["author"] == "Alice Author"
+        assert simplified["version"] == 3
 
     def test_search_with_empty_results(self, search_mixin):
         """Test handling of empty search results."""
@@ -183,6 +248,7 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f"(test query) AND (space = {quoted_dev})",
             limit=10,
+            expand="content.history,content.version",
         )
         assert len(result) == 1
 
@@ -195,6 +261,7 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f"(test query) AND (space = {quoted_dev} OR space = {quoted_team})",
             limit=10,
+            expand="content.history,content.version",
         )
         assert len(result) == 1
 
@@ -205,6 +272,7 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f'(space = "EXISTING") AND (space = {quoted_dev})',
             limit=10,
+            expand="content.history,content.version",
         )
         assert len(result) == 1
 
@@ -277,6 +345,7 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f"(test query) AND (space = {quoted_dev} OR space = {quoted_team})",
             limit=10,
+            expand="content.history,content.version",
         )
         assert len(result) == 1
 
@@ -293,6 +362,7 @@ class TestSearchMixin:
                 f" AND (space = {quoted_override})"
             ),
             limit=10,
+            expand="content.history,content.version",
         )
         assert len(result) == 1
 
