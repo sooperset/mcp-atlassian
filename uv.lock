@@ -1426,6 +1426,7 @@ cli = [
 name = "mcp-atlassian"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "atlassian-python-api" },
     { name = "beautifulsoup4" },
     { name = "cachetools" },
@@ -1473,6 +1474,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.0.0" },
     { name = "atlassian-python-api", specifier = ">=4.0.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.3" },
     { name = "cachetools", specifier = ">=5.0.0" },
