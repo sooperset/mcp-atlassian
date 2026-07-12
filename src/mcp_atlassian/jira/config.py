@@ -11,6 +11,7 @@ from ..utils.oauth import (
     OAuthConfig,
     get_oauth_config_from_env,
 )
+from ..utils.proxy import get_proxy_settings_from_env
 from ..utils.urls import is_atlassian_cloud_url
 
 
@@ -107,6 +108,8 @@ class JiraConfig:
     https_proxy: str | None = None  # HTTPS proxy URL
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
     socks_proxy: str | None = None  # SOCKS proxy URL (optional)
+    proxy_wpad_enable: bool = False  # Whether to load PAC/WPAD configuration
+    proxy_wpad_url: str | None = None  # PAC URL used when WPAD is enabled
     custom_headers: dict[str, str] | None = None  # Custom HTTP headers
     disable_jira_markup_translation: bool = (
         False  # Disable automatic markup translation between formats
@@ -239,10 +242,7 @@ class JiraConfig:
         projects_filter = os.getenv("JIRA_PROJECTS_FILTER")
 
         # Proxy settings
-        http_proxy = os.getenv("JIRA_HTTP_PROXY", os.getenv("HTTP_PROXY"))
-        https_proxy = os.getenv("JIRA_HTTPS_PROXY", os.getenv("HTTPS_PROXY"))
-        no_proxy = os.getenv("JIRA_NO_PROXY", os.getenv("NO_PROXY"))
-        socks_proxy = os.getenv("JIRA_SOCKS_PROXY", os.getenv("SOCKS_PROXY"))
+        proxy_settings = get_proxy_settings_from_env("JIRA")
 
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("JIRA_CUSTOM_HEADERS")
@@ -271,10 +271,12 @@ class JiraConfig:
             oauth_config=oauth_config,
             ssl_verify=ssl_verify,
             projects_filter=projects_filter,
-            http_proxy=http_proxy,
-            https_proxy=https_proxy,
-            no_proxy=no_proxy,
-            socks_proxy=socks_proxy,
+            http_proxy=proxy_settings["http_proxy"],
+            https_proxy=proxy_settings["https_proxy"],
+            no_proxy=proxy_settings["no_proxy"],
+            socks_proxy=proxy_settings["socks_proxy"],
+            proxy_wpad_enable=bool(proxy_settings["proxy_wpad_enable"]),
+            proxy_wpad_url=proxy_settings["proxy_wpad_url"],
             custom_headers=custom_headers,
             disable_jira_markup_translation=disable_jira_markup_translation,
             client_cert=client_cert,
