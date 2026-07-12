@@ -70,6 +70,16 @@ class TestFiltersMixin:
 
         filters_mixin.jira.get.assert_called_once_with("rest/api/2/filter/my")
 
+    def test_get_my_filters_rejects_server_dc(self, filters_mixin: FiltersMixin):
+        """Test that the Cloud-only endpoint is not called on Server/DC."""
+        filters_mixin.config.is_cloud = False
+        filters_mixin.jira.get = MagicMock()
+
+        with pytest.raises(ValueError, match="only supported on Jira Cloud"):
+            filters_mixin.get_my_filters()
+
+        filters_mixin.jira.get.assert_not_called()
+
     def test_get_my_filters_parses_fields_correctly(self, filters_mixin: FiltersMixin):
         """Test that filter fields are correctly parsed."""
         filters_mixin.jira.get = MagicMock(return_value=[MOCK_FILTER_RESPONSE])

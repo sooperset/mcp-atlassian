@@ -25,8 +25,16 @@ class FiltersMixin(JiraClient):
 
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails.
+            ValueError: If running on Jira Server/Data Center.
             Exception: If there is an error retrieving filters.
         """
+        if not self.config.is_cloud:
+            raise ValueError(
+                "Listing filters owned by the current user is only supported on "
+                "Jira Cloud. On Jira Server/Data Center, use get_favourite_filters "
+                "or get_filter_by_id instead."
+            )
+
         try:
             response: Any = self.jira.get("rest/api/2/filter/my")
 
