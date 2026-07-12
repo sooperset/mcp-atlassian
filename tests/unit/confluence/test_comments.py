@@ -275,8 +275,9 @@ class TestCommentsMixin:
 class TestReplyToComment:
     """Tests for reply_to_comment method."""
 
-    def test_reply_to_comment_v1_success(self, comments_mixin):
-        """T1: reply_to_comment v1 success - parent_comment_id set."""
+    def test_reply_to_comment_v1_cloud_basic_success(self, comments_mixin):
+        """T1: v1 Cloud Basic replies use the parent page as the container."""
+        assert comments_mixin.config.is_cloud is True
         comments_mixin.confluence.get_page_by_id.return_value = (
             MOCK_PARENT_COMMENT_V1_RESPONSE
         )
@@ -311,8 +312,42 @@ class TestReplyToComment:
             },
         )
 
+    def test_reply_to_comment_v1_server_dc_success(self, comments_mixin):
+        """T2: v1 Server/DC replies use the parent page as the container."""
+        comments_mixin.config.url = "https://confluence.example.com"
+        assert comments_mixin.config.is_cloud is False
+        comments_mixin.confluence.get_page_by_id.return_value = (
+            MOCK_PARENT_COMMENT_V1_RESPONSE
+        )
+        comments_mixin.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>This is a reply</p>"
+        )
+
+        result = comments_mixin.reply_to_comment("456789123", "This is a reply")
+
+        assert result is not None
+        assert result.parent_comment_id == "456789123"
+        comments_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id="456789123", expand="container"
+        )
+        comments_mixin.confluence.post.assert_called_once_with(
+            "rest/api/content/",
+            data={
+                "type": "comment",
+                "container": {"id": "987654321", "type": "page"},
+                "ancestors": [{"id": "456789123"}],
+                "body": {
+                    "storage": {
+                        "value": "<p>This is a reply</p>",
+                        "representation": "storage",
+                    },
+                },
+            },
+        )
+
     def test_reply_to_comment_v2_oauth_success(self, comments_mixin):
-        """T2: reply_to_comment v2/OAuth routes through v2_adapter."""
+        """T3: reply_to_comment v2/OAuth routes through v2_adapter."""
         # Configure as OAuth Cloud
         comments_mixin.config.auth_type = "oauth"
         comments_mixin.config.url = "https://test.atlassian.net/wiki"
@@ -358,7 +393,7 @@ class TestReplyToComment:
         )
 
     def test_reply_with_html_content(self, comments_mixin):
-        """T3: Reply with HTML content skips markdown conversion."""
+        """T4: Reply with HTML content skips markdown conversion."""
         comments_mixin.confluence.get_page_by_id.return_value = (
             MOCK_PARENT_COMMENT_V1_RESPONSE
         )
@@ -374,7 +409,7 @@ class TestReplyToComment:
         comments_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
 
     def test_reply_network_error(self, comments_mixin):
-        """T4: Network error returns None."""
+        """T5: Network error returns None."""
         comments_mixin.confluence.get_page_by_id.return_value = (
             MOCK_PARENT_COMMENT_V1_RESPONSE
         )
@@ -390,7 +425,7 @@ class TestReplyToComment:
         assert result is None
 
     def test_reply_empty_response(self, comments_mixin):
-        """T5: Empty API response returns None."""
+        """T6: Empty API response returns None."""
         comments_mixin.confluence.get_page_by_id.return_value = (
             MOCK_PARENT_COMMENT_V1_RESPONSE
         )
@@ -404,7 +439,7 @@ class TestReplyToComment:
         assert result is None
 
     def test_reply_missing_container_page_returns_none(self, comments_mixin):
-        """T6: Missing parent page container returns None instead of empty stub."""
+        """T7: Missing parent page container returns None instead of empty stub."""
         comments_mixin.confluence.get_page_by_id.return_value = {
             "id": "456789123",
             "type": "comment",
