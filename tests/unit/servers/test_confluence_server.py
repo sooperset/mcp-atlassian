@@ -1837,9 +1837,7 @@ async def test_get_user_contributed_spaces_default_limit(
         "CSME": {"key": "CSME", "name": "Customer Success / NPI"},
     }
 
-    response = await client.call_tool(
-        "confluence_get_user_contributed_spaces", {}
-    )
+    response = await client.call_tool("confluence_get_user_contributed_spaces", {})
 
     mock_confluence_fetcher.get_user_contributed_spaces.assert_called_once_with(
         limit=100

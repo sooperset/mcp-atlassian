@@ -367,9 +367,7 @@ async def get_spaces(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     raw = confluence_fetcher.get_spaces(start=start, limit=limit)
-    return json.dumps(
-        _simplify_spaces_response(raw), indent=2, ensure_ascii=False
-    )
+    return json.dumps(_simplify_spaces_response(raw), indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
