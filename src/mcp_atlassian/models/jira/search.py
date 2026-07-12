@@ -53,6 +53,7 @@ class JiraSearchResult(ApiModel):
         # of search responses.  Propagate it into each issue dict so that
         # JiraIssue.from_api_response can populate display names.
         top_level_names = data.get("names")
+        base_url = kwargs.get("base_url")
         if isinstance(issues_data, list):
             for issue_data in issues_data:
                 if issue_data:
@@ -61,7 +62,9 @@ class JiraSearchResult(ApiModel):
                     requested_fields = kwargs.get("requested_fields")
                     issues.append(
                         JiraIssue.from_api_response(
-                            issue_data, requested_fields=requested_fields
+                            issue_data,
+                            base_url=base_url,
+                            requested_fields=requested_fields,
                         )
                     )
 
