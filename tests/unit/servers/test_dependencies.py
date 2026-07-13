@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +13,8 @@ from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.servers.dependencies import (
+    _confluence_spec,
+    _create_and_validate,
     _create_user_config_for_fetcher,
     _resolve_bearer_auth_type,
     _validation_cache,
@@ -1740,6 +1744,100 @@ class TestValidationCache:
         await get_confluence_fetcher(mock_context)
         mock_get_http_request.return_value = request2
         await get_confluence_fetcher(mock_context)
+
+        fetcher1.get_current_user_info.assert_called_once()
+        fetcher2.get_current_user_info.assert_called_once()
+
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    def test_different_credentials_validate_concurrently(
+        self, mock_confluence_fetcher_class, config_factory
+    ):
+        """Different cache keys must not wait on each other's validation."""
+        request1 = MockFastMCP.create_request()
+        request2 = MockFastMCP.create_request()
+        config1 = config_factory.create_confluence_config(
+            auth_type="pat", personal_token="token-a"
+        )
+        config2 = config_factory.create_confluence_config(
+            auth_type="pat", personal_token="token-b"
+        )
+
+        fetcher1 = _create_mock_fetcher(ConfluenceFetcher)
+        fetcher2 = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.side_effect = [fetcher1, fetcher2]
+
+        validation_started = threading.Event()
+        validation_release = threading.Event()
+        started_count = 0
+        started_count_lock = threading.Lock()
+
+        def validate() -> dict[str, str]:
+            nonlocal started_count
+            with started_count_lock:
+                started_count += 1
+                if started_count == 2:
+                    validation_started.set()
+            if not validation_release.wait(timeout=2):
+                raise AssertionError("Validation release was not signaled")
+            return {"email": "user@example.com", "displayName": "User"}
+
+        fetcher1.get_current_user_info.side_effect = validate
+        fetcher2.get_current_user_info.side_effect = validate
+
+        spec = _confluence_spec()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(
+                    _create_and_validate, request1, spec, config1, "header_pat"
+                ),
+                executor.submit(
+                    _create_and_validate, request2, spec, config2, "header_pat"
+                ),
+            ]
+            try:
+                assert validation_started.wait(timeout=1)
+            finally:
+                validation_release.set()
+
+            for future in futures:
+                future.result(timeout=2)
+
+        fetcher1.get_current_user_info.assert_called_once()
+        fetcher2.get_current_user_info.assert_called_once()
+
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    def test_same_oauth_token_and_url_different_cloud_ids_validate_separately(
+        self, mock_confluence_fetcher_class
+    ):
+        """Cloud OAuth cache entries must be isolated by effective Cloud ID."""
+        shared_url = "https://shared.example.atlassian.net"
+        shared_token = "shared-oauth-token"
+
+        def make_config(cloud_id: str) -> ConfluenceConfig:
+            return ConfluenceConfig(
+                url=shared_url,
+                auth_type="oauth",
+                oauth_config=OAuthConfig(
+                    client_id="client-id",
+                    client_secret="client-secret",
+                    redirect_uri="http://localhost/callback",
+                    scope="read:confluence-content.all",
+                    cloud_id=cloud_id,
+                    access_token=shared_token,
+                ),
+            )
+
+        fetcher1 = _create_mock_fetcher(ConfluenceFetcher)
+        fetcher2 = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.side_effect = [fetcher1, fetcher2]
+        spec = _confluence_spec()
+
+        _create_and_validate(
+            MockFastMCP.create_request(), spec, make_config("cloud-a"), "oauth"
+        )
+        _create_and_validate(
+            MockFastMCP.create_request(), spec, make_config("cloud-b"), "oauth"
+        )
 
         fetcher1.get_current_user_info.assert_called_once()
         fetcher2.get_current_user_info.assert_called_once()

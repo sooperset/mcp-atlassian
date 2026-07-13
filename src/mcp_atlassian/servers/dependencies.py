@@ -99,6 +99,18 @@ _CACHE_MISS = object()  # sentinel distinguishing "not cached" from a cached Non
 _validation_cache_lock = threading.RLock()
 
 
+@dataclasses.dataclass
+class _ValidationInFlight:
+    """Coordinate concurrent validation calls for one cache key."""
+
+    event: threading.Event = dataclasses.field(default_factory=threading.Event)
+    validation_data: Any = _CACHE_MISS
+    error: BaseException | None = None
+
+
+_validation_inflight: dict[tuple[str, str], _ValidationInFlight] = {}
+
+
 def _credential_for_cache(config: JiraConfig | ConfluenceConfig) -> str | None:
     """Extract the secret that authenticates ``config``, for cache-key hashing.
 
@@ -120,16 +132,89 @@ def _credential_for_cache(config: JiraConfig | ConfluenceConfig) -> str | None:
 
 
 def _validation_cache_key(
-    spec: _ServiceSpec, credential: str, url: str
+    spec: _ServiceSpec, credential: str, scope: str
 ) -> tuple[str, str]:
-    """Build the cache key, scoped to both the credential and the target URL.
+    """Build the cache key, scoped to both the credential and target.
 
     Header-based PAT auth accepts the base URL per-request (from
     X-Atlassian-*-Url), so the same credential string reused against a
     different instance must not share a cached validation result.
     """
-    digest = hashlib.sha256(f"{url}\x00{credential}".encode()).hexdigest()
+    digest = hashlib.sha256(f"{scope}\x00{credential}".encode()).hexdigest()
     return (spec.name, digest)
+
+
+def _validation_cache_scope(config: JiraConfig | ConfluenceConfig) -> str:
+    """Return the target identity to include in a validation cache key.
+
+    Cloud OAuth requests share the same API hostname, so the URL alone does
+    not identify the tenant. Include the effective Cloud ID as well as the
+    configured URL and Data Center OAuth base URL.
+    """
+    oauth_config = getattr(config, "oauth_config", None)
+    cloud_id = getattr(oauth_config, "cloud_id", None)
+    oauth_base_url = getattr(oauth_config, "base_url", None)
+    return "\x00".join(
+        value if isinstance(value, str) else ""
+        for value in (
+            getattr(config, "url", ""),
+            cloud_id,
+            oauth_base_url,
+        )
+    )
+
+
+def _validate_with_cache(
+    cache_key: tuple[str, str],
+    validation_cache: TTLCache[tuple[str, str], Any],
+    validate_fn: Callable[[], Any],
+    fn_name: str,
+    service_name: str,
+) -> Any:
+    """Return cached validation data or run one validation per cache key.
+
+    The process-wide lock protects only cache and in-flight bookkeeping. The
+    network validation runs outside it, allowing unrelated credentials to
+    validate concurrently while callers for the same key share one result.
+    """
+    with _validation_cache_lock:
+        cached_validation = validation_cache.get(cache_key, _CACHE_MISS)
+        if cached_validation is not _CACHE_MISS:
+            logger.debug(
+                f"{fn_name}: Reusing cached {service_name} credential "
+                "validation (skipped network call)."
+            )
+            return cached_validation
+
+        in_flight = _validation_inflight.get(cache_key)
+        if in_flight is None:
+            in_flight = _ValidationInFlight()
+            _validation_inflight[cache_key] = in_flight
+            owns_validation = True
+        else:
+            owns_validation = False
+
+    if not owns_validation:
+        in_flight.event.wait()
+        if in_flight.error is not None:
+            raise in_flight.error
+        return in_flight.validation_data
+
+    try:
+        validation_data = validate_fn()
+    except BaseException as error:
+        with _validation_cache_lock:
+            in_flight.error = error
+            _validation_inflight.pop(cache_key, None)
+            in_flight.event.set()
+        raise
+
+    with _validation_cache_lock:
+        validation_cache[cache_key] = validation_data
+        in_flight.validation_data = validation_data
+        _validation_inflight.pop(cache_key, None)
+        in_flight.event.set()
+    return validation_data
 
 
 def _jira_on_validated(
@@ -341,7 +426,7 @@ def _create_and_validate(
     auth_desc = "header-based" if auth_branch == "header_pat" else "user"
     credential = _credential_for_cache(config)
     cache_key = (
-        _validation_cache_key(spec, credential, getattr(config, "url", "") or "")
+        _validation_cache_key(spec, credential, _validation_cache_scope(config))
         if credential and _validation_cache is not None
         else None
     )
@@ -354,20 +439,13 @@ def _create_and_validate(
             )
         validation_cache = _validation_cache
         if cache_key is not None and validation_cache is not None:
-            # TTLCache isn't thread-safe. Keep the lookup and validation in one
-            # critical section so concurrent requests don't duplicate the
-            # upstream validation call for the same credential.
-            with _validation_cache_lock:
-                cached_validation = validation_cache.get(cache_key, _CACHE_MISS)
-                if cached_validation is not _CACHE_MISS:
-                    validation_data = cached_validation
-                    logger.debug(
-                        f"{fn_name}: Reusing cached {spec.name} credential "
-                        "validation (skipped network call)."
-                    )
-                else:
-                    validation_data = spec.validate_fn(fetcher)
-                    validation_cache[cache_key] = validation_data
+            validation_data = _validate_with_cache(
+                cache_key,
+                validation_cache,
+                lambda: spec.validate_fn(fetcher),
+                fn_name,
+                spec.name,
+            )
         else:
             validation_data = spec.validate_fn(fetcher)
         spec.on_validated(
