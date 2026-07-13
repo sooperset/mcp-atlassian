@@ -18,6 +18,7 @@ Get details of a specific Jira issue.
 | `properties` | `object` | No | Issue properties to return. |
 | `update_history` | `boolean` | No | Whether to update the issue view history for the requesting user |
 | `include` | `object` | No | Comma-separated enrichment sections to inline. |
+| `use_display_names` | `boolean` | No | When true, custom field keys in the output use human-readable display names (e.g. 'Story Points') instead of opaque IDs (e.g. 'customfield_10243'). The 'names' expansion is added automatically. Standard fields are unaffected. |
 **Example:**
 
 ```json
@@ -48,7 +49,7 @@ Create a new Jira issue with optional Epic link or parent for subtasks.
 | `summary` | `string` | Yes | Summary/title of the issue |
 | `issue_type` | `string` | Yes | Issue type (e.g. 'Task', 'Bug', 'Story', 'Epic', 'Subtask'). The available types depend on your project configuration. For subtasks, use 'Subtask' (not 'Sub-task') and include parent in additional_fields. |
 | `assignee` | `string` | No | (Optional) Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...') |
-| `description` | `string` | No | Issue description in Markdown format |
+| `description` | `string` | No | Issue description in Markdown format. On Jira Cloud, use '`{expand:Title}`...`{expand}`' for a collapsible section. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names to assign (e.g., 'Frontend,API') |
 | `additional_fields` | `string` | No | (Optional) JSON string of additional fields to set. Examples: - Set priority: `{"priority": {"name": "High"}`} - Add labels: `{"labels": ["frontend", "urgent"]}` - Link to parent (for any issue type): `{"parent": "PROJ-123"}` - Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}` - Set Fix Version/s: `{"fixVersions": [{"id": "10020"}]`} - Custom fields: `{"customfield_10010": "value"}` |
 **Example:**
@@ -78,7 +79,7 @@ Update an existing Jira issue including changing status, adding Epic links, upda
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `fields` | `string` | Yes | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format. Example: '`{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}`' |
+| `fields` | `string` | Yes | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format; on Jira Cloud, use '`{expand:Title}`...`{expand}`' for a collapsible section. Example: '`{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}`' |
 | `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}`. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names (e.g., 'Frontend,API') |
 | `attachments` | `string` | No | (Optional) JSON string array or comma-separated list of file paths to attach to the issue. Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt'] |
@@ -105,6 +106,21 @@ Delete an existing Jira issue.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+
+---
+
+### Assign Issue
+
+Assign a Jira issue to a user using the dedicated assignment endpoint.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `assignee` | `string` | No | User identifier to assign (email, display name, or account ID), or a JSON object string from jira_search_assignable_users. Pass null or empty string to unassign the issue. |
 
 ---
 
@@ -135,21 +151,6 @@ Create multiple Jira issues in a batch.
 |-----------|------|----------|-------------|
 | `issues` | `string` | Yes | JSON array of issue objects. Each object should contain: - project_key (required): The project key (e.g., 'PROJ') - summary (required): Issue summary/title - issue_type (required): Type of issue (e.g., 'Task', 'Bug') - description (optional): Issue description in Markdown format - assignee (optional): Assignee username or email - components (optional): Array of component names Example: [ `{"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"}`, `{"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]}` ] |
 | `validate_only` | `boolean` | No | If true, only validates the issues without creating them |
-
----
-
-### Assign Issue
-
-Assign a Jira issue to a user using the dedicated assignment endpoint.
-
-<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `assignee` | `string` | No | User identifier to assign (email, display name, or account ID), or a JSON object string from jira_search_assignable_users. Pass null or empty string to unassign the issue. |
 
 ---
 
@@ -200,20 +201,6 @@ Get all Jira projects accessible to the current user.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `include_archived` | `boolean` | No | Whether to include archived projects in the results |
-
----
-
-### Search Projects
-
-Search for Jira projects by name or key prefix.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `query` | `string` | Yes | Name or key prefix to search for |
-| `max_results` | `integer` | No | Maximum number of results to return |
-| `current_project_ids` | `object` | No | Comma-separated project IDs to exclude. |
 
 ---
 

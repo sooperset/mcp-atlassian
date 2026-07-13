@@ -160,20 +160,45 @@ This guide covers IDE integration, environment variables, and advanced configura
 
 See [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) for all available options.
 
-## Proxy Configuration
+### HTTP Hardening
 
-MCP Atlassian supports routing API requests through HTTP/HTTPS/SOCKS proxies.
+These optional safeguards are useful for protecting self-hosted Server/Data Center
+instances from runaway request loops. They are disabled by default.
 
 | Variable | Description |
 |----------|-------------|
-| `HTTP_PROXY` | HTTP proxy URL |
-| `HTTPS_PROXY` | HTTPS proxy URL |
-| `SOCKS_PROXY` | SOCKS proxy URL |
-| `NO_PROXY` | Hosts to bypass proxy |
-| `JIRA_HTTPS_PROXY` | Jira-specific HTTPS proxy |
-| `CONFLUENCE_HTTPS_PROXY` | Confluence-specific HTTPS proxy |
+| `ATLASSIAN_RETRY_TOTAL` | Enable retries for transient `429/502/503/504` responses and connection errors. `0` or unset disables retries. |
+| `ATLASSIAN_RETRY_BACKOFF` | Retry exponential backoff factor in seconds (default: `1.0` when retries are enabled). |
+| `ATLASSIAN_RETRY_INCLUDE_WRITES` | Also retry write methods (`POST`/`PUT`/`PATCH`/`DELETE`). Use only when writes are known to be idempotent. |
+| `ATLASSIAN_MAX_CONCURRENT_REQUESTS` | Process-wide cap for concurrent Jira and Confluence requests. `0` or unset disables the cap. |
+| `ATLASSIAN_REQUESTS_PER_SECOND` | Process-wide outbound request rate limit. `0` or unset disables the limit. |
+| `ATLASSIAN_MAX_PAGINATION_LIMIT` | Clamp user-supplied page sizes for high-fanout list/search calls. `0` or unset disables clamping. |
+| `ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD` | Open a process-wide circuit breaker after this many consecutive `429/503` responses. `0` or unset disables it. |
+| `ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN` | Circuit breaker cooldown in seconds before allowing a probe request (default: `30.0`). |
 
-Service-specific variables override global ones.
+## Proxy Configuration
+
+MCP Atlassian supports routing API requests through HTTP/HTTPS/SOCKS proxies,
+with optional PAC/WPAD auto-configuration.
+
+| Variable | Description |
+|----------|-------------|
+| `HTTP_PROXY` | Global HTTP proxy URL |
+| `HTTPS_PROXY` | Global HTTPS proxy URL |
+| `SOCKS_PROXY` | Global SOCKS proxy URL |
+| `NO_PROXY` | Global hosts to bypass proxy |
+| `ATLASSIAN_PROXY_WPAD_ENABLE` | Enable global PAC/WPAD evaluation (`true`/`false`) |
+| `ATLASSIAN_PROXY_WPAD_URL` | Global PAC URL (defaults to `http://wpad/wpad.dat` when enabled) |
+| `JIRA_HTTP_PROXY`, `JIRA_HTTPS_PROXY`, `JIRA_SOCKS_PROXY`, `JIRA_NO_PROXY` | Jira-specific explicit proxy overrides |
+| `JIRA_PROXY_WPAD_ENABLE`, `JIRA_PROXY_WPAD_URL` | Jira-specific PAC/WPAD overrides |
+| `CONFLUENCE_HTTP_PROXY`, `CONFLUENCE_HTTPS_PROXY`, `CONFLUENCE_SOCKS_PROXY`, `CONFLUENCE_NO_PROXY` | Confluence-specific explicit proxy overrides |
+| `CONFLUENCE_PROXY_WPAD_ENABLE`, `CONFLUENCE_PROXY_WPAD_URL` | Confluence-specific PAC/WPAD overrides |
+
+Service-specific variables override global ones. PAC/WPAD is opt-in and is
+only evaluated when no explicit proxy is configured for that service.
+PAC/WPAD support is provided by the optional `wpad` extra. Install it with
+`pip install "mcp-atlassian[wpad]"` or `uv add "mcp-atlassian[wpad]"` before
+enabling the feature. The published Docker image includes this extra.
 
 ## Custom HTTP Headers
 

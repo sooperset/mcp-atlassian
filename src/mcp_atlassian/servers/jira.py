@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
@@ -16,6 +16,7 @@ from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
 from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
+from mcp_atlassian.servers.async_utils import run_jira_fetcher_call
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.media import (
@@ -30,8 +31,10 @@ logger = logging.getLogger(__name__)
 # Regex patterns for Jira key validation.
 # Per Atlassian docs, Cloud project keys are 2-10 chars. Server/Data Center
 # allows longer keys (configurable). We accept any length to support both.
-# Underscores are also allowed to support non-standard project key formats
-ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d+$"
+# Underscores are also allowed to support non-standard project key formats.
+# Server/Data Center may use hyphens between numeric suffix segments
+# (e.g., B7-214-68901), but every segment must contain digits.
+ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*$"
 PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+$"
 
 jira_mcp = FastMCP(
@@ -49,6 +52,14 @@ _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
         "worklogs",
     }
 )
+_GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
+    "remote_links": "remote_links",
+    "transitions": "transitions",
+    "watchers": "watchers",
+    "changelog": "changelogs",
+    "comments": "comments",
+    "worklogs": "worklogs",
+}
 _GET_ISSUE_INCLUDE_ALIASES = {
     "comment": "comments",
     "worklog": "worklogs",
@@ -166,6 +177,73 @@ def _parse_additional_fields(
         except json.JSONDecodeError as e:
             raise ValueError(f"additional_fields is not valid JSON: {e}") from e
     raise ValueError("additional_fields must be a dictionary or JSON string.")
+
+
+def _parse_request_field_values(
+    request_field_values: dict[str, Any] | str,
+) -> dict[str, Any]:
+    """Parse request_field_values from dict or JSON string."""
+    try:
+        return _parse_additional_fields(request_field_values)
+    except ValueError as e:
+        msg = f"request_field_values is not valid JSON: {e}"
+        raise ValueError(msg) from e
+
+
+def _parse_request_participants(
+    request_participants: str | list[str] | None,
+) -> list[str] | None:
+    """Parse request participants from a JSON array string or comma-separated list."""
+    if request_participants is None:
+        return None
+    if isinstance(request_participants, list):
+        return [
+            str(value).strip() for value in request_participants if str(value).strip()
+        ]
+    if isinstance(request_participants, str):
+        stripped = request_participants.strip()
+        if not stripped:
+            return None
+        try:
+            parsed = json.loads(stripped)
+            if not isinstance(parsed, list):
+                raise ValueError("request_participants JSON string must be an array.")
+            return [str(value).strip() for value in parsed if str(value).strip()]
+        except json.JSONDecodeError:
+            return [value.strip() for value in stripped.split(",") if value.strip()]
+
+    raise ValueError(
+        "request_participants must be a JSON array string, a list of strings, or None."
+    )
+
+
+def _parse_attachments(
+    attachments: str | list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """Parse customer request attachments from a JSON array string or list.
+
+    Each attachment must be an object with ``filename``, ``mime_type`` and
+    base64-encoded ``base64`` content.
+    """
+    if attachments is None:
+        return None
+    if isinstance(attachments, str):
+        stripped = attachments.strip()
+        if not stripped:
+            return None
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            msg = f"attachments is not valid JSON: {e}"
+            raise ValueError(msg) from e
+    else:
+        parsed = attachments
+
+    if not isinstance(parsed, list):
+        raise ValueError("attachments must be a JSON array of attachment objects.")
+    if not all(isinstance(item, dict) for item in parsed):
+        raise ValueError("attachments must be a JSON array of attachment objects.")
+    return parsed
 
 
 @jira_mcp.tool(
@@ -384,7 +462,7 @@ async def get_issue_watchers(
     tags={"jira", "write", "toolset:jira_watchers"},
     annotations={
         "title": "Add Issue Watcher",
-        "readOnlyHint": False,
+        "destructiveHint": False,
     },
 )
 @check_write_access
@@ -429,7 +507,7 @@ async def add_watcher(
     tags={"jira", "write", "toolset:jira_watchers"},
     annotations={
         "title": "Remove Issue Watcher",
-        "readOnlyHint": False,
+        "destructiveHint": True,
     },
 )
 @check_write_access
@@ -547,6 +625,18 @@ async def get_issue(
             default=None,
         ),
     ] = None,
+    use_display_names: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true, custom field keys in the output use human-readable "
+                "display names (e.g. 'Story Points') instead of opaque IDs "
+                "(e.g. 'customfield_10243'). The 'names' expansion is added "
+                "automatically. Standard fields are unaffected."
+            ),
+            default=False,
+        ),
+    ] = False,
 ) -> str:
     """Get details of a specific Jira issue.
 
@@ -564,6 +654,7 @@ async def get_issue(
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
         include: Comma-separated enrichment sections to inline.
+        use_display_names: Opt into human-readable custom field keys.
 
     Returns:
         JSON string representing the Jira issue object.
@@ -586,10 +677,13 @@ async def get_issue(
     expand_additions = []
     if "changelog" in include_sections:
         expand_additions.append("changelog")
+    if use_display_names:
+        expand_additions.append("names")
     expand = _merge_expand(expand, expand_additions)
 
-    # Fetch the issue (with augmented expand)
-    issue = jira.get_issue(
+    # Fetch the issue (with augmented expand) without blocking the event loop.
+    issue = await run_jira_fetcher_call(
+        jira.get_issue,
         issue_key=issue_key,
         fields=fields_list,
         expand=expand,
@@ -597,7 +691,15 @@ async def get_issue(
         properties=properties.split(",") if properties else None,
         update_history=update_history,
     )
-    result = issue.to_simplified_dict()
+    if use_display_names:
+        include_output_keys = {
+            _GET_ISSUE_INCLUDE_OUTPUT_KEYS[s]
+            for s in include_sections
+            if s in _GET_ISSUE_INCLUDE_OUTPUT_KEYS
+        }
+        result = issue.to_display_name_dict(extra_reserved_keys=include_output_keys)
+    else:
+        result = issue.to_simplified_dict()
 
     if "comments" in include_sections:
         result.setdefault("comments", [])
@@ -700,6 +802,18 @@ async def search(
             default=None,
         ),
     ] = None,
+    use_display_names: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true, custom field keys in the output use human-readable "
+                "display names (e.g. 'Story Points') instead of opaque IDs "
+                "(e.g. 'customfield_10243'). The 'names' expansion is added "
+                "automatically. Standard fields are unaffected."
+            ),
+            default=False,
+        ),
+    ] = False,
 ) -> str:
     """Search Jira issues using JQL (Jira Query Language).
 
@@ -712,6 +826,7 @@ async def search(
         projects_filter: Comma-separated list of project keys to filter by.
         expand: Optional fields to expand.
         page_token: Pagination token from a previous search result (Cloud only).
+        use_display_names: Opt into human-readable custom field keys.
 
     Returns:
         JSON string representing the search results including pagination info.
@@ -721,7 +836,11 @@ async def search(
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
 
-    search_result = jira.search_issues(
+    if use_display_names:
+        expand = _merge_expand(expand, ["names"])
+
+    search_result = await run_jira_fetcher_call(
+        jira.search_issues,
         jql=jql,
         fields=fields_list,
         limit=limit,
@@ -730,7 +849,10 @@ async def search(
         projects_filter=projects_filter,
         page_token=page_token,
     )
-    result = search_result.to_simplified_dict()
+    if use_display_names:
+        result = search_result.to_display_name_dict()
+    else:
+        result = search_result.to_simplified_dict()
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -1067,17 +1189,22 @@ async def download_attachments(
 ) -> list[TextContent | EmbeddedResource]:
     """Download attachments from a Jira issue.
 
-    Returns attachment contents as base64-encoded embedded resources so that
-    they are available over the MCP protocol without requiring filesystem
-    access on the server.
+    Returns attachment contents as base64-encoded content so that they are
+    available over the MCP protocol without requiring filesystem access on
+    the server. Image attachments are returned as ``EmbeddedResource`` blobs;
+    all other attachments (documents, archives, etc.) are returned as
+    ``TextContent`` carrying a base64 payload, since many MCP clients only
+    forward ``EmbeddedResource`` blobs for recognized image MIME types and
+    otherwise drop the attachment (#1419).
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
 
     Returns:
-        A list containing a text summary and one EmbeddedResource per
-        successfully downloaded attachment.
+        A list containing a text summary, one EmbeddedResource per
+        downloaded image attachment, and one TextContent (base64 payload)
+        per downloaded non-image attachment.
     """
     jira = await get_jira_fetcher(ctx)
     result = jira.get_issue_attachment_contents(issue_key=issue_key)
@@ -1118,16 +1245,42 @@ async def download_attachments(
         mime_type = attachment.get("content_type", "application/octet-stream")
         downloaded += 1
 
-        contents.append(
-            EmbeddedResource(
-                type="resource",
-                resource=BlobResourceContents(
-                    uri=f"attachment:///{issue_key}/{filename}",
-                    mimeType=mime_type,
-                    blob=encoded,
-                ),
+        is_image, resolved_mime_type = is_image_attachment(mime_type, filename)
+        if is_image:
+            contents.append(
+                EmbeddedResource(
+                    type="resource",
+                    resource=BlobResourceContents(
+                        uri=f"attachment:///{issue_key}/{filename}",
+                        mimeType=resolved_mime_type,
+                        blob=encoded,
+                    ),
+                )
             )
-        )
+        else:
+            # Many MCP clients only forward EmbeddedResource blobs whose
+            # mimeType is a recognized image format, rejecting anything
+            # else (e.g. .zip) with "returned an image in an unsupported
+            # format" and dropping the attachment (#1419). TextContent is
+            # reliably forwarded, so non-image attachments carry their
+            # base64 payload there instead.
+            contents.append(
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "success": True,
+                            "issue_key": issue_key,
+                            "filename": filename,
+                            "mime_type": mime_type,
+                            "encoding": "base64",
+                            "content": encoded,
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
+            )
 
     summary: dict[str, Any] = {
         "success": True,
@@ -1551,7 +1704,7 @@ async def get_link_types(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_issues"},
-    annotations={"title": "Create Issue", "destructiveHint": True},
+    annotations={"title": "Create Issue", "destructiveHint": False},
 )
 @check_write_access
 async def create_issue(
@@ -1587,7 +1740,13 @@ async def create_issue(
     ] = None,
     description: Annotated[
         str | None,
-        Field(description="Issue description in Markdown format", default=None),
+        Field(
+            description=(
+                "Issue description in Markdown format. On Jira Cloud, use "
+                "'{expand:Title}...{expand}' for a collapsible section."
+            ),
+            default=None,
+        ),
     ] = None,
     components: Annotated[
         str | None,
@@ -1659,7 +1818,7 @@ async def create_issue(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_issues"},
-    annotations={"title": "Batch Create Issues", "destructiveHint": True},
+    annotations={"title": "Batch Create Issues", "destructiveHint": False},
 )
 @check_write_access
 async def batch_create_issues(
@@ -1829,7 +1988,8 @@ async def update_issue(
         Field(
             description=(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
-                "For 'description', provide text in Markdown format. "
+                "For 'description', provide text in Markdown format; on Jira Cloud, "
+                "use '{expand:Title}...{expand}' for a collapsible section. "
                 'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             )
         ),
@@ -2114,7 +2274,7 @@ async def move_issue(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_comments"},
-    annotations={"title": "Add Comment", "destructiveHint": True},
+    annotations={"title": "Add Comment", "destructiveHint": False},
 )
 @check_write_access
 async def add_comment(
@@ -2126,7 +2286,13 @@ async def add_comment(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
-    body: Annotated[str, Field(description="Comment text in Markdown format")],
+    body: Annotated[
+        str,
+        Field(
+            description="Comment text in Markdown format",
+            validation_alias=AliasChoices("body", "comment"),
+        ),
+    ],
     visibility: Annotated[
         str | None,
         Field(
@@ -2341,7 +2507,7 @@ async def link_to_epic(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_links"},
-    annotations={"title": "Create Issue Link", "destructiveHint": True},
+    annotations={"title": "Create Issue Link", "destructiveHint": False},
 )
 @check_write_access
 async def create_issue_link(
@@ -2425,7 +2591,7 @@ async def create_issue_link(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_links"},
-    annotations={"title": "Create Remote Issue Link", "destructiveHint": True},
+    annotations={"title": "Create Remote Issue Link", "destructiveHint": False},
 )
 @check_write_access
 async def create_remote_issue_link(
@@ -2622,7 +2788,7 @@ async def transition_issue(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_agile"},
-    annotations={"title": "Create Sprint", "destructiveHint": True},
+    annotations={"title": "Create Sprint", "destructiveHint": False},
 )
 @check_write_access
 async def create_sprint(
@@ -2729,7 +2895,7 @@ async def update_sprint(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_agile"},
-    annotations={"title": "Add Issues to Sprint", "readOnlyHint": False},
+    annotations={"title": "Add Issues to Sprint", "destructiveHint": True},
 )
 @check_write_access
 async def add_issues_to_sprint(
@@ -2796,6 +2962,103 @@ async def move_issues_to_backlog(
         "issue_keys": keys_list,
     }
     return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Project Issue Types", "readOnlyHint": True},
+)
+async def get_project_issue_types(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'JTEST')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """Get available issue types for a Jira project.
+
+    Returns the list of issue types (Bug, Task, Story, Epic, etc.) that can
+    be created in the specified project. Use the returned issue type IDs with
+    get_create_fields to discover what fields each type requires.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+
+    Returns:
+        JSON string with list of issue types (id, name, description, subtask).
+    """
+    jira = await get_jira_fetcher(ctx)
+    issue_types = []
+    for issue_type in jira.get_project_issue_types(project_key):
+        issue_type_id = issue_type.get("id")
+        compact_type = {
+            "id": str(issue_type_id) if issue_type_id is not None else "",
+            "name": issue_type.get("name", ""),
+            "description": issue_type.get("description"),
+            "subtask": bool(issue_type.get("subtask", False)),
+        }
+        untranslated_name = issue_type.get("untranslatedName")
+        if untranslated_name:
+            compact_type["untranslated_name"] = untranslated_name
+        issue_types.append(compact_type)
+    return json.dumps(issue_types, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Create Fields", "readOnlyHint": True},
+)
+async def get_create_fields(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'JTEST')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+    issue_type_id: Annotated[
+        str,
+        Field(
+            description=(
+                "The issue type ID (from get_project_issue_types). "
+                "Example: '10002' for Task."
+            )
+        ),
+    ],
+) -> str:
+    """Get fields available for creating an issue of a specific type.
+
+    Returns all fields (required and optional) for the given project and
+    issue type, including field names, IDs, whether they're required, and
+    their schema. Use jira_get_field_options when a returned field needs its
+    allowed values.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        issue_type_id: The issue type ID.
+
+    Returns:
+        JSON string with list of field metadata (field_id, name, required, schema).
+    """
+    jira = await get_jira_fetcher(ctx)
+    fields = []
+    for field in jira.get_create_fields(project_key, issue_type_id):
+        field_id = field.get("fieldId") or field.get("key")
+        fields.append(
+            {
+                "field_id": field_id,
+                "name": field.get("name", ""),
+                "required": bool(field.get("required", False)),
+                "schema": field.get("schema") or {},
+            }
+        )
+    return json.dumps(fields, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -3179,8 +3442,179 @@ async def get_queue_issues(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Request Types", "readOnlyHint": True},
+)
+async def get_request_types(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+) -> str:
+    """Get request types for a Jira Service Management service desk.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        start_at: Starting index for pagination.
+        limit: Maximum number of request types to return.
+
+    Returns:
+        JSON string with request types and pagination metadata.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_request_types(
+        service_desk_id=service_desk_id,
+        start_at=start_at,
+        limit=limit,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Request Type Fields", "readOnlyHint": True},
+)
+async def get_request_type_fields(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    request_type_id: Annotated[
+        str,
+        Field(description="Request type ID (e.g., '23')"),
+    ],
+) -> str:
+    """Get field definitions for a Jira Service Management request type.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        request_type_id: Request type ID.
+
+    Returns:
+        JSON string with request type field definitions.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_request_type_fields(
+        service_desk_id=service_desk_id,
+        request_type_id=request_type_id,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_service_desk"},
+    annotations={"title": "Create Customer Request", "destructiveHint": True},
+)
+@check_write_access
+async def create_customer_request(
+    ctx: Context,
+    service_desk_id: Annotated[
+        str,
+        Field(description="Service desk ID (e.g., '4')"),
+    ],
+    request_type_id: Annotated[
+        str,
+        Field(description="Request type ID (e.g., '23')"),
+    ],
+    request_field_values: Annotated[
+        str,
+        Field(
+            description=(
+                "JSON string of request field values keyed by field ID. Examples:\n"
+                '- Summary and description: {"summary": "Access issue", "description": "Cannot log in"}\n'
+                '- Multi-value field: {"customfield_10001": ["alice", "bob"]}'
+            )
+        ),
+    ],
+    raise_on_behalf_of: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Jira user identifier for raiseOnBehalfOf. "
+                "For Server/DC this is typically username or key; for Cloud use the identifier expected by your JSM instance."
+            ),
+            default=None,
+        ),
+    ] = None,
+    request_participants: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON array string or comma-separated list of request participants. "
+                'Examples: ["user1","user2"] or "user1,user2"'
+            ),
+            default=None,
+        ),
+    ] = None,
+    attachments: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON array string of files to attach to the created request. "
+                "Each object must contain 'filename', 'mime_type', and base64-encoded 'base64' content. "
+                'Example: [{"filename": "log.txt", "mime_type": "text/plain", "base64": "aGVsbG8="}]'
+            ),
+            default=None,
+        ),
+    ] = None,
+    strict_on_behalf: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, fail immediately when raiseOnBehalfOf cannot be applied. "
+                "If false, retry without raiseOnBehalfOf and return a fallback warning."
+            ),
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Create a Jira Service Management customer request.
+
+    Args:
+        ctx: The FastMCP context.
+        service_desk_id: Service desk ID.
+        request_type_id: Request type ID.
+        request_field_values: JSON string of request field values keyed by field ID.
+        raise_on_behalf_of: Optional Jira user identifier for raiseOnBehalfOf.
+        request_participants: Optional JSON array string or comma-separated list.
+        attachments: Optional JSON array string of base64-encoded files to attach.
+        strict_on_behalf: Whether to fail instead of retrying without on-behalf mode.
+
+    Returns:
+        JSON string representing the created customer request.
+    """
+    jira = await get_jira_fetcher(ctx)
+    parsed_field_values = _parse_request_field_values(request_field_values)
+    parsed_request_participants = _parse_request_participants(request_participants)
+    parsed_attachments = _parse_attachments(attachments)
+
+    result = jira.create_customer_request(
+        service_desk_id=service_desk_id,
+        request_type_id=request_type_id,
+        request_field_values=parsed_field_values,
+        raise_on_behalf_of=raise_on_behalf_of,
+        request_participants=parsed_request_participants,
+        attachments=parsed_attachments,
+        strict_on_behalf=strict_on_behalf,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_projects"},
-    annotations={"title": "Create Version", "destructiveHint": True},
+    annotations={"title": "Create Version", "destructiveHint": False},
 )
 @check_write_access
 async def create_version(
@@ -3238,7 +3672,7 @@ async def create_version(
 @jira_mcp.tool(
     name="batch_create_versions",
     tags={"jira", "write", "toolset:jira_projects"},
-    annotations={"title": "Batch Create Versions", "destructiveHint": True},
+    annotations={"title": "Batch Create Versions", "destructiveHint": False},
 )
 @check_write_access
 async def batch_create_versions(
@@ -3797,7 +4231,9 @@ async def get_issue_development_info(
         Field(
             description=(
                 "(Optional) Filter by application type (case-sensitive). "
-                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'GitHub', 'GitLab'"
+                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'GitHub', "
+                "'githube' (GitHub Enterprise Server), 'GitLab'. If omitted, "
+                "types are discovered automatically."
             )
         ),
     ] = None,
@@ -3862,7 +4298,9 @@ async def get_issues_development_info(
         Field(
             description=(
                 "(Optional) Filter by application type (case-sensitive). "
-                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'GitHub', 'GitLab'"
+                "Examples: 'stash' (Bitbucket Server), 'bitbucket', 'GitHub', "
+                "'githube' (GitHub Enterprise Server), 'GitLab'. If omitted, "
+                "types are discovered automatically."
             )
         ),
     ] = None,
@@ -3905,3 +4343,100 @@ async def get_issues_development_info(
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_project_analysis"},
+    annotations={
+        "title": "Get Project Epic Hierarchy",
+        "readOnlyHint": True,
+    },
+)
+async def get_project_epic_hierarchy(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+    max_epics: Annotated[
+        int,
+        Field(
+            description="Maximum number of epics to fetch (1-500)",
+            ge=1,
+            le=500,
+        ),
+    ] = 200,
+) -> str:
+    """Group a project's epics under their cross-project parent issues.
+
+    Fetches all epics in the project, detects their parent issue via
+    the parent field or inward issue links, then groups them by parent.
+    Epics with no detected parent appear under "Unlinked". Useful for
+    understanding how a project's epics roll up to initiatives in
+    another project.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        max_epics: Max epics to fetch.
+
+    Returns:
+        JSON string with grouped epic hierarchy.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_project_epic_hierarchy(
+        project_key=project_key,
+        max_epics=max_epics,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_project_analysis"},
+    annotations={
+        "title": "Get Cross-Project Dependencies",
+        "readOnlyHint": True,
+    },
+)
+async def get_cross_project_dependencies(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+    max_issues: Annotated[
+        int,
+        Field(
+            description="Maximum issues to scan for links (1-500)",
+            ge=1,
+            le=500,
+        ),
+    ] = 200,
+) -> str:
+    """Find all cross-project issue links for a project.
+
+    Scans issues in the project, extracts every issue link whose
+    target belongs to a different project, and groups them by target
+    project and link type. Useful for dependency analysis across
+    multi-project Jira setups.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        max_issues: Max issues to scan.
+
+    Returns:
+        JSON string with cross-project dependency map.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_cross_project_dependencies(
+        project_key=project_key,
+        max_issues=max_issues,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)

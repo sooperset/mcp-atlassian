@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 
 import pytest
@@ -123,6 +124,10 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
+            # Pin the workspace so the absolute path resolves inside it — keeps
+            # validate_safe_path passing deterministically across Python versions
+            # (mocking os.path.abspath does not reach pathlib.Path.resolve on 3.13).
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.path.isabs") as mock_isabs,
@@ -176,6 +181,7 @@ class TestAttachmentsMixin:
         self._mock_rest_api_upload(attachments_mixin)
 
         with (
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists", return_value=True),
             patch("os.path.getsize", return_value=100),
             patch("os.path.isabs", return_value=True),
@@ -228,33 +234,19 @@ class TestAttachmentsMixin:
             "/rest/api/content/123456/child/attachment"
         )
 
-    def test_upload_attachment_relative_path(self, attachments_mixin: AttachmentsMixin):
-        """Test attachment upload with a relative path."""
-        # Mock the REST API call
+    def test_upload_attachment_relative_path(
+        self, attachments_mixin: AttachmentsMixin, tmp_path: Path
+    ):
+        """A relative path inside the workspace resolves and uploads."""
         self._mock_rest_api_upload(attachments_mixin)
 
-        # Mock file operations
-        with (
-            patch("os.path.exists") as mock_exists,
-            patch("os.path.getsize") as mock_getsize,
-            patch("os.path.isabs") as mock_isabs,
-            patch("os.path.abspath") as mock_abspath,
-            patch("os.path.basename") as mock_basename,
-            patch("builtins.open", mock_open(read_data=b"test content")),
-        ):
-            mock_exists.return_value = True
-            mock_getsize.return_value = 100
-            mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
-            mock_basename.return_value = "test_file.txt"
+        (tmp_path / "test_file.txt").write_bytes(b"test content")
 
-            # Call the method with a relative path
+        with patch("os.getcwd", return_value=str(tmp_path)):
             result = attachments_mixin.upload_attachment("123456", "test_file.txt")
 
-            # Assertions
-            assert result["success"] is True
-            mock_isabs.assert_called_once_with("test_file.txt")
-            mock_abspath.assert_called_once_with("test_file.txt")
+        assert result["success"] is True
+        attachments_mixin.confluence._session.post.assert_called_once()
 
     def test_upload_attachment_no_content_id(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no content ID."""
@@ -282,6 +274,7 @@ class TestAttachmentsMixin:
         """Test attachment upload when file doesn't exist."""
         # Mock file operations
         with (
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
@@ -311,6 +304,7 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
@@ -378,6 +372,7 @@ class TestAttachmentsMixin:
         attachments_mixin.confluence._session.get.return_value = list_response
 
         with (
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists", return_value=True),
             patch("os.path.getsize", return_value=200),
             patch("os.path.isabs", return_value=True),
@@ -514,6 +509,130 @@ class TestAttachmentsMixin:
         # Assertions
         assert result["success"] is False
         assert "No content ID provided" in result["error"]
+
+    # Tests for upload_attachment_from_content method
+
+    def test_upload_attachment_from_content_success(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test successful in-memory attachment upload (no filesystem access)."""
+        self._mock_rest_api_upload(attachments_mixin)
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456",
+            "test_file.txt",
+            b"test content",
+            comment="Test comment",
+            minor_edit=False,
+        )
+
+        assert result["success"] is True
+        assert result["content_id"] == "123456"
+        assert result["filename"] == "test_file.txt"
+        assert result["size"] == len(b"test content")
+        assert result["id"] == "att12345"
+
+        # The REST API must be called without ever touching the filesystem
+        attachments_mixin.confluence._session.post.assert_called_once()
+        call_args = attachments_mixin.confluence._session.post.call_args
+        assert "/rest/api/content/123456/child/attachment" in call_args[0][0]
+        assert call_args[1]["headers"]["X-Atlassian-Token"] == "no-check"
+        assert call_args[1]["data"]["minorEdit"] == "false"
+        # The raw bytes are sent directly as the multipart file payload
+        assert call_args[1]["files"]["file"] == ("test_file.txt", b"test content")
+
+    def test_upload_attachment_from_content_no_content_id(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test in-memory upload with no content ID."""
+        result = attachments_mixin.upload_attachment_from_content(
+            "", "test_file.txt", b"data"
+        )
+
+        assert result["success"] is False
+        assert "No content ID provided" in result["error"]
+        attachments_mixin.confluence._session.post.assert_not_called()
+
+    def test_upload_attachment_from_content_no_filename(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test in-memory upload with no filename."""
+        result = attachments_mixin.upload_attachment_from_content("123456", "", b"data")
+
+        assert result["success"] is False
+        assert "No filename provided" in result["error"]
+        attachments_mixin.confluence._session.post.assert_not_called()
+
+    def test_upload_attachment_from_content_api_error(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test in-memory upload surfaces API errors as a failure result."""
+        from requests.exceptions import HTTPError
+
+        self._mock_rest_api_upload(
+            attachments_mixin, raise_error=HTTPError("API Error")
+        )
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456", "test_file.txt", b"data"
+        )
+
+        assert result["success"] is False
+        assert "API Error" in result["error"]
+
+    def test_upload_attachment_from_content_versioning_fallback(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test in-memory upload can update an existing attachment version."""
+        filename = "test file & notes #1.txt"
+        updated_attachment = {
+            "id": "att12345",
+            "type": "attachment",
+            "title": filename,
+            "extensions": {"mediaType": "text/plain", "fileSize": 200},
+            "_links": {"download": f"/download/attachments/123/{filename}"},
+            "version": {"number": 2},
+        }
+
+        conflict_response = Mock()
+        conflict_response.status_code = 400
+        conflict_response.text = (
+            f"Attachment with same file name already exists: {filename}"
+        )
+
+        list_response = Mock()
+        list_response.status_code = 200
+        list_response.raise_for_status.return_value = None
+        list_response.json.return_value = {"results": [{"id": "att12345"}]}
+
+        update_response = Mock()
+        update_response.status_code = 200
+        update_response.raise_for_status.return_value = None
+        update_response.json.return_value = updated_attachment
+
+        attachments_mixin.confluence._session.post.side_effect = [
+            conflict_response,
+            update_response,
+        ]
+        attachments_mixin.confluence._session.get.return_value = list_response
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456",
+            filename,
+            b"updated content",
+        )
+
+        assert result["success"] is True
+        assert result["filename"] == filename
+        assert result["id"] == "att12345"
+
+        list_call_url = attachments_mixin.confluence._session.get.call_args[0][0]
+        assert "filename=test%20file%20%26%20notes%20%231.txt" in list_call_url
+
+        assert attachments_mixin.confluence._session.post.call_count == 2
+        second_call = attachments_mixin.confluence._session.post.call_args_list[1]
+        assert "/child/attachment/att12345/data" in second_call[0][0]
+        assert second_call[1]["files"]["file"] == (filename, b"updated content")
 
     # Tests for download_attachment method
 
@@ -1662,6 +1781,37 @@ class TestConfluenceAttachmentPathTraversal:
         """download_content_attachments rejects directory escape."""
         with pytest.raises(ValueError, match="Path traversal detected"):
             confluence_mixin.download_content_attachments("12345", "/etc")
+
+    # --- Upload-side path traversal regression -----------------------------------
+    # The download tests above cover the CVE-2026-27825 fix. The upload path used to
+    # feed any caller-supplied file_path to the sink after only an os.path.exists
+    # check. These tests assert the secure outcome — the sink is never reached with
+    # a path outside the workspace.
+    # Covers GHSA-wm45, vc25, 93xw, 6cr4, f4p7, f6pj, mrq8, wv8v, p6hp, h7wj, mfv2,
+    # f26r, 9547, cc5h (read half). Asserts on the sink (not an exception type)
+    # because upload_attachment wraps its body in except Exception -> error dict.
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("attack", ["absolute_outside_cwd", "relative_traversal"])
+    def test_upload_attachment_does_not_read_outside_workspace(
+        self,
+        confluence_mixin: AttachmentsMixin,
+        tmp_path: Path,
+        attack: str,
+    ) -> None:
+        """A file_path resolving outside the workspace must not reach the sink."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        secret = tmp_path / "secret.txt"  # sibling of workspace -> outside it
+        secret.write_bytes(b"SECRET-EXFIL")
+        malicious = str(secret) if attack == "absolute_outside_cwd" else "../secret.txt"
+
+        confluence_mixin._upload_attachment_direct = MagicMock(return_value={"id": "1"})
+
+        with patch("os.getcwd", return_value=str(workspace)):
+            confluence_mixin.upload_attachment("123456", malicious)
+
+        confluence_mixin._upload_attachment_direct.assert_not_called()
 
 
 class TestResolveAttachmentDownloadUrl:

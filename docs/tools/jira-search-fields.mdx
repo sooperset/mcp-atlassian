@@ -18,6 +18,7 @@ Search Jira issues using JQL (Jira Query Language).
 | `projects_filter` | `object` | No | Comma-separated list of project keys to filter by. |
 | `expand` | `object` | No | Optional fields to expand. |
 | `page_token` | `object` | No | Pagination token from a previous search result (Cloud only). |
+| `use_display_names` | `boolean` | No | When true, custom field keys in the output use human-readable display names (e.g. 'Story Points') instead of opaque IDs (e.g. 'customfield_10243'). The 'names' expansion is added automatically. Standard fields are unaffected. |
 **Example:**
 
 ```json
@@ -75,6 +76,31 @@ Get allowed option values for a custom field.
 
 ---
 
+### Get Project Issue Types
+
+Get available issue types for a Jira project.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'JTEST') |
+
+---
+
+### Get Create Fields
+
+Get fields available for creating an issue of a specific type.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'JTEST') |
+| `issue_type_id` | `string` | Yes | The issue type ID (from get_project_issue_types). Example: '10002' for Task. |
+
+---
+
 ### Get Project Fields
 
 Get the fields available on issues of a project (the create schema),
@@ -84,5 +110,19 @@ Get the fields available on issues of a project (the create schema),
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `project_key` | `string` | Yes | The project key, e.g. 'PROJ'. |
+
+---
+
+### Search Projects
+
+Search for Jira projects by name or key prefix.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Name or key prefix to search for |
+| `max_results` | `integer` | No | Maximum number of results to return |
+| `current_project_ids` | `object` | No | Comma-separated project IDs to exclude. |
 
 ---

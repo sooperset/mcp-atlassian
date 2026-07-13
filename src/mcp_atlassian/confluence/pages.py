@@ -11,6 +11,7 @@ from requests.exceptions import HTTPError
 
 from ..models.confluence import ConfluencePage
 from ..utils.decorators import handle_auth_errors
+from ..utils.pagination import clamp_limit
 from .client import ConfluenceClient
 from .utils import emoji_to_hex_id, extract_emoji_from_property
 from .v2_adapter import ConfluenceV2Adapter
@@ -33,6 +34,20 @@ class PagesMixin(ConfluenceClient):
                 session=self.confluence._session, base_url=self.confluence.url
             )
         return None
+
+    def _cloud_v2_adapter(self) -> ConfluenceV2Adapter | None:
+        """Get a v2 API adapter for any Confluence Cloud auth mode."""
+        if not self.config.is_cloud:
+            return None
+
+        if self.config.auth_type == "oauth":
+            base_url = self.confluence.url
+        else:
+            base_url = self.config.url
+        return ConfluenceV2Adapter(
+            session=self.confluence._session,
+            base_url=base_url,
+        )
 
     @property
     def _page_children_v2_adapter(self) -> ConfluenceV2Adapter | None:
@@ -664,6 +679,7 @@ class PagesMixin(ConfluenceClient):
         content_representation: str | None = None,
         emoji: str | None = None,
         page_width: str | None = None,
+        subtype: str | None = None,
         table_layout: str | None = None,
     ) -> ConfluencePage:
         """
@@ -679,6 +695,7 @@ class PagesMixin(ConfluenceClient):
             content_representation: Content format when is_markdown=False ('wiki' or 'storage', keyword-only)
             emoji: Optional emoji character for the page title icon (keyword-only)
             page_width: Optional page layout width ('full-width', 'max', or 'default', keyword-only)
+            subtype: Optional Confluence page subtype. Use "live" to create a Live Doc.
             table_layout: Optional table width preset for markdown tables ('full-width', 'wide', 'default', keyword-only)
 
         Returns:
@@ -702,19 +719,29 @@ class PagesMixin(ConfluenceClient):
                 final_body = body
                 representation = content_representation or "storage"
 
-            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            # Use v2 API for OAuth authentication and for Cloud page subtypes
+            # such as Live Docs. The v1 API/client does not expose subtype.
             v2_adapter = self._v2_adapter
+            if subtype:
+                v2_adapter = self._cloud_v2_adapter()
+                if not v2_adapter:
+                    raise ValueError(
+                        "Confluence page subtype is only supported for Confluence Cloud"
+                    )
             if v2_adapter:
                 logger.debug(
                     f"Using v2 API for OAuth authentication to create page '{title}'"
                 )
-                result = v2_adapter.create_page(
-                    space_key=space_key,
-                    title=title,
-                    body=final_body,
-                    parent_id=parent_id,
-                    representation=representation,
-                )
+                create_kwargs = {
+                    "space_key": space_key,
+                    "title": title,
+                    "body": final_body,
+                    "parent_id": parent_id,
+                    "representation": representation,
+                }
+                if subtype:
+                    create_kwargs["subtype"] = subtype
+                result = v2_adapter.create_page(**create_kwargs)
             else:
                 logger.debug(
                     f"Using v1 API for token/basic authentication to create page '{title}'"
@@ -1013,6 +1040,8 @@ class PagesMixin(ConfluenceClient):
             List of ConfluencePage models containing the child pages and folders
         """
         try:
+            limit = clamp_limit(limit, context="confluence.get_page_children")
+
             v2_adapter = self._page_children_v2_adapter
             if v2_adapter:
                 logger.debug(f"Using v2 API to get children for Cloud page '{page_id}'")
@@ -1151,6 +1180,8 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error fetching pages
         """
         try:
+            limit = clamp_limit(limit, context="confluence.get_space_page_tree")
+
             # Paginate using the raw API to access _links.next for reliable
             # truncation detection. The higher-level get_all_pages_from_space()
             # has a broken termination condition when limit > server-side cap.

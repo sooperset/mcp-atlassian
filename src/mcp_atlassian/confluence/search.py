@@ -13,6 +13,7 @@ from ..models.confluence import (
 )
 from ..models.confluence.common import ConfluenceUser
 from ..utils.decorators import handle_atlassian_api_errors
+from ..utils.pagination import clamp_limit
 from .client import ConfluenceClient
 from .utils import quote_cql_identifier_if_needed
 
@@ -21,6 +22,29 @@ logger = logging.getLogger("mcp-atlassian")
 
 class SearchMixin(ConfluenceClient):
     """Mixin for Confluence search operations."""
+
+    def _and_spaces_filter(self, cql: str, filter_to_use: str) -> str:
+        """AND a single comma-separated spaces allowlist into ``cql``.
+
+        Always ANDs the allowlist, even when the caller's CQL already names a
+        space, so a caller-supplied ``space = X`` cannot escape it.
+        """
+        spaces = [s.strip() for s in filter_to_use.split(",")]
+        space_query = " OR ".join(
+            [f"space = {quote_cql_identifier_if_needed(space)}" for space in spaces]
+        )
+        if not cql:
+            return space_query
+        # Extract a trailing ORDER BY so the AND does not produce invalid CQL.
+        order_match = re.search(r"\s+(ORDER\s+BY\s+.*)$", cql, re.IGNORECASE)
+        if order_match:
+            order_clause = order_match.group(1)
+            cql_without_order = cql[: order_match.start()]
+            cql = f"({cql_without_order}) AND ({space_query}) {order_clause}"
+        else:
+            cql = f"({cql}) AND ({space_query})"
+        logger.info(f"Applied spaces filter to query: {cql}")
+        return cql
 
     @handle_atlassian_api_errors("Confluence API")
     def search(
@@ -32,8 +56,9 @@ class SearchMixin(ConfluenceClient):
         Args:
             cql: Confluence Query Language string
             limit: Maximum number of results to return
-            spaces_filter: Optional comma-separated list of space keys to filter by,
-                overrides config
+            spaces_filter: Optional comma-separated list of space keys to narrow
+                results within the configured allowlist (ANDed with config,
+                never replaces it)
 
         Returns:
             List of ConfluencePage models containing search results
@@ -42,30 +67,24 @@ class SearchMixin(ConfluenceClient):
             MCPAtlassianAuthenticationError: If authentication fails with the
                 Confluence API (401/403)
         """
-        # Use spaces_filter parameter if provided, otherwise fall back to config
-        filter_to_use = spaces_filter or self.config.spaces_filter
+        limit = clamp_limit(limit, context="confluence.search")
 
-        # Apply spaces filter if present
-        if filter_to_use:
-            # Split spaces filter by commas and handle possible whitespace
-            spaces = [s.strip() for s in filter_to_use.split(",")]
+        # config.spaces_filter is a hard boundary and is always applied; a
+        # caller-supplied spaces_filter may only *narrow* within it (both ANDed),
+        # never replace it — otherwise the tool argument would defeat the
+        # operator's allowlist in shared-credential deployments.
+        for filter_str in (self.config.spaces_filter, spaces_filter):
+            if filter_str:
+                cql = self._and_spaces_filter(cql, filter_str)
 
-            # Build the space filter query part using proper quoting for each space key
-            space_query = " OR ".join(
-                [f"space = {quote_cql_identifier_if_needed(space)}" for space in spaces]
-            )
-
-            # Add the space filter to existing query with parentheses
-            if cql and space_query:
-                if "space = " not in cql:  # Only add if not already filtering by space
-                    cql = f"({cql}) AND ({space_query})"
-            else:
-                cql = space_query
-
-            logger.info(f"Applied spaces filter to query: {cql}")
-
-        # Execute the CQL search query
-        results = self.confluence.cql(cql=cql, limit=limit)
+        # Execute the CQL search query. Expand content.history and
+        # content.version so each result carries created/updated/author and
+        # version metadata; on the /rest/api/search endpoint these nested
+        # properties require the "content." prefix (a bare "history,version"
+        # is silently ignored).
+        results = self.confluence.cql(
+            cql=cql, limit=limit, expand="content.history,content.version"
+        )
 
         # Convert the response to a search result model
         search_result = ConfluenceSearchResult.from_api_response(
@@ -123,6 +142,8 @@ class SearchMixin(ConfluenceClient):
             MCPAtlassianAuthenticationError: If authentication fails
                 with the Confluence API (401/403)
         """
+        limit = clamp_limit(limit, context="confluence.search_user")
+
         if self.config.is_cloud:
             # Cloud: use CQL search endpoint
             results = self.confluence.get(

@@ -63,6 +63,9 @@ class TestJiraIssue:
         assert isinstance(issue.fix_versions, list)
         assert "v1.0" in issue.fix_versions
 
+        assert isinstance(issue.versions, list)
+        assert "v0.9" in issue.versions
+
         assert isinstance(issue.attachments, list)
         assert len(issue.attachments) == 1
         assert issue.attachments[0].filename == "test_attachment.txt"
@@ -255,7 +258,29 @@ class TestJiraIssue:
         assert issue.security is None
         assert issue.worklog is None
 
-    def test_to_simplified_dict(self, jira_issue_data):
+    def test_from_api_response_builds_browse_url(self, jira_issue_data):
+        """Test creating a browser URL from the configured Jira base URL."""
+        issue = JiraIssue.from_api_response(
+            jira_issue_data,
+            base_url="https://example.atlassian.net/",
+            requested_fields="summary",
+        )
+        simplified = issue.to_simplified_dict()
+
+        assert issue.url == "https://example.atlassian.net/rest/api/2/issue/12345"
+        assert issue.browse_url == "https://example.atlassian.net/browse/PROJ-123"
+        expected_browse_url = "https://example.atlassian.net/browse/PROJ-123"
+        assert simplified["browse_url"] == expected_browse_url
+        assert "url" not in simplified
+
+    def test_from_api_response_omits_browse_url_without_base_url(self, jira_issue_data):
+        """Test browser URL is absent when no Jira base URL is provided."""
+        issue = JiraIssue.from_api_response(jira_issue_data)
+
+        assert issue.browse_url is None
+        assert "browse_url" not in issue.to_simplified_dict()
+
+    def test_to_simplified_dict(self, jira_issue_data, pacific_timezone):
         """Test converting a JiraIssue to a simplified dictionary."""
         issue = JiraIssue.from_api_response(jira_issue_data)
         simplified = issue.to_simplified_dict()
@@ -267,10 +292,8 @@ class TestJiraIssue:
         assert "summary" in simplified
         assert simplified["summary"] == "Test Issue Summary"
 
-        assert "created" in simplified
-        assert isinstance(simplified["created"], str)
-        assert "updated" in simplified
-        assert isinstance(simplified["updated"], str)
+        assert simplified["created"] == "2024-01-01 02:00:00 PST"
+        assert simplified["updated"] == "2024-01-02 07:30:00 PST"
 
         if isinstance(simplified["status"], str):
             assert simplified["status"] == "In Progress"
@@ -318,6 +341,7 @@ class TestJiraIssue:
             "epic_key",
             "epic_name",
             "fix_versions",
+            "versions",
             "project",
             "resolution",
             "duedate",
@@ -609,6 +633,7 @@ class TestJiraIssue:
             "labels",
             "components",
             "fix_versions",
+            "versions",
             "epic_key",
             "epic_name",
             "timetracking",
@@ -655,6 +680,7 @@ class TestJiraIssue:
         ("requested_field", "expected_key"),
         [
             ("fixVersions", "fix_versions"),
+            ("versions", "versions"),
             ("issuetype", "issue_type"),
         ],
     )
@@ -668,6 +694,7 @@ class TestJiraIssue:
             summary="Test",
             issue_type=JiraIssueType(id="1", name="Task"),
             fix_versions=["1.0"],
+            versions=["0.9"],
             requested_fields=[requested_field],
         )
         result = issue.to_simplified_dict()
@@ -773,3 +800,194 @@ class TestProcessCustomFieldValue:
         field = simplified["customfield_10200"]
         assert field["name"] == "Okapya Checklist"
         assert field["value"] == checklist_items
+
+
+class TestDisplayNameMethods:
+    """Tests for the additive display-name helper methods.
+
+    These methods sit on top of the existing JiraIssue model without
+    modifying any existing behavior.
+    """
+
+    @pytest.fixture()
+    def issue_with_names(self):
+        """Create a JiraIssue whose custom fields carry display names."""
+        api_data = {
+            "id": "100",
+            "key": "DN-1",
+            "fields": {
+                "summary": "Display name test",
+                "customfield_10001": "text value",
+                "customfield_10002": {"value": "Option A"},
+                "customfield_10003": [
+                    {"value": "Multi 1"},
+                    {"value": "Multi 2"},
+                ],
+                "customfield_10099": "orphan without a name",
+            },
+            "names": {
+                "customfield_10001": "Story Points",
+                "customfield_10002": "Severity",
+                "customfield_10003": "Affected Versions",
+            },
+        }
+        return JiraIssue.from_api_response(api_data, requested_fields="*all")
+
+    # -- get_custom_field_by_name -----------------------------------------
+
+    def test_get_custom_field_by_name_exact(self, issue_with_names):
+        result = issue_with_names.get_custom_field_by_name("Story Points")
+        assert result == "text value"
+
+    def test_get_custom_field_by_name_case_insensitive(self, issue_with_names):
+        result = issue_with_names.get_custom_field_by_name("story points")
+        assert result == "text value"
+
+    def test_get_custom_field_by_name_case_sensitive_miss(self, issue_with_names):
+        result = issue_with_names.get_custom_field_by_name(
+            "story points", case_sensitive=True
+        )
+        assert result is None
+
+    def test_get_custom_field_by_name_select(self, issue_with_names):
+        result = issue_with_names.get_custom_field_by_name("Severity")
+        assert result == "Option A"
+
+    def test_get_custom_field_by_name_multiselect(self, issue_with_names):
+        result = issue_with_names.get_custom_field_by_name("Affected Versions")
+        assert result == ["Multi 1", "Multi 2"]
+
+    def test_get_custom_field_by_name_not_found(self, issue_with_names):
+        assert issue_with_names.get_custom_field_by_name("Nonexistent") is None
+
+    # -- custom_fields_by_display_name property ---------------------------
+
+    def test_property_rekeys_by_display_name(self, issue_with_names):
+        by_name = issue_with_names.custom_fields_by_display_name
+        assert "Story Points" in by_name
+        assert "Severity" in by_name
+        assert "Affected Versions" in by_name
+
+    def test_property_includes_field_id(self, issue_with_names):
+        by_name = issue_with_names.custom_fields_by_display_name
+        assert by_name["Story Points"]["field_id"] == "customfield_10001"
+        assert by_name["Severity"]["field_id"] == "customfield_10002"
+
+    def test_property_keeps_orphans_by_raw_id(self, issue_with_names):
+        by_name = issue_with_names.custom_fields_by_display_name
+        assert "customfield_10099" in by_name
+        assert by_name["customfield_10099"]["field_id"] == "customfield_10099"
+
+    def test_property_does_not_mutate_original(self, issue_with_names):
+        _ = issue_with_names.custom_fields_by_display_name
+        assert "customfield_10001" in issue_with_names.custom_fields
+
+    def test_property_preserves_duplicate_display_names(self, issue_with_names):
+        issue_with_names.custom_fields["customfield_10004"] = {
+            "name": "Story Points",
+            "value": 8,
+        }
+
+        by_name = issue_with_names.custom_fields_by_display_name
+
+        assert by_name["Story Points"]["field_id"] == "customfield_10001"
+        assert by_name["customfield_10004"]["value"] == 8
+        assert len(by_name) == len(issue_with_names.custom_fields)
+
+    # -- to_display_name_dict ---------------------------------------------
+
+    def test_display_name_dict_rekeys_customs(self, issue_with_names):
+        d = issue_with_names.to_display_name_dict()
+        assert "Story Points" in d
+        assert "Severity" in d
+        assert "Affected Versions" in d
+        assert "customfield_10001" not in d
+        assert "customfield_10002" not in d
+
+    def test_display_name_dict_preserves_standard_fields(self, issue_with_names):
+        d = issue_with_names.to_display_name_dict()
+        assert d["key"] == "DN-1"
+        assert d["summary"] == "Display name test"
+
+    def test_display_name_dict_includes_field_id(self, issue_with_names):
+        d = issue_with_names.to_display_name_dict()
+        assert d["Story Points"]["field_id"] == "customfield_10001"
+
+    def test_display_name_dict_orphan_kept(self, issue_with_names):
+        d = issue_with_names.to_display_name_dict()
+        assert "customfield_10099" in d
+
+    def test_original_simplified_dict_unchanged(self, issue_with_names):
+        """to_simplified_dict must still use customfield_XXXXX keys."""
+        s = issue_with_names.to_simplified_dict()
+        assert "customfield_10001" in s
+        assert "Story Points" not in s
+
+    def test_display_name_dict_preserves_duplicate_names(self, issue_with_names):
+        issue_with_names.custom_fields["customfield_10004"] = {
+            "name": "Story Points",
+            "value": 8,
+        }
+
+        display_dict = issue_with_names.to_display_name_dict()
+
+        assert display_dict["Story Points"]["field_id"] == "customfield_10001"
+        assert display_dict["customfield_10004"]["value"] == 8
+        assert display_dict["customfield_10004"]["field_id"] == "customfield_10004"
+
+    def test_display_name_dict_preserves_standard_field_collision(
+        self, issue_with_names
+    ):
+        issue_with_names.custom_fields["customfield_10004"] = {
+            "name": "summary",
+            "value": "custom summary",
+        }
+
+        display_dict = issue_with_names.to_display_name_dict()
+
+        assert display_dict["summary"] == "Display name test"
+        assert display_dict["customfield_10004"]["value"] == "custom summary"
+
+    def test_display_name_dict_extra_reserved_keys(self, issue_with_names):
+        """Custom field named 'comments' must not claim that key when reserved."""
+        issue_with_names.custom_fields["customfield_10099"] = {
+            "name": "comments",
+            "value": "some value",
+        }
+
+        display_dict = issue_with_names.to_display_name_dict(
+            extra_reserved_keys={"comments"}
+        )
+
+        assert "customfield_10099" in display_dict
+        assert display_dict["customfield_10099"]["value"] == "some value"
+        assert display_dict["customfield_10099"]["field_id"] == "customfield_10099"
+
+    def test_display_name_dict_extra_reserved_keys_no_false_positives(
+        self, issue_with_names
+    ):
+        """Unrelated fields are still rekeyed even with extra_reserved_keys."""
+        display_dict = issue_with_names.to_display_name_dict(
+            extra_reserved_keys={"comments", "watchers"}
+        )
+
+        assert "Story Points" in display_dict
+        assert "Severity" in display_dict
+
+    def test_display_name_dict_strips_redundant_name(self, issue_with_names):
+        """The redundant 'name' field is removed from custom field entries."""
+        display_dict = issue_with_names.to_display_name_dict()
+
+        sp = display_dict["Story Points"]
+        assert "name" not in sp
+        assert sp["field_id"] == "customfield_10001"
+
+    def test_custom_fields_by_display_name_strips_redundant_name(
+        self, issue_with_names
+    ):
+        """The property variant also strips redundant 'name' entries."""
+        by_name = issue_with_names.custom_fields_by_display_name
+
+        sp = by_name["Story Points"]
+        assert "name" not in sp
+        assert sp["field_id"] == "customfield_10001"

@@ -1,0 +1,30 @@
+---
+title: "Jira Project Analysis"
+description: "Epic hierarchy and cross-project dependency analysis"
+---
+
+### Get Project Epic Hierarchy
+
+Group a project's epics under their cross-project parent issues.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ') |
+| `max_epics` | `integer` | No | Maximum number of epics to fetch (1-500) |
+
+---
+
+### Get Cross-Project Dependencies
+
+Find all cross-project issue links for a project.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ') |
+| `max_issues` | `integer` | No | Maximum issues to scan for links (1-500) |
+
+---

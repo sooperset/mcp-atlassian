@@ -34,20 +34,22 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_create_issue",
         "jira_update_issue",
         "jira_delete_issue",
+        "jira_assign_issue",
         "jira_move_issue",
         "jira_batch_create_issues",
-        "jira_assign_issue",
         "jira_transition_issue",
         "jira_get_transitions",
         "jira_get_all_projects",
-        "jira_search_projects",
         "jira_get_project_issues",
     ],
     "jira-search-fields": [
         "jira_search",
         "jira_search_fields",
         "jira_get_field_options",
+        "jira_get_project_issue_types",
+        "jira_get_create_fields",
         "jira_get_project_fields",
+        "jira_search_projects",
     ],
     "jira-agile": [
         "jira_get_agile_boards",
@@ -91,6 +93,9 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_service_desk_for_project",
         "jira_get_service_desk_queues",
         "jira_get_queue_issues",
+        "jira_get_request_types",
+        "jira_get_request_type_fields",
+        "jira_create_customer_request",
     ],
     "jira-forms-metrics": [
         "jira_get_issue_proforma_forms",
@@ -101,6 +106,10 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_issue_development_info",
         "jira_get_issues_development_info",
     ],
+    "jira-project-analysis": [
+        "jira_get_project_epic_hierarchy",
+        "jira_get_cross_project_dependencies",
+    ],
     "confluence-pages": [
         "confluence_get_page",
         "confluence_create_page",
@@ -109,9 +118,12 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_get_page_children",
         "confluence_get_space_page_tree",
         "confluence_get_page_history",
-        "confluence_move_page",
-        "confluence_get_page_diff",
         "confluence_update_page_section",
+        "confluence_move_page",
+        "confluence_copy_page",
+        "confluence_get_page_restrictions",
+        "confluence_set_page_restrictions",
+        "confluence_get_page_diff",
     ],
     "confluence-search": [
         "confluence_search",
@@ -135,6 +147,15 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_get_labels",
         "confluence_add_label",
         "confluence_get_page_views",
+    ],
+    "confluence-permissions": [
+        "confluence_check_content_permissions",
+        "confluence_get_space_permissions",
+    ],
+    "confluence-templates": [
+        "confluence_list_page_templates",
+        "confluence_get_page_template",
+        "confluence_create_page_from_template",
     ],
 }
 
@@ -167,11 +188,15 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     },
     "jira-service-desk": {
         "title": "Jira Service Desk",
-        "description": "Service desk queues and queue issues",
+        "description": "Customer requests, service desks, and queues",
     },
     "jira-forms-metrics": {
         "title": "Jira Forms & Metrics",
         "description": ("ProForma forms, SLA metrics, dates, and development info"),
+    },
+    "jira-project-analysis": {
+        "title": "Jira Project Analysis",
+        "description": "Epic hierarchy and cross-project dependency analysis",
     },
     "confluence-pages": {
         "title": "Confluence Pages",
@@ -188,6 +213,14 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     "confluence-comments": {
         "title": "Confluence Comments & Labels",
         "description": "Comments, labels, and page analytics",
+    },
+    "confluence-permissions": {
+        "title": "Confluence Permissions",
+        "description": "Inspect content and space permissions",
+    },
+    "confluence-templates": {
+        "title": "Confluence Templates",
+        "description": "List page templates and create pages from them",
     },
 }
 

@@ -3,10 +3,11 @@
 import json
 import logging
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastmcp import Context
+from fastmcp import Context, FastMCP
+from fastmcp.exceptions import NotFoundError
 from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
 from starlette.applications import Starlette
@@ -89,6 +90,55 @@ class TestMCPProtocolIntegration:
         server = AtlassianMCP(name="Test Atlassian MCP", lifespan=main_lifespan)
         # Mount sub-servers (they're already mounted in the actual server)
         return server
+
+    @pytest.mark.security_regression
+    async def test_call_tool_mcp_enforces_enablement_at_dispatch(
+        self, atlassian_mcp_server, mock_jira_config, mock_confluence_config
+    ):
+        """A tool filtered out of the listing must not be invocable by name.
+
+        `_list_tools_mcp` hides read-only-excluded / non-enabled / disabled-toolset
+        tools, but the call path must re-check — otherwise a client can dispatch a
+        hidden tool directly by name. Verifies denied calls never reach the
+        underlying executor and enabled calls do (GHSA-3r68).
+        """
+        app_context = MainAppContext(
+            full_jira_config=mock_jira_config,
+            full_confluence_config=mock_confluence_config,
+            read_only=True,  # write tools are excluded
+            enabled_tools=None,
+        )
+        request_context = MagicMock()
+        request_context.request = None
+        request_context.lifespan_context = {"app_lifespan_context": app_context}
+        atlassian_mcp_server._mcp_server = MagicMock()
+        atlassian_mcp_server._mcp_server.request_context = request_context
+
+        async def mock_list_tools():
+            read_tool = MagicMock(spec=FastMCPTool)
+            read_tool.name = "jira_get_issue"
+            read_tool.tags = {"jira", "read"}
+            write_tool = MagicMock(spec=FastMCPTool)
+            write_tool.name = "jira_create_issue"
+            write_tool.tags = {"jira", "write"}
+            return [read_tool, write_tool]
+
+        atlassian_mcp_server.list_tools = mock_list_tools
+
+        with patch.object(
+            FastMCP, "_call_tool_mcp", new_callable=AsyncMock
+        ) as mock_super:
+            mock_super.return_value = "EXECUTED"
+
+            # Write tool is read-only-excluded -> denied before reaching the executor.
+            with pytest.raises(NotFoundError):
+                await atlassian_mcp_server._call_tool_mcp("jira_create_issue", {})
+            mock_super.assert_not_called()
+
+            # Read tool is enabled -> passes the gate and reaches the executor.
+            result = await atlassian_mcp_server._call_tool_mcp("jira_get_issue", {})
+            assert result == "EXECUTED"
+            mock_super.assert_called_once()
 
     async def test_tool_discovery_with_full_configuration(
         self, atlassian_mcp_server, mock_jira_config, mock_confluence_config

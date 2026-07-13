@@ -14,7 +14,9 @@ Upload an attachment to Confluence content (page or blog post).
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `content_id` | `string` | Yes | The ID of the Confluence content (page or blog post) to attach the file to. Page IDs can be found in the page URL or by using the search/get_page tools. Example: '123456789' |
-| `file_path` | `string` | Yes | Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\Users\name\file.docx') or relative to the current working directory (e.g., './uploads/document.pdf'). If a file with the same name already exists, a new version will be created. |
+| `file_path` | `string` | No | Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\Users\name\file.docx') or relative to the current working directory (e.g., './uploads/document.pdf'). If a file with the same name already exists, a new version will be created. Requires the server to be able to read the path; for remote or containerized servers use 'content_base64' instead. Provide either 'file_path' or 'content_base64', not both. |
+| `content_base64` | `string` | No | (Optional) Base64-encoded file content to upload directly, without the server reading from disk. Use this when the server cannot access host file paths (e.g. a remote or containerized MCP server). Requires 'filename'. Provide either 'file_path' or 'content_base64', not both. |
+| `filename` | `string` | No | (Optional) Attachment filename, including extension (e.g. 'report.pdf'). Required when using 'content_base64'; it determines the attachment title and file type. Ignored when 'file_path' is used. |
 | `comment` | `string` | No | (Optional) A comment describing this attachment or version. Visible in the attachment history. Example: 'Updated Q4 2024 figures' |
 | `minor_edit` | `boolean` | No | (Optional) Whether this is a minor edit. If true, watchers are not notified. Default is false. |
 **Example:**

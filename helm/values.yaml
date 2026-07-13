@@ -204,16 +204,25 @@ proxy:
   https: ""
   noProxy: "localhost,127.0.0.1"
   socks: ""
+  wpad:
+    enabled: false
+    url: ""
 
   # Service-specific proxy overrides
   confluence:
     http: ""
     https: ""
     noProxy: ""
+    wpad:
+      enabled: null # Set true/false to override the global WPAD toggle for Confluence
+      url: ""
   jira:
     http: ""
     https: ""
     noProxy: ""
+    wpad:
+      enabled: null # Set true/false to override the global WPAD toggle for Jira
+      url: ""
 
 # Server Configuration
 config:

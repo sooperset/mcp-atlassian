@@ -440,36 +440,28 @@ class TestOAuthConfig:
         # Verify fallback to file was used
         mock_save_to_file.assert_called_once()
 
-    @patch("pathlib.Path.mkdir")
-    @patch("json.dump")
-    def test_save_tokens_to_file(self, mock_dump, mock_mkdir):
-        """Test _save_tokens_to_file method."""
-        # Mock open
-        mock_open = MagicMock()
-        with patch("builtins.open", mock_open):
-            config = OAuthConfig(
-                client_id="test-client-id",
-                client_secret="test-client-secret",
-                redirect_uri="https://example.com/callback",
-                scope="read:jira-work write:jira-work",
-                cloud_id="test-cloud-id",
-                refresh_token="test-refresh-token",
-                access_token="test-access-token",
-                expires_at=1234567890,
-            )
+    def test_save_tokens_to_file(self, tmp_path):
+        """Test _save_tokens_to_file writes the token JSON to the fallback file."""
+        config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read:jira-work write:jira-work",
+            cloud_id="test-cloud-id",
+            refresh_token="test-refresh-token",
+            access_token="test-access-token",
+            expires_at=1234567890,
+        )
+        with patch("mcp_atlassian.utils.oauth.Path.home", return_value=tmp_path):
             config._save_tokens_to_file()
 
-            # Should create directory and save tokens
-            mock_mkdir.assert_called_once()
-            mock_open.assert_called_once()
-            mock_dump.assert_called_once()
-
-            # Check saved data
-            saved_data = mock_dump.call_args[0][0]
-            assert saved_data["refresh_token"] == "test-refresh-token"
-            assert saved_data["access_token"] == "test-access-token"
-            assert saved_data["expires_at"] == 1234567890
-            assert saved_data["cloud_id"] == "test-cloud-id"
+        token_path = tmp_path / ".mcp-atlassian" / "oauth-test-client-id.json"
+        assert token_path.exists()
+        saved_data = json.loads(token_path.read_text())
+        assert saved_data["refresh_token"] == "test-refresh-token"
+        assert saved_data["access_token"] == "test-access-token"
+        assert saved_data["expires_at"] == 1234567890
+        assert saved_data["cloud_id"] == "test-cloud-id"
 
     @patch("keyring.get_password")
     @patch.object(OAuthConfig, "_load_tokens_from_file")
@@ -1219,3 +1211,48 @@ class TestDataCenterOAuth:
         token_json = mock_set_pw.call_args[0][2]
         data = json.loads(token_json)
         assert data["base_url"] == self.DC_BASE_URL
+
+
+class TestTokenFilePermissionsRegression:
+    """Regression (GHSA-g5xv, GHSA-76pr, GHSA-4596) — the OAuth token file must
+    not be world/group-readable.
+
+    ``_save_tokens_to_file`` used to create ``~/.mcp-atlassian`` with
+    ``mkdir(exist_ok=True)`` (no mode) and write ``oauth-<client>.json`` with
+    ``open(..., "w")`` (no chmod), so the refresh and access tokens landed with the
+    process umask's default permissions (commonly 0o644, i.e. group/world-readable).
+    This test forces a permissive umask so the result is deterministic regardless
+    of the runner, then asserts the file is owner-only (0o600).
+    """
+
+    @pytest.mark.security_regression
+    def test_saved_token_file_is_not_group_or_world_readable(self, tmp_path) -> None:
+        """The persisted OAuth token file must be owner-only (0o600)."""
+        import os
+        import stat
+
+        config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read:jira-work",
+            cloud_id="test-cloud-id",
+            refresh_token="secret-refresh-token",
+            access_token="secret-access-token",
+            expires_at=1234567890,
+        )
+
+        old_umask = os.umask(0o022)  # permissive -> pre-fix file would be 0o644
+        try:
+            with patch("mcp_atlassian.utils.oauth.Path.home", return_value=tmp_path):
+                config._save_tokens_to_file()
+        finally:
+            os.umask(old_umask)
+
+        token_path = tmp_path / ".mcp-atlassian" / "oauth-test-client-id.json"
+        assert token_path.exists(), "token file was not written"
+        mode = stat.S_IMODE(token_path.stat().st_mode)
+        assert mode & 0o077 == 0, (
+            "OAuth token file must not be group/world-readable (expected 0o600); "
+            f"got {oct(mode)}"
+        )

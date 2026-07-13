@@ -69,7 +69,8 @@ class TestAttachmentsMixin:
         mock_response.raise_for_status = MagicMock()
         attachments_mixin.jira._session.get.return_value = mock_response
 
-        download_path = "/tmp/test_file.txt"
+        # A subdirectory of CWD (downloads may not land in the CWD root itself).
+        download_path = "/tmp/downloads/test_file.txt"
         expected_path = os.path.abspath(download_path)
 
         # Mock file operations
@@ -121,20 +122,25 @@ class TestAttachmentsMixin:
             mock_exists.return_value = True
             mock_getsize.return_value = 12
             mock_isabs.return_value = False
+            # Target a subdirectory (downloads may not land in the CWD root itself).
             mock_abspath.side_effect = lambda p: (
-                "/absolute/path/test_file.txt" if p == "test_file.txt" else p
+                "/absolute/path/downloads/test_file.txt"
+                if p == "downloads/test_file.txt"
+                else p
             )
 
             # Call the method with a relative path
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "test_file.txt"
+                "https://test.url/attachment", "downloads/test_file.txt"
             )
 
             # Assertions
             assert result is True
-            mock_isabs.assert_called_once_with("test_file.txt")
-            mock_abspath.assert_any_call("test_file.txt")
-            mock_file.assert_called_once_with("/absolute/path/test_file.txt", "wb")
+            mock_isabs.assert_any_call("downloads/test_file.txt")
+            mock_abspath.assert_any_call("downloads/test_file.txt")
+            mock_file.assert_called_once_with(
+                "/absolute/path/downloads/test_file.txt", "wb"
+            )
 
     def test_download_attachment_no_url(self, attachments_mixin: AttachmentsMixin):
         """Test attachment download with no URL."""
@@ -479,6 +485,10 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
+            # Pin the workspace so the absolute path resolves inside it — keeps
+            # validate_safe_path passing deterministically across Python versions
+            # (mocking os.path.abspath does not reach pathlib.Path.resolve on 3.13).
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.path.isabs") as mock_isabs,
@@ -507,9 +517,10 @@ class TestAttachmentsMixin:
                 issue_key="TEST-123", filename="/absolute/path/test_file.txt"
             )
 
-    def test_upload_attachment_relative_path(self, attachments_mixin: AttachmentsMixin):
-        """Test attachment upload with a relative path."""
-        # Mock the Jira API response
+    def test_upload_attachment_relative_path(
+        self, attachments_mixin: AttachmentsMixin, tmp_path: Path
+    ):
+        """A relative path inside the workspace resolves and uploads."""
         mock_attachment_response = {
             "id": "12345",
             "filename": "test_file.txt",
@@ -517,31 +528,16 @@ class TestAttachmentsMixin:
         }
         attachments_mixin.jira.add_attachment.return_value = mock_attachment_response
 
-        # Mock file operations
-        with (
-            patch("os.path.exists") as mock_exists,
-            patch("os.path.getsize") as mock_getsize,
-            patch("os.path.isabs") as mock_isabs,
-            patch("os.path.abspath") as mock_abspath,
-            patch("os.path.basename") as mock_basename,
-            patch("builtins.open", mock_open(read_data=b"test content")),
-        ):
-            mock_exists.return_value = True
-            mock_getsize.return_value = 100
-            mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
-            mock_basename.return_value = "test_file.txt"
+        (tmp_path / "test_file.txt").write_bytes(b"test content")
+        resolved = str((tmp_path / "test_file.txt").resolve())
 
-            # Call the method with a relative path
+        with patch("os.getcwd", return_value=str(tmp_path)):
             result = attachments_mixin.upload_attachment("TEST-123", "test_file.txt")
 
-            # Assertions
-            assert result["success"] is True
-            mock_isabs.assert_called_once_with("test_file.txt")
-            mock_abspath.assert_called_once_with("test_file.txt")
-            attachments_mixin.jira.add_attachment.assert_called_once_with(
-                issue_key="TEST-123", filename="/absolute/path/test_file.txt"
-            )
+        assert result["success"] is True
+        attachments_mixin.jira.add_attachment.assert_called_once_with(
+            issue_key="TEST-123", filename=resolved
+        )
 
     def test_upload_attachment_no_issue_key(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no issue key."""
@@ -567,6 +563,7 @@ class TestAttachmentsMixin:
         """Test attachment upload when file doesn't exist."""
         # Mock file operations
         with (
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
@@ -592,6 +589,7 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
@@ -618,6 +616,7 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
+            patch("os.getcwd", return_value="/absolute/path"),
             patch("os.path.exists") as mock_exists,
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
@@ -1316,3 +1315,96 @@ class TestAttachmentsMixin:
         assert result[1].filename == "report.pdf"
         # No download calls should have been made
         attachments_mixin.jira._session.get.assert_not_called()
+
+
+class TestUploadPathTraversalRegression:
+    """Regression — upload-side attachment path traversal / arbitrary file read.
+
+    Covers GHSA-wm45, vc25, 93xw, 6cr4, f4p7, f6pj, 2xj6, mrq8, wv8v, p6hp, h7wj,
+    mfv2, f26r, 9547, cc5h (read half), and the 6vmq download-overwrite variant.
+
+    The download side gained ``validate_safe_path`` (CVE-2026-27825), but the
+    upload path used to feed any caller-supplied ``file_path`` to the API after
+    only an ``os.path.exists`` check, so a path outside the workspace was read and
+    exfiltrated. These tests assert the secure outcome: a traversal/absolute path
+    never reaches the upload sink.
+
+    Assertions target the *sink* (``add_attachment`` not called), not an exception
+    type, because ``upload_attachment`` wraps its body in ``except Exception`` and
+    returns an error dict — so the fix may reject by raising or by returning a dict,
+    and either way the secret must never reach the API.
+    """
+
+    @pytest.fixture
+    def attachments_mixin(self, jira_fetcher: JiraFetcher) -> AttachmentsMixin:
+        """AttachmentsMixin with a mocked Jira client (Cloud by default)."""
+        mixin = jira_fetcher
+        mixin.jira = MagicMock()
+        mixin.jira._session = MagicMock()
+        return mixin
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("attack", ["absolute_outside_cwd", "relative_traversal"])
+    def test_upload_attachment_does_not_read_outside_workspace(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        tmp_path: Path,
+        attack: str,
+    ) -> None:
+        """A file_path resolving outside the workspace must not reach the API."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        secret = tmp_path / "secret.txt"  # sibling of workspace -> outside it
+        secret.write_bytes(b"SECRET-EXFIL")
+        malicious = str(secret) if attack == "absolute_outside_cwd" else "../secret.txt"
+
+        with patch("os.getcwd", return_value=str(workspace)):
+            attachments_mixin.upload_attachment("PROJ-1", malicious)
+
+        attachments_mixin.jira.add_attachment.assert_not_called()
+
+    @pytest.mark.security_regression
+    def test_upload_attachments_list_does_not_read_outside_workspace(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        tmp_path: Path,
+    ) -> None:
+        """The list/confused-deputy path (update_issue -> upload_attachments)."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        secret = tmp_path / "secret.txt"
+        secret.write_bytes(b"SECRET-EXFIL")
+
+        with patch("os.getcwd", return_value=str(workspace)):
+            attachments_mixin.upload_attachments("PROJ-1", [str(secret)])
+
+        attachments_mixin.jira.add_attachment.assert_not_called()
+
+    @pytest.mark.security_regression
+    def test_download_into_cwd_module_is_rejected(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        tmp_path: Path,
+    ) -> None:
+        """Downloading onto a source file inside CWD must be confined/rejected."""
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = [b"import os; os.system('id')\n"]
+        mock_response.raise_for_status = MagicMock()
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        with (
+            patch("builtins.open", mock_open()),
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getsize", return_value=27),
+            patch("os.makedirs"),
+            patch("os.getcwd", return_value=str(tmp_path)),
+        ):
+            result = attachments_mixin.download_attachment(
+                "https://test.url/evil",
+                "important_module.py",  # relative -> resolves inside CWD
+            )
+
+        assert result is False, (
+            "download targeting the CWD (where Python imports modules) must be "
+            "confined to a dedicated directory, not allowed to overwrite source files"
+        )

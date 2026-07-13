@@ -1,11 +1,14 @@
 """Confluence FastMCP server instance and tool definitions."""
 
 import base64
+import binascii
 import json
 import logging
 import mimetypes
+import re
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import parse_qs, urlsplit
 
 from fastmcp import Context, FastMCP
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
@@ -17,6 +20,7 @@ from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
+from mcp_atlassian.utils.io import validate_safe_path
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
@@ -24,6 +28,110 @@ from mcp_atlassian.utils.media import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_CONFLUENCE_TINY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,11}")
+_PAGE_ID_PATH_PATTERN = re.compile(r"(?:^|/)pages/([0-9]+)(?:/|$)")
+_TINY_LINK_PATH_PATTERN = re.compile(r"(?:^|/)x/([A-Za-z0-9_-]+)(?:/|$)")
+_MAX_CONFLUENCE_PAGE_ID = (1 << 63) - 1
+
+
+def _template_description(template: dict[str, object]) -> str:
+    """Normalize Cloud template descriptions across API response variants."""
+    description = template.get("description")
+    if isinstance(description, str):
+        return description
+    if isinstance(description, dict):
+        value = description.get("value")
+        return value if isinstance(value, str) else ""
+    return ""
+
+
+def _template_storage_body(template: dict[str, object]) -> str:
+    """Extract a storage-format body from a Cloud template response."""
+    body = template.get("body")
+    storage = body.get("storage") if isinstance(body, dict) else None
+    value = storage.get("value") if isinstance(storage, dict) else None
+    return value if isinstance(value, str) else ""
+
+
+def _encode_confluence_tiny_id(page_id: int) -> str:
+    """Encode a page ID using Confluence's tiny-link representation."""
+    encoded = base64.b64encode(page_id.to_bytes(8, byteorder="little"))
+    return (
+        encoded.decode("ascii")
+        .rstrip("=")
+        .rstrip("A")
+        .replace("/", "-")
+        .replace("+", "_")
+    )
+
+
+def _decode_confluence_tiny_id(encoded: str) -> int | None:
+    """Decode a Confluence tiny-link identifier to a numeric page ID.
+
+    Confluence encodes a little-endian 64-bit page ID with base64, substitutes
+    URL-safe characters, and removes padding and trailing zero-byte markers.
+
+    Args:
+        encoded: Identifier from the path segment after ``/x/``.
+
+    Returns:
+        The positive page ID, or ``None`` when the identifier is invalid.
+    """
+    if _CONFLUENCE_TINY_ID_PATTERN.fullmatch(encoded) is None:
+        return None
+
+    standard_base64 = encoded.replace("-", "/").replace("_", "+")
+    padded = standard_base64.ljust(11, "A") + "="
+    try:
+        decoded = base64.b64decode(padded, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+    if len(decoded) != 8:
+        return None
+
+    page_id = int.from_bytes(decoded, byteorder="little")
+    if not 0 < page_id <= _MAX_CONFLUENCE_PAGE_ID:
+        return None
+    if _encode_confluence_tiny_id(page_id) != encoded:
+        return None
+    return page_id
+
+
+def _resolve_page_id(page_reference: str) -> str:
+    """Resolve a page ID from a numeric ID, full URL, or tiny link.
+
+    Args:
+        page_reference: Numeric ID, page URL, or tiny-link URL/path.
+
+    Returns:
+        The resolved numeric ID, or the original value when it is not a
+        supported page reference.
+    """
+    if re.fullmatch(r"[0-9]+", page_reference):
+        return page_reference
+
+    parsed = urlsplit(page_reference)
+    page_match = _PAGE_ID_PATH_PATTERN.search(parsed.path)
+    if page_match:
+        return page_match.group(1)
+
+    query_page_ids = parse_qs(parsed.query).get("pageId", [])
+    if len(query_page_ids) == 1 and re.fullmatch(r"[0-9]+", query_page_ids[0]):
+        return query_page_ids[0]
+
+    tiny_match = _TINY_LINK_PATH_PATTERN.search(parsed.path)
+    if tiny_match:
+        encoded = tiny_match.group(1)
+        resolved = _decode_confluence_tiny_id(encoded)
+        if resolved is not None:
+            logger.info("Resolved tiny link 'x/%s' to page ID %s", encoded, resolved)
+            return str(resolved)
+        logger.warning("Could not decode tiny link 'x/%s'", encoded)
+
+    return page_reference
 
 
 def _resolve_page_content(content: str | None, content_file: str | None) -> str:
@@ -36,15 +144,17 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
 
     Args:
         content: Inline page body (any supported content_format).
-        content_file: Absolute or relative filesystem path to read the body from.
-            Read as UTF-8.
+        content_file: Filesystem path to read the body from (UTF-8). Must
+            resolve inside the current working directory (workspace), the same
+            confinement contract as attachment paths.
 
     Returns:
         The resolved page body as a string.
 
     Raises:
-        ValueError: If neither or both arguments are supplied, or if the file does
-            not exist / is not a regular file.
+        ValueError: If neither or both arguments are supplied, if the file does
+            not exist / is not a regular file, or if the path escapes the
+            workspace.
         OSError: If the file exists but cannot be read.
     """
     has_content = content is not None
@@ -58,7 +168,10 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
     if content_file is None or content_file == "":
         raise ValueError("One of 'content' or 'content_file' must be provided.")
 
-    path = Path(content_file).expanduser()
+    # Confine the read to the workspace, same contract as attachment paths — an
+    # unconfined caller-supplied path is an arbitrary-file-read primitive (the
+    # file body is echoed back through the created/updated page).
+    path = validate_safe_path(Path(content_file).expanduser())
     if not path.is_file():
         msg = f"content_file does not exist or is not a regular file: {path}"
         raise ValueError(msg)
@@ -173,10 +286,13 @@ async def get_page(
         str | None,
         Field(
             description=(
-                "Confluence page ID (numeric ID, can be found in the page URL). "
-                "For example, in the URL 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', "
-                "the page ID is '123456789'. "
-                "Provide this OR both 'title' and 'space_key'. If page_id is provided, title and space_key will be ignored."
+                "Confluence page ID, full page URL, or tiny link. For example: "
+                "'123456789', "
+                "'https://example.atlassian.net/wiki/spaces/TEAM/pages/"
+                "123456789/Page+Title', or "
+                "'https://example.atlassian.net/wiki/x/N4CIO'. Provide this OR "
+                "both 'title' and 'space_key'. If page_id is provided, title "
+                "and space_key will be ignored."
             ),
             default=None,
         ),
@@ -223,7 +339,8 @@ async def get_page(
 
     Args:
         ctx: The FastMCP context.
-        page_id: Confluence page ID. If provided, 'title' and 'space_key' are ignored.
+        page_id: Confluence page ID, full page URL, or tiny link. If provided,
+            'title' and 'space_key' are ignored.
         title: The exact title of the page. Must be used with 'space_key'.
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
@@ -242,6 +359,10 @@ async def get_page(
             )
         try:
             page_id_str = str(page_id)
+
+            # Resolve page ID from URL or tiny link
+            page_id_str = _resolve_page_id(page_id_str)
+
             page_object = confluence_fetcher.get_page_content(
                 page_id_str, convert_to_markdown=convert_to_markdown
             )
@@ -503,7 +624,7 @@ async def get_labels(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_labels"},
-    annotations={"title": "Add Label", "destructiveHint": True},
+    annotations={"title": "Add Label", "destructiveHint": False},
 )
 @check_write_access
 async def add_label(
@@ -556,7 +677,7 @@ async def add_label(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_pages"},
-    annotations={"title": "Create Page", "destructiveHint": True},
+    annotations={"title": "Create Page", "destructiveHint": False},
 )
 @check_write_access
 async def create_page(
@@ -656,6 +777,16 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    subtype: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Confluence page subtype. Use 'live' to create a "
+                "Confluence Live Doc. Only supported for Confluence Cloud."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -676,6 +807,7 @@ async def create_page(
         emoji: Optional page title emoji (icon shown in navigation).
         page_width: Optional page layout width ('full-width' or 'default').
         table_layout: Optional table width preset ('full-width', 'wide', 'default').
+        subtype: Optional page subtype. Use "live" to create a Confluence Live Doc.
 
     Returns:
         JSON string representing the created page object.
@@ -716,6 +848,7 @@ async def create_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        subtype=subtype,
         page_width=page_width,
         table_layout=table_layout if content_format == "markdown" else None,
     )
@@ -1135,7 +1268,7 @@ async def move_page(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_comments"},
-    annotations={"title": "Add Comment", "destructiveHint": True},
+    annotations={"title": "Add Comment", "destructiveHint": False},
 )
 @check_write_access
 async def add_comment(
@@ -1186,7 +1319,7 @@ async def add_comment(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_comments"},
-    annotations={"title": "Reply to Comment", "destructiveHint": True},
+    annotations={"title": "Reply to Comment", "destructiveHint": False},
 )
 @check_write_access
 async def reply_to_comment(
@@ -1708,15 +1841,43 @@ async def upload_attachment(
         ),
     ],
     file_path: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\\Users\\name\\file.docx') "
                 "or relative to the current working directory (e.g., './uploads/document.pdf'). "
-                "If a file with the same name already exists, a new version will be created."
-            )
+                "If a file with the same name already exists, a new version will be created. "
+                "Requires the server to be able to read the path; for remote or "
+                "containerized servers use 'content_base64' instead. Provide either "
+                "'file_path' or 'content_base64', not both."
+            ),
+            default=None,
         ),
-    ],
+    ] = None,
+    content_base64: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Base64-encoded file content to upload directly, without "
+                "the server reading from disk. Use this when the server cannot access "
+                "host file paths (e.g. a remote or containerized MCP server). "
+                "Requires 'filename'. Provide either 'file_path' or 'content_base64', "
+                "not both."
+            ),
+            default=None,
+        ),
+    ] = None,
+    filename: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Attachment filename, including extension (e.g. "
+                "'report.pdf'). Required when using 'content_base64'; it determines "
+                "the attachment title and file type. Ignored when 'file_path' is used."
+            ),
+            default=None,
+        ),
+    ] = None,
     comment: Annotated[
         str | None,
         Field(
@@ -1740,6 +1901,11 @@ async def upload_attachment(
 ) -> str:
     """Upload an attachment to Confluence content (page or blog post).
 
+    Provide the file either as a server-readable path ('file_path') or as
+    base64-encoded content ('content_base64' together with 'filename'). The
+    base64 form is intended for remote or containerized servers that cannot
+    read host file paths. Exactly one of the two must be supplied.
+
     If the attachment already exists (same filename), a new version is created.
     This is useful for:
     - Attaching documents, images, or files to a page
@@ -1749,21 +1915,48 @@ async def upload_attachment(
     Args:
         ctx: The FastMCP context.
         content_id: The ID of the content to attach to.
-        file_path: Path to the file to upload.
+        file_path: Path to the file to upload (server-readable).
+        content_base64: Base64-encoded file content (filesystem-free upload).
+        filename: Attachment filename, required with content_base64.
         comment: Optional comment for the attachment.
         minor_edit: Whether this is a minor edit (no notifications).
 
     Returns:
         JSON string with upload confirmation and attachment metadata.
     """
+    has_file_path = file_path is not None and file_path != ""
+    has_content = content_base64 is not None
+    if has_file_path == has_content:
+        raise ValueError("Provide exactly one of 'file_path' or 'content_base64'.")
+
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
-    result = confluence_fetcher.upload_attachment(
-        content_id=content_id,
-        file_path=file_path,
-        comment=comment,
-        minor_edit=minor_edit,
-    )
+    if has_content:
+        if not filename:
+            raise ValueError("'filename' is required when using 'content_base64'.")
+        if content_base64 is None:
+            raise ValueError("Provide exactly one of 'file_path' or 'content_base64'.")
+        try:
+            content = base64.b64decode(content_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"Invalid base64 content: {exc}") from exc
+
+        result = confluence_fetcher.upload_attachment_from_content(
+            content_id=content_id,
+            filename=filename,
+            content=content,
+            comment=comment,
+            minor_edit=minor_edit,
+        )
+    else:
+        if not file_path:
+            raise ValueError("Provide exactly one of 'file_path' or 'content_base64'.")
+        result = confluence_fetcher.upload_attachment(
+            content_id=content_id,
+            file_path=file_path,
+            comment=comment,
+            minor_edit=minor_edit,
+        )
 
     return json.dumps(
         {"message": "Attachment uploaded successfully", "attachment": result},
@@ -2484,6 +2677,159 @@ async def get_page_images(
     return contents
 
 
+# ---------------------------------------------------------------------------
+# Template tools
+# ---------------------------------------------------------------------------
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_templates"},
+    annotations={"title": "List Page Templates", "readOnlyHint": True},
+)
+async def list_page_templates(
+    ctx: Context,
+    space_key: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Optional space key to list templates defined in that space. "
+                "When omitted, global templates are returned."
+            ),
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Field(
+            default=25,
+            ge=1,
+            le=200,
+            description="Maximum number of templates to return.",
+        ),
+    ] = 25,
+) -> str:
+    """List Confluence page content templates.
+
+    This operation is only available for Confluence Cloud.
+    Returns template metadata (ID, name, description, type) without the
+    full body.  Use confluence_get_page_template to fetch a template's body.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        results = confluence_fetcher.list_page_templates(
+            space_key=space_key,
+            limit=limit,
+        )
+        simplified = [
+            {
+                "templateId": t.get("templateId", ""),
+                "name": t.get("name", ""),
+                "templateType": t.get("templateType", ""),
+                "description": _template_description(t),
+            }
+            for t in results
+        ]
+        return json.dumps(
+            {"templates": simplified, "total": len(simplified)},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error listing templates: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error listing templates: {e}")
+        raise
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_templates"},
+    annotations={"title": "Get Page Template", "readOnlyHint": True},
+)
+async def get_page_template(
+    ctx: Context,
+    template_id: Annotated[
+        str,
+        Field(description="The ID of the template to retrieve."),
+    ],
+) -> str:
+    """Get a Cloud page template by ID, including its storage-format body."""
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        template = confluence_fetcher.get_page_template(template_id)
+        return json.dumps(
+            {
+                "templateId": template.get("templateId", ""),
+                "name": template.get("name", ""),
+                "templateType": template.get("templateType", ""),
+                "description": _template_description(template),
+                "body": _template_storage_body(template),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error fetching template {template_id}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching template {template_id}: {e}")
+        raise
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_templates"},
+    annotations={"title": "Create Page from Template", "destructiveHint": False},
+)
+@check_write_access
+async def create_page_from_template(
+    ctx: Context,
+    space_key: Annotated[
+        str,
+        Field(description="Key of the space in which to create the page."),
+    ],
+    title: Annotated[
+        str,
+        Field(description="Title for the new page."),
+    ],
+    template_id: Annotated[
+        str,
+        Field(description="ID of the template to use as the page body."),
+    ],
+    parent_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Optional ID of the parent page.",
+        ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
+    ] = None,
+) -> str:
+    """Create a new Cloud page pre-populated with a template's body.
+
+    This operation is only available for Confluence Cloud.
+    Fetches the named template and creates a page with its storage-format
+    content.  The page can be edited afterwards via confluence_update_page.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        result = confluence_fetcher.create_page_from_template(
+            space_key=space_key,
+            title=title,
+            template_id=template_id,
+            parent_id=parent_id,
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error creating page from template: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error creating page from template {template_id}: {e}")
+        raise
+
+
 @confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page Restrictions", "readOnlyHint": True},
@@ -2529,6 +2875,7 @@ async def set_page_restrictions(
                 "allowed to view the page. Empty list = unrestricted."
             ),
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     read_groups: Annotated[
@@ -2536,6 +2883,7 @@ async def set_page_restrictions(
         Field(
             description="(Optional) Group names allowed to view the page.",
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     edit_users: Annotated[
@@ -2546,6 +2894,7 @@ async def set_page_restrictions(
                 "allowed to edit the page."
             ),
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     edit_groups: Annotated[
@@ -2553,6 +2902,7 @@ async def set_page_restrictions(
         Field(
             description="(Optional) Group names allowed to edit the page.",
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
 ) -> str:
@@ -2658,3 +3008,122 @@ async def copy_page(
         indent=2,
         ensure_ascii=False,
     )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_permissions"},
+    annotations={"title": "Check Content Permissions", "readOnlyHint": True},
+)
+async def check_content_permissions(
+    ctx: Context,
+    content_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence content ID (page, blog post, comment, or attachment). "
+                "Example: '123456789'"
+            )
+        ),
+    ],
+    user_identifier: Annotated[
+        str,
+        Field(
+            description=(
+                "Account ID of the user (for subject_type='user') or group ID "
+                "(for subject_type='group'). "
+                "Example user account ID: '5b10a2844c20165700ede21g'"
+            )
+        ),
+    ],
+    operation: Annotated[
+        str,
+        Field(
+            description=(
+                "The operation to check. Common values: 'read', 'update', 'delete', "
+                "'export', 'purge', 'administer', 'create_or_delete_from_view'."
+            )
+        ),
+    ],
+    subject_type: Annotated[
+        str,
+        Field(
+            description=(
+                "Whether the subject is a 'user' or a 'group'. Defaults to 'user'."
+            ),
+            default="user",
+        ),
+    ] = "user",
+) -> str:
+    """Check whether a user or group can perform an operation on specific content.
+
+    Wraps POST /wiki/rest/api/content/{id}/permission/check.
+
+    Note: This tool is only available for Confluence Cloud. Server/Data Center
+    instances use different permission APIs.
+
+    Returns a JSON object with a 'hasPermission' boolean indicating whether
+    the subject has the requested permission on the content.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    result = confluence_fetcher.check_content_permissions(
+        content_id=content_id,
+        user_identifier=user_identifier,
+        operation=operation,
+        subject_type=subject_type,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_permissions"},
+    annotations={"title": "Get Space Permissions", "readOnlyHint": True},
+)
+async def get_space_permissions(
+    ctx: Context,
+    space_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Numeric ID of the Confluence space. This is the internal space ID, "
+                "not the space key. Example: '98304'. You can find the space ID from "
+                "the Confluence REST API (GET /wiki/api/v2/spaces) or from the "
+                "space URL."
+            )
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Field(
+            description=(
+                "Maximum number of permission entries to return. Defaults to 25."
+            ),
+            default=25,
+            ge=1,
+        ),
+    ] = 25,
+    cursor: Annotated[
+        str | None,
+        Field(
+            description="Optional pagination cursor from a previous response.",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """List all permission assignments for a Confluence space.
+
+    Wraps GET /wiki/api/v2/spaces/{id}/permissions.
+
+    Note: This tool is only available for Confluence Cloud. Server/Data Center
+    instances use different permission APIs.
+
+    Returns a JSON object with a 'results' list of permission assignment objects.
+    Each entry contains the principal (user or group), the operation permitted,
+    and the target. Use this to audit who has access to a space.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    result = confluence_fetcher.get_space_permissions(
+        space_id=space_id,
+        limit=limit,
+        cursor=cursor,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)

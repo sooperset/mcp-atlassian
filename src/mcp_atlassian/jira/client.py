@@ -10,13 +10,22 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
+from mcp_atlassian.utils.http import (
+    configure_circuit_breaker,
+    configure_concurrency,
+    configure_rate_limit,
+    configure_retry,
+)
 from mcp_atlassian.utils.logging import (
     get_masked_session_headers,
     log_config_param,
     mask_sensitive,
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
+from mcp_atlassian.utils.proxy import apply_proxy_configuration
 from mcp_atlassian.utils.ssl import configure_ssl_verification
+from mcp_atlassian.utils.ssrf_adapter import mount_ssrf_pinning
+from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
 from mcp_atlassian.utils.user_agent import get_default_user_agent
 
 from ..models.jira.adf import markdown_to_adf
@@ -47,6 +56,7 @@ class JiraClient:
         """
         # Load configuration from environment variables if not provided
         self.config = config or JiraConfig.from_env()
+        transport_url = self.config.url
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "oauth":
@@ -79,6 +89,7 @@ class JiraClient:
                 # Cloud: use the Atlassian Cloud API URL
                 api_url = f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
+            transport_url = api_url
 
             # Initialize Jira with the session
             self.jira = Jira(
@@ -126,34 +137,46 @@ class JiraClient:
         if self.config.auth_type in ("pat", "oauth"):
             self.jira._session.trust_env = False
 
+        if self.config.no_proxy and isinstance(self.config.no_proxy, str):
+            os.environ["NO_PROXY"] = self.config.no_proxy
+            log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
+
         # Configure SSL verification using the shared utility
         configure_ssl_verification(
             service_name="Jira",
-            url=self.config.url,
+            url=transport_url,
             session=self.jira._session,
             ssl_verify=self.config.ssl_verify,
             client_cert=self.config.client_cert,
             client_key=self.config.client_key,
             client_key_password=self.config.client_key_password,
+            no_proxy=self.config.no_proxy,
         )
 
-        # Proxy configuration
-        proxies = {}
-        if self.config.http_proxy:
-            proxies["http"] = self.config.http_proxy
-        if self.config.https_proxy:
-            proxies["https"] = self.config.https_proxy
-        if self.config.socks_proxy:
-            proxies["socks"] = self.config.socks_proxy
-        if proxies:
-            self.jira._session.proxies.update(proxies)
-            for k, v in proxies.items():
-                log_config_param(
-                    logger, "Jira", f"{k.upper()}_PROXY", v, sensitive=True
-                )
-        if self.config.no_proxy and isinstance(self.config.no_proxy, str):
-            os.environ["NO_PROXY"] = self.config.no_proxy
-            log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
+        # Validate redirects for SSRF on every outbound call from this session
+        # (covers direct _session.get() paths and global/stdio fetchers, not just
+        # the per-user HTTP path).
+        self.jira._session.hooks["response"].append(make_ssrf_redirect_hook())
+        # Pin DNS resolution against rebinding: resolve+validate once and connect
+        # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
+        mount_ssrf_pinning(self.jira._session, transport_url)
+
+        # Apply opt-in HTTP hardening after SSL setup and after the pinning
+        # adapter is mounted: these wrappers patch send() in place on whatever
+        # adapters are mounted now, so mounting the pinning adapter later would
+        # silently drop them.
+        configure_retry(self.jira._session, service="Jira")
+        configure_concurrency(self.jira._session, service="Jira")
+        configure_rate_limit(self.jira._session, service="Jira")
+        configure_circuit_breaker(self.jira._session, service="Jira")
+
+        self.jira._session = apply_proxy_configuration(
+            logger=logger,
+            service_name="Jira",
+            session=self.jira._session,
+            config=self.config,
+            target_url=transport_url,
+        )
 
         # Set an explicit User-Agent so requests aren't blocked by WAFs that
         # reject the default ``python-requests/X.Y`` header. User-supplied
@@ -260,7 +283,7 @@ class JiraClient:
 
         if self.config.is_cloud:
             try:
-                return markdown_to_adf(markdown_text)
+                return markdown_to_adf(markdown_text, jira_base_url=self.config.url)
             except Exception as e:
                 logger.warning(f"Error converting markdown to ADF: {e}")
                 return {
