@@ -406,6 +406,32 @@ class TestJiraCloudJSMComments:
             )
 
             jira_fetcher.config.internal_only_projects = frozenset({project_key})
+
+            # The add guard is the actual boundary: on a listed project a
+            # customer-visible comment must be refused outright, and an omitted
+            # 'public' must not quietly default to one.
+            with pytest.raises(ValueError, match="internal-only"):
+                jira_fetcher.add_comment(
+                    issue_key, "must never reach the customer", public=True
+                )
+            with pytest.raises(ValueError, match="internal-only"):
+                jira_fetcher.add_comment(issue_key, "must never reach the customer")
+
+            # ...while an explicit internal comment still gets through — this is
+            # exactly what the MCP boundary used to drop.
+            guarded = jira_fetcher.add_comment(
+                issue_key, "Cloud guarded internal comment", public=False
+            )
+            guarded_id = str(guarded["id"])
+            comment_ids.append(guarded_id)
+            assert guarded["public"] is False
+            assert (
+                jira_fetcher._fetch_servicedesk_comment_is_public(
+                    issue_key, guarded_id
+                )
+                is False
+            )
+
             with pytest.raises(ValueError, match="PUBLIC"):
                 jira_fetcher.edit_comment(issue_key, public_id, "must remain unchanged")
 

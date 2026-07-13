@@ -284,19 +284,20 @@ class CommentsMixin(JiraClient):
 
     @staticmethod
     def _is_http_404(error: BaseException) -> bool:
-        """Return whether an error chain identifies an HTTP 404 response."""
+        """Return whether an error chain carries an HTTP 404 response.
+
+        Only a real status code counts. Sniffing the message for "404" would
+        also match an issue key like PROJ-404, and this decides whether a failed
+        ServiceDesk request may be retried as a normal (customer-visible)
+        comment — so an unrecognized error stays an error.
+        """
         current: BaseException | None = error
         while current is not None:
             response = getattr(current, "response", None)
             status_code = getattr(response, "status_code", None)
             if status_code is not None:
                 return status_code == 404
-
-            next_error = current.__cause__ or current.__context__
-            if next_error is not None:
-                current = next_error
-                continue
-            return "404" in str(current)
+            current = current.__cause__ or current.__context__
         return False
 
     def _add_servicedesk_comment(
