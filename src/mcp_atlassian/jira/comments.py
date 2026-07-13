@@ -39,9 +39,19 @@ class CommentsMixin(JiraClient):
 
             processed_comments = []
             for comment in comments.get("comments", [])[:limit]:
+                # On Jira Cloud (REST API v3) comment bodies are returned as ADF
+                # (Atlassian Document Format) dicts. convert to plain text before
+                # passing to _clean_text -> clean_jira_text -> _process_mentions,
+                # which calls re.sub() and would otherwise raise TypeError on the
+                # dict. Mirrors the pattern used in add_comment / edit_comment
+                # above. Fixes #1488.
+                body_raw = comment.get("body", "")
+                body_text = (
+                    adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
+                )
                 processed_comment = {
                     "id": comment.get("id"),
-                    "body": self._clean_text(comment.get("body", "")),
+                    "body": self._clean_text(body_text or ""),
                     "created": str(parse_date(comment.get("created"))),
                     "updated": str(parse_date(comment.get("updated"))),
                     "author": comment.get("author", {}).get("displayName", "Unknown"),
