@@ -426,9 +426,7 @@ class TestJiraCloudJSMComments:
             comment_ids.append(guarded_id)
             assert guarded["public"] is False
             assert (
-                jira_fetcher._fetch_servicedesk_comment_is_public(
-                    issue_key, guarded_id
-                )
+                jira_fetcher._fetch_servicedesk_comment_is_public(issue_key, guarded_id)
                 is False
             )
 

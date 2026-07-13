@@ -2801,9 +2801,7 @@ async def test_add_comment_preserves_public_values_at_server_boundary(
     """Test omitted, false, and true public values reach the Jira client intact."""
     base_args = {"issue_key": "TEST-123", "body": "Test comment body"}
 
-    await jira_client.call_tool(
-        "jira_add_comment", {**base_args, "public": False}
-    )
+    await jira_client.call_tool("jira_add_comment", {**base_args, "public": False})
     await jira_client.call_tool("jira_add_comment", {**base_args, "public": True})
     await jira_client.call_tool("jira_add_comment", base_args)
 

@@ -574,15 +574,11 @@ class TestCommentsMixin:
         comments_mixin.jira.post.side_effect = Exception("404 Client Error: Not Found")
 
         with pytest.raises(Exception, match="not a JSM service desk issue"):
-            comments_mixin._add_servicedesk_comment(
-                "TEST-123", "Test", public=True
-            )
+            comments_mixin._add_servicedesk_comment("TEST-123", "Test", public=True)
 
     def test_add_comment_non_jsm_public_false_falls_back_on_404(self, comments_mixin):
         """A non-JSM public=False comment falls back to normal Jira on 404."""
-        comments_mixin.jira.post.side_effect = HTTPError(
-            response=Mock(status_code=404)
-        )
+        comments_mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=404))
         comments_mixin._post_api3 = Mock(
             return_value={
                 "id": "10001",
@@ -592,9 +588,7 @@ class TestCommentsMixin:
             }
         )
 
-        result = comments_mixin.add_comment(
-            "TEST-123", "Internal note", public=False
-        )
+        result = comments_mixin.add_comment("TEST-123", "Internal note", public=False)
 
         comments_mixin.jira.post.assert_called_once()
         comments_mixin._post_api3.assert_called_once()
@@ -794,9 +788,7 @@ class TestInternalOnlyProjectsGuard:
         self, guarded_mixin
     ):
         """Listed project + ServiceDesk 404 never falls back to Jira."""
-        guarded_mixin.jira.post.side_effect = HTTPError(
-            response=Mock(status_code=404)
-        )
+        guarded_mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=404))
         guarded_mixin._post_api3 = Mock()
 
         with pytest.raises(Exception, match="Error adding ServiceDesk comment"):
