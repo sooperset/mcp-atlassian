@@ -881,6 +881,8 @@ class TestInternalOnlyProjectsGuard:
             "\tCC-1",  # leading tab
             "CC -1",  # space before the dash
             " cc-1 ",  # padded + lowercase
+            "C\u200bC-1",  # zero-width space inside the project key
+            "\ufeffCC-1",  # BOM before the project key
         ],
     )
     def test_add_comment_internal_only_whitespace_padded_key_still_guarded(
@@ -889,9 +891,9 @@ class TestInternalOnlyProjectsGuard:
         """Whitespace-padded issue keys must NOT bypass the guard.
 
         The guard normalizes its own input: config keys are stripped at
-        parse time, and the issue key is stripped (around the whole key
+        parse time, and the issue key is normalized (around the whole key
         AND around the extracted project segment) at check time. Pins
-        the ' CC-1' / '\\tCC-1' / 'CC -1' bypass class.
+        the whitespace and invisible-character bypass classes.
         """
         with pytest.raises(ValueError, match="internal-only"):
             guarded_mixin.add_comment(padded_key, "Client update", public=True)

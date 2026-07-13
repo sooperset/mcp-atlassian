@@ -437,6 +437,16 @@ class TestJiraCloudJSMComments:
                 issue_key, internal_id, "Cloud edited internal ServiceDesk comment"
             )
             assert edited["id"] == internal_id
+            # The edit itself goes through the core Jira API, so assert the
+            # comment is still internal afterwards: if that write ever dropped
+            # the ServiceDesk visibility property, the guard would have let the
+            # text through to the customer portal while the test still passed.
+            assert (
+                jira_fetcher._fetch_servicedesk_comment_is_public(
+                    issue_key, internal_id
+                )
+                is False
+            )
         finally:
             for comment_id in comment_ids:
                 _delete_cloud_comment(jira_fetcher, issue_key, comment_id)
