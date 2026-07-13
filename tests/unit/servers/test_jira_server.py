@@ -5,7 +5,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -2729,7 +2729,7 @@ async def test_add_comment(jira_client, mock_jira_fetcher):
 async def test_add_comment_ignores_empty_optional_fields(
     jira_client, mock_jira_fetcher
 ):
-    """Test add_comment treats client default optional fields as omitted."""
+    """Test add_comment ignores empty visibility but preserves public=False."""
     response = await jira_client.call_tool(
         "jira_add_comment",
         {
@@ -2741,7 +2741,7 @@ async def test_add_comment_ignores_empty_optional_fields(
     )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(
-        "TEST-123", "Test comment body", None, public=None
+        "TEST-123", "Test comment body", None, public=False
     )
 
     result = json.loads(response.content[0].text)
@@ -2767,30 +2767,51 @@ async def test_add_comment_accepts_comment_alias(jira_client, mock_jira_fetcher)
 
 
 @pytest.mark.anyio
-async def test_add_comment_restricted_visibility_ignores_false_public_default(
+async def test_add_comment_restricted_visibility_rejects_explicit_false(
     jira_client, mock_jira_fetcher
 ):
-    """Test add_comment can combine visibility with client default public=false."""
-    response = await jira_client.call_tool(
-        "jira_add_comment",
-        {
-            "issue_key": "TEST-123",
-            "body": "Test comment body",
-            "visibility": '{"type":"role","value":"Developer"}',
-            "public": False,
-        },
+    """Test add_comment passes the invalid public/visibility pair to the client."""
+    mock_jira_fetcher.add_comment.side_effect = ValueError(
+        "Cannot use both 'public' and 'visibility'."
     )
+
+    with pytest.raises(ToolError, match="Cannot use both"):
+        await jira_client.call_tool(
+            "jira_add_comment",
+            {
+                "issue_key": "TEST-123",
+                "body": "Test comment body",
+                "visibility": '{"type":"role","value":"Developer"}',
+                "public": False,
+            },
+        )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(
         "TEST-123",
         "Test comment body",
         {"type": "role", "value": "Developer"},
-        public=None,
+        public=False,
     )
 
-    result = json.loads(response.content[0].text)
-    assert result["id"] == "10001"
-    assert result["body"] == "Test comment body"
+
+@pytest.mark.anyio
+async def test_add_comment_preserves_public_values_at_server_boundary(
+    jira_client, mock_jira_fetcher
+):
+    """Test omitted, false, and true public values reach the Jira client intact."""
+    base_args = {"issue_key": "TEST-123", "body": "Test comment body"}
+
+    await jira_client.call_tool(
+        "jira_add_comment", {**base_args, "public": False}
+    )
+    await jira_client.call_tool("jira_add_comment", {**base_args, "public": True})
+    await jira_client.call_tool("jira_add_comment", base_args)
+
+    assert mock_jira_fetcher.add_comment.call_args_list == [
+        call("TEST-123", "Test comment body", None, public=False),
+        call("TEST-123", "Test comment body", None, public=True),
+        call("TEST-123", "Test comment body", None, public=None),
+    ]
 
 
 @pytest.mark.anyio

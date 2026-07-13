@@ -3,6 +3,7 @@
 from unittest.mock import Mock
 
 import pytest
+from requests.exceptions import HTTPError
 
 from mcp_atlassian.jira.comments import CommentsMixin
 
@@ -568,12 +569,36 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="not a JSM service desk issue"):
             comments_mixin.add_comment("TEST-123", "Test", public=True)
 
-    def test_add_comment_servicedesk_404(self, comments_mixin):
-        """public=True on non-existent issue gives clear 404 error."""
+    def test_add_servicedesk_comment_404_is_strict(self, comments_mixin):
+        """The ServiceDesk helper keeps raising its 404 error."""
         comments_mixin.jira.post.side_effect = Exception("404 Client Error: Not Found")
 
         with pytest.raises(Exception, match="not a JSM service desk issue"):
-            comments_mixin.add_comment("TEST-123", "Test", public=True)
+            comments_mixin._add_servicedesk_comment(
+                "TEST-123", "Test", public=True
+            )
+
+    def test_add_comment_non_jsm_public_false_falls_back_on_404(self, comments_mixin):
+        """A non-JSM public=False comment falls back to normal Jira on 404."""
+        comments_mixin.jira.post.side_effect = HTTPError(
+            response=Mock(status_code=404)
+        )
+        comments_mixin._post_api3 = Mock(
+            return_value={
+                "id": "10001",
+                "body": "Internal note",
+                "created": "2024-01-01T10:00:00.000+0000",
+                "author": {"displayName": "John Doe"},
+            }
+        )
+
+        result = comments_mixin.add_comment(
+            "TEST-123", "Internal note", public=False
+        )
+
+        comments_mixin.jira.post.assert_called_once()
+        comments_mixin._post_api3.assert_called_once()
+        assert result["id"] == "10001"
 
     def test_add_comment_public_with_visibility_raises(self, comments_mixin):
         """public + visibility together raises ValueError."""
@@ -764,6 +789,21 @@ class TestInternalOnlyProjectsGuard:
         result = guarded_mixin.add_comment("CC-1", "Internal note", public=False)
         guarded_mixin.jira.post.assert_called_once()
         assert result["public"] is False
+
+    def test_add_comment_internal_only_public_false_404_fails_closed(
+        self, guarded_mixin
+    ):
+        """Listed project + ServiceDesk 404 never falls back to Jira."""
+        guarded_mixin.jira.post.side_effect = HTTPError(
+            response=Mock(status_code=404)
+        )
+        guarded_mixin._post_api3 = Mock()
+
+        with pytest.raises(Exception, match="Error adding ServiceDesk comment"):
+            guarded_mixin.add_comment("CC-1", "Internal note", public=False)
+
+        guarded_mixin.jira.post.assert_called_once()
+        guarded_mixin._post_api3.assert_not_called()
 
     def test_add_comment_internal_only_case_insensitive_project_match(
         self, guarded_mixin

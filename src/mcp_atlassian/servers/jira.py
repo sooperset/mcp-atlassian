@@ -2343,9 +2343,9 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    # Some MCP clients send omitted optional booleans as false. Keep normal
-    # Jira comments as the default and reserve ServiceDesk routing for true.
-    public_value = True if public is True else None
+    # Preserve the caller's public value so explicit False reaches the client
+    # and can route to the ServiceDesk internal-comment path.
+    public_value = public
     result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
