@@ -112,6 +112,22 @@ class JiraClient:
                 verify_ssl=self.config.ssl_verify,
                 timeout=self.config.timeout,
             )
+        elif self.config.auth_type == "external":
+            logger.debug(
+                f"Initializing Jira client in external auth passthrough mode. "
+                f"URL: {self.config.url}"
+            )
+            session = Session()
+            session.trust_env = False
+            self.jira = Jira(
+                url=self.config.url,
+                session=session,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
+            # Ensure no Authorization header is carried over from defaults
+            self.jira._session.headers.pop("Authorization", None)
         else:  # basic auth
             logger.debug(
                 f"Initializing Jira client with Basic auth. "
@@ -196,7 +212,7 @@ class JiraClient:
         self._current_user_account_id = None
 
         # Test authentication during initialization (in debug mode only)
-        if logger.isEnabledFor(logging.DEBUG):
+        if logger.isEnabledFor(logging.DEBUG) and self.config.auth_type != "external":
             try:
                 self._validate_authentication()
             except MCPAtlassianAuthenticationError:
