@@ -1074,13 +1074,13 @@ class TestTaskLists:
 
     def test_nested_task_list_is_converted_by_md2conf(self):
         """md2conf converts nested Markdown task items to task macros."""
-        result = self._convert("- [ ] Parent\n  - [x] Child")
+        result = self._convert("- [ ] Parent\n    - [x] Child")
 
-        assert result.count("<ac:task-list>") == 1
+        assert result.count("<ac:task-list>") == 2
         assert result.count("<ac:task>") == 2
         assert "<ac:task-status>incomplete</ac:task-status>" in result
         assert "<ac:task-status>complete</ac:task-status>" in result
-        assert "<ac:task-body>Parent</ac:task-body>" in result
+        assert "<ac:task-body>Parent<ac:task-list>" in result
         assert "<ac:task-body>Child</ac:task-body>" in result
         assert "[ ]" not in result
         assert "[x]" not in result
