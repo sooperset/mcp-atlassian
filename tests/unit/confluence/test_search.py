@@ -67,6 +67,18 @@ class TestSearchMixin:
         assert result[0].title == "Test Page"
         assert result[0].content == "Processed content"
 
+    def test_search_with_empty_results(self, search_mixin):
+        """Test handling of empty search results."""
+        # Mock an empty result set
+        search_mixin.confluence.cql.return_value = {"results": []}
+
+        # Act
+        results = search_mixin.search("empty query")
+
+        # Assert
+        assert isinstance(results, list)
+        assert len(results) == 0
+
     def test_search_with_space_type_result(self, search_mixin) -> None:
         """Test CQL space results that use the space key instead of content."""
         search_mixin.confluence.cql.return_value = {
@@ -148,18 +160,6 @@ class TestSearchMixin:
                 confluence_client=search_mixin.confluence,
             ),
         ]
-
-    def test_search_with_empty_results(self, search_mixin):
-        """Test handling of empty search results."""
-        # Mock an empty result set
-        search_mixin.confluence.cql.return_value = {"results": []}
-
-        # Act
-        results = search_mixin.search("empty query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
 
     def test_search_with_non_page_content(self, search_mixin):
         """Test handling of non-page content in search results."""
