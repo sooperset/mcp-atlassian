@@ -5,7 +5,12 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from ..utils.env import get_custom_headers, is_env_ssl_verify
+from ..utils.env import (
+    get_custom_headers,
+    get_header_names,
+    is_env_ssl_verify,
+    is_env_truthy,
+)
 from ..utils.oauth import (
     BYOAccessTokenOAuthConfig,
     OAuthConfig,
@@ -97,7 +102,7 @@ class JiraConfig:
     """
 
     url: str  # Base URL for Jira
-    auth_type: Literal["basic", "pat", "oauth"]  # Authentication type
+    auth_type: Literal["basic", "pat", "oauth", "external"]  # Authentication type
     username: str | None = None  # Email or username (Cloud)
     api_token: str | None = None  # API token (Cloud)
     personal_token: str | None = None  # Personal access token (Server/DC)
@@ -111,6 +116,7 @@ class JiraConfig:
     proxy_wpad_enable: bool = False  # Whether to load PAC/WPAD configuration
     proxy_wpad_url: str | None = None  # PAC URL used when WPAD is enabled
     custom_headers: dict[str, str] | None = None  # Custom HTTP headers
+    passthrough_headers: list[str] | None = None  # Request headers to pass through
     disable_jira_markup_translation: bool = (
         False  # Disable automatic markup translation between formats
     )
@@ -169,7 +175,11 @@ class JiraConfig:
             ValueError: If required environment variables are missing or invalid
         """
         url = os.getenv("JIRA_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        if (
+            not url
+            and not os.getenv("ATLASSIAN_OAUTH_ENABLE")
+            and not is_env_truthy("ATLASSIAN_EXTERNAL_AUTH_ENABLE")
+        ):
             error_msg = (
                 "Missing required JIRA_URL environment variable. "
                 "Set JIRA_URL to your Jira base URL, for example "
@@ -189,7 +199,16 @@ class JiraConfig:
         # Use the shared utility function directly
         is_cloud = is_atlassian_cloud_url(url) if url else False
 
-        if is_cloud:
+        # External auth passthrough mode — no credentials needed
+        if (
+            is_env_truthy("ATLASSIAN_EXTERNAL_AUTH_ENABLE")
+            and not username
+            and not api_token
+            and not personal_token
+            and not oauth_config
+        ):
+            auth_type = "external"
+        elif is_cloud:
             # Cloud: OAuth takes priority, then basic auth
             if oauth_config:
                 auth_type = "oauth"
@@ -246,6 +265,7 @@ class JiraConfig:
 
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("JIRA_CUSTOM_HEADERS")
+        passthrough_headers = get_header_names("JIRA_PASSTHROUGH_HEADERS")
 
         # Markup translation setting
         disable_jira_markup_translation = (
@@ -278,6 +298,7 @@ class JiraConfig:
             proxy_wpad_enable=bool(proxy_settings["proxy_wpad_enable"]),
             proxy_wpad_url=proxy_settings["proxy_wpad_url"],
             custom_headers=custom_headers,
+            passthrough_headers=passthrough_headers,
             disable_jira_markup_translation=disable_jira_markup_translation,
             client_cert=client_cert,
             client_key=client_key,
@@ -338,6 +359,8 @@ class JiraConfig:
             return bool(self.personal_token)
         elif self.auth_type == "basic":
             return bool(self.username and self.api_token)
+        elif self.auth_type == "external":
+            return True
         logger.warning(
             f"Unknown or unsupported auth_type: {self.auth_type} in JiraConfig"
         )

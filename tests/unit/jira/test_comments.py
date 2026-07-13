@@ -153,6 +153,57 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="Error getting comments"):
             comments_mixin.get_issue_comments("TEST-123")
 
+    def test_get_issue_comments_adf_body(self, comments_mixin):
+        """Regression test for #1488: Jira Cloud (REST API v3) returns
+        comment bodies as ADF dicts; get_issue_comments previously raised
+        TypeError from re.sub() in _process_mentions because the dict was
+        passed straight to _clean_text. adf_to_text() must be applied
+        first, matching the pattern in add_comment / edit_comment."""
+        comments_mixin.jira.issue_get_comments.return_value = {
+            "comments": [
+                {
+                    "id": "10001",
+                    "body": {
+                        "type": "doc",
+                        "version": 1,
+                        "content": [
+                            {
+                                "type": "paragraph",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Hello from ADF",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    "created": "2024-01-01T10:00:00.000+0000",
+                    "updated": "2024-01-01T11:00:00.000+0000",
+                    "author": {"displayName": "John Doe"},
+                },
+                {
+                    "id": "10002",
+                    # Plain string body must still work unchanged
+                    "body": "This is a plain text comment",
+                    "created": "2024-01-02T10:00:00.000+0000",
+                    "updated": "2024-01-02T11:00:00.000+0000",
+                    "author": {"displayName": "Jane Smith"},
+                },
+            ]
+        }
+
+        result = comments_mixin.get_issue_comments("TEST-123")
+
+        assert len(result) == 2
+        # ADF body converted to plain text and forwarded to _clean_text.
+        # The fixture's mock _clean_text is the identity function, so the
+        # plain-text extraction result is what comes back.
+        assert "Hello from ADF" in result[0]["body"]
+        assert "doc" not in result[0]["body"]
+        # Plain string body passes through adf_to_text unchanged.
+        assert result[1]["body"] == "This is a plain text comment"
+
     def test_add_comment_basic(self, comments_mixin):
         """Test add_comment with basic data (Cloud → ADF via v3 API)."""
         # Setup mock response for v3 API path
@@ -439,6 +490,17 @@ class TestCommentsMixin:
         assert result["version"] == 1
         assert result["type"] == "doc"
         comments_mixin.preprocessor.markdown_to_jira.assert_not_called()
+
+    def test_markdown_to_jira_cloud_links_issue_keys(self, comments_mixin):
+        """Cloud ADF links bare Jira issue keys to the configured Jira site."""
+        result = comments_mixin._markdown_to_jira("Blocked by PROJ-123.")
+        assert isinstance(result, dict)
+        para = result["content"][0]
+        link_node = next(n for n in para["content"] if n.get("text") == "PROJ-123")
+        link_mark = next(m for m in link_node["marks"] if m["type"] == "link")
+        assert (
+            link_mark["attrs"]["href"] == "https://test.atlassian.net/browse/PROJ-123"
+        )
 
     def test_markdown_to_jira_cloud_empty(self, comments_mixin):
         """Test _markdown_to_jira with empty text on Cloud returns ADF."""
