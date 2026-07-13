@@ -132,7 +132,12 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             transition_id: The ID of the transition to perform
                 (integer preferred, string accepted)
             fields: Optional fields to set during the transition
-            comment: Optional comment to add during the transition
+            comment: Optional comment to add during the transition.
+                Rejected for projects listed in
+                JIRA_INTERNAL_ONLY_PROJECTS: a transition comment is a
+                standard Jira comment whose customer-visibility on JSM
+                cannot be controlled from this call, so it may not be
+                posted on an internal-only project.
 
         Returns:
             JiraIssue model representing the transitioned issue
@@ -140,8 +145,13 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails
                 with the Jira API (401/403)
-            ValueError: If there is an error transitioning the issue
+            ValueError: If there is an error transitioning the issue, or
+                if a comment is provided for a project listed in
+                JIRA_INTERNAL_ONLY_PROJECTS
         """
+        if comment:
+            self._enforce_internal_only_transition_comment(issue_key)
+
         try:
             # Normalize transition_id to int when possible
             normalized_transition_id = self._normalize_transition_id(transition_id)
@@ -349,6 +359,37 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 sanitized_fields[key] = value
 
         return sanitized_fields
+
+    def _enforce_internal_only_transition_comment(self, issue_key: str) -> None:
+        """Reject transition comments on JIRA_INTERNAL_ONLY_PROJECTS projects.
+
+        A transition comment is posted through the core Jira API
+        (``update.comment[].add``), which on JSM issues is commonly
+        customer-visible by default — and this call offers no way to
+        force it internal. Allowing it would re-open the exact hole the
+        internal-only guard on add_comment/edit_comment closes, through a
+        sibling entry point. So for listed projects the transition
+        comment is refused outright; the transition itself (without a
+        comment) is unaffected.
+
+        Args:
+            issue_key: The issue key (e.g. 'CC-123')
+
+        Raises:
+            ValueError: If issue_key's project is listed in
+                JIRA_INTERNAL_ONLY_PROJECTS
+        """
+        if not self._is_internal_only_project(issue_key):
+            return
+        raise ValueError(
+            f"Issue {issue_key} belongs to a project configured as "
+            "internal-only (JIRA_INTERNAL_ONLY_PROJECTS). Transition "
+            "comments are posted via the core Jira API and may be "
+            "customer-visible on JSM, with no way to force them "
+            "internal from this call — so they are blocked here. "
+            "Perform the transition WITHOUT a comment, then post an "
+            "internal note with add_comment(public=False)."
+        )
 
     def _add_comment_to_transition_data(
         self, transition_data: dict[str, Any], comment: str | int

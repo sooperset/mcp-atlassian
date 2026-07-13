@@ -210,6 +210,70 @@ def test_from_env_service_specific_wpad_disable_overrides_global():
         assert config.proxy_wpad_url == "http://global-wpad.example.com/wpad.dat"
 
 
+def test_from_env_internal_only_projects_unset_is_noop():
+    """Unset JIRA_INTERNAL_ONLY_PROJECTS must default to an empty set (no-op)."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.internal_only_projects == frozenset()
+
+
+def test_from_env_internal_only_projects_empty_string_is_noop():
+    """An empty JIRA_INTERNAL_ONLY_PROJECTS value must also be a no-op."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_INTERNAL_ONLY_PROJECTS": "",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.internal_only_projects == frozenset()
+
+
+def test_from_env_internal_only_projects_basic():
+    """A simple comma-separated list is parsed and upper-cased."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_INTERNAL_ONLY_PROJECTS": "CC,help",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.internal_only_projects == frozenset({"CC", "HELP"})
+
+
+def test_from_env_internal_only_projects_malformed_tolerated():
+    """Whitespace, blank entries (double/trailing commas), and mixed case
+    must not raise and must be normalized away."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_INTERNAL_ONLY_PROJECTS": "  cc , ,Help,, support ,cc",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.internal_only_projects == frozenset({"CC", "HELP", "SUPPORT"})
+
+
 def test_is_cloud_oauth_with_cloud_id():
     """Test that is_cloud returns True for OAuth with cloud_id regardless of URL."""
     from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig

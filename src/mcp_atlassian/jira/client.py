@@ -319,6 +319,32 @@ class JiraClient:
             logger.warning(f"Error converting markdown to Jira format: {str(e)}")
             return markdown_text
 
+    @staticmethod
+    def _project_key_from_issue_key(issue_key: str) -> str:
+        """Extract the project key from an issue key (e.g. 'CC-123' -> 'CC').
+
+        Normalizes its own input (strips surrounding whitespace on the
+        issue key AND on the extracted key) so that padded inputs like
+        ' CC-1', '\\tCC-1' or 'CC -1' cannot slip past callers that
+        compare the result against a set of clean project keys. A
+        defense-in-depth check must not rely on the downstream API to
+        reject whitespace-padded keys.
+        """
+        return issue_key.strip().split("-", 1)[0].strip().upper()
+
+    def _is_internal_only_project(self, issue_key: str) -> bool:
+        """Check whether issue_key's project is in JIRA_INTERNAL_ONLY_PROJECTS.
+
+        Returns False (no-op) whenever the env var is unset/empty, which is
+        the default for every deployment that hasn't opted in.
+        """
+        if not self.config.internal_only_projects:
+            return False
+        return (
+            self._project_key_from_issue_key(issue_key)
+            in self.config.internal_only_projects
+        )
+
     def _post_api3(
         self,
         resource: str,

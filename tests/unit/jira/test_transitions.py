@@ -199,6 +199,55 @@ class TestTransitionsMixin:
         assert body["type"] == "doc"
         assert body["content"][0]["content"][0]["text"] == comment
 
+    # --- JIRA_INTERNAL_ONLY_PROJECTS guard on transition comments ---
+
+    def test_transition_comment_internal_only_project_rejected(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """A transition comment on a listed project is rejected before any
+        API call (a transition comment is a standard, potentially
+        customer-visible Jira comment that cannot be forced internal)."""
+        transitions_mixin.config.internal_only_projects = frozenset({"CC"})
+
+        with pytest.raises(ValueError, match="internal-only"):
+            transitions_mixin.transition_issue("CC-1", "10", comment="Client update")
+
+        transitions_mixin._post_api3.assert_not_called()
+
+    def test_transition_comment_internal_only_whitespace_padded_key_rejected(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Whitespace-padded issue keys do not bypass the transition guard."""
+        transitions_mixin.config.internal_only_projects = frozenset({"CC"})
+
+        with pytest.raises(ValueError, match="internal-only"):
+            transitions_mixin.transition_issue(" CC-1", "10", comment="Client update")
+
+    def test_transition_comment_unlisted_project_unaffected(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """A comment on an unlisted project transitions normally even with
+        the guard configured for another project."""
+        transitions_mixin.config.internal_only_projects = frozenset({"CC"})
+
+        transitions_mixin.transition_issue("TEST-123", "10", comment="Test comment")
+
+        transitions_mixin._post_api3.assert_called_once()
+
+    def test_transition_without_comment_internal_only_project_unaffected(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """A transition WITHOUT a comment on a listed project is allowed —
+        the guard only blocks the comment, not the transition itself."""
+        transitions_mixin.config.internal_only_projects = frozenset({"CC"})
+
+        transitions_mixin.transition_issue("CC-1", "10")
+
+        transitions_mixin._post_api3.assert_called_once_with(
+            "issue/CC-1/transitions",
+            {"transition": {"id": "10"}},
+        )
+
     def test_transition_issue_with_error(self, transitions_mixin: TransitionsMixin):
         """Test transition_issue error handling."""
         # Setup mock to raise exception on the POST
