@@ -335,13 +335,19 @@ class TestJiraDCJSMComments:
 
     def test_internal_only_comment_guard_matches_servicedesk_visibility(
         self,
-        jira_fetcher: JiraFetcher,
-        dc_instance: DCInstanceInfo,
-        resource_tracker: DCResourceTracker,
+        jsm_jira_fetcher: JiraFetcher,
+        jsm_dc_instance: DCInstanceInfo,
+        jsm_resource_tracker: DCResourceTracker,
     ) -> None:
         existing_issue_key = os.environ.get("DC_E2E_JSM_ISSUE_KEY", "").strip()
-        project_key = _dc_jsm_project_key(dc_instance, existing_issue_key)
-        project = jira_fetcher.jira.get(f"rest/api/2/project/{project_key}")
+        if not existing_issue_key:
+            pytest.skip(
+                "DC JSM e2e requires DC_E2E_JSM_ISSUE_KEY (a pre-seeded "
+                "ServiceDesk request); JSM projects reject plain issue creation"
+            )
+
+        project_key = _dc_jsm_project_key(jsm_dc_instance, existing_issue_key)
+        project = jsm_jira_fetcher.jira.get(f"rest/api/2/project/{project_key}")
         if not isinstance(project, dict) or project.get("projectTypeKey") not in {
             "service_desk",
             "service-desk",
@@ -352,21 +358,13 @@ class TestJiraDCJSMComments:
             )
 
         issue_key = existing_issue_key
-        if not issue_key:
-            issue = jira_fetcher.create_issue(
-                project_key=project_key,
-                summary=f"DC E2E JSM comment test {uuid.uuid4().hex[:8]}",
-                issue_type=os.environ.get("DC_E2E_JSM_ISSUE_TYPE", "Task"),
-            )
-            issue_key = issue.key
-            resource_tracker.add_jira_issue(issue_key)
 
         comment_ids: list[str] = []
         try:
-            public_comment = jira_fetcher.add_comment(
+            public_comment = jsm_jira_fetcher.add_comment(
                 issue_key, "DC public ServiceDesk comment", public=True
             )
-            internal_comment = jira_fetcher.add_comment(
+            internal_comment = jsm_jira_fetcher.add_comment(
                 issue_key, "DC internal ServiceDesk comment", public=False
             )
             public_id = str(public_comment["id"])
@@ -376,24 +374,28 @@ class TestJiraDCJSMComments:
             assert public_comment["public"] is True
             assert internal_comment["public"] is False
             assert (
-                jira_fetcher._fetch_servicedesk_comment_is_public(issue_key, public_id)
+                jsm_jira_fetcher._fetch_servicedesk_comment_is_public(
+                    issue_key, public_id
+                )
                 is True
             )
             assert (
-                jira_fetcher._fetch_servicedesk_comment_is_public(
+                jsm_jira_fetcher._fetch_servicedesk_comment_is_public(
                     issue_key, internal_id
                 )
                 is False
             )
 
-            jira_fetcher.config.internal_only_projects = frozenset({project_key})
+            jsm_jira_fetcher.config.internal_only_projects = frozenset({project_key})
             with pytest.raises(ValueError, match="PUBLIC"):
-                jira_fetcher.edit_comment(issue_key, public_id, "must remain unchanged")
+                jsm_jira_fetcher.edit_comment(
+                    issue_key, public_id, "must remain unchanged"
+                )
 
-            edited = jira_fetcher.edit_comment(
+            edited = jsm_jira_fetcher.edit_comment(
                 issue_key, internal_id, "DC edited internal ServiceDesk comment"
             )
             assert edited["id"] == internal_id
         finally:
             for comment_id in comment_ids:
-                _delete_dc_comment(jira_fetcher, issue_key, comment_id)
+                _delete_dc_comment(jsm_jira_fetcher, issue_key, comment_id)
