@@ -12,6 +12,7 @@ from ..models.confluence import (
     ConfluenceUserSearchResults,
 )
 from ..models.confluence.common import ConfluenceUser
+from ..models.confluence.search import get_search_result_identifier
 from ..utils.decorators import handle_atlassian_api_errors
 from ..utils.pagination import clamp_limit
 from .client import ConfluenceClient
@@ -139,7 +140,7 @@ class SearchMixin(ConfluenceClient):
         for page in search_result.results:
             # Get the excerpt from the original search results
             for result_item in results.get("results", []):
-                if result_item.get("content", {}).get("id") == page.id:
+                if get_search_result_identifier(result_item) == page.id:
                     excerpt = result_item.get("excerpt", "")
                     if excerpt:
                         # Process the excerpt as HTML content
