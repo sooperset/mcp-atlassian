@@ -2729,7 +2729,9 @@ async def test_add_comment(jira_client, mock_jira_fetcher):
 async def test_add_comment_ignores_empty_optional_fields(
     jira_client, mock_jira_fetcher
 ):
-    """Test add_comment ignores empty visibility but preserves public=False."""
+    """Test add_comment treats a client's default empty fields as omitted."""
+    mock_jira_fetcher._is_internal_only_project.return_value = False
+
     response = await jira_client.call_tool(
         "jira_add_comment",
         {
@@ -2741,7 +2743,7 @@ async def test_add_comment_ignores_empty_optional_fields(
     )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(
-        "TEST-123", "Test comment body", None, public=False
+        "TEST-123", "Test comment body", None, public=None
     )
 
     result = json.loads(response.content[0].text)
@@ -2767,38 +2769,48 @@ async def test_add_comment_accepts_comment_alias(jira_client, mock_jira_fetcher)
 
 
 @pytest.mark.anyio
-async def test_add_comment_restricted_visibility_rejects_explicit_false(
+async def test_add_comment_restricted_visibility_with_client_default_false(
     jira_client, mock_jira_fetcher
 ):
-    """Test add_comment passes the invalid public/visibility pair to the client."""
-    mock_jira_fetcher.add_comment.side_effect = ValueError(
-        "Cannot use both 'public' and 'visibility'."
-    )
+    """A client's default public=false must not break a restricted comment.
 
-    with pytest.raises(ToolError, match="Cannot use both"):
-        await jira_client.call_tool(
-            "jira_add_comment",
-            {
-                "issue_key": "TEST-123",
-                "body": "Test comment body",
-                "visibility": '{"type":"role","value":"Developer"}',
-                "public": False,
-            },
-        )
+    Some MCP clients auto-fill omitted optional fields, sending public=false
+    alongside a real visibility. Forwarding that false would trip the
+    public/visibility conflict and break a restricted comment that used to work.
+    """
+    mock_jira_fetcher._is_internal_only_project.return_value = False
+
+    response = await jira_client.call_tool(
+        "jira_add_comment",
+        {
+            "issue_key": "TEST-123",
+            "body": "Test comment body",
+            "visibility": '{"type":"role","value":"Developer"}',
+            "public": False,
+        },
+    )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(
         "TEST-123",
         "Test comment body",
         {"type": "role", "value": "Developer"},
-        public=False,
+        public=None,
     )
+
+    result = json.loads(response.content[0].text)
+    assert result["id"] == "10001"
 
 
 @pytest.mark.anyio
-async def test_add_comment_preserves_public_values_at_server_boundary(
+async def test_add_comment_forwards_false_for_internal_only_project(
     jira_client, mock_jira_fetcher
 ):
-    """Test omitted, false, and true public values reach the Jira client intact."""
+    """On a listed project, public=false must survive to the client.
+
+    Dropping it here is what blocked internal comments outright: the guard only
+    accepts an exact False, so a coerced None read as "omitted" and was refused.
+    """
+    mock_jira_fetcher._is_internal_only_project.return_value = True
     base_args = {"issue_key": "TEST-123", "body": "Test comment body"}
 
     await jira_client.call_tool("jira_add_comment", {**base_args, "public": False})
@@ -2809,6 +2821,28 @@ async def test_add_comment_preserves_public_values_at_server_boundary(
         call("TEST-123", "Test comment body", None, public=False),
         call("TEST-123", "Test comment body", None, public=True),
         call("TEST-123", "Test comment body", None, public=None),
+    ]
+
+
+@pytest.mark.anyio
+async def test_add_comment_drops_client_default_false_on_ordinary_project(
+    jira_client, mock_jira_fetcher
+):
+    """On an unlisted project, a bare false stays "omitted".
+
+    Some MCP clients auto-fill an omitted optional boolean as false. Forwarding
+    that would route ordinary Jira comments through the ServiceDesk API, which
+    answers 403 for non-JSM issues. public=true still routes, as before.
+    """
+    mock_jira_fetcher._is_internal_only_project.return_value = False
+    base_args = {"issue_key": "TEST-123", "body": "Test comment body"}
+
+    await jira_client.call_tool("jira_add_comment", {**base_args, "public": False})
+    await jira_client.call_tool("jira_add_comment", {**base_args, "public": True})
+
+    assert mock_jira_fetcher.add_comment.call_args_list == [
+        call("TEST-123", "Test comment body", None, public=None),
+        call("TEST-123", "Test comment body", None, public=True),
     ]
 
 

@@ -2343,9 +2343,17 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    # Preserve the caller's public value so explicit False reaches the client
-    # and can route to the ServiceDesk internal-comment path.
+    # A bare false is ambiguous here in a way it is not in the client API: some
+    # MCP clients auto-fill an omitted optional boolean as false. Honor it only
+    # for a project the operator declared internal-only, where it can only mean
+    # "internal" — that is the case the guard exists for, and dropping it there
+    # is what blocked internal comments entirely. Anywhere else, keep treating it
+    # as omitted, so those clients don't start routing ordinary Jira comments
+    # through the ServiceDesk API (which answers 403 for non-JSM issues) or
+    # tripping the public/visibility conflict on a restricted comment.
     public_value = public
+    if public is False and not jira._is_internal_only_project(issue_key):
+        public_value = None
     result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
     return json.dumps(result, indent=2, ensure_ascii=False)
 

@@ -576,23 +576,21 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="not a JSM service desk issue"):
             comments_mixin._add_servicedesk_comment("TEST-123", "Test", public=True)
 
-    def test_add_comment_non_jsm_public_false_falls_back_on_404(self, comments_mixin):
-        """A non-JSM public=False comment falls back to normal Jira on 404."""
+    def test_add_comment_servicedesk_failure_never_reaches_jira(self, comments_mixin):
+        """A failed internal-comment request must not become an ordinary one.
+
+        Falling through to the normal Jira comment path could publish the text to
+        the customer portal, so the request has to fail instead.
+        """
         comments_mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=404))
-        comments_mixin._post_api3 = Mock(
-            return_value={
-                "id": "10001",
-                "body": "Internal note",
-                "created": "2024-01-01T10:00:00.000+0000",
-                "author": {"displayName": "John Doe"},
-            }
-        )
+        comments_mixin._post_api3 = Mock()
+        comments_mixin.jira.issue_add_comment = Mock()
 
-        result = comments_mixin.add_comment("TEST-123", "Internal note", public=False)
+        with pytest.raises(Exception, match="ServiceDesk"):
+            comments_mixin.add_comment("TEST-123", "Internal note", public=False)
 
-        comments_mixin.jira.post.assert_called_once()
-        comments_mixin._post_api3.assert_called_once()
-        assert result["id"] == "10001"
+        comments_mixin._post_api3.assert_not_called()
+        comments_mixin.jira.issue_add_comment.assert_not_called()
 
     def test_add_comment_public_with_visibility_raises(self, comments_mixin):
         """public + visibility together raises ValueError."""
@@ -784,18 +782,28 @@ class TestInternalOnlyProjectsGuard:
         guarded_mixin.jira.post.assert_called_once()
         assert result["public"] is False
 
-    def test_add_comment_internal_only_public_false_404_fails_closed(
-        self, guarded_mixin
+    @pytest.mark.parametrize("status_code", [403, 404, 500])
+    def test_add_comment_internal_only_failure_never_reaches_jira(
+        self, guarded_mixin, status_code
     ):
-        """Listed project + ServiceDesk 404 never falls back to Jira."""
-        guarded_mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=404))
-        guarded_mixin._post_api3 = Mock()
+        """An internal comment must never be downgraded to an ordinary one.
 
-        with pytest.raises(Exception, match="Error adding ServiceDesk comment"):
+        Whatever the ServiceDesk API answers, falling through to the normal Jira
+        comment path could publish the text to the customer portal, so the
+        request has to fail instead.
+        """
+        guarded_mixin.jira.post.side_effect = HTTPError(
+            response=Mock(status_code=status_code)
+        )
+        guarded_mixin._post_api3 = Mock()
+        guarded_mixin.jira.issue_add_comment = Mock()
+
+        with pytest.raises(Exception, match="ServiceDesk"):
             guarded_mixin.add_comment("CC-1", "Internal note", public=False)
 
         guarded_mixin.jira.post.assert_called_once()
         guarded_mixin._post_api3.assert_not_called()
+        guarded_mixin.jira.issue_add_comment.assert_not_called()
 
     def test_add_comment_internal_only_case_insensitive_project_match(
         self, guarded_mixin

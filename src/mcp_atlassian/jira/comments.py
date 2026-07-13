@@ -228,26 +228,11 @@ class CommentsMixin(JiraClient):
                     "does not support Jira visibility "
                     "restrictions."
                 )
-            try:
-                return self._add_servicedesk_comment(issue_key, comment, public)
-            except Exception as e:
-                if self._is_internal_only_project(issue_key) or not self._is_http_404(
-                    e
-                ):
-                    raise
-                # A real JSM issue that unexpectedly returns 404 could fall
-                # back to a customer-visible Jira comment; internal-only
-                # projects above remain fail-closed. This residual edge is
-                # accepted because 404 is not expected there, and the
-                # internal-only lock is the supported way to force internal.
-                logger.warning(
-                    "ServiceDesk comment endpoint returned 404 for %s; "
-                    "falling back to a normal Jira comment",
-                    issue_key,
-                )
-
-        # The ServiceDesk path above falls through here only for a non-
-        # internal-only project whose ServiceDesk request returned 404.
+            # Deliberately no fallback: downgrading a failed internal-comment
+            # request to an ordinary Jira comment could publish it to the
+            # customer portal. An internal comment either posts as internal or
+            # it fails.
+            return self._add_servicedesk_comment(issue_key, comment, public)
 
         try:
             # Convert Markdown to Jira's markup format
@@ -281,24 +266,6 @@ class CommentsMixin(JiraClient):
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
             raise Exception(f"Error adding comment: {str(e)}") from e
-
-    @staticmethod
-    def _is_http_404(error: BaseException) -> bool:
-        """Return whether an error chain carries an HTTP 404 response.
-
-        Only a real status code counts. Sniffing the message for "404" would
-        also match an issue key like PROJ-404, and this decides whether a failed
-        ServiceDesk request may be retried as a normal (customer-visible)
-        comment — so an unrecognized error stays an error.
-        """
-        current: BaseException | None = error
-        while current is not None:
-            response = getattr(current, "response", None)
-            status_code = getattr(response, "status_code", None)
-            if status_code is not None:
-                return status_code == 404
-            current = current.__cause__ or current.__context__
-        return False
 
     def _add_servicedesk_comment(
         self,
