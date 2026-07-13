@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import parse_qs, urlsplit
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import BeforeValidator, Field
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluenceAttachment
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
+from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
@@ -178,7 +179,7 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
     return path.read_text(encoding="utf-8")
 
 
-confluence_mcp = FastMCP(
+confluence_mcp = ErrorPreservingFastMCP(
     name="Confluence MCP Service",
     instructions="Provides tools for interacting with Atlassian Confluence.",
 )
@@ -777,6 +778,16 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    subtype: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Confluence page subtype. Use 'live' to create a "
+                "Confluence Live Doc. Only supported for Confluence Cloud."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -797,6 +808,7 @@ async def create_page(
         emoji: Optional page title emoji (icon shown in navigation).
         page_width: Optional page layout width ('full-width' or 'default').
         table_layout: Optional table width preset ('full-width', 'wide', 'default').
+        subtype: Optional page subtype. Use "live" to create a Confluence Live Doc.
 
     Returns:
         JSON string representing the created page object.
@@ -837,6 +849,7 @@ async def create_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        subtype=subtype,
         page_width=page_width,
         table_layout=table_layout if content_format == "markdown" else None,
     )
@@ -2863,6 +2876,7 @@ async def set_page_restrictions(
                 "allowed to view the page. Empty list = unrestricted."
             ),
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     read_groups: Annotated[
@@ -2870,6 +2884,7 @@ async def set_page_restrictions(
         Field(
             description="(Optional) Group names allowed to view the page.",
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     edit_users: Annotated[
@@ -2880,6 +2895,7 @@ async def set_page_restrictions(
                 "allowed to edit the page."
             ),
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     edit_groups: Annotated[
@@ -2887,6 +2903,7 @@ async def set_page_restrictions(
         Field(
             description="(Optional) Group names allowed to edit the page.",
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
 ) -> str:

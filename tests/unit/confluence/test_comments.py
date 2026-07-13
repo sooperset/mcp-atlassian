@@ -1,6 +1,6 @@
 """Unit tests for the CommentsMixin class."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 import requests
@@ -13,6 +13,7 @@ from tests.fixtures.confluence_mocks import (
     MOCK_COMMENT_REPLY_V2_RESPONSE,
     MOCK_INLINE_COMMENT_V1_RESPONSE,
     MOCK_INLINE_COMMENT_V2_RESPONSE,
+    MOCK_PARENT_COMMENT_V1_RESPONSE,
 )
 
 
@@ -308,11 +309,14 @@ class TestCommentsMixin:
 class TestReplyToComment:
     """Tests for reply_to_comment method."""
 
-    def test_reply_to_comment_v1_success(self, comments_mixin):
-        """T1: reply_to_comment v1 success - parent_comment_id set."""
-        # Mock the POST call for v1 API
+    def test_reply_to_comment_v1_cloud_basic_success(self, comments_mixin):
+        """V1 Cloud Basic replies use the parent page as the container."""
+        assert comments_mixin.config.is_cloud is True
+        comments_mixin.confluence.get_page_by_id.side_effect = [
+            MOCK_PARENT_COMMENT_V1_RESPONSE,
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
         comments_mixin.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
-        # Mock preprocessor
         comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
             "<p>This is a reply</p>"
         )
@@ -325,7 +329,65 @@ class TestReplyToComment:
 
         assert result is not None
         assert result.parent_comment_id == "456789123"
-        comments_mixin.confluence.post.assert_called_once()
+        assert comments_mixin.confluence.get_page_by_id.call_args_list == [
+            call(page_id="456789123", expand="container,ancestors"),
+            call(page_id="987654321", expand="space"),
+        ]
+        comments_mixin.confluence.post.assert_called_once_with(
+            "rest/api/content/",
+            data={
+                "type": "comment",
+                "container": {"id": "987654321", "type": "page"},
+                "ancestors": [{"id": "456789123"}],
+                "body": {
+                    "storage": {
+                        "value": "<p>This is a reply</p>",
+                        "representation": "storage",
+                    },
+                },
+            },
+        )
+
+    def test_reply_to_nested_comment_uses_page_ancestor(self, comments_mixin):
+        """Nested comment replies resolve their nearest page ancestor."""
+        comments_mixin.confluence.get_page_by_id.side_effect = [
+            {
+                "id": "nested-comment",
+                "container": {"id": "parent-comment", "type": "comment"},
+                "ancestors": [
+                    {"id": "987654321", "type": "page"},
+                    {"id": "parent-comment", "type": "comment"},
+                ],
+            },
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
+        comments_mixin.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>Nested reply</p>"
+        )
+
+        result = comments_mixin.reply_to_comment("nested-comment", "Nested reply")
+
+        assert result is not None
+        payload = comments_mixin.confluence.post.call_args.kwargs["data"]
+        assert payload["container"] == {"id": "987654321", "type": "page"}
+        assert payload["ancestors"] == [{"id": "nested-comment"}]
+
+    def test_reply_to_comment_v1_server_dc_success(self, comments_mixin_dc):
+        """V1 Server/DC replies use the parent page as the container."""
+        comments_mixin_dc.confluence.get_page_by_id.side_effect = [
+            MOCK_PARENT_COMMENT_V1_RESPONSE,
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
+        comments_mixin_dc.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
+
+        result = comments_mixin_dc.reply_to_comment("456789123", "This is a reply")
+
+        assert result is not None
+        assert comments_mixin_dc.config.is_cloud is False
+        payload = comments_mixin_dc.confluence.post.call_args.kwargs["data"]
+        assert payload["container"] == {"id": "987654321", "type": "page"}
+        assert payload["ancestors"] == [{"id": "456789123"}]
 
     def test_reply_to_comment_v2_oauth_success(self, comments_mixin):
         """T2: reply_to_comment v2/OAuth routes through v2_adapter."""
@@ -374,7 +436,11 @@ class TestReplyToComment:
         )
 
     def test_reply_with_html_content(self, comments_mixin):
-        """T3: Reply with HTML content skips markdown conversion."""
+        """Reply with HTML content skips markdown conversion."""
+        comments_mixin.confluence.get_page_by_id.side_effect = [
+            MOCK_PARENT_COMMENT_V1_RESPONSE,
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
         comments_mixin.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
         comments_mixin.preprocessor.process_html_content.return_value = (
             "<p>HTML reply</p>",
@@ -387,7 +453,11 @@ class TestReplyToComment:
         comments_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
 
     def test_reply_network_error(self, comments_mixin):
-        """T4: Network error returns None."""
+        """Network error returns None."""
+        comments_mixin.confluence.get_page_by_id.side_effect = [
+            MOCK_PARENT_COMMENT_V1_RESPONSE,
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
         comments_mixin.confluence.post.side_effect = requests.RequestException(
             "Connection error"
         )
@@ -400,7 +470,11 @@ class TestReplyToComment:
         assert result is None
 
     def test_reply_empty_response(self, comments_mixin):
-        """T5: Empty API response returns None."""
+        """Empty API response returns None."""
+        comments_mixin.confluence.get_page_by_id.side_effect = [
+            MOCK_PARENT_COMMENT_V1_RESPONSE,
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
         comments_mixin.confluence.post.return_value = None
         comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
             "<p>Test</p>"
@@ -410,9 +484,91 @@ class TestReplyToComment:
 
         assert result is None
 
+    def test_reply_missing_container_page_returns_none(self, comments_mixin):
+        """Missing page resolution doesn't post an empty reply stub."""
+        comments_mixin.confluence.get_page_by_id.return_value = {
+            "id": "456789123",
+            "type": "comment",
+            "container": {},
+        }
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>Test</p>"
+        )
+
+        result = comments_mixin.reply_to_comment("456789123", "Test")
+
+        assert result is None
+        comments_mixin.confluence.post.assert_not_called()
+
+    def test_reply_unsupported_parent_path_returns_none(self, comments_mixin):
+        """A non-page container and ancestors don't produce a reply."""
+        comments_mixin.confluence.get_page_by_id.return_value = {
+            "id": "456789123",
+            "type": "comment",
+            "container": {"id": "blog-1", "type": "blogpost"},
+            "ancestors": [{"id": "space-1", "type": "space"}],
+        }
+
+        result = comments_mixin.reply_to_comment("456789123", "Test")
+
+        assert result is None
+        comments_mixin.confluence.post.assert_not_called()
+
+    def test_process_comment_response_falls_back_to_storage_body(self, comments_mixin):
+        """Comment responses without view content use storage content."""
+        comments_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed Markdown",
+        )
+        response = {
+            "id": "111222333",
+            "type": "comment",
+            "body": {
+                "storage": {
+                    "value": "<p>Storage body</p>",
+                    "representation": "storage",
+                },
+            },
+        }
+
+        result = comments_mixin._process_comment_response(response, "TEST")
+
+        assert result.body == "Processed Markdown"
+        comments_mixin.preprocessor.process_html_content.assert_called_once_with(
+            "<p>Storage body</p>",
+            space_key="TEST",
+            confluence_client=comments_mixin.confluence,
+        )
+
 
 class TestAddCommentV2Routing:
     """Tests for add_comment v2 routing for OAuth Cloud."""
+
+    @pytest.mark.parametrize(
+        ("auth_type", "url", "uses_v2"),
+        [
+            ("oauth", "https://test.atlassian.net/wiki", True),
+            ("pat", "https://test.atlassian.net/wiki", True),
+            ("basic", "https://test.atlassian.net/wiki", False),
+            ("pat", "https://confluence.example.com", False),
+        ],
+    )
+    def test_v2_adapter_supports_only_cloud_oauth_and_pat(
+        self, comments_mixin, auth_type, url, uses_v2
+    ):
+        """Only supported Cloud authentication routes footer comments through v2."""
+        comments_mixin.config.auth_type = auth_type
+        comments_mixin.config.url = url
+
+        with patch("mcp_atlassian.confluence.comments.ConfluenceV2Adapter") as adapter:
+            result = comments_mixin._v2_adapter
+
+        if uses_v2:
+            assert result is adapter.return_value
+            adapter.assert_called_once()
+        else:
+            assert result is None
+            adapter.assert_not_called()
 
     def test_add_comment_v2_routing_for_oauth_cloud(self, comments_mixin):
         """T10: add_comment routes through v2 adapter for OAuth Cloud."""
