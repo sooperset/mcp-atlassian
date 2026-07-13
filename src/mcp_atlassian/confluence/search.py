@@ -48,13 +48,13 @@ class SearchMixin(ConfluenceClient):
 
     @staticmethod
     def _validate_search_response(response: Any, operation: str) -> dict[str, Any]:
-        """Ensure a search API response carries the required 'results' field.
+        """Ensure a search API response has a list of results.
 
         A well-formed Confluence search response always includes a "results"
-        field (which may legitimately be an empty list). A response missing it
-        entirely indicates an API, network, or processing failure that must
-        surface as an error rather than be silently treated as an empty result
-        set.
+        field containing a list (which may legitimately be empty). A response
+        missing it or containing a different type indicates an API, network, or
+        processing failure that must surface as an error rather than be
+        silently treated as an empty result set.
 
         Args:
             response: The raw response returned by the Confluence API.
@@ -65,13 +65,21 @@ class SearchMixin(ConfluenceClient):
             The validated response dictionary.
 
         Raises:
-            ValueError: If the response is not a dict or is missing "results".
+            ValueError: If the response is not a dict or "results" is not a
+                list.
         """
         if not isinstance(response, dict) or "results" not in response:
-            raise ValueError(
+            error = (
                 f"Confluence {operation} returned a malformed response "
                 "missing the 'results' field"
             )
+            raise ValueError(error)
+        if not isinstance(response["results"], list):
+            error = (
+                f"Confluence {operation} returned a malformed response "
+                "where 'results' is not a list"
+            )
+            raise ValueError(error)
         return response
 
     @handle_atlassian_api_errors("Confluence API")

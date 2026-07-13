@@ -465,7 +465,15 @@ class TestSearchMixin:
         with pytest.raises(HTTPError):
             search_mixin.search_user('user.fullname ~ "Test"')
 
-    @pytest.mark.parametrize("malformed_response", [{"incomplete": "data"}, None])
+    @pytest.mark.parametrize(
+        "malformed_response",
+        [
+            {"incomplete": "data"},
+            None,
+            {"results": None},
+            {"results": {}},
+        ],
+    )
     def test_search_user_cloud_malformed_response_raises(
         self, search_mixin, malformed_response
     ):
@@ -707,7 +715,15 @@ class TestSearchUserServerDC:
         assert isinstance(results, list)
         assert len(results) == 0
 
-    @pytest.mark.parametrize("malformed_response", [{"incomplete": "data"}, None])
+    @pytest.mark.parametrize(
+        "malformed_response",
+        [
+            {"incomplete": "data"},
+            None,
+            {"results": None},
+            {"results": {}},
+        ],
+    )
     def test_server_dc_malformed_response_raises(
         self, server_search_mixin, malformed_response
     ):
@@ -724,7 +740,15 @@ class TestSearchUserServerDC:
         ):
             server_search_mixin.search_user('user.fullname ~ "Test"')
 
-    @pytest.mark.parametrize("malformed_response", [{"incomplete": "data"}, None])
+    @pytest.mark.parametrize(
+        "malformed_response",
+        [
+            {"incomplete": "data"},
+            None,
+            {"results": None},
+            {"results": {}},
+        ],
+    )
     def test_cloud_malformed_response_raises(
         self, cloud_search_mixin, malformed_response
     ):
