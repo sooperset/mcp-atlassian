@@ -465,24 +465,22 @@ class TestSearchMixin:
         with pytest.raises(HTTPError):
             search_mixin.search_user('user.fullname ~ "Test"')
 
-    @pytest.mark.parametrize(
-        "mock_response,expected_length",
-        [
-            ({"incomplete": "data"}, 0),  # KeyError case
-            (None, 0),  # None response case
-            ({"results": []}, 0),  # Empty results case
-        ],
-    )
-    def test_search_user_edge_cases(self, search_mixin, mock_response, expected_length):
-        """Test search_user handling of edge cases in API responses."""
-        search_mixin.confluence.get.return_value = mock_response
+    @pytest.mark.parametrize("malformed_response", [{"incomplete": "data"}, None])
+    def test_search_user_cloud_malformed_response_raises(
+        self, search_mixin, malformed_response
+    ):
+        """Malformed Cloud user-search responses must raise, not return [].
 
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
+        A response missing the 'results' field indicates an API/network/
+        processing failure and must not be reported as "no users found".
+        """
+        search_mixin.confluence.get.return_value = malformed_response
 
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == expected_length
+        with pytest.raises(
+            ValueError,
+            match="Error processing search_user results.*malformed response",
+        ):
+            search_mixin.search_user('user.fullname ~ "Test"')
 
     # You can also parametrize the regular search method exception tests:
     @pytest.mark.parametrize(
@@ -699,6 +697,45 @@ class TestSearchUserServerDC:
         assert len(results) == 1
         assert results[0].user is not None
         assert results[0].user.display_name == "John Doe"
+
+    def test_server_dc_empty_results_returns_empty(self, server_search_mixin):
+        """A genuine {'results': []} Server/DC response returns an empty list."""
+        server_search_mixin.confluence.get.return_value = {"results": []}
+
+        results = server_search_mixin.search_user('user.fullname ~ "Test"')
+
+        assert isinstance(results, list)
+        assert len(results) == 0
+
+    @pytest.mark.parametrize("malformed_response", [{"incomplete": "data"}, None])
+    def test_server_dc_malformed_response_raises(
+        self, server_search_mixin, malformed_response
+    ):
+        """Malformed Server/DC group-member responses must raise, not return [].
+
+        A response missing the 'results' field indicates an API/network/
+        processing failure and must not be reported as "no users found".
+        """
+        server_search_mixin.confluence.get.return_value = malformed_response
+
+        with pytest.raises(
+            ValueError,
+            match="Error processing search_user results.*malformed response",
+        ):
+            server_search_mixin.search_user('user.fullname ~ "Test"')
+
+    @pytest.mark.parametrize("malformed_response", [{"incomplete": "data"}, None])
+    def test_cloud_malformed_response_raises(
+        self, cloud_search_mixin, malformed_response
+    ):
+        """Malformed Cloud user-search responses must raise, not return []."""
+        cloud_search_mixin.confluence.get.return_value = malformed_response
+
+        with pytest.raises(
+            ValueError,
+            match="Error processing search_user results.*malformed response",
+        ):
+            cloud_search_mixin.search_user('user.fullname ~ "Test"')
 
     def test_server_dc_fuzzy_match_case_insensitive(self, server_search_mixin):
         """Fuzzy matching should be case-insensitive substring match."""
