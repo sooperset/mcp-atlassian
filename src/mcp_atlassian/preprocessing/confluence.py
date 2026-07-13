@@ -27,7 +27,9 @@ logger = logging.getLogger("mcp-atlassian")
 class ConfluencePreprocessor(BasePreprocessor):
     """Handles text preprocessing for Confluence content."""
 
-    _TASK_MARKER_PREFIX = "\u200b"
+    # Use a private-use codepoint so restoring an opt-out task list cannot
+    # remove a zero-width space supplied by the user.
+    _TASK_MARKER_PREFIX = "\ue000"
     _TASK_MARKER_PATTERN = re.compile(r"(<li\b[^>]*>)(\[[ xX]\])")
 
     def __init__(self, base_url: str) -> None:
@@ -126,7 +128,8 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = self._fix_attachment_images(
                     str(elements_to_string(root))
                 )
-                storage_format = self._restore_task_list_markers(storage_format)
+                if not apply_task_lists:
+                    storage_format = self._restore_task_list_markers(storage_format)
                 if apply_task_lists:
                     storage_format = self._normalize_task_list_bodies(storage_format)
 

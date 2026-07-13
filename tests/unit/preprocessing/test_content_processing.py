@@ -1023,6 +1023,12 @@ class TestTaskLists:
         result = self._convert("- [ ] Skip me", apply_task_lists=False)
         assert "<ul>" in result
         assert "<ac:task-list>" not in result
+        assert "\ue000" not in result
+
+    def test_zero_width_space_is_preserved(self):
+        """A user-supplied zero-width space is not treated as a sentinel."""
+        result = self._convert("Keep\u200b this space")
+        assert "Keep\u200b this space" in result
 
     def test_apply_task_lists_classmethod_directly(self):
         """_apply_task_lists can be called as a classmethod."""
@@ -1049,10 +1055,23 @@ class TestTaskLists:
         )
 
     def test_nested_task_list_is_left_unchanged(self):
-        """Nested lists are not partially converted into task macros."""
+        """The post-processor does not partially convert nested HTML lists."""
         html = "<ul><li>[ ] Parent<ul><li>[x] Child</li></ul></li></ul>"
         result = ConfluencePreprocessor._apply_task_lists(html)
         assert result == html
+
+    def test_nested_task_list_is_converted_by_md2conf(self):
+        """md2conf converts nested Markdown task items to task macros."""
+        result = self._convert("- [ ] Parent\n  - [x] Child")
+
+        assert result.count("<ac:task-list>") == 1
+        assert result.count("<ac:task>") == 2
+        assert "<ac:task-status>incomplete</ac:task-status>" in result
+        assert "<ac:task-status>complete</ac:task-status>" in result
+        assert "<ac:task-body>Parent</ac:task-body>" in result
+        assert "<ac:task-body>Child</ac:task-body>" in result
+        assert "[ ]" not in result
+        assert "[x]" not in result
 
     def test_marker_without_following_space_is_left_unchanged(self):
         """Text resembling a checkbox without GFM spacing is not converted."""
