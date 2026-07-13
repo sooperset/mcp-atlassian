@@ -1806,6 +1806,66 @@ class TestValidationCache:
         fetcher2.get_current_user_info.assert_called_once()
 
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    def test_same_credential_validation_is_single_flight(
+        self, mock_confluence_fetcher_class, config_factory
+    ):
+        """Concurrent requests for one cache key share one validation call."""
+        request1 = MockFastMCP.create_request()
+        request2 = MockFastMCP.create_request()
+        config1 = config_factory.create_confluence_config(
+            auth_type="pat", personal_token="shared-token"
+        )
+        config2 = config_factory.create_confluence_config(
+            auth_type="pat", personal_token="shared-token"
+        )
+
+        fetcher1 = _create_mock_fetcher(ConfluenceFetcher)
+        fetcher2 = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.side_effect = [fetcher1, fetcher2]
+
+        validation_started = threading.Event()
+        validation_release = threading.Event()
+        validation_call_count = 0
+        validation_count_lock = threading.Lock()
+
+        def validate() -> dict[str, str]:
+            nonlocal validation_call_count
+            with validation_count_lock:
+                validation_call_count += 1
+                validation_started.set()
+            if not validation_release.wait(timeout=2):
+                raise AssertionError("Validation release was not signaled")
+            return {"email": "user@example.com", "displayName": "User"}
+
+        fetcher1.get_current_user_info.side_effect = validate
+        fetcher2.get_current_user_info.side_effect = validate
+
+        spec = _confluence_spec()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(
+                    _create_and_validate, request1, spec, config1, "header_pat"
+                ),
+                executor.submit(
+                    _create_and_validate, request2, spec, config2, "header_pat"
+                ),
+            ]
+            try:
+                assert validation_started.wait(timeout=1)
+            finally:
+                validation_release.set()
+
+            for future in futures:
+                future.result(timeout=2)
+
+        assert validation_call_count == 1
+        assert (
+            fetcher1.get_current_user_info.call_count
+            + fetcher2.get_current_user_info.call_count
+            == 1
+        )
+
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
     def test_same_oauth_token_and_url_different_cloud_ids_validate_separately(
         self, mock_confluence_fetcher_class
     ):
