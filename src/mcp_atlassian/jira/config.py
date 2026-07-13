@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -19,28 +20,63 @@ from ..utils.oauth import (
 from ..utils.proxy import get_proxy_settings_from_env
 from ..utils.urls import is_atlassian_cloud_url
 
+logger = logging.getLogger("mcp-atlassian.jira.config")
+
+_PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+# str.strip() does not remove zero-width characters or a BOM, so a key pasted
+# from a browser or spreadsheet can carry one invisibly. That matters more here
+# than in most settings: an unmatched key silently leaves the project
+# unprotected, and this guard exists to keep automation off a customer-facing
+# portal, so it has to normalize them away rather than fail open.
+_INVISIBLE_CHARS = dict.fromkeys(
+    map(ord, "​‌‍⁠﻿")  # ZWSP, ZWNJ, ZWJ, word-joiner, BOM
+)
+
+
+def normalize_project_key(raw: str) -> str:
+    """Normalize a project key for internal-only comparisons."""
+    return raw.translate(_INVISIBLE_CHARS).strip().upper()
+
 
 def _parse_internal_only_projects(raw: str | None) -> frozenset[str]:
     """Parse JIRA_INTERNAL_ONLY_PROJECTS into a set of normalized project keys.
 
-    Tolerant of malformed input: extra whitespace, blank entries from
-    double/trailing commas, and mixed case are all normalized away. An
-    unset or empty value returns an empty set, which is the semantic
+    Tolerant of malformed input: extra whitespace, invisible characters, blank
+    entries from double/trailing commas, and mixed case are all normalized away.
+    An unset or empty value returns an empty set, which is the semantic
     "guard disabled" state used throughout the internal-only-projects
     feature — this keeps the feature strictly opt-in and a no-op for
     every other deployment of this server.
+
+    An entry that still does not look like a project key after normalization is
+    kept (it simply never matches) but logged as a warning: silently discarding
+    it would leave an operator believing a project is guarded when it is not.
 
     Args:
         raw: Raw comma-separated project keys from the environment
             (e.g. "CC" or "CC, HELP ,, support").
 
     Returns:
-        A frozenset of upper-cased, stripped project keys. Empty when
-        raw is None, empty, or contains only blank entries.
+        A frozenset of normalized project keys. Empty when raw is None,
+        empty, or contains only blank entries.
     """
     if not raw:
         return frozenset()
-    return frozenset(key.strip().upper() for key in raw.split(",") if key.strip())
+
+    keys = set()
+    for entry in raw.split(","):
+        key = normalize_project_key(entry)
+        if not key:
+            continue
+        if not _PROJECT_KEY_RE.match(key):
+            logger.warning(
+                "JIRA_INTERNAL_ONLY_PROJECTS entry %r is not a valid project key; "
+                "it will never match an issue, so that project is NOT guarded.",
+                entry,
+            )
+        keys.add(key)
+    return frozenset(keys)
 
 
 @dataclass
