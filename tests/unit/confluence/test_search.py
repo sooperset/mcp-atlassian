@@ -107,6 +107,48 @@ class TestSearchMixin:
             confluence_client=search_mixin.confluence,
         )
 
+    def test_search_with_multiple_space_results_without_ids(self, search_mixin) -> None:
+        """Match excerpts by space key when Server/DC omits space ids."""
+        search_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "space": {"key": "DEV", "name": "Development"},
+                    "title": "Development",
+                    "excerpt": "Development excerpt",
+                },
+                {
+                    "space": {"key": "OPS", "name": "Operations"},
+                    "title": "Operations",
+                    "excerpt": "Operations excerpt",
+                },
+            ],
+            "totalSize": 2,
+        }
+        search_mixin.preprocessor.process_html_content.side_effect = [
+            ("<p>Development excerpt</p>", "Development excerpt"),
+            ("<p>Operations excerpt</p>", "Operations excerpt"),
+        ]
+
+        result = search_mixin.search("type=space")
+
+        assert [page.id for page in result] == ["DEV", "OPS"]
+        assert [page.content for page in result] == [
+            "Development excerpt",
+            "Operations excerpt",
+        ]
+        assert search_mixin.preprocessor.process_html_content.call_args_list == [
+            call(
+                "Development excerpt",
+                space_key="DEV",
+                confluence_client=search_mixin.confluence,
+            ),
+            call(
+                "Operations excerpt",
+                space_key="OPS",
+                confluence_client=search_mixin.confluence,
+            ),
+        ]
+
     def test_search_with_empty_results(self, search_mixin):
         """Test handling of empty search results."""
         # Mock an empty result set

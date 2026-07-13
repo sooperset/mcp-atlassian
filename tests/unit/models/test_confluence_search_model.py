@@ -70,3 +70,44 @@ class TestConfluenceSearchResult:
         # Space id is mapped onto the page id so excerpt matching can resolve it
         assert page.id == "98765"
         assert page.title == "Development"
+
+    def test_from_api_response_with_server_dc_space_without_id(self):
+        """Preserve the key and UI URL from a Server/DC space result.
+
+        Regression for https://github.com/sooperset/mcp-atlassian/issues/907
+        """
+        data = {
+            "results": [
+                {
+                    "space": {
+                        "key": "ANONKEY1",
+                        "name": "Anonymized Space 1",
+                        "type": "global",
+                        "_links": {
+                            "self": "https://anonymized.wiki.net/rest/api/space/ANONKEY1"
+                        },
+                    },
+                    "title": "Anonymized Space 1",
+                    "excerpt": "",
+                    "url": "/spaces/ANONKEY1/overview",
+                    "resultGlobalContainer": {
+                        "displayUrl": "/spaces/ANONKEY1/overview"
+                    },
+                    "entityType": "space",
+                }
+            ],
+            "totalSize": 1,
+        }
+
+        search_result = ConfluenceSearchResult.from_api_response(
+            data,
+            base_url="https://anonymized.wiki.net",
+            is_cloud=False,
+        )
+
+        page = search_result.results[0]
+        assert page.id == "ANONKEY1"
+        assert page.title == "Anonymized Space 1"
+        assert page.space is not None
+        assert page.space.key == "ANONKEY1"
+        assert page.url == "https://anonymized.wiki.net/spaces/ANONKEY1/overview"
