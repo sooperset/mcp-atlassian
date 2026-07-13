@@ -29,7 +29,7 @@ from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
 from mcp_atlassian.utils.user_agent import get_default_user_agent
 
 from ..models.jira.adf import markdown_to_adf
-from .config import JiraConfig
+from .config import JiraConfig, normalize_project_key
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
@@ -323,14 +323,18 @@ class JiraClient:
     def _project_key_from_issue_key(issue_key: str) -> str:
         """Extract the project key from an issue key (e.g. 'CC-123' -> 'CC').
 
-        Normalizes its own input (strips surrounding whitespace on the
+        Normalizes its own input the same way the configured keys are
+        normalized (surrounding whitespace and invisible characters, on the
         issue key AND on the extracted key) so that padded inputs like
         ' CC-1', '\\tCC-1' or 'CC -1' cannot slip past callers that
         compare the result against a set of clean project keys. A
         defense-in-depth check must not rely on the downstream API to
-        reject whitespace-padded keys.
+        reject whitespace-padded keys, and both sides of the comparison have
+        to normalize identically or the guard silently stops matching.
         """
-        return issue_key.strip().split("-", 1)[0].strip().upper()
+        return normalize_project_key(
+            normalize_project_key(issue_key).split("-", 1)[0]
+        )
 
     def _is_internal_only_project(self, issue_key: str) -> bool:
         """Check whether issue_key's project is in JIRA_INTERNAL_ONLY_PROJECTS.
