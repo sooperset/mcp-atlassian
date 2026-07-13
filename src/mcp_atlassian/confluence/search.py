@@ -46,6 +46,42 @@ class SearchMixin(ConfluenceClient):
         logger.info(f"Applied spaces filter to query: {cql}")
         return cql
 
+    @staticmethod
+    def _validate_search_response(response: Any, operation: str) -> dict[str, Any]:
+        """Ensure a search API response has a list of results.
+
+        A well-formed Confluence search response always includes a "results"
+        field containing a list (which may legitimately be empty). A response
+        missing it or containing a different type indicates an API, network, or
+        processing failure that must surface as an error rather than be
+        silently treated as an empty result set.
+
+        Args:
+            response: The raw response returned by the Confluence API.
+            operation: Human-readable operation name for the error message
+                (e.g. "search", "user search").
+
+        Returns:
+            The validated response dictionary.
+
+        Raises:
+            ValueError: If the response is not a dict or "results" is not a
+                list.
+        """
+        if not isinstance(response, dict) or "results" not in response:
+            error = (
+                f"Confluence {operation} returned a malformed response "
+                "missing the 'results' field"
+            )
+            raise ValueError(error)
+        if not isinstance(response["results"], list):
+            error = (
+                f"Confluence {operation} returned a malformed response "
+                "where 'results' is not a list"
+            )
+            raise ValueError(error)
+        return response
+
     @handle_atlassian_api_errors("Confluence API")
     def search(
         self, cql: str, limit: int = 10, spaces_filter: str | None = None
@@ -85,6 +121,10 @@ class SearchMixin(ConfluenceClient):
         results = self.confluence.cql(
             cql=cql, limit=limit, expand="content.history,content.version"
         )
+
+        # Surface malformed responses (missing "results") as errors while
+        # allowing a genuine "results": [] to return an empty list.
+        self._validate_search_response(results, "search")
 
         # Convert the response to a search result model
         search_result = ConfluenceSearchResult.from_api_response(
@@ -150,7 +190,10 @@ class SearchMixin(ConfluenceClient):
                 "rest/api/search/user",
                 params={"cql": cql, "limit": limit},
             )
-            search_result = ConfluenceUserSearchResults.from_api_response(results or {})
+            # Surface malformed responses (missing "results") as errors while
+            # allowing a genuine "results": [] to return an empty list.
+            self._validate_search_response(results, "user search")
+            search_result = ConfluenceUserSearchResults.from_api_response(results)
             return search_result.results
 
         # Server/DC: fall back to group member API
@@ -187,6 +230,9 @@ class SearchMixin(ConfluenceClient):
                 f"rest/api/group/{encoded_group}/member",
                 params={"start": start, "limit": page_size},
             )
+            # Surface malformed responses (missing "results") as errors while
+            # allowing a genuine "results": [] to end pagination cleanly.
+            self._validate_search_response(response, "user search")
             members = response.get("results", [])
 
             for member in members:

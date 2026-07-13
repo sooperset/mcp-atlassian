@@ -167,53 +167,44 @@ class TestSearchMixin:
         # The method should still handle them as pages since we're using models
         assert len(results) > 0
 
-    def test_search_key_error(self, search_mixin):
-        """Test handling of KeyError in search results."""
-        # Mock a response missing required keys
+    def test_search_malformed_response_missing_results(self, search_mixin):
+        """Test that a response missing the 'results' key raises an error.
+
+        A malformed response (e.g. an API/network/processing failure) must not
+        be silently treated as an empty result set. Only a genuine
+        ``{"results": []}`` response should return an empty list.
+        """
+        # Mock a response missing the required "results" key
         search_mixin.confluence.cql.return_value = {"incomplete": "data"}
 
-        # Act
-        results = search_mixin.search("invalid query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(
+            ValueError, match="Error processing search results.*malformed response"
+        ):
+            search_mixin.search("invalid query")
 
     def test_search_request_exception(self, search_mixin):
         """Test handling of RequestException during search."""
         # Mock a network error
         search_mixin.confluence.cql.side_effect = requests.RequestException("API error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(ValueError, match="Network error during search"):
+            search_mixin.search("error query")
 
     def test_search_value_error(self, search_mixin):
         """Test handling of ValueError during search."""
         # Mock a value error
         search_mixin.confluence.cql.side_effect = ValueError("Value error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(ValueError, match="Error processing search results"):
+            search_mixin.search("error query")
 
     def test_search_type_error(self, search_mixin):
         """Test handling of TypeError during search."""
         # Mock a type error
         search_mixin.confluence.cql.side_effect = TypeError("Type error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(ValueError, match="Error processing search results"):
+            search_mixin.search("error query")
 
     def test_search_with_spaces_filter(self, search_mixin):
         """Test searching with spaces filter from parameter."""
@@ -371,12 +362,8 @@ class TestSearchMixin:
         # Mock a general exception
         search_mixin.confluence.cql.side_effect = Exception("General error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(RuntimeError, match="Unexpected error during search"):
+            search_mixin.search("error query")
 
     def test_search_user_success(self, search_mixin):
         """Test search_user with successful results."""
@@ -474,28 +461,44 @@ class TestSearchMixin:
         )
 
     @pytest.mark.parametrize(
-        "exception_type,exception_args,expected_result",
+        "exception_type,exception_args,expected_exception,match",
         [
-            (requests.RequestException, ("Network error",), []),
-            (ValueError, ("Value error",), []),
-            (TypeError, ("Type error",), []),
-            (Exception, ("General error",), []),
-            (KeyError, ("Missing key",), []),
+            (
+                requests.RequestException,
+                ("Network error",),
+                ValueError,
+                "Network error during search_user",
+            ),
+            (
+                ValueError,
+                ("Value error",),
+                ValueError,
+                "Error processing search_user results",
+            ),
+            (
+                TypeError,
+                ("Type error",),
+                ValueError,
+                "Error processing search_user results",
+            ),
+            (
+                Exception,
+                ("General error",),
+                RuntimeError,
+                "Unexpected error during search_user",
+            ),
+            (KeyError, ("Missing key",), ValueError, "missing key"),
         ],
     )
     def test_search_user_exception_handling(
-        self, search_mixin, exception_type, exception_args, expected_result
+        self, search_mixin, exception_type, exception_args, expected_exception, match
     ):
-        """Test search_user handling of various exceptions that return empty list."""
+        """Test search_user propagates detailed exceptions."""
         # Mock the exception
         search_mixin.confluence.get.side_effect = exception_type(*exception_args)
 
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
-
-        # Assert
-        assert isinstance(results, list)
-        assert results == expected_result
+        with pytest.raises(expected_exception, match=match):
+            search_mixin.search_user('user.fullname ~ "Test"')
 
     @pytest.mark.parametrize(
         "status_code,exception_type",
@@ -533,48 +536,70 @@ class TestSearchMixin:
             search_mixin.search_user('user.fullname ~ "Test"')
 
     @pytest.mark.parametrize(
-        "mock_response,expected_length",
+        "malformed_response",
         [
-            ({"incomplete": "data"}, 0),  # KeyError case
-            (None, 0),  # None response case
-            ({"results": []}, 0),  # Empty results case
+            {"incomplete": "data"},
+            None,
+            {"results": None},
+            {"results": {}},
         ],
     )
-    def test_search_user_edge_cases(self, search_mixin, mock_response, expected_length):
-        """Test search_user handling of edge cases in API responses."""
-        search_mixin.confluence.get.return_value = mock_response
+    def test_search_user_cloud_malformed_response_raises(
+        self, search_mixin, malformed_response
+    ):
+        """Malformed Cloud user-search responses must raise, not return [].
 
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
+        A response missing the 'results' field indicates an API/network/
+        processing failure and must not be reported as "no users found".
+        """
+        search_mixin.confluence.get.return_value = malformed_response
 
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == expected_length
+        with pytest.raises(
+            ValueError,
+            match="Error processing search_user results.*malformed response",
+        ):
+            search_mixin.search_user('user.fullname ~ "Test"')
 
     # You can also parametrize the regular search method exception tests:
     @pytest.mark.parametrize(
-        "exception_type,exception_args,expected_result",
+        "exception_type,exception_args,expected_exception,match",
         [
-            (requests.RequestException, ("API error",), []),
-            (ValueError, ("Value error",), []),
-            (TypeError, ("Type error",), []),
-            (Exception, ("General error",), []),
-            (KeyError, ("Missing key",), []),
+            (
+                requests.RequestException,
+                ("API error",),
+                ValueError,
+                "Network error during search",
+            ),
+            (
+                ValueError,
+                ("Value error",),
+                ValueError,
+                "Error processing search results",
+            ),
+            (
+                TypeError,
+                ("Type error",),
+                ValueError,
+                "Error processing search results",
+            ),
+            (
+                Exception,
+                ("General error",),
+                RuntimeError,
+                "Unexpected error during search",
+            ),
+            (KeyError, ("Missing key",), ValueError, "missing key"),
         ],
     )
     def test_search_exception_handling(
-        self, search_mixin, exception_type, exception_args, expected_result
+        self, search_mixin, exception_type, exception_args, expected_exception, match
     ):
-        """Test search handling of various exceptions that return empty list."""
+        """Test search propagates detailed exceptions."""
         # Mock the exception
         search_mixin.confluence.cql.side_effect = exception_type(*exception_args)
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert results == expected_result
+        with pytest.raises(expected_exception, match=match):
+            search_mixin.search("error query")
 
     # Parametrize CQL query tests:
     @pytest.mark.parametrize(
@@ -750,6 +775,61 @@ class TestSearchUserServerDC:
         assert len(results) == 1
         assert results[0].user is not None
         assert results[0].user.display_name == "John Doe"
+
+    def test_server_dc_empty_results_returns_empty(self, server_search_mixin):
+        """A genuine {'results': []} Server/DC response returns an empty list."""
+        server_search_mixin.confluence.get.return_value = {"results": []}
+
+        results = server_search_mixin.search_user('user.fullname ~ "Test"')
+
+        assert isinstance(results, list)
+        assert len(results) == 0
+
+    @pytest.mark.parametrize(
+        "malformed_response",
+        [
+            {"incomplete": "data"},
+            None,
+            {"results": None},
+            {"results": {}},
+        ],
+    )
+    def test_server_dc_malformed_response_raises(
+        self, server_search_mixin, malformed_response
+    ):
+        """Malformed Server/DC group-member responses must raise, not return [].
+
+        A response missing the 'results' field indicates an API/network/
+        processing failure and must not be reported as "no users found".
+        """
+        server_search_mixin.confluence.get.return_value = malformed_response
+
+        with pytest.raises(
+            ValueError,
+            match="Error processing search_user results.*malformed response",
+        ):
+            server_search_mixin.search_user('user.fullname ~ "Test"')
+
+    @pytest.mark.parametrize(
+        "malformed_response",
+        [
+            {"incomplete": "data"},
+            None,
+            {"results": None},
+            {"results": {}},
+        ],
+    )
+    def test_cloud_malformed_response_raises(
+        self, cloud_search_mixin, malformed_response
+    ):
+        """Malformed Cloud user-search responses must raise, not return []."""
+        cloud_search_mixin.confluence.get.return_value = malformed_response
+
+        with pytest.raises(
+            ValueError,
+            match="Error processing search_user results.*malformed response",
+        ):
+            cloud_search_mixin.search_user('user.fullname ~ "Test"')
 
     def test_server_dc_fuzzy_match_case_insensitive(self, server_search_mixin):
         """Fuzzy matching should be case-insensitive substring match."""

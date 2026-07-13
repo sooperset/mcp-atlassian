@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import parse_qs, urlsplit
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import BeforeValidator, Field
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluenceAttachment
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
+from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
@@ -178,7 +179,7 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
     return path.read_text(encoding="utf-8")
 
 
-confluence_mcp = FastMCP(
+confluence_mcp = ErrorPreservingFastMCP(
     name="Confluence MCP Service",
     instructions="Provides tools for interacting with Atlassian Confluence.",
 )

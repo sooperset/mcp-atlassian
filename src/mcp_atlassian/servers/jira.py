@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Annotated, Any
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import AliasChoices, Field
 from requests.exceptions import HTTPError
@@ -18,6 +18,7 @@ from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.async_utils import run_jira_fetcher_call
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
+from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
@@ -37,7 +38,7 @@ logger = logging.getLogger(__name__)
 ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*$"
 PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+$"
 
-jira_mcp = FastMCP(
+jira_mcp = ErrorPreservingFastMCP(
     name="Jira MCP Service",
     instructions="Provides tools for interacting with Atlassian Jira.",
 )
