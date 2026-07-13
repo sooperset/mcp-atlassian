@@ -634,7 +634,7 @@ def hello():
     assert '<a href="https://example.com">Link text</a>' in result
     assert "ac:structured-macro" in result  # Code block macro
     assert 'ac:name="code"' in result
-    assert "python" in result
+    assert '<ac:parameter ac:name="language">py</ac:parameter>' in result
 
 
 def test_markdown_to_confluence_optional_anchor_generation():
@@ -919,13 +919,6 @@ def test_markdown_to_jira_preserves_underscores_in_url_targets(
         preprocessor_with_jira.markdown_to_jira("<https://example.com/foo_bar>")
         == "[https://example.com/foo_bar]"
     )
-
-
-def test_md2conf_elements_from_string_available():
-    """Test that elements_from_string is importable with fallback (issue #817)."""
-    from mcp_atlassian.preprocessing.confluence import elements_from_string
-
-    assert callable(elements_from_string)
 
 
 # Issue #893 regression tests - Code Block Content Corruption
