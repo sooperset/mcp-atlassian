@@ -556,6 +556,26 @@ def test_jira_client_custom_user_agent_overrides_default() -> None:
         assert headers["User-Agent"] == "my-app/1.0"
 
 
+def test_jira_client_applies_configured_cookie() -> None:
+    """The configured raw cookie is attached to the Jira session."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        headers: dict[str, str] = {}
+        mock_jira.return_value._session.headers = headers
+
+        config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="pat",
+            cookie="JSESSIONID=abc123; sso_token=xyz",
+        )
+        JiraClient(config=config)
+
+        assert headers["Cookie"] == "JSESSIONID=abc123; sso_token=xyz"
+
+
 @pytest.mark.parametrize(
     "url",
     [

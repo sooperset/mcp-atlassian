@@ -43,6 +43,7 @@ class ConfluenceConfig:
     client_key: str | None = None  # Client private key file path (.pem)
     client_key_password: str | None = None  # Password for encrypted private key
     timeout: int = 75  # Connection timeout in seconds
+    cookie: str | None = None  # Raw cookie string to attach to all requests
     # Cloud removed the legacy /download/attachments/... endpoint (CHANGE-2735);
     # it now 401s for API-token / scoped-token auth. Controls whether attachment
     # downloads use the v1 REST endpoint
@@ -195,6 +196,9 @@ class ConfluenceConfig:
         ):
             timeout = int(os.getenv("CONFLUENCE_TIMEOUT", "75"))
 
+        # Cookie configuration
+        cookie = os.getenv("CONFLUENCE_COOKIE")
+
         # Unset or empty/whitespace -> None (auto); only an explicit value forces.
         _use_v1_raw = os.getenv("CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1")
         attachment_download_use_v1 = (
@@ -223,6 +227,7 @@ class ConfluenceConfig:
             client_key=client_key,
             client_key_password=client_key_password,
             timeout=timeout,
+            cookie=cookie,
             attachment_download_use_v1=attachment_download_use_v1,
         )
 
