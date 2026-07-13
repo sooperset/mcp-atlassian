@@ -1025,6 +1025,18 @@ class TestTaskLists:
         assert "<ac:task-list>" not in result
         assert "\ue000" not in result
 
+    def test_apply_task_lists_false_preserves_private_use_characters(self):
+        """Opting out of task conversion preserves user private-use characters."""
+        private_use = "\ue000"
+        result = self._convert(
+            f"Before {private_use}\n\n- [ ] Skip {private_use}\n\nAfter {private_use}",
+            apply_task_lists=False,
+        )
+
+        assert result.count(private_use) == 3
+        assert "<ul>" in result
+        assert "<ac:task-list>" not in result
+
     def test_zero_width_space_is_preserved(self):
         """A user-supplied zero-width space is not treated as a sentinel."""
         result = self._convert("Keep\u200b this space")
