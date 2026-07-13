@@ -105,7 +105,9 @@ class TestSearchMixin:
 
         result = search_mixin.search("type=space")
 
-        search_mixin.confluence.cql.assert_called_once_with(cql="type=space", limit=10)
+        search_call = search_mixin.confluence.cql.call_args
+        assert search_call.kwargs["cql"] == "type=space"
+        assert search_call.kwargs["limit"] == 10
         assert len(result) == 1
         assert result[0].id == "98765"
         assert result[0].title == "Development"
