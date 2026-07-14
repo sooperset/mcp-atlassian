@@ -157,6 +157,15 @@ For mTLS, replace the personal token variables with client certificate variables
 | `CONFLUENCE_SSL_VERIFY` | SSL verification (`true`/`false`) |
 | `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE` | Use OS native trust store (`true`/`false`, default: `true`) |
 
+<Warning>
+Encrypted private keys are not supported. Setting `JIRA_CLIENT_KEY_PASSWORD` or
+`CONFLUENCE_CLIENT_KEY_PASSWORD` to a non-empty value will raise a configuration error
+at startup. Decrypt the key first:
+```bash
+openssl rsa -in encrypted.key -out decrypted.key
+```
+</Warning>
+
 ### Filtering Options
 
 | Variable | Description | Example |

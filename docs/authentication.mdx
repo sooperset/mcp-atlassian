@@ -79,7 +79,19 @@ CONFLUENCE_CLIENT_CERT=/etc/mcp-atlassian/confluence-client-combined.pem
 
 In the example, Jira uses separate certificate and key files, while Confluence uses a combined PEM. For a combined PEM, omit `*_CLIENT_KEY`. The matching `JIRA_*` and `CONFLUENCE_*` variables configure each service independently.
 
-Encrypted private keys aren't supported by the requests library. Decrypt the key before starting MCP Atlassian, and don't set `JIRA_CLIENT_KEY_PASSWORD` or `CONFLUENCE_CLIENT_KEY_PASSWORD`.
+<Warning>
+**Encrypted private keys are not supported.** If your key is passphrase-protected, decrypt it first:
+
+```bash
+openssl rsa -in encrypted.key -out decrypted.key
+```
+
+`JIRA_CLIENT_KEY_PASSWORD` and `CONFLUENCE_CLIENT_KEY_PASSWORD` are recognised environment variables but will raise a configuration error at startup if set to a non-empty value.
+</Warning>
+
+<Note>
+If your Server/DC instance uses a self-signed or internal CA certificate alongside mTLS, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false` as well.
+</Note>
 
 ## OAuth 2.0 (Cloud) - Advanced
 
