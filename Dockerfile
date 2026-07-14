@@ -19,13 +19,13 @@ RUN --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=uv.lock,target=uv.lock \
-    uv sync --frozen --no-install-project --no-dev --no-editable
+    uv sync --frozen --extra wpad --no-install-project --no-dev --no-editable
 
 # Then, copy the rest of the project source code and install it
 COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
-    uv sync --frozen --no-dev --no-editable
+    uv sync --frozen --extra wpad --no-dev --no-editable
 
 # Remove unnecessary files from the virtual environment before copying
 RUN find /app/.venv -name '__pycache__' -type d -exec rm -rf {} + && \

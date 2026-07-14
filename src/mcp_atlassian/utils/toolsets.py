@@ -1,6 +1,6 @@
 """Toolset definitions and filtering utilities for MCP Atlassian.
 
-Groups 93 tools into 23 named toolsets controlled via the TOOLSETS env var.
+Groups 95 tools into 24 named toolsets controlled via the TOOLSETS env var.
 Supports 'all', 'default', and comma-separated toolset names.
 """
 
@@ -22,7 +22,7 @@ class ToolsetDefinition:
     default: bool
 
 
-# --- Jira toolsets (15) ---
+# --- Jira toolsets (16) ---
 
 JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
     "jira_issues": ToolsetDefinition(
@@ -100,6 +100,11 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
         description="Development info (branches, PRs, commits)",
         default=False,
     ),
+    "jira_project_analysis": ToolsetDefinition(
+        name="jira_project_analysis",
+        description="Project epic hierarchy and cross-project dependencies",
+        default=False,
+    ),
 }
 
 # --- Confluence toolsets (8) ---
@@ -162,7 +167,7 @@ DEFAULT_TOOLSETS: set[str] = {
 def get_enabled_toolsets() -> set[str]:
     """Parse the TOOLSETS env var into a set of enabled toolset names.
 
-    Supports keywords 'all' (all 23 toolsets) and 'default' (6 defaults),
+    Supports keywords 'all' (all 24 toolsets) and 'default' (6 defaults),
     plus comma-separated specific toolset names. Case-insensitive for keywords.
 
     When TOOLSETS is unset or empty, returns all toolsets with a deprecation
@@ -175,9 +180,9 @@ def get_enabled_toolsets() -> set[str]:
         names are given, returns an empty set (fail-closed).
 
     Examples:
-        TOOLSETS unset -> all 23 toolsets (with deprecation warning)
-        TOOLSETS="" -> all 23 toolsets (with deprecation warning)
-        TOOLSETS="all" -> all 23 names
+        TOOLSETS unset -> all 24 toolsets (with deprecation warning)
+        TOOLSETS="" -> all 24 toolsets (with deprecation warning)
+        TOOLSETS="all" -> all 24 names
         TOOLSETS="default" -> 6 default names
         TOOLSETS="default,jira_agile" -> defaults + jira_agile
         TOOLSETS="typo_name" -> set() (fail-closed)

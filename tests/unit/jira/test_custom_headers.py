@@ -71,6 +71,21 @@ class TestJiraConfigCustomHeaders:
             config = JiraConfig.from_env()
             assert config.custom_headers == {}
 
+    def test_passthrough_headers(self):
+        """Test JiraConfig parsing of passthrough header names."""
+        with patch.dict(
+            os.environ,
+            {
+                "JIRA_URL": "https://test.atlassian.net",
+                "JIRA_USERNAME": "test_user",
+                "JIRA_API_TOKEN": "test_token",
+                "JIRA_PASSTHROUGH_HEADERS": "X-SSO-User, X-Request-ID,x-sso-user",
+            },
+            clear=True,
+        ):
+            config = JiraConfig.from_env()
+            assert config.passthrough_headers == ["X-SSO-User", "X-Request-ID"]
+
 
 class TestJiraClientCustomHeaders:
     """Test JiraClient custom headers application."""

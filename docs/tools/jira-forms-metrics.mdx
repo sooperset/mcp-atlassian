@@ -92,7 +92,7 @@ Get development information (PRs, commits, branches) linked to a Jira issue.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123') |
-| `application_type` | `string` | No | (Optional) Filter by application type. Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab' |
+| `application_type` | `string` | No | (Optional) Case-sensitive application type. Examples: 'stash' (Bitbucket Server), 'bitbucket', 'GitHub', 'githube' (GitHub Enterprise Server), 'GitLab'. If omitted, available types are discovered automatically. |
 | `data_type` | `string` | No | (Optional) Filter by data type. Examples: 'pullrequest', 'branch', 'repository' |
 
 ---
@@ -106,7 +106,7 @@ Get development information for multiple Jira issues.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_keys` | `string` | Yes | Comma-separated list of Jira issue keys (e.g., 'PROJ-123,PROJ-456') |
-| `application_type` | `string` | No | (Optional) Filter by application type. Examples: 'stash' (Bitbucket Server), 'bitbucket', 'github', 'gitlab' |
+| `application_type` | `string` | No | (Optional) Case-sensitive application type. Examples: 'stash' (Bitbucket Server), 'bitbucket', 'GitHub', 'githube' (GitHub Enterprise Server), 'GitLab'. If omitted, available types are discovered automatically. |
 | `data_type` | `string` | No | (Optional) Filter by data type. Examples: 'pullrequest', 'branch', 'repository' |
 
 ---

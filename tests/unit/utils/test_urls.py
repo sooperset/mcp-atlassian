@@ -5,12 +5,38 @@ import socket
 from unittest.mock import patch
 
 import pytest
+import requests
 
 from mcp_atlassian.utils.urls import (
     is_atlassian_cloud_url,
+    make_ssrf_redirect_hook,
     resolve_relative_url,
     validate_url_for_ssrf,
 )
+
+
+@pytest.mark.parametrize(
+    ("location", "expected"),
+    [
+        ("/login", "https://jira.example.com/login"),
+        ("//cdn.example.com/file", "https://cdn.example.com/file"),
+    ],
+)
+def test_redirect_hook_resolves_location_before_validation(
+    location: str, expected: str
+) -> None:
+    """Relative and scheme-relative redirects are validated as absolute URLs."""
+    response = requests.Response()
+    response.status_code = 302
+    response.url = "https://jira.example.com/start"
+    response.headers["Location"] = location
+
+    with patch(
+        "mcp_atlassian.utils.urls.validate_url_for_ssrf", return_value=None
+    ) as validate:
+        assert make_ssrf_redirect_hook()(response) is response
+
+    validate.assert_called_once_with(expected)
 
 
 class TestResolveRelativeUrl:

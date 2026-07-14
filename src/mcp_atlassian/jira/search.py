@@ -39,10 +39,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
     def _and_projects_filter(self, jql: str, filter_to_use: str) -> str:
         """AND a single comma-separated project allowlist into ``jql``."""
-        # Split by commas, and escape backslashes before double-quotes to prevent
-        # JQL-injection bypass of the quoting below.
         projects = [p.strip() for p in filter_to_use.split(",")]
-        projects = [p.replace("\\", "\\\\").replace('"', '\\"') for p in projects]
 
         if len(projects) == 1:
             quoted = quote_jql_identifier_if_needed(projects[0])
@@ -51,6 +48,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             quoted_projects = [quote_jql_identifier_if_needed(p) for p in projects]
             projects_list = ", ".join(quoted_projects)
             project_query = f"project IN ({projects_list})"
+        grouped_project_query = f"({project_query})"
 
         if not jql:
             jql = project_query
@@ -65,9 +63,11 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             if order_match:
                 order_clause = order_match.group(1)
                 jql_without_order = jql[: order_match.start()]
-                jql = f"({jql_without_order}) AND {project_query} {order_clause}"
+                jql = (
+                    f"({jql_without_order}) AND {grouped_project_query} {order_clause}"
+                )
             else:
-                jql = f"({jql}) AND {project_query}"
+                jql = f"({jql}) AND {grouped_project_query}"
 
         logger.info(f"Applied projects filter to query: {jql}")
         return jql

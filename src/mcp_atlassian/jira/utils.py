@@ -37,12 +37,11 @@ def quote_jql_identifier_if_needed(identifier: str) -> str:
         needs_quoting = True
         logger.debug(f"Identifier '{identifier}' needs quoting (starts with digit).")
 
-    # Rule 3: Contains internal quotes or backslashes (always needs quoting+escaping)
-    elif '"' in identifier or "\\" in identifier:
+    # Rule 3: Only plain identifier characters are safe without quotes. Quoting
+    # everything else keeps whitespace and JQL operators inside one literal.
+    elif not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", identifier):
         needs_quoting = True
-        logger.debug(
-            f"Identifier '{identifier}' needs quoting (contains quotes/backslashes)."
-        )
+        logger.debug(f"Identifier '{identifier}' needs quoting (contains JQL syntax).")
 
     if needs_quoting:
         # Escape internal backslashes first, then double quotes

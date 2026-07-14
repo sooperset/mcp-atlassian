@@ -810,6 +810,12 @@ class IssuesMixin(
         """
         try:
             issue_types = self.get_project_issue_types(project_key)
+            # First pass: prefer exact match on "Epic" (case-insensitive)
+            for issue_type in issue_types:
+                type_name = issue_type.get("name", "")
+                if type_name.lower() == "epic":
+                    return issue_type.get("id")
+            # Second pass: fallback to any type containing "epic"
             for issue_type in issue_types:
                 type_name = issue_type.get("name", "")
                 if self._is_epic_issue_type(type_name):
