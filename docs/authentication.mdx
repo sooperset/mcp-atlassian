@@ -93,6 +93,16 @@ openssl rsa -in encrypted.key -out decrypted.key
 If your Server/DC instance uses a self-signed or internal CA certificate alongside mTLS, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false` as well.
 </Note>
 
+<Note>
+When using mTLS as the sole authentication method, MCP clients that connect without an `Authorization` header (such as a locally running OpenCode instance) will be rejected by default. Set `ALLOW_GLOBAL_CRED_FALLBACK=true` to allow the server to use the configured certificate credentials for requests that carry no per-request auth header:
+
+```bash
+ALLOW_GLOBAL_CRED_FALLBACK=true
+```
+
+Only set this when the server is not exposed to untrusted callers, as it allows any unauthenticated client to transact under the operator's certificate identity.
+</Note>
+
 ## OAuth 2.0 (Cloud) - Advanced
 
 OAuth 2.0 provides enhanced security features but requires more setup. For most users, API Token authentication is simpler and sufficient.
