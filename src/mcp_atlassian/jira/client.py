@@ -29,7 +29,7 @@ from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
 from mcp_atlassian.utils.user_agent import get_default_user_agent
 
 from ..models.jira.adf import markdown_to_adf
-from .config import JiraConfig
+from .config import JiraConfig, normalize_project_key
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
@@ -112,6 +112,22 @@ class JiraClient:
                 verify_ssl=self.config.ssl_verify,
                 timeout=self.config.timeout,
             )
+        elif self.config.auth_type == "external":
+            logger.debug(
+                f"Initializing Jira client in external auth passthrough mode. "
+                f"URL: {self.config.url}"
+            )
+            session = Session()
+            session.trust_env = False
+            self.jira = Jira(
+                url=self.config.url,
+                session=session,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
+            # Ensure no Authorization header is carried over from defaults
+            self.jira._session.headers.pop("Authorization", None)
         else:  # basic auth
             logger.debug(
                 f"Initializing Jira client with Basic auth. "
@@ -196,7 +212,7 @@ class JiraClient:
         self._current_user_account_id = None
 
         # Test authentication during initialization (in debug mode only)
-        if logger.isEnabledFor(logging.DEBUG):
+        if logger.isEnabledFor(logging.DEBUG) and self.config.auth_type != "external":
             try:
                 self._validate_authentication()
             except MCPAtlassianAuthenticationError:
@@ -302,6 +318,34 @@ class JiraClient:
         except Exception as e:
             logger.warning(f"Error converting markdown to Jira format: {str(e)}")
             return markdown_text
+
+    @staticmethod
+    def _project_key_from_issue_key(issue_key: str) -> str:
+        """Extract the project key from an issue key (e.g. 'CC-123' -> 'CC').
+
+        Normalizes its own input the same way the configured keys are
+        normalized (surrounding whitespace and invisible characters, on the
+        issue key AND on the extracted key) so that padded inputs like
+        ' CC-1', '\\tCC-1' or 'CC -1' cannot slip past callers that
+        compare the result against a set of clean project keys. A
+        defense-in-depth check must not rely on the downstream API to
+        reject whitespace-padded keys, and both sides of the comparison have
+        to normalize identically or the guard silently stops matching.
+        """
+        return normalize_project_key(normalize_project_key(issue_key).split("-", 1)[0])
+
+    def _is_internal_only_project(self, issue_key: str) -> bool:
+        """Check whether issue_key's project is in JIRA_INTERNAL_ONLY_PROJECTS.
+
+        Returns False (no-op) whenever the env var is unset/empty, which is
+        the default for every deployment that hasn't opted in.
+        """
+        if not self.config.internal_only_projects:
+            return False
+        return (
+            self._project_key_from_issue_key(issue_key)
+            in self.config.internal_only_projects
+        )
 
     def _post_api3(
         self,

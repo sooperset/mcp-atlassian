@@ -10,12 +10,18 @@ data:
   {{- if .Values.confluence.spacesFilter }}
   confluence-spaces-filter: {{ .Values.confluence.spacesFilter | quote }}
   {{- end }}
+  {{- if .Values.confluence.passthroughHeaders }}
+  confluence-passthrough-headers: {{ .Values.confluence.passthroughHeaders | quote }}
+  {{- end }}
   {{- end }}
 
   {{- if .Values.jira.enabled }}
   jira-url: {{ .Values.jira.url | quote }}
   {{- if .Values.jira.projectsFilter }}
   jira-projects-filter: {{ .Values.jira.projectsFilter | quote }}
+  {{- end }}
+  {{- if .Values.jira.passthroughHeaders }}
+  jira-passthrough-headers: {{ .Values.jira.passthroughHeaders | quote }}
   {{- end }}
   {{- end }}
 

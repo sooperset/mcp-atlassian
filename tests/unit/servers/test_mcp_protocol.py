@@ -12,6 +12,9 @@ from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from mcp_atlassian.confluence import ConfluenceFetcher
@@ -925,6 +928,33 @@ class TestMCPProtocolIntegration:
 
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+    @pytest.mark.security_regression
+    async def test_malformed_host_cannot_bypass_url_path_gate(
+        self, atlassian_mcp_server
+    ):
+        """Malformed Host headers must not rewrite the path used by middleware."""
+
+        class PathGateMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                if request.url.path not in {"", "/"}:
+                    return PlainTextResponse("Forbidden", status_code=403)
+                return await call_next(request)
+
+        async def admin(_request):
+            return PlainTextResponse("secret")
+
+        app = Starlette(
+            routes=[Route("/admin", admin)],
+            middleware=[Middleware(PathGateMiddleware)],
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/admin", headers={"host": "example.com/allowed?query="}
+            )
+
+        assert response.status_code == 403
 
     async def test_combined_filtering_scenarios(
         self, atlassian_mcp_server, mock_jira_config
