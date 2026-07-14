@@ -16,6 +16,11 @@ from .protocols import (
 
 logger = logging.getLogger("mcp-jira")
 
+# Stable schema identifier of the Epic Link custom field on both Cloud and
+# Server/DC. Display names are mutable and can collide, so they must never be
+# used to identify the field.
+EPIC_LINK_SCHEMA_CUSTOM = "com.pyxis.greenhopper.jira:gh-epic-link"
+
 
 class EpicsMixin(
     JiraClient,
@@ -461,23 +466,26 @@ class EpicsMixin(
         return field_id in fields and fields[field_id] is None
 
     def _get_verified_epic_link_field_id(self) -> str | None:
-        """Return the instance's Epic Link field ID when metadata verifies it."""
-        field_id = self.get_field_ids_to_epic().get("epic_link")
-        if not field_id or not field_id.startswith("customfield_"):
-            return None
+        """Return the instance's Epic Link field ID from its stable schema type.
 
-        field = self.get_field_by_id(field_id)
-        if not field:
-            return None
-
-        field_name = str(field.get("name", "")).strip().lower()
-        schema = field.get("schema")
-        custom_type = schema.get("custom", "") if isinstance(schema, dict) else ""
-        if (
-            field_name == "epic link"
-            or custom_type == "com.pyxis.greenhopper.jira:gh-epic-link"
-        ):
-            return field_id
+        Scans the field metadata for ``schema.custom`` equal to
+        :data:`EPIC_LINK_SCHEMA_CUSTOM`. Display names and well-known field IDs
+        are deliberately ignored: names can be renamed or duplicated, and a
+        guessed ID such as ``customfield_10014`` can belong to an unrelated
+        field whose data must not be cleared.
+        """
+        for field in self.get_fields():
+            if not isinstance(field, dict):
+                continue
+            field_id = field.get("id")
+            schema = field.get("schema")
+            custom_type = schema.get("custom") if isinstance(schema, dict) else None
+            if (
+                isinstance(field_id, str)
+                and field_id.startswith("customfield_")
+                and custom_type == EPIC_LINK_SCHEMA_CUSTOM
+            ):
+                return field_id
 
         return None
 

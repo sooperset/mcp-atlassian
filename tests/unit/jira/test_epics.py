@@ -772,19 +772,66 @@ class TestEpicsMixin:
     def test_get_verified_epic_link_field_id_rejects_guessed_id(
         self, epics_mixin: EpicsMixin
     ) -> None:
-        """A common field ID is rejected when metadata says it is unrelated."""
-        epics_mixin.get_field_ids_to_epic = MagicMock(
-            return_value={"epic_link": "customfield_10014"}
-        )
-        epics_mixin.get_field_by_id = MagicMock(
-            return_value={
-                "id": "customfield_10014",
-                "name": "Customer impact",
-                "schema": {"custom": "com.example:customer-impact"},
-            }
+        """A common field ID is rejected when its schema type is unrelated."""
+        epics_mixin.get_fields = MagicMock(
+            return_value=[
+                {
+                    "id": "customfield_10014",
+                    "name": "Customer impact",
+                    "schema": {"custom": "com.example:customer-impact"},
+                }
+            ]
         )
 
         assert epics_mixin._get_verified_epic_link_field_id() is None
+
+    def test_get_verified_epic_link_field_id_rejects_same_named_field(
+        self, epics_mixin: EpicsMixin
+    ) -> None:
+        """A duplicate field named 'Epic Link' is rejected without the schema."""
+        epics_mixin.get_fields = MagicMock(
+            return_value=[
+                {
+                    "id": "customfield_20001",
+                    "name": "Epic Link",
+                    "schema": {
+                        "custom": (
+                            "com.atlassian.jira.plugin.system.customfieldtypes:"
+                            "textfield"
+                        )
+                    },
+                },
+                {"id": "customfield_20002", "name": "Epic Link"},
+            ]
+        )
+
+        assert epics_mixin._get_verified_epic_link_field_id() is None
+
+    def test_get_verified_epic_link_field_id_accepts_renamed_field(
+        self, epics_mixin: EpicsMixin
+    ) -> None:
+        """A renamed Epic Link field is found through its stable schema type."""
+        epics_mixin.get_fields = MagicMock(
+            return_value=[
+                {
+                    "id": "customfield_20001",
+                    "name": "Epic Link",
+                    "schema": {
+                        "custom": (
+                            "com.atlassian.jira.plugin.system.customfieldtypes:"
+                            "textfield"
+                        )
+                    },
+                },
+                {
+                    "id": "customfield_10777",
+                    "name": "Инициатива",
+                    "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+                },
+            ]
+        )
+
+        assert epics_mixin._get_verified_epic_link_field_id() == "customfield_10777"
 
     def test_metadata_is_epic_issue_type_uses_cloud_hierarchy_level(
         self, epics_mixin: EpicsMixin
@@ -908,11 +955,14 @@ class TestEpicsMixin:
         epics_mixin.get_issue = MagicMock(
             return_value=JiraIssue(key="TEST-123", id="123456")
         )
-        epics_mixin.get_field_ids_to_epic = MagicMock(
-            return_value={"epic_link": "customfield_12345"}
-        )
-        epics_mixin.get_field_by_id = MagicMock(
-            return_value={"id": "customfield_12345", "name": "Epic Link"}
+        epics_mixin.get_fields = MagicMock(
+            return_value=[
+                {
+                    "id": "customfield_12345",
+                    "name": "Epic Link",
+                    "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+                }
+            ]
         )
 
         result = epics_mixin.unlink_issue_from_epic("TEST-123")
@@ -927,16 +977,24 @@ class TestEpicsMixin:
     def test_unlink_issue_from_epic_does_not_clear_unrelated_fields(
         self, epics_mixin: EpicsMixin
     ) -> None:
-        """A guessed common field ID is not cleared without matching metadata."""
+        """A same-named field without the Epic Link schema is never cleared."""
         epics_mixin.jira.get_issue.return_value = {
             "key": "TEST-123",
             "fields": {"customfield_10014": "important customer data"},
         }
-        epics_mixin.get_field_ids_to_epic = MagicMock(
-            return_value={"epic_link": "customfield_10014"}
-        )
-        epics_mixin.get_field_by_id = MagicMock(
-            return_value={"id": "customfield_10014", "name": "Customer impact"}
+        epics_mixin.get_fields = MagicMock(
+            return_value=[
+                {
+                    "id": "customfield_10014",
+                    "name": "Epic Link",
+                    "schema": {
+                        "custom": (
+                            "com.atlassian.jira.plugin.system.customfieldtypes:"
+                            "textfield"
+                        )
+                    },
+                }
+            ]
         )
 
         result = epics_mixin.unlink_issue_from_epic("TEST-123")
@@ -955,7 +1013,7 @@ class TestEpicsMixin:
                 }
             },
         }
-        epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        epics_mixin.get_fields = MagicMock(return_value=[])
         epics_mixin.jira.put.side_effect = HTTPError("Update failed")
 
         with pytest.raises(
@@ -995,16 +1053,19 @@ class TestEpicsMixin:
         epics_mixin.get_issue = MagicMock(
             return_value=JiraIssue(key="TEST-123", id="123456")
         )
-        epics_mixin.get_field_ids_to_epic = MagicMock(
-            return_value={"epic_link": "customfield_12345"}
-        )
-        epics_mixin.get_field_by_id = MagicMock(
-            return_value={"id": "customfield_12345", "name": "Epic Link"}
+        epics_mixin.get_fields = MagicMock(
+            return_value=[
+                {
+                    "id": "customfield_12345",
+                    "name": "Epic Link",
+                    "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+                }
+            ]
         )
 
         result = epics_mixin.unlink_issue_from_epic("TEST-123")
 
-        # Should skip parent and use discovered epic_link field
+        # Should skip parent and use the schema-verified epic_link field
         epics_mixin.jira.put.assert_called_once_with(
             "/rest/api/2/issue/TEST-123",
             data={"fields": {"customfield_12345": None}},
