@@ -316,7 +316,7 @@ def test_configure_rate_limit_disabled_by_default():
 
 
 def test_configure_rate_limit_throttles_requests(monkeypatch: pytest.MonkeyPatch):
-    """At 10 rps, 5 sends after the burst should take >= ~0.4s."""
+    """At 10 rps (burst 10), 15 sends must take >= 0.5s from the first send."""
     monkeypatch.setenv("ATLASSIAN_REQUESTS_PER_SECOND", "10")
 
     session = Session()
@@ -326,21 +326,29 @@ def test_configure_rate_limit_throttles_requests(monkeypatch: pytest.MonkeyPatch
     configure_rate_limit(session, service="Test")
 
     adapter = session.adapters["https://"]
-    for _ in range(10):
-        adapter.send(MagicMock())  # drain burst
-
+    # Timer covers all 15 sends: the bucket holds 10 tokens, so the last 5
+    # must wait for refill at 10/s — a >= 0.5s lower bound a slow runner can
+    # only lengthen. (Timing only the post-drain sends was flaky: tokens
+    # refilled during a slow drain loop, shrinking the measured wait.)
     start = time.monotonic()
-    for _ in range(5):
+    for _ in range(15):
         adapter.send(MagicMock())
     elapsed = time.monotonic() - start
 
-    assert elapsed >= 0.35, f"expected throttling >= 0.35s, got {elapsed:.3f}s"
+    assert elapsed >= 0.45, f"expected throttling >= 0.45s, got {elapsed:.3f}s"
 
 
 def test_configure_rate_limit_shares_bucket_across_sessions(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv("ATLASSIAN_REQUESTS_PER_SECOND", "5")
+    clock = [0.0]
+
+    def advance_clock(seconds: float) -> None:
+        clock[0] += seconds
+
+    monkeypatch.setattr("mcp_atlassian.utils.http.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("mcp_atlassian.utils.http.time.sleep", advance_clock)
 
     s1, s2 = Session(), Session()
     for sess in (s1, s2):
@@ -356,10 +364,8 @@ def test_configure_rate_limit_shares_bucket_across_sessions(
     s2.adapters["https://"].send(MagicMock())
     s2.adapters["https://"].send(MagicMock())
 
-    start = time.monotonic()
     s1.adapters["https://"].send(MagicMock())
-    elapsed = time.monotonic() - start
-    assert elapsed >= 0.1
+    assert clock[0] == pytest.approx(0.2)
 
 
 def _build_circuit_session(status_codes_iter):

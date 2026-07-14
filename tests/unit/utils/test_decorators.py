@@ -51,6 +51,7 @@ async def test_handle_tool_errors_wraps_exception_as_tool_error():
 
     with pytest.raises(ToolError) as exc:
         await failing_tool()
+    assert "Error calling tool 'failing_tool'" in str(exc.value)
     assert "something went wrong" in str(exc.value)
 
 

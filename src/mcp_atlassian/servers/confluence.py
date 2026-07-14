@@ -10,16 +10,18 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import parse_qs, urlsplit
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import BeforeValidator, Field
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluenceAttachment
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
+from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
+from mcp_atlassian.utils.io import validate_safe_path
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
@@ -33,6 +35,25 @@ _CONFLUENCE_TINY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,11}")
 _PAGE_ID_PATH_PATTERN = re.compile(r"(?:^|/)pages/([0-9]+)(?:/|$)")
 _TINY_LINK_PATH_PATTERN = re.compile(r"(?:^|/)x/([A-Za-z0-9_-]+)(?:/|$)")
 _MAX_CONFLUENCE_PAGE_ID = (1 << 63) - 1
+
+
+def _template_description(template: dict[str, object]) -> str:
+    """Normalize Cloud template descriptions across API response variants."""
+    description = template.get("description")
+    if isinstance(description, str):
+        return description
+    if isinstance(description, dict):
+        value = description.get("value")
+        return value if isinstance(value, str) else ""
+    return ""
+
+
+def _template_storage_body(template: dict[str, object]) -> str:
+    """Extract a storage-format body from a Cloud template response."""
+    body = template.get("body")
+    storage = body.get("storage") if isinstance(body, dict) else None
+    value = storage.get("value") if isinstance(storage, dict) else None
+    return value if isinstance(value, str) else ""
 
 
 def _encode_confluence_tiny_id(page_id: int) -> str:
@@ -124,15 +145,17 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
 
     Args:
         content: Inline page body (any supported content_format).
-        content_file: Absolute or relative filesystem path to read the body from.
-            Read as UTF-8.
+        content_file: Filesystem path to read the body from (UTF-8). Must
+            resolve inside the current working directory (workspace), the same
+            confinement contract as attachment paths.
 
     Returns:
         The resolved page body as a string.
 
     Raises:
-        ValueError: If neither or both arguments are supplied, or if the file does
-            not exist / is not a regular file.
+        ValueError: If neither or both arguments are supplied, if the file does
+            not exist / is not a regular file, or if the path escapes the
+            workspace.
         OSError: If the file exists but cannot be read.
     """
     has_content = content is not None
@@ -146,14 +169,17 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
     if content_file is None or content_file == "":
         raise ValueError("One of 'content' or 'content_file' must be provided.")
 
-    path = Path(content_file).expanduser()
+    # Confine the read to the workspace, same contract as attachment paths — an
+    # unconfined caller-supplied path is an arbitrary-file-read primitive (the
+    # file body is echoed back through the created/updated page).
+    path = validate_safe_path(Path(content_file).expanduser())
     if not path.is_file():
         msg = f"content_file does not exist or is not a regular file: {path}"
         raise ValueError(msg)
     return path.read_text(encoding="utf-8")
 
 
-confluence_mcp = FastMCP(
+confluence_mcp = ErrorPreservingFastMCP(
     name="Confluence MCP Service",
     instructions="Provides tools for interacting with Atlassian Confluence.",
 )
@@ -599,7 +625,7 @@ async def get_labels(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_labels"},
-    annotations={"title": "Add Label", "destructiveHint": True},
+    annotations={"title": "Add Label", "destructiveHint": False},
 )
 @check_write_access
 async def add_label(
@@ -652,7 +678,7 @@ async def add_label(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_pages"},
-    annotations={"title": "Create Page", "destructiveHint": True},
+    annotations={"title": "Create Page", "destructiveHint": False},
 )
 @check_write_access
 async def create_page(
@@ -752,6 +778,16 @@ async def create_page(
             default=None,
         ),
     ] = None,
+    subtype: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Confluence page subtype. Use 'live' to create a "
+                "Confluence Live Doc. Only supported for Confluence Cloud."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Confluence page.
 
@@ -772,6 +808,7 @@ async def create_page(
         emoji: Optional page title emoji (icon shown in navigation).
         page_width: Optional page layout width ('full-width' or 'default').
         table_layout: Optional table width preset ('full-width', 'wide', 'default').
+        subtype: Optional page subtype. Use "live" to create a Confluence Live Doc.
 
     Returns:
         JSON string representing the created page object.
@@ -812,6 +849,7 @@ async def create_page(
         else False,
         content_representation=content_representation,
         emoji=emoji,
+        subtype=subtype,
         page_width=page_width,
         table_layout=table_layout if content_format == "markdown" else None,
     )
@@ -1231,7 +1269,7 @@ async def move_page(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_comments"},
-    annotations={"title": "Add Comment", "destructiveHint": True},
+    annotations={"title": "Add Comment", "destructiveHint": False},
 )
 @check_write_access
 async def add_comment(
@@ -1282,7 +1320,7 @@ async def add_comment(
 
 @confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_comments"},
-    annotations={"title": "Reply to Comment", "destructiveHint": True},
+    annotations={"title": "Reply to Comment", "destructiveHint": False},
 )
 @check_write_access
 async def reply_to_comment(
@@ -2640,6 +2678,159 @@ async def get_page_images(
     return contents
 
 
+# ---------------------------------------------------------------------------
+# Template tools
+# ---------------------------------------------------------------------------
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_templates"},
+    annotations={"title": "List Page Templates", "readOnlyHint": True},
+)
+async def list_page_templates(
+    ctx: Context,
+    space_key: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Optional space key to list templates defined in that space. "
+                "When omitted, global templates are returned."
+            ),
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Field(
+            default=25,
+            ge=1,
+            le=200,
+            description="Maximum number of templates to return.",
+        ),
+    ] = 25,
+) -> str:
+    """List Confluence page content templates.
+
+    This operation is only available for Confluence Cloud.
+    Returns template metadata (ID, name, description, type) without the
+    full body.  Use confluence_get_page_template to fetch a template's body.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        results = confluence_fetcher.list_page_templates(
+            space_key=space_key,
+            limit=limit,
+        )
+        simplified = [
+            {
+                "templateId": t.get("templateId", ""),
+                "name": t.get("name", ""),
+                "templateType": t.get("templateType", ""),
+                "description": _template_description(t),
+            }
+            for t in results
+        ]
+        return json.dumps(
+            {"templates": simplified, "total": len(simplified)},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error listing templates: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error listing templates: {e}")
+        raise
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_templates"},
+    annotations={"title": "Get Page Template", "readOnlyHint": True},
+)
+async def get_page_template(
+    ctx: Context,
+    template_id: Annotated[
+        str,
+        Field(description="The ID of the template to retrieve."),
+    ],
+) -> str:
+    """Get a Cloud page template by ID, including its storage-format body."""
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        template = confluence_fetcher.get_page_template(template_id)
+        return json.dumps(
+            {
+                "templateId": template.get("templateId", ""),
+                "name": template.get("name", ""),
+                "templateType": template.get("templateType", ""),
+                "description": _template_description(template),
+                "body": _template_storage_body(template),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error fetching template {template_id}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching template {template_id}: {e}")
+        raise
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_templates"},
+    annotations={"title": "Create Page from Template", "destructiveHint": False},
+)
+@check_write_access
+async def create_page_from_template(
+    ctx: Context,
+    space_key: Annotated[
+        str,
+        Field(description="Key of the space in which to create the page."),
+    ],
+    title: Annotated[
+        str,
+        Field(description="Title for the new page."),
+    ],
+    template_id: Annotated[
+        str,
+        Field(description="ID of the template to use as the page body."),
+    ],
+    parent_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Optional ID of the parent page.",
+        ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
+    ] = None,
+) -> str:
+    """Create a new Cloud page pre-populated with a template's body.
+
+    This operation is only available for Confluence Cloud.
+    Fetches the named template and creates a page with its storage-format
+    content.  The page can be edited afterwards via confluence_update_page.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        result = confluence_fetcher.create_page_from_template(
+            space_key=space_key,
+            title=title,
+            template_id=template_id,
+            parent_id=parent_id,
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error creating page from template: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error creating page from template {template_id}: {e}")
+        raise
+
+
 @confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page Restrictions", "readOnlyHint": True},
@@ -2685,6 +2876,7 @@ async def set_page_restrictions(
                 "allowed to view the page. Empty list = unrestricted."
             ),
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     read_groups: Annotated[
@@ -2692,6 +2884,7 @@ async def set_page_restrictions(
         Field(
             description="(Optional) Group names allowed to view the page.",
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     edit_users: Annotated[
@@ -2702,6 +2895,7 @@ async def set_page_restrictions(
                 "allowed to edit the page."
             ),
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
     edit_groups: Annotated[
@@ -2709,6 +2903,7 @@ async def set_page_restrictions(
         Field(
             description="(Optional) Group names allowed to edit the page.",
             default=None,
+            json_schema_extra={"items": {"type": "string"}},
         ),
     ] = None,
 ) -> str:

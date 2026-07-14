@@ -6,10 +6,11 @@ Jira and Confluence models to ensure consistent behavior and reduce
 code duplication.
 """
 
-from datetime import datetime
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
+
+from mcp_atlassian.utils import parse_date
 
 from .constants import EMPTY_STRING
 
@@ -73,23 +74,11 @@ class TimestampMixin:
             return EMPTY_STRING
 
         try:
-            # Parse ISO 8601 format like "2024-01-01T10:00:00.000+0000"
-            # Convert Z format to +00:00 for compatibility with fromisoformat
-            ts = timestamp.replace("Z", "+00:00")
-
-            # Handle timezone format without colon (+0000 -> +00:00)
-            if "+" in ts and ":" not in ts[-5:]:
-                tz_pos = ts.rfind("+")
-                if tz_pos != -1 and len(ts) >= tz_pos + 5:
-                    ts = ts[: tz_pos + 3] + ":" + ts[tz_pos + 3 :]
-            elif "-" in ts and ":" not in ts[-5:]:
-                tz_pos = ts.rfind("-")
-                if tz_pos != -1 and len(ts) >= tz_pos + 5:
-                    ts = ts[: tz_pos + 3] + ":" + ts[tz_pos + 3 :]
-
-            dt = datetime.fromisoformat(ts)
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
-        except (ValueError, TypeError):
+            dt = parse_date(timestamp)
+            if dt is None:
+                return timestamp
+            return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        except (OSError, OverflowError, TypeError, ValueError):
             return timestamp or EMPTY_STRING
 
     @staticmethod
@@ -107,20 +96,6 @@ class TimestampMixin:
             return False
 
         try:
-            # Convert Z format to +00:00 for compatibility with fromisoformat
-            ts = timestamp.replace("Z", "+00:00")
-
-            # Handle timezone format without colon (+0000 -> +00:00)
-            if "+" in ts and ":" not in ts[-5:]:
-                tz_pos = ts.rfind("+")
-                if tz_pos != -1 and len(ts) >= tz_pos + 5:
-                    ts = ts[: tz_pos + 3] + ":" + ts[tz_pos + 3 :]
-            elif "-" in ts and ":" not in ts[-5:]:
-                tz_pos = ts.rfind("-")
-                if tz_pos != -1 and len(ts) >= tz_pos + 5:
-                    ts = ts[: tz_pos + 3] + ":" + ts[tz_pos + 3 :]
-
-            datetime.fromisoformat(ts)
-            return True
-        except (ValueError, TypeError):
+            return parse_date(timestamp) is not None
+        except (OSError, OverflowError, TypeError, ValueError):
             return False

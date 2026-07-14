@@ -93,6 +93,9 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_service_desk_for_project",
         "jira_get_service_desk_queues",
         "jira_get_queue_issues",
+        "jira_get_request_types",
+        "jira_get_request_type_fields",
+        "jira_create_customer_request",
     ],
     "jira-forms-metrics": [
         "jira_get_issue_proforma_forms",
@@ -145,6 +148,11 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_check_content_permissions",
         "confluence_get_space_permissions",
     ],
+    "confluence-templates": [
+        "confluence_list_page_templates",
+        "confluence_get_page_template",
+        "confluence_create_page_from_template",
+    ],
 }
 
 CATEGORY_META: dict[str, dict[str, str]] = {
@@ -176,7 +184,7 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     },
     "jira-service-desk": {
         "title": "Jira Service Desk",
-        "description": "Service desk queues and queue issues",
+        "description": "Customer requests, service desks, and queues",
     },
     "jira-forms-metrics": {
         "title": "Jira Forms & Metrics",
@@ -201,6 +209,10 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     "confluence-permissions": {
         "title": "Confluence Permissions",
         "description": "Inspect content and space permissions",
+    },
+    "confluence-templates": {
+        "title": "Confluence Templates",
+        "description": "List page templates and create pages from them",
     },
 }
 

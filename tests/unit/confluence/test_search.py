@@ -59,13 +59,78 @@ class TestSearchMixin:
         result = search_mixin.search("test query")
 
         # Verify API call
-        search_mixin.confluence.cql.assert_called_once_with(cql="test query", limit=10)
+        search_mixin.confluence.cql.assert_called_once_with(
+            cql="test query", limit=10, expand="content.history,content.version"
+        )
 
         # Verify result
         assert len(result) == 1
         assert result[0].id == "123456789"
         assert result[0].title == "Test Page"
         assert result[0].content == "Processed content"
+
+    def test_search_expands_content_metadata(self, search_mixin):
+        """Search results should carry created/updated/author and version metadata.
+
+        Regression guard: on the ``/rest/api/search`` endpoint these live under
+        the nested ``content`` object, so the query must expand
+        ``content.history`` and ``content.version``. Without it every result's
+        ``created``/``updated``/``author`` comes back empty.
+        """
+        search_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "content": {
+                        "id": "123456789",
+                        "title": "Test Page",
+                        "type": "page",
+                        "space": {"key": "SPACE", "name": "Test Space"},
+                        "history": {
+                            "createdDate": "2026-07-07T17:56:30.079+08:00",
+                            "createdBy": {"displayName": "Alice Author"},
+                        },
+                        "version": {
+                            "number": 3,
+                            "when": "2026-07-09T17:22:07.533+08:00",
+                            "by": {"displayName": "Bob Editor"},
+                        },
+                    },
+                    "excerpt": "Test content excerpt",
+                    "url": "https://confluence.example.com/pages/123456789",
+                }
+            ]
+        }
+        search_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed content",
+        )
+
+        result = search_mixin.search("test query")
+
+        # The nested content properties must be requested with the
+        # "content." prefix, otherwise /rest/api/search ignores them.
+        search_mixin.confluence.cql.assert_called_once_with(
+            cql="test query", limit=10, expand="content.history,content.version"
+        )
+
+        assert len(result) == 1
+        page = result[0]
+        assert page.created == "2026-07-07T17:56:30.079+08:00"
+        # No history.lastUpdated in the payload, so updated falls back to the
+        # version timestamp.
+        assert page.updated == "2026-07-09T17:22:07.533+08:00"
+        assert page.author is not None
+        assert page.author.display_name == "Alice Author"
+        assert page.version is not None
+        assert page.version.number == 3
+        assert page.version.by is not None
+        assert page.version.by.display_name == "Bob Editor"
+
+        simplified = page.to_simplified_dict()
+        assert simplified["created"]
+        assert simplified["updated"]
+        assert simplified["author"] == "Alice Author"
+        assert simplified["version"] == 3
 
     def test_search_with_empty_results(self, search_mixin):
         """Test handling of empty search results."""
@@ -78,6 +143,90 @@ class TestSearchMixin:
         # Assert
         assert isinstance(results, list)
         assert len(results) == 0
+
+    def test_search_with_space_type_result(self, search_mixin) -> None:
+        """Test CQL space results that use the space key instead of content."""
+        search_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "space": {
+                        "id": 98765,
+                        "key": "DEV",
+                        "name": "Development",
+                    },
+                    "title": "Development",
+                    "excerpt": "<strong>Space excerpt</strong>",
+                }
+            ],
+            "totalSize": 1,
+            "start": 0,
+            "limit": 10,
+        }
+
+        search_mixin.preprocessor.process_html_content.return_value = (
+            "<strong>Space excerpt</strong>",
+            "Space excerpt",
+        )
+
+        result = search_mixin.search("type=space")
+
+        search_call = search_mixin.confluence.cql.call_args
+        assert search_call.kwargs["cql"] == "type=space"
+        assert search_call.kwargs["limit"] == 10
+        assert len(result) == 1
+        assert result[0].id == "98765"
+        assert result[0].title == "Development"
+        assert result[0].type == "space"
+        assert result[0].space is not None
+        assert result[0].space.key == "DEV"
+        assert result[0].content == "Space excerpt"
+        search_mixin.preprocessor.process_html_content.assert_called_once_with(
+            "<strong>Space excerpt</strong>",
+            space_key="DEV",
+            confluence_client=search_mixin.confluence,
+        )
+
+    def test_search_with_multiple_space_results_without_ids(self, search_mixin) -> None:
+        """Match excerpts by space key when Server/DC omits space ids."""
+        search_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "space": {"key": "DEV", "name": "Development"},
+                    "title": "Development",
+                    "excerpt": "Development excerpt",
+                },
+                {
+                    "space": {"key": "OPS", "name": "Operations"},
+                    "title": "Operations",
+                    "excerpt": "Operations excerpt",
+                },
+            ],
+            "totalSize": 2,
+        }
+        search_mixin.preprocessor.process_html_content.side_effect = [
+            ("<p>Development excerpt</p>", "Development excerpt"),
+            ("<p>Operations excerpt</p>", "Operations excerpt"),
+        ]
+
+        result = search_mixin.search("type=space")
+
+        assert [page.id for page in result] == ["DEV", "OPS"]
+        assert [page.content for page in result] == [
+            "Development excerpt",
+            "Operations excerpt",
+        ]
+        assert search_mixin.preprocessor.process_html_content.call_args_list == [
+            call(
+                "Development excerpt",
+                space_key="DEV",
+                confluence_client=search_mixin.confluence,
+            ),
+            call(
+                "Operations excerpt",
+                space_key="OPS",
+                confluence_client=search_mixin.confluence,
+            ),
+        ]
 
     def test_search_with_non_page_content(self, search_mixin):
         """Test handling of non-page content in search results."""
@@ -102,53 +251,44 @@ class TestSearchMixin:
         # The method should still handle them as pages since we're using models
         assert len(results) > 0
 
-    def test_search_key_error(self, search_mixin):
-        """Test handling of KeyError in search results."""
-        # Mock a response missing required keys
+    def test_search_malformed_response_missing_results(self, search_mixin):
+        """Test that a response missing the 'results' key raises an error.
+
+        A malformed response (e.g. an API/network/processing failure) must not
+        be silently treated as an empty result set. Only a genuine
+        ``{"results": []}`` response should return an empty list.
+        """
+        # Mock a response missing the required "results" key
         search_mixin.confluence.cql.return_value = {"incomplete": "data"}
 
-        # Act
-        results = search_mixin.search("invalid query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(
+            ValueError, match="Error processing search results.*malformed response"
+        ):
+            search_mixin.search("invalid query")
 
     def test_search_request_exception(self, search_mixin):
         """Test handling of RequestException during search."""
         # Mock a network error
         search_mixin.confluence.cql.side_effect = requests.RequestException("API error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(ValueError, match="Network error during search"):
+            search_mixin.search("error query")
 
     def test_search_value_error(self, search_mixin):
         """Test handling of ValueError during search."""
         # Mock a value error
         search_mixin.confluence.cql.side_effect = ValueError("Value error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(ValueError, match="Error processing search results"):
+            search_mixin.search("error query")
 
     def test_search_type_error(self, search_mixin):
         """Test handling of TypeError during search."""
         # Mock a type error
         search_mixin.confluence.cql.side_effect = TypeError("Type error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(ValueError, match="Error processing search results"):
+            search_mixin.search("error query")
 
     def test_search_with_spaces_filter(self, search_mixin):
         """Test searching with spaces filter from parameter."""
@@ -183,6 +323,7 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f"(test query) AND (space = {quoted_dev})",
             limit=10,
+            expand="content.history,content.version",
         )
         assert len(result) == 1
 
@@ -195,16 +336,52 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f"(test query) AND (space = {quoted_dev} OR space = {quoted_team})",
             limit=10,
+            expand="content.history,content.version",
         )
         assert len(result) == 1
 
-        # Test with filter when query already has space
+        # Filter is always ANDed, even when the caller's CQL already names a space,
+        # so a caller-supplied `space = X` cannot escape the configured allowlist.
         result = search_mixin.search('space = "EXISTING"', spaces_filter="DEV")
+        quoted_dev = quote_cql_identifier_if_needed("DEV")
         search_mixin.confluence.cql.assert_called_with(
-            cql='space = "EXISTING"',  # Should not add filter when space already exists
+            cql=f'(space = "EXISTING") AND (space = {quoted_dev})',
             limit=10,
+            expand="content.history,content.version",
         )
         assert len(result) == 1
+
+    @pytest.mark.security_regression
+    def test_spaces_filter_not_bypassed_by_caller_space_clause(self, search_mixin):
+        """A caller-supplied space clause must not escape the config allowlist.
+
+        The old code skipped the filter when the CQL already named a space, so
+        `space = EVIL` bypassed CONFLUENCE_SPACES_FILTER entirely.
+        """
+        search_mixin.confluence.cql.return_value = {"results": [], "size": 0}
+        search_mixin.config.spaces_filter = "SECSPACE"
+
+        search_mixin.search('space = "EVIL"')
+
+        sent_cql = search_mixin.confluence.cql.call_args.kwargs["cql"]
+        assert "SECSPACE" in sent_cql, (
+            "config spaces_filter must be ANDed even when the caller already "
+            f"names a space; CQL was {sent_cql!r}"
+        )
+
+    @pytest.mark.security_regression
+    def test_spaces_filter_param_cannot_replace_config_allowlist(self, search_mixin):
+        """The spaces_filter tool arg may narrow, not replace, the config allowlist."""
+        search_mixin.confluence.cql.return_value = {"results": [], "size": 0}
+        search_mixin.config.spaces_filter = "SECSPACE"
+
+        search_mixin.search("type = page", spaces_filter="EVIL")
+
+        sent_cql = search_mixin.confluence.cql.call_args.kwargs["cql"]
+        assert "SECSPACE" in sent_cql, (
+            "config allowlist must still be applied even when a spaces_filter arg "
+            f"is supplied; CQL was {sent_cql!r}"
+        )
 
     def test_search_with_config_spaces_filter(self, search_mixin):
         """Test search using spaces filter from config."""
@@ -243,17 +420,24 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f"(test query) AND (space = {quoted_dev} OR space = {quoted_team})",
             limit=10,
+            expand="content.history,content.version",
         )
         assert len(result) == 1
 
-        # Test that explicit filter overrides config filter
+        # A spaces_filter arg narrows within the config allowlist (hard boundary):
+        # the config filter is still ANDed, it cannot be replaced.
         result = search_mixin.search("test query", spaces_filter="OVERRIDE")
 
-        # Verify space was properly quoted in the CQL query
+        quoted_dev = quote_cql_identifier_if_needed("DEV")
+        quoted_team = quote_cql_identifier_if_needed("TEAM")
         quoted_override = quote_cql_identifier_if_needed("OVERRIDE")
         search_mixin.confluence.cql.assert_called_with(
-            cql=f"(test query) AND (space = {quoted_override})",
+            cql=(
+                f"((test query) AND (space = {quoted_dev} OR space = {quoted_team}))"
+                f" AND (space = {quoted_override})"
+            ),
             limit=10,
+            expand="content.history,content.version",
         )
         assert len(result) == 1
 
@@ -262,12 +446,8 @@ class TestSearchMixin:
         # Mock a general exception
         search_mixin.confluence.cql.side_effect = Exception("General error")
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == 0
+        with pytest.raises(RuntimeError, match="Unexpected error during search"):
+            search_mixin.search("error query")
 
     def test_search_user_success(self, search_mixin):
         """Test search_user with successful results."""
@@ -365,28 +545,44 @@ class TestSearchMixin:
         )
 
     @pytest.mark.parametrize(
-        "exception_type,exception_args,expected_result",
+        "exception_type,exception_args,expected_exception,match",
         [
-            (requests.RequestException, ("Network error",), []),
-            (ValueError, ("Value error",), []),
-            (TypeError, ("Type error",), []),
-            (Exception, ("General error",), []),
-            (KeyError, ("Missing key",), []),
+            (
+                requests.RequestException,
+                ("Network error",),
+                ValueError,
+                "Network error during search_user",
+            ),
+            (
+                ValueError,
+                ("Value error",),
+                ValueError,
+                "Error processing search_user results",
+            ),
+            (
+                TypeError,
+                ("Type error",),
+                ValueError,
+                "Error processing search_user results",
+            ),
+            (
+                Exception,
+                ("General error",),
+                RuntimeError,
+                "Unexpected error during search_user",
+            ),
+            (KeyError, ("Missing key",), ValueError, "missing key"),
         ],
     )
     def test_search_user_exception_handling(
-        self, search_mixin, exception_type, exception_args, expected_result
+        self, search_mixin, exception_type, exception_args, expected_exception, match
     ):
-        """Test search_user handling of various exceptions that return empty list."""
+        """Test search_user propagates detailed exceptions."""
         # Mock the exception
         search_mixin.confluence.get.side_effect = exception_type(*exception_args)
 
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
-
-        # Assert
-        assert isinstance(results, list)
-        assert results == expected_result
+        with pytest.raises(expected_exception, match=match):
+            search_mixin.search_user('user.fullname ~ "Test"')
 
     @pytest.mark.parametrize(
         "status_code,exception_type",
@@ -424,48 +620,70 @@ class TestSearchMixin:
             search_mixin.search_user('user.fullname ~ "Test"')
 
     @pytest.mark.parametrize(
-        "mock_response,expected_length",
+        "malformed_response",
         [
-            ({"incomplete": "data"}, 0),  # KeyError case
-            (None, 0),  # None response case
-            ({"results": []}, 0),  # Empty results case
+            {"incomplete": "data"},
+            None,
+            {"results": None},
+            {"results": {}},
         ],
     )
-    def test_search_user_edge_cases(self, search_mixin, mock_response, expected_length):
-        """Test search_user handling of edge cases in API responses."""
-        search_mixin.confluence.get.return_value = mock_response
+    def test_search_user_cloud_malformed_response_raises(
+        self, search_mixin, malformed_response
+    ):
+        """Malformed Cloud user-search responses must raise, not return [].
 
-        # Act
-        results = search_mixin.search_user('user.fullname ~ "Test"')
+        A response missing the 'results' field indicates an API/network/
+        processing failure and must not be reported as "no users found".
+        """
+        search_mixin.confluence.get.return_value = malformed_response
 
-        # Assert
-        assert isinstance(results, list)
-        assert len(results) == expected_length
+        with pytest.raises(
+            ValueError,
+            match="Error processing search_user results.*malformed response",
+        ):
+            search_mixin.search_user('user.fullname ~ "Test"')
 
     # You can also parametrize the regular search method exception tests:
     @pytest.mark.parametrize(
-        "exception_type,exception_args,expected_result",
+        "exception_type,exception_args,expected_exception,match",
         [
-            (requests.RequestException, ("API error",), []),
-            (ValueError, ("Value error",), []),
-            (TypeError, ("Type error",), []),
-            (Exception, ("General error",), []),
-            (KeyError, ("Missing key",), []),
+            (
+                requests.RequestException,
+                ("API error",),
+                ValueError,
+                "Network error during search",
+            ),
+            (
+                ValueError,
+                ("Value error",),
+                ValueError,
+                "Error processing search results",
+            ),
+            (
+                TypeError,
+                ("Type error",),
+                ValueError,
+                "Error processing search results",
+            ),
+            (
+                Exception,
+                ("General error",),
+                RuntimeError,
+                "Unexpected error during search",
+            ),
+            (KeyError, ("Missing key",), ValueError, "missing key"),
         ],
     )
     def test_search_exception_handling(
-        self, search_mixin, exception_type, exception_args, expected_result
+        self, search_mixin, exception_type, exception_args, expected_exception, match
     ):
-        """Test search handling of various exceptions that return empty list."""
+        """Test search propagates detailed exceptions."""
         # Mock the exception
         search_mixin.confluence.cql.side_effect = exception_type(*exception_args)
 
-        # Act
-        results = search_mixin.search("error query")
-
-        # Assert
-        assert isinstance(results, list)
-        assert results == expected_result
+        with pytest.raises(expected_exception, match=match):
+            search_mixin.search("error query")
 
     # Parametrize CQL query tests:
     @pytest.mark.parametrize(
@@ -641,6 +859,61 @@ class TestSearchUserServerDC:
         assert len(results) == 1
         assert results[0].user is not None
         assert results[0].user.display_name == "John Doe"
+
+    def test_server_dc_empty_results_returns_empty(self, server_search_mixin):
+        """A genuine {'results': []} Server/DC response returns an empty list."""
+        server_search_mixin.confluence.get.return_value = {"results": []}
+
+        results = server_search_mixin.search_user('user.fullname ~ "Test"')
+
+        assert isinstance(results, list)
+        assert len(results) == 0
+
+    @pytest.mark.parametrize(
+        "malformed_response",
+        [
+            {"incomplete": "data"},
+            None,
+            {"results": None},
+            {"results": {}},
+        ],
+    )
+    def test_server_dc_malformed_response_raises(
+        self, server_search_mixin, malformed_response
+    ):
+        """Malformed Server/DC group-member responses must raise, not return [].
+
+        A response missing the 'results' field indicates an API/network/
+        processing failure and must not be reported as "no users found".
+        """
+        server_search_mixin.confluence.get.return_value = malformed_response
+
+        with pytest.raises(
+            ValueError,
+            match="Error processing search_user results.*malformed response",
+        ):
+            server_search_mixin.search_user('user.fullname ~ "Test"')
+
+    @pytest.mark.parametrize(
+        "malformed_response",
+        [
+            {"incomplete": "data"},
+            None,
+            {"results": None},
+            {"results": {}},
+        ],
+    )
+    def test_cloud_malformed_response_raises(
+        self, cloud_search_mixin, malformed_response
+    ):
+        """Malformed Cloud user-search responses must raise, not return []."""
+        cloud_search_mixin.confluence.get.return_value = malformed_response
+
+        with pytest.raises(
+            ValueError,
+            match="Error processing search_user results.*malformed response",
+        ):
+            cloud_search_mixin.search_user('user.fullname ~ "Test"')
 
     def test_server_dc_fuzzy_match_case_insensitive(self, server_search_mixin):
         """Fuzzy matching should be case-insensitive substring match."""

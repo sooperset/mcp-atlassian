@@ -68,6 +68,8 @@ def issues_mixin():
     with patch("mcp_atlassian.jira.config.JiraConfig.from_env") as mock_from_env:
         mock_config = MagicMock()
         mock_config.is_cloud = True
+        mock_config.url = "https://test.atlassian.net"
+        mock_config.ssl_verify = True
         mock_from_env.return_value = mock_config
 
         mixin = ConcreteIssuesMixin()
@@ -159,6 +161,17 @@ def test_create_issue_falls_back_to_name_if_id_not_found(issues_mixin):
 def test_find_epic_issue_type_id_returns_id(issues_mixin):
     """Verify _find_epic_issue_type_id returns the correct ID."""
     issues_mixin.get_project_issue_types.return_value = [
+        {"id": "10001", "name": "Epic", "subtask": False},
+    ]
+
+    epic_id = issues_mixin._find_epic_issue_type_id("PROJ")
+    assert epic_id == "10001"
+
+
+def test_find_epic_issue_type_id_prefers_exact_match(issues_mixin):
+    """Verify _find_epic_issue_type_id prefers exact 'Epic' over substring match."""
+    issues_mixin.get_project_issue_types.return_value = [
+        {"id": "10099", "name": "Program Epic", "subtask": False},
         {"id": "10001", "name": "Epic", "subtask": False},
     ]
 

@@ -29,9 +29,14 @@ class TestJQLQuoting:
             ("TEST", "TEST"),
             ("MYPROJECT", "MYPROJECT"),
             ("SCRUM", "SCRUM"),
+            ("MY-PROJECT", "MY-PROJECT"),
             # Starts with digit → quoted
             ("123P", '"123P"'),
             ("1ABC", '"1ABC"'),
+            # JQL syntax characters → quoted as a single literal
+            ("X OR project = OUTSIDE", '"X OR project = OUTSIDE"'),
+            ("X) OR project = OUTSIDE", '"X) OR project = OUTSIDE"'),
+            ("X=OUTSIDE", '"X=OUTSIDE"'),
             # Internal quote escaping
             ('my"key', '"my\\"key"'),
             # Internal backslash escaping
@@ -52,8 +57,12 @@ class TestJQLQuoting:
             "normal-TEST",
             "normal-MYPROJECT",
             "normal-SCRUM",
+            "normal-hyphenated",
             "digit-start-123P",
             "digit-start-1ABC",
+            "spaces-and-operator",
+            "parenthesis-and-operator",
+            "equals-operator",
             "internal-quote",
             "internal-backslash",
             "internal-backslash-and-quote",

@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
+import shutil
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,6 +26,21 @@ from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture
+def workspace_tmp_path() -> Generator[Path, None, None]:
+    """A temp directory *inside* the workspace (CWD).
+
+    ``upload_attachment`` / ``content_file`` confine caller-supplied paths to
+    the working directory, so files fed to those tools must live under it —
+    pytest's ``tmp_path`` (outside CWD) is rejected by design.
+    """
+    d = Path.cwd() / f".e2e-tmp-{uuid.uuid4().hex[:8]}"
+    d.mkdir()
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
+
 
 # Default DC instance settings
 DEFAULT_JIRA_URL = "http://localhost:8080"
@@ -447,6 +465,12 @@ def dc_instance() -> DCInstanceInfo:
     """
     info = DCInstanceInfo()
 
+    # Mirror a real deployment: the operator sets JIRA_URL/CONFLUENCE_URL in the
+    # environment, which the SSRF pinning adapter trusts — without this, the
+    # localhost DC instances are (correctly) rejected as non-global addresses.
+    os.environ.setdefault("JIRA_URL", info.jira_url)
+    os.environ.setdefault("CONFLUENCE_URL", info.confluence_url)
+
     if not _check_dc_health(info.jira_url):
         pytest.skip(f"Jira DC not reachable at {info.jira_url}")
     if not _check_dc_health(info.confluence_url):
@@ -562,6 +586,50 @@ def resource_tracker(
         jira_client=jira_fetcher,
         confluence_client=confluence_fetcher,
     )
+
+
+@pytest.fixture(scope="session")
+def jsm_dc_instance() -> DCInstanceInfo:
+    """Session-scoped info for the dedicated Jira Service Management DC instance.
+
+    JSM ships as a separate application, so it runs as its own instance rather
+    than on the Jira Software DC box used by the rest of the DC suite.
+    """
+    jsm_url = os.environ.get("DC_E2E_JSM_URL", "").strip()
+    if not jsm_url:
+        pytest.skip("DC JSM e2e requires DC_E2E_JSM_URL")
+
+    info = DCInstanceInfo(
+        jira_url=jsm_url,
+        admin_username=os.environ.get("DC_E2E_JSM_USERNAME", DEFAULT_ADMIN_USER),
+        admin_password=os.environ.get("DC_E2E_JSM_PASSWORD", DEFAULT_ADMIN_PASS),
+    )
+
+    # Same reason as dc_instance: the SSRF pinning adapter only trusts hosts
+    # named in the environment.
+    os.environ.setdefault("JIRA_URL", info.jira_url)
+
+    if not _check_dc_health(info.jira_url):
+        pytest.skip(f"Jira Service Management DC not reachable at {info.jira_url}")
+
+    return info
+
+
+@pytest.fixture(scope="session")
+def jsm_jira_fetcher(jsm_dc_instance: DCInstanceInfo) -> JiraFetcher:
+    """Session-scoped Jira fetcher for the JSM DC instance (basic auth)."""
+    config = _make_jira_basic_config(jsm_dc_instance)
+    return JiraFetcher(config=config)
+
+
+@pytest.fixture
+def jsm_resource_tracker(
+    jsm_jira_fetcher: JiraFetcher,
+) -> Generator[DCResourceTracker, None, None]:
+    """Resource tracker that cleans up against the JSM instance, not :8080."""
+    tracker = DCResourceTracker()
+    yield tracker
+    tracker.cleanup(jira_client=jsm_jira_fetcher)
 
 
 @pytest.fixture(scope="module")

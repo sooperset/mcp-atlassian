@@ -120,16 +120,16 @@ class UsersMixin(JiraClient):
             ValueError: If the account ID could not be found.
         """
         # If it looks like an account ID already, return it.
-        # Cloud account IDs come in two shapes: the legacy 24-char hex format
-        # (e.g. "5b10ac8d82e05b22cc7d4ef5") and the current "<digits>:<uuid>"
-        # format (e.g. "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d").
+        # Known unprefixed Cloud account IDs use a legacy 24-char hex format
+        # (e.g. "5b10ac8d82e05b22cc7d4ef5") or a "<digits>:<uuid>" format
+        # (e.g. "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d").
         # An explicit "accountid:" prefix is also accepted, matching the
-        # format documented in the create_issue/update_issue tool schemas.
+        # create_issue/update_issue tool schemas and supporting opaque IDs.
         if assignee.startswith("accountid:"):
             return assignee[len("accountid:") :]
-        if assignee.startswith("5") and len(assignee) >= 10:
+        if re.fullmatch(r"[0-9a-fA-F]{24}", assignee):
             return assignee
-        if re.match(r"^\d+:[0-9a-fA-F][0-9a-fA-F-]{7,}$", assignee):
+        if re.fullmatch(r"\d+:[0-9a-fA-F][0-9a-fA-F-]{7,}", assignee):
             return assignee
 
         account_id = self._lookup_user_directly(assignee)

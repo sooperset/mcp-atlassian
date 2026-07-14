@@ -1,5 +1,6 @@
 """Tests for the Jira config module."""
 
+import logging
 import os
 from unittest.mock import patch
 
@@ -7,6 +8,7 @@ import pytest
 
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.utils.oauth import OAuthConfig
+from mcp_atlassian.utils.proxy import DEFAULT_PROXY_WPAD_URL
 
 
 def test_from_env_basic_auth():
@@ -152,6 +154,7 @@ def test_from_env_proxy_settings():
             "HTTPS_PROXY": "https://proxy.example.com:8443",
             "SOCKS_PROXY": "socks5://user:pass@proxy.example.com:1080",
             "NO_PROXY": "localhost,127.0.0.1",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
         },
         clear=True,
     ):
@@ -160,6 +163,8 @@ def test_from_env_proxy_settings():
         assert config.https_proxy == "https://proxy.example.com:8443"
         assert config.socks_proxy == "socks5://user:pass@proxy.example.com:1080"
         assert config.no_proxy == "localhost,127.0.0.1"
+        assert config.proxy_wpad_enable is True
+        assert config.proxy_wpad_url == DEFAULT_PROXY_WPAD_URL
 
     # Service-specific overrides
     with patch.dict(
@@ -172,6 +177,9 @@ def test_from_env_proxy_settings():
             "JIRA_HTTPS_PROXY": "https://jira-proxy.example.com:8443",
             "JIRA_SOCKS_PROXY": "socks5://user:pass@jira-proxy.example.com:1080",
             "JIRA_NO_PROXY": "localhost,127.0.0.1,.internal.example.com",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
+            "ATLASSIAN_PROXY_WPAD_URL": "http://global-wpad.example.com/wpad.dat",
+            "JIRA_PROXY_WPAD_URL": "http://jira-wpad.example.com/wpad.dat",
         },
         clear=True,
     ):
@@ -180,6 +188,142 @@ def test_from_env_proxy_settings():
         assert config.https_proxy == "https://jira-proxy.example.com:8443"
         assert config.socks_proxy == "socks5://user:pass@jira-proxy.example.com:1080"
         assert config.no_proxy == "localhost,127.0.0.1,.internal.example.com"
+        assert config.proxy_wpad_enable is True
+        assert config.proxy_wpad_url == "http://jira-wpad.example.com/wpad.dat"
+
+
+def test_from_env_service_specific_wpad_disable_overrides_global():
+    """Test Jira can opt out of globally enabled WPAD/PAC."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
+            "JIRA_PROXY_WPAD_ENABLE": "false",
+            "ATLASSIAN_PROXY_WPAD_URL": "http://global-wpad.example.com/wpad.dat",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.proxy_wpad_enable is False
+        assert config.proxy_wpad_url == "http://global-wpad.example.com/wpad.dat"
+
+
+def test_from_env_internal_only_projects_unset_is_noop():
+    """Unset JIRA_INTERNAL_ONLY_PROJECTS must default to an empty set (no-op)."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.internal_only_projects == frozenset()
+
+
+def test_from_env_internal_only_projects_empty_string_is_noop():
+    """An empty JIRA_INTERNAL_ONLY_PROJECTS value must also be a no-op."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_INTERNAL_ONLY_PROJECTS": "",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.internal_only_projects == frozenset()
+
+
+def test_from_env_internal_only_projects_basic():
+    """A simple comma-separated list is parsed and upper-cased."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_INTERNAL_ONLY_PROJECTS": "CC,help",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.internal_only_projects == frozenset({"CC", "HELP"})
+
+
+def test_from_env_internal_only_projects_malformed_tolerated():
+    """Whitespace, blank entries (double/trailing commas), and mixed case
+    must not raise and must be normalized away."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_INTERNAL_ONLY_PROJECTS": "  cc , ,Help,, support ,cc",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.internal_only_projects == frozenset({"CC", "HELP", "SUPPORT"})
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "CC​",  # zero-width space
+        "﻿CC",  # BOM
+        "C‍C",  # zero-width joiner inside the key
+        "⁠CC‌",  # word-joiner + zero-width non-joiner
+    ],
+    ids=["zwsp", "bom", "zwj", "wj-zwnj"],
+)
+def test_from_env_internal_only_projects_strips_invisible_chars(raw):
+    """An invisible character must not silently leave the project unguarded.
+
+    str.strip() does not remove these, so a key pasted from a browser or
+    spreadsheet would never match its issues — and the guard would fail open
+    while the operator believed the project was protected.
+    """
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_INTERNAL_ONLY_PROJECTS": raw,
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.internal_only_projects == frozenset({"CC"})
+
+
+def test_from_env_internal_only_projects_warns_on_invalid_key(caplog):
+    """An entry that cannot match any issue is surfaced, not silently dropped."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_INTERNAL_ONLY_PROJECTS": "CC,not a key!",
+        },
+        clear=True,
+    ):
+        with caplog.at_level(logging.WARNING):
+            config = JiraConfig.from_env()
+
+    assert "CC" in config.internal_only_projects
+    assert "not a key!" in caplog.text
+    assert "NOT guarded" in caplog.text
 
 
 def test_is_cloud_oauth_with_cloud_id():

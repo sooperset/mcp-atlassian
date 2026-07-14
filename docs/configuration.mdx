@@ -215,18 +215,27 @@ instances from runaway request loops. They are disabled by default.
 
 ## Proxy Configuration
 
-MCP Atlassian supports routing API requests through HTTP/HTTPS/SOCKS proxies.
+MCP Atlassian supports routing API requests through HTTP/HTTPS/SOCKS proxies,
+with optional PAC/WPAD auto-configuration.
 
 | Variable | Description |
 |----------|-------------|
-| `HTTP_PROXY` | HTTP proxy URL |
-| `HTTPS_PROXY` | HTTPS proxy URL |
-| `SOCKS_PROXY` | SOCKS proxy URL |
-| `NO_PROXY` | Hosts to bypass proxy |
-| `JIRA_HTTPS_PROXY` | Jira-specific HTTPS proxy |
-| `CONFLUENCE_HTTPS_PROXY` | Confluence-specific HTTPS proxy |
+| `HTTP_PROXY` | Global HTTP proxy URL |
+| `HTTPS_PROXY` | Global HTTPS proxy URL |
+| `SOCKS_PROXY` | Global SOCKS proxy URL |
+| `NO_PROXY` | Global hosts to bypass proxy |
+| `ATLASSIAN_PROXY_WPAD_ENABLE` | Enable global PAC/WPAD evaluation (`true`/`false`) |
+| `ATLASSIAN_PROXY_WPAD_URL` | Global PAC URL (defaults to `http://wpad/wpad.dat` when enabled) |
+| `JIRA_HTTP_PROXY`, `JIRA_HTTPS_PROXY`, `JIRA_SOCKS_PROXY`, `JIRA_NO_PROXY` | Jira-specific explicit proxy overrides |
+| `JIRA_PROXY_WPAD_ENABLE`, `JIRA_PROXY_WPAD_URL` | Jira-specific PAC/WPAD overrides |
+| `CONFLUENCE_HTTP_PROXY`, `CONFLUENCE_HTTPS_PROXY`, `CONFLUENCE_SOCKS_PROXY`, `CONFLUENCE_NO_PROXY` | Confluence-specific explicit proxy overrides |
+| `CONFLUENCE_PROXY_WPAD_ENABLE`, `CONFLUENCE_PROXY_WPAD_URL` | Confluence-specific PAC/WPAD overrides |
 
-Service-specific variables override global ones.
+Service-specific variables override global ones. PAC/WPAD is opt-in and is
+only evaluated when no explicit proxy is configured for that service.
+PAC/WPAD support is provided by the optional `wpad` extra. Install it with
+`pip install "mcp-atlassian[wpad]"` or `uv add "mcp-atlassian[wpad]"` before
+enabling the feature. The published Docker image includes this extra.
 
 ## Custom HTTP Headers
 
@@ -236,13 +245,30 @@ Add custom HTTP headers to all API requests. Useful in corporate environments.
 |----------|-------------|
 | `JIRA_CUSTOM_HEADERS` | Custom headers for Jira requests |
 | `CONFLUENCE_CUSTOM_HEADERS` | Custom headers for Confluence requests |
+| `JIRA_PASSTHROUGH_HEADERS` | Incoming MCP request header names to pass through to Jira requests |
+| `CONFLUENCE_PASSTHROUGH_HEADERS` | Incoming MCP request header names to pass through to Confluence requests |
 
-**Format:** Comma-separated `key=value` pairs.
+**Format:** Static custom headers use comma-separated `key=value` pairs.
+Passthrough headers use comma-separated header names.
 
 ```bash
 JIRA_CUSTOM_HEADERS=X-Forwarded-User=service-account,X-Custom-Auth=token
 CONFLUENCE_CUSTOM_HEADERS=X-Service=mcp-integration,X-ALB-Token=secret
+
+# Header names only. Values are read from each incoming MCP HTTP request.
+JIRA_PASSTHROUGH_HEADERS=X-SSO-User,X-Request-ID
+CONFLUENCE_PASSTHROUGH_HEADERS=X-SSO-User,X-Request-ID
 ```
+
+Passthrough headers are request-scoped and only apply to HTTP transports. If a
+passthrough header name conflicts with a static custom header, the incoming
+request header value is used for that request.
+
+Only configure headers that are set by a trusted proxy or gateway. Clients can
+control any passthrough header they are allowed to send to the MCP endpoint.
+When external auth uses a client-supplied Jira or Confluence URL, configure
+`MCP_ALLOWED_URL_DOMAINS`; dynamic URLs are rejected without this allowlist so
+trusted session headers cannot be forwarded to an attacker-controlled host.
 
 <Note>
 Header values are masked in debug logs for security.

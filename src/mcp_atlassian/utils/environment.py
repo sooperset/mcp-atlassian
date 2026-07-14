@@ -3,6 +3,7 @@
 import logging
 import os
 
+from .env import is_env_truthy
 from .urls import is_atlassian_cloud_url
 
 logger = logging.getLogger("mcp-atlassian.utils.environment")
@@ -127,6 +128,13 @@ def get_available_services(
             "- expecting user-provided tokens via headers"
         )
 
+    if not confluence_is_setup and is_env_truthy("ATLASSIAN_EXTERNAL_AUTH_ENABLE"):
+        confluence_is_setup = True
+        logger.info(
+            "Using Confluence external auth passthrough mode "
+            "- auth headers injected by upstream proxy"
+        )
+
     if not confluence_is_setup:
         confluence_token = headers.get("X-Atlassian-Confluence-Personal-Token")
         confluence_url_header = headers.get("X-Atlassian-Confluence-Url")
@@ -165,6 +173,13 @@ def get_available_services(
         logger.info(
             "Using Jira minimal OAuth configuration "
             "- expecting user-provided tokens via headers"
+        )
+
+    if not jira_is_setup and is_env_truthy("ATLASSIAN_EXTERNAL_AUTH_ENABLE"):
+        jira_is_setup = True
+        logger.info(
+            "Using Jira external auth passthrough mode "
+            "- auth headers injected by upstream proxy"
         )
 
     if not jira_is_setup:

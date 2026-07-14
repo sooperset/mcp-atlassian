@@ -11,6 +11,9 @@ from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from mcp_atlassian.confluence import ConfluenceFetcher
@@ -89,6 +92,58 @@ class TestMCPProtocolIntegration:
         server = AtlassianMCP(name="Test Atlassian MCP", lifespan=main_lifespan)
         # Mount sub-servers (they're already mounted in the actual server)
         return server
+
+    @pytest.mark.security_regression
+    async def test_call_tool_mcp_enforces_enablement_at_dispatch(
+        self, atlassian_mcp_server, mock_jira_config, mock_confluence_config
+    ):
+        """A tool filtered out of the listing must not be invocable by name.
+
+        `_list_tools_mcp` hides read-only-excluded / non-enabled / disabled-toolset
+        tools, but the call path must re-check — otherwise a client can dispatch a
+        hidden tool directly by name. Verifies denied calls never reach the
+        underlying executor and enabled calls do (GHSA-3r68).
+        """
+        from unittest.mock import AsyncMock
+
+        from fastmcp import FastMCP
+        from fastmcp.exceptions import NotFoundError
+
+        app_context = MainAppContext(
+            full_jira_config=mock_jira_config,
+            full_confluence_config=mock_confluence_config,
+            read_only=True,  # write tools are excluded
+            enabled_tools=None,
+        )
+        request_context = MagicMock()
+        request_context.request = None
+        request_context.lifespan_context = {"app_lifespan_context": app_context}
+        atlassian_mcp_server._mcp_server = MagicMock()
+        atlassian_mcp_server._mcp_server.request_context = request_context
+
+        async def mock_get_tools():
+            read_tool = MagicMock(spec=FastMCPTool)
+            read_tool.tags = {"jira", "read"}
+            write_tool = MagicMock(spec=FastMCPTool)
+            write_tool.tags = {"jira", "write"}
+            return {"jira_get_issue": read_tool, "jira_create_issue": write_tool}
+
+        atlassian_mcp_server.get_tools = mock_get_tools
+
+        with patch.object(
+            FastMCP, "_call_tool_mcp", new_callable=AsyncMock
+        ) as mock_super:
+            mock_super.return_value = "EXECUTED"
+
+            # Write tool is read-only-excluded -> denied before reaching the executor.
+            with pytest.raises(NotFoundError):
+                await atlassian_mcp_server._call_tool_mcp("jira_create_issue", {})
+            mock_super.assert_not_called()
+
+            # Read tool is enabled -> passes the gate and reaches the executor.
+            result = await atlassian_mcp_server._call_tool_mcp("jira_get_issue", {})
+            assert result == "EXECUTED"
+            mock_super.assert_called_once()
 
     async def test_tool_discovery_with_full_configuration(
         self, atlassian_mcp_server, mock_jira_config, mock_confluence_config
@@ -868,6 +923,33 @@ class TestMCPProtocolIntegration:
 
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+    @pytest.mark.security_regression
+    async def test_malformed_host_cannot_bypass_url_path_gate(
+        self, atlassian_mcp_server
+    ):
+        """Malformed Host headers must not rewrite the path used by middleware."""
+
+        class PathGateMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                if request.url.path not in {"", "/"}:
+                    return PlainTextResponse("Forbidden", status_code=403)
+                return await call_next(request)
+
+        async def admin(_request):
+            return PlainTextResponse("secret")
+
+        app = Starlette(
+            routes=[Route("/admin", admin)],
+            middleware=[Middleware(PathGateMiddleware)],
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/admin", headers={"host": "example.com/allowed?query="}
+            )
+
+        assert response.status_code == 403
 
     async def test_combined_filtering_scenarios(
         self, atlassian_mcp_server, mock_jira_config

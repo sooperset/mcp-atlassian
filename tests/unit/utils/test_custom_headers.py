@@ -1,6 +1,6 @@
 """Tests for custom headers parsing functionality."""
 
-from mcp_atlassian.utils.env import get_custom_headers
+from mcp_atlassian.utils.env import get_custom_headers, get_header_names
 
 
 class TestParseCustomHeaders:
@@ -173,3 +173,52 @@ class TestParseCustomHeaders:
         result = get_custom_headers("TEST_HEADERS")
         expected = {"X-Multi": "line1\nline2", "X-Tab": "value\twith\ttabs"}
         assert result == expected
+
+
+class TestParseHeaderNames:
+    """Test the get_header_names function."""
+
+    def test_empty_input(self, monkeypatch):
+        """Test header name parsing with empty inputs."""
+        monkeypatch.delenv("TEST_HEADER_NAMES", raising=False)
+        assert get_header_names("TEST_HEADER_NAMES") == []
+
+        monkeypatch.setenv("TEST_HEADER_NAMES", "")
+        assert get_header_names("TEST_HEADER_NAMES") == []
+
+        monkeypatch.setenv("TEST_HEADER_NAMES", "   ")
+        assert get_header_names("TEST_HEADER_NAMES") == []
+
+    def test_single_header_name(self, monkeypatch):
+        """Test parsing a single header name."""
+        monkeypatch.setenv("TEST_HEADER_NAMES", "X-SSO-User")
+        assert get_header_names("TEST_HEADER_NAMES") == ["X-SSO-User"]
+
+    def test_multiple_header_names(self, monkeypatch):
+        """Test parsing comma-separated header names."""
+        monkeypatch.setenv("TEST_HEADER_NAMES", "X-SSO-User,X-Request-ID")
+        assert get_header_names("TEST_HEADER_NAMES") == [
+            "X-SSO-User",
+            "X-Request-ID",
+        ]
+
+    def test_header_names_with_spaces(self, monkeypatch):
+        """Test parsing comma-separated header names with whitespace."""
+        monkeypatch.setenv("TEST_HEADER_NAMES", " X-SSO-User, X-Request-ID ")
+        assert get_header_names("TEST_HEADER_NAMES") == [
+            "X-SSO-User",
+            "X-Request-ID",
+        ]
+
+    def test_empty_entries_are_skipped(self, monkeypatch):
+        """Test that empty entries are ignored."""
+        monkeypatch.setenv("TEST_HEADER_NAMES", "X-First,, X-Second, ")
+        assert get_header_names("TEST_HEADER_NAMES") == ["X-First", "X-Second"]
+
+    def test_duplicate_names_are_deduplicated_case_insensitively(self, monkeypatch):
+        """Test duplicate header names preserve first configured casing."""
+        monkeypatch.setenv("TEST_HEADER_NAMES", "X-SSO-User,x-sso-user,X-Trace")
+        assert get_header_names("TEST_HEADER_NAMES") == [
+            "X-SSO-User",
+            "X-Trace",
+        ]
