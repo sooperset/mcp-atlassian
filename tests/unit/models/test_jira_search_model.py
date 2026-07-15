@@ -94,10 +94,7 @@ class TestJiraSearchResult:
 
         issue = simplified["issues"][0]
         assert issue["key"] == "PROJ-123"
-        assert (
-            issue["browse_url"]
-            == "https://example.atlassian.net/browse/PROJ-123"
-        )
+        assert issue["browse_url"] == "https://example.atlassian.net/browse/PROJ-123"
 
     def test_to_simplified_dict_empty_result(self):
         """Test converting an empty JiraSearchResult to a simplified dictionary."""

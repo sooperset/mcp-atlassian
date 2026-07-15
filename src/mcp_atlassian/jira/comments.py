@@ -1,4 +1,19 @@
-"""Module for Jira comment operations."""
+"""Module for Jira comment operations.
+
+Internal-only guard (JIRA_INTERNAL_ONLY_PROJECTS) coverage map:
+
+- Guarded routes: add_comment (here), edit_comment (here),
+  transition_issue's comment argument (transitions.py), and
+  create_issue_link's comment payload (links.py).
+- Known non-covered route: add_worklog's comment (worklog.py) is left
+  unguarded by design — worklog entries are not portal-visible to JSM
+  customers by default, so a worklog comment does not carry the
+  customer-visible-leak risk this guard exists for.
+- Audited non-routes: FormattingMixin.add_comment_to_transition_data has
+  no production caller (the transition path uses
+  TransitionsMixin._add_comment_to_transition_data, whose caller is
+  guarded), and update_issue never emits an update.comment block.
+"""
 
 import logging
 from typing import Any
@@ -39,9 +54,19 @@ class CommentsMixin(JiraClient):
 
             processed_comments = []
             for comment in comments.get("comments", [])[:limit]:
+                # On Jira Cloud (REST API v3) comment bodies are returned as ADF
+                # (Atlassian Document Format) dicts. convert to plain text before
+                # passing to _clean_text -> clean_jira_text -> _process_mentions,
+                # which calls re.sub() and would otherwise raise TypeError on the
+                # dict. Mirrors the pattern used in add_comment / edit_comment
+                # above. Fixes #1488.
+                body_raw = comment.get("body", "")
+                body_text = (
+                    adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
+                )
                 processed_comment = {
                     "id": comment.get("id"),
-                    "body": self._clean_text(comment.get("body", "")),
+                    "body": self._clean_text(body_text or ""),
                     "created": str(parse_date(comment.get("created"))),
                     "updated": str(parse_date(comment.get("updated"))),
                     "author": comment.get("author", {}).get("displayName", "Unknown"),
@@ -52,6 +77,122 @@ class CommentsMixin(JiraClient):
         except Exception as e:
             logger.error(f"Error getting comments for issue {issue_key}: {str(e)}")
             raise Exception(f"Error getting comments: {str(e)}") from e
+
+    def _enforce_internal_only_add(self, issue_key: str, public: bool | None) -> None:
+        """Reject add_comment calls that would post client-visible content
+        on a project listed in JIRA_INTERNAL_ONLY_PROJECTS.
+
+        This is the server-side backstop for the client-side PreToolUse
+        hook: it protects every MCP client (not only sessions that have the
+        hook installed). ``public`` defaults to customer-visible on the
+        underlying API when omitted, so an absent value is treated the same
+        as ``public=True`` here.
+
+        Args:
+            issue_key: The issue key (e.g. 'CC-123')
+            public: The 'public' value the caller passed to add_comment
+
+        Raises:
+            ValueError: If the project is internal-only and public is not
+                exactly False
+        """
+        if not self._is_internal_only_project(issue_key):
+            return
+        if public is False:
+            return
+        raise ValueError(
+            f"Issue {issue_key} belongs to a project configured as "
+            "internal-only (JIRA_INTERNAL_ONLY_PROJECTS). Automation may "
+            "only post internal notes here: call add_comment with "
+            "public=False (omitting 'public', or passing public=True, "
+            "defaults to a customer-visible comment and is blocked). If "
+            "the content is genuinely client-facing, post it as an "
+            "internal note prefixed '[DRAFT — client-facing]' and have a "
+            "human review and publish it as a public comment."
+        )
+
+    def _fetch_servicedesk_comment_is_public(
+        self, issue_key: str, comment_id: str
+    ) -> bool:
+        """Fetch whether a JSM comment is customer-visible via the ServiceDesk API.
+
+        Used by the internal-only-projects guard to check an existing
+        comment's visibility before allowing edit_comment to modify it.
+        Only called for issues whose project is listed in
+        JIRA_INTERNAL_ONLY_PROJECTS, so the extra API round-trip is never
+        paid by unaffected projects.
+
+        Args:
+            issue_key: The issue key (e.g. 'CC-123')
+            comment_id: The ID of the comment to check
+
+        Returns:
+            True if the comment is public (customer-visible), False if it
+            is internal. Defaults to True (public) if the API response
+            omits the field, so ambiguous responses fail closed rather
+            than allowing an unverified edit.
+
+        Raises:
+            Exception: If the comment's visibility cannot be resolved via
+                the ServiceDesk API (e.g. not a JSM issue, or the comment
+                does not exist). The guard fails closed: an edit that
+                cannot be verified is refused rather than allowed through.
+        """
+        try:
+            url = f"rest/servicedeskapi/request/{issue_key}/comment/{comment_id}"
+            headers = {
+                **self.jira.default_headers,
+                "X-ExperimentalApi": "opt-in",
+            }
+            response = self.jira.get(url, headers=headers)
+            if not isinstance(response, dict):
+                msg = (
+                    "Unexpected return value type from ServiceDesk API: "
+                    f"{type(response)}"
+                )
+                logger.error(msg)
+                raise TypeError(msg)
+            public = response.get("public")
+            # Only an actual boolean False proves that the comment is
+            # internal. Treat missing, null, string, and numeric values as
+            # public so malformed responses fail closed.
+            return public is not False
+        except Exception as e:
+            raise Exception(
+                f"Could not verify the visibility of comment {comment_id} "
+                f"on {issue_key} via the ServiceDesk API (required because "
+                f"{issue_key} is in an internal-only project): {e}"
+            ) from e
+
+    def _enforce_internal_only_edit(self, issue_key: str, comment_id: str) -> None:
+        """Reject edit_comment calls that would modify a public comment on a
+        project listed in JIRA_INTERNAL_ONLY_PROJECTS.
+
+        This closes the gap the client-side PreToolUse hook cannot cover:
+        the hook can inspect the arguments of an edit_comment call, but not
+        the *current* visibility of the comment being edited. The server
+        fetches that visibility itself before allowing the edit through.
+
+        Args:
+            issue_key: The issue key (e.g. 'CC-123')
+            comment_id: The ID of the comment being edited
+
+        Raises:
+            ValueError: If the project is internal-only and the target
+                comment is currently public
+        """
+        if not self._is_internal_only_project(issue_key):
+            return
+        if self._fetch_servicedesk_comment_is_public(issue_key, comment_id):
+            raise ValueError(
+                f"Comment {comment_id} on issue {issue_key} is PUBLIC "
+                f"(customer-visible). {issue_key}'s project is configured "
+                "as internal-only (JIRA_INTERNAL_ONLY_PROJECTS), so "
+                "automation may not edit public comments there — a human "
+                "must edit client-facing content directly in Jira. Post a "
+                "new internal note (public=False) instead if you need to "
+                "add information."
+            )
 
     def add_comment(
         self,
@@ -68,17 +209,26 @@ class CommentsMixin(JiraClient):
             visibility: (optional) Restrict comment visibility
                 (e.g. {"type":"group","value":"jira-users"})
             public: (optional) For JSM issues only. True for
-                customer-visible, False for internal/agent-only.
-                Uses ServiceDesk API (plain text, not Markdown).
-                Cannot be combined with visibility.
+                customer-visible, False for internal/agent-only. Posted
+                via the ServiceDesk API as a raw string; Jira Cloud
+                renders it server-side and stores ADF (markdown observed
+                to render on Cloud, but without the client-side
+                markdown→ADF guarantees of the regular comment path).
+                Cannot be combined with visibility. If issue_key's
+                project is listed in JIRA_INTERNAL_ONLY_PROJECTS, only
+                public=False is accepted.
 
         Returns:
             The created comment details
 
         Raises:
-            ValueError: If both public and visibility are set
+            ValueError: If both public and visibility are set, or if
+                issue_key's project is internal-only and public is not
+                exactly False
             Exception: If there is an error adding the comment
         """
+        self._enforce_internal_only_add(issue_key, public)
+
         # ServiceDesk API path for internal/public comments
         if public is not None:
             if visibility is not None:
@@ -88,6 +238,10 @@ class CommentsMixin(JiraClient):
                     "does not support Jira visibility "
                     "restrictions."
                 )
+            # Deliberately no fallback: downgrading a failed internal-comment
+            # request to an ordinary Jira comment could publish it to the
+            # customer portal. An internal comment either posts as internal or
+            # it fails.
             return self._add_servicedesk_comment(issue_key, comment, public)
 
         try:
@@ -132,12 +286,20 @@ class CommentsMixin(JiraClient):
         """Add a comment via the ServiceDesk API.
 
         Supports internal (agent-only) and public (customer-visible)
-        comments on JSM issues. Uses plain text, not ADF or wiki
-        markup.
+        comments on JSM issues. The body is posted as a raw string —
+        unlike the regular comment path, NO client-side markdown→ADF
+        conversion happens here (the ServiceDesk ``body`` field is a
+        string and would not accept an ADF dict). Jira Cloud renders the
+        string server-side and stores ADF; markdown constructs (bold,
+        lists, tables) have been observed to render correctly on Cloud,
+        but that server-side rendering fidelity is undocumented and the
+        deterministic markdown→ADF guarantees of the regular comment
+        path do NOT apply here.
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
-            comment: Comment text (plain text, not Markdown)
+            comment: Comment text (Markdown; rendered server-side by
+                Jira, see above)
             public: True for customer-visible, False for internal
 
         Returns:
@@ -221,8 +383,15 @@ class CommentsMixin(JiraClient):
             The updated comment details
 
         Raises:
-            Exception: If there is an error editing the comment
+            ValueError: If issue_key's project is listed in
+                JIRA_INTERNAL_ONLY_PROJECTS and the target comment is
+                currently public (customer-visible)
+            Exception: If there is an error editing the comment, or if
+                the target comment's visibility cannot be verified for
+                an internal-only project
         """
+        self._enforce_internal_only_edit(issue_key, comment_id)
+
         try:
             # Convert Markdown to Jira's markup format
             jira_formatted_comment = self._markdown_to_jira(comment)

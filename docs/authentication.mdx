@@ -1,9 +1,9 @@
 ---
 title: "Authentication"
-description: "Configure authentication for MCP Atlassian — API tokens, PATs, and OAuth 2.0"
+description: "Configure authentication for MCP Atlassian — API tokens, PATs, mTLS, and OAuth 2.0"
 ---
 
-MCP Atlassian supports three authentication methods depending on your Atlassian deployment type.
+MCP Atlassian supports four authentication methods depending on your Atlassian deployment type.
 
 ## API Token (Cloud) - Recommended
 
@@ -60,6 +60,47 @@ CONFLUENCE_PERSONAL_TOKEN=your_personal_access_token
 <Note>
 Enterprise CA certificates in the OS trust store (Windows Certificate Store, macOS Keychain, Linux system CAs) are trusted automatically.
 For self-signed certificates not in the OS trust store, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
+</Note>
+
+## Client Certificate (mTLS) (Server/Data Center)
+
+Use mutual TLS when your Jira or Confluence Server/Data Center instance requires a client certificate. This authentication method does not require a username, API token, or personal access token.
+
+Set `*_CLIENT_CERT` to either a combined certificate-and-private-key PEM, or set it with the matching `*_CLIENT_KEY` when the certificate and key are separate files:
+
+```bash
+JIRA_URL=https://jira.your-company.com
+JIRA_CLIENT_CERT=/etc/mcp-atlassian/jira-client-cert.pem
+JIRA_CLIENT_KEY=/etc/mcp-atlassian/jira-client-key.pem
+
+CONFLUENCE_URL=https://confluence.your-company.com
+CONFLUENCE_CLIENT_CERT=/etc/mcp-atlassian/confluence-client-combined.pem
+```
+
+In the example, Jira uses separate certificate and key files, while Confluence uses a combined PEM. For a combined PEM, omit `*_CLIENT_KEY`. The matching `JIRA_*` and `CONFLUENCE_*` variables configure each service independently.
+
+<Warning>
+**Encrypted private keys are not supported.** If your key is passphrase-protected, decrypt it first:
+
+```bash
+openssl rsa -in encrypted.key -out decrypted.key
+```
+
+`JIRA_CLIENT_KEY_PASSWORD` and `CONFLUENCE_CLIENT_KEY_PASSWORD` are recognised environment variables but will raise a configuration error at startup if set to a non-empty value.
+</Warning>
+
+<Note>
+If your Server/DC instance uses a self-signed or internal CA certificate alongside mTLS, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false` as well.
+</Note>
+
+<Note>
+When using mTLS as the sole authentication method, MCP clients that connect without an `Authorization` header (such as a locally running OpenCode instance) will be rejected by default. Set `ALLOW_GLOBAL_CRED_FALLBACK=true` to allow the server to use the configured certificate credentials for requests that carry no per-request auth header:
+
+```bash
+ALLOW_GLOBAL_CRED_FALLBACK=true
+```
+
+Only set this when the server is not exposed to untrusted callers, as it allows any unauthenticated client to transact under the operator's certificate identity.
 </Note>
 
 ## OAuth 2.0 (Cloud) - Advanced

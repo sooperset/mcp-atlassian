@@ -78,6 +78,10 @@ class TestConfluenceClientOAuth:
 
             # Verify SSL verification was configured
             mock_configure_ssl.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/confluence/{oauth_config.cloud_id}"
+            )
 
             # Verify preprocessor was initialized
             assert client.preprocessor == mock_preprocessor.return_value
@@ -131,6 +135,10 @@ class TestConfluenceClientOAuth:
 
             # Verify SSL verification was configured
             mock_configure_ssl.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/confluence/{byo_oauth_config.cloud_id}"
+            )
 
             # Verify preprocessor was initialized
             assert client.preprocessor == mock_preprocessor.return_value
@@ -358,6 +366,10 @@ class TestConfluenceClientOAuth:
 
             # Verify OAuth session was configured
             mock_configure_oauth.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/confluence/{mock_standard_oauth_config.cloud_id}"
+            )
 
     def test_from_env_with_byo_token_oauth(self):
         """Test creating client from env vars with BYO token OAuth config."""
@@ -398,6 +410,92 @@ class TestConfluenceClientOAuth:
                 == f"https://api.atlassian.com/ex/confluence/{mock_byo_oauth_config.cloud_id}"
             )
             mock_configure_oauth.assert_called_once()
+            assert (
+                mock_configure_ssl.call_args.kwargs["url"]
+                == f"https://api.atlassian.com/ex/confluence/{mock_byo_oauth_config.cloud_id}"
+            )
+
+    def test_cloud_oauth_uses_api_url_for_proxy_target(self):
+        """Test PAC/WPAD resolution uses Atlassian's Cloud API host for OAuth."""
+        oauth_config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read:confluence-space.summary write:confluence-content",
+            cloud_id="test-cloud-id",
+            access_token="test-access-token",
+        )
+        config = ConfluenceConfig(
+            url="https://test.atlassian.net/wiki",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+        )
+
+        with (
+            patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+            patch(
+                "mcp_atlassian.confluence.client.configure_oauth_session",
+                return_value=True,
+            ),
+            patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+            patch(
+                "mcp_atlassian.confluence.client.apply_proxy_configuration"
+            ) as mock_apply_proxy,
+            patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        ):
+            mock_apply_proxy.side_effect = lambda **kwargs: kwargs["session"]
+
+            ConfluenceClient(config=config)
+
+            assert (
+                mock_apply_proxy.call_args.kwargs["target_url"]
+                == "https://api.atlassian.com/ex/confluence/test-cloud-id"
+            )
+            assert (
+                mock_apply_proxy.call_args.kwargs["session"]
+                is mock_confluence.return_value._session
+            )
+
+    def test_dc_oauth_uses_instance_url_for_proxy_target(self):
+        """Test PAC/WPAD resolution keeps the DC instance URL for OAuth."""
+        dc_oauth_config = OAuthConfig(
+            client_id="dc-client",
+            client_secret="dc-secret",
+            redirect_uri="http://localhost:8080/callback",
+            scope="WRITE",
+            base_url="https://confluence.corp.example.com",
+            access_token="dc-access-token",
+        )
+        config = ConfluenceConfig(
+            url="https://confluence.corp.example.com",
+            auth_type="oauth",
+            oauth_config=dc_oauth_config,
+        )
+
+        with (
+            patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+            patch(
+                "mcp_atlassian.confluence.client.configure_oauth_session",
+                return_value=True,
+            ),
+            patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+            patch(
+                "mcp_atlassian.confluence.client.apply_proxy_configuration"
+            ) as mock_apply_proxy,
+            patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        ):
+            mock_apply_proxy.side_effect = lambda **kwargs: kwargs["session"]
+
+            ConfluenceClient(config=config)
+
+            assert (
+                mock_apply_proxy.call_args.kwargs["target_url"]
+                == "https://confluence.corp.example.com"
+            )
+            assert (
+                mock_apply_proxy.call_args.kwargs["session"]
+                is mock_confluence.return_value._session
+            )
 
     def test_from_env_with_no_oauth_config_found(self):
         """Test client creation from env when no OAuth config is found by the utility."""

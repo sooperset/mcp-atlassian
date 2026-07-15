@@ -54,6 +54,12 @@ def env_scenarios():
             "JIRA_USERNAME": "admin",
             "JIRA_API_TOKEN": "password",
         },
+        "mtls_server": {
+            "CONFLUENCE_URL": "https://confluence.company.com",
+            "CONFLUENCE_CLIENT_CERT": "/path/to/confluence-client.pem",
+            "JIRA_URL": "https://jira.company.com",
+            "JIRA_CLIENT_CERT": "/path/to/jira-client.pem",
+        },
     }
 
 
@@ -68,6 +74,7 @@ def _assert_authentication_logs(caplog, auth_type, services):
         "oauth": "OAuth 2.0 (3LO) authentication (Cloud)",
         "cloud_basic": "Cloud Basic Authentication (API Token)",
         "server": "Server/Data Center authentication (PAT or Basic Auth)",
+        "mtls": "mTLS client certificate authentication",
         "not_configured": "is not configured or required environment variables are missing",
     }
 
@@ -104,6 +111,7 @@ class TestGetAvailableServices:
             ("basic_auth_cloud", True, True),
             ("pat_server", True, True),
             ("basic_auth_server", True, True),
+            ("mtls_server", True, True),
         ],
     )
     def test_valid_authentication_scenarios(
@@ -132,6 +140,28 @@ class TestGetAvailableServices:
                 )
             elif scenario in ["pat_server", "basic_auth_server"]:
                 _assert_authentication_logs(caplog, "server", ["confluence", "jira"])
+            elif scenario == "mtls_server":
+                _assert_authentication_logs(caplog, "mtls", ["confluence", "jira"])
+
+    def test_mtls_client_cert_alone_does_not_enable_cloud_services(self, caplog):
+        """Test that client certificates alone do not enable Cloud services."""
+        with MockEnvironment.clean_env():
+            import os
+
+            os.environ["CONFLUENCE_URL"] = "https://company.atlassian.net"
+            os.environ["CONFLUENCE_CLIENT_CERT"] = "/path/to/confluence-client.pem"
+            os.environ["JIRA_URL"] = "https://company.atlassian.net"
+            os.environ["JIRA_CLIENT_CERT"] = "/path/to/jira-client.pem"
+
+            result = get_available_services()
+
+            _assert_service_availability(
+                result, confluence_expected=False, jira_expected=False
+            )
+            _assert_authentication_logs(
+                caplog, "not_configured", ["confluence", "jira"]
+            )
+            assert "mTLS client certificate authentication" not in caplog.text
 
     @pytest.mark.parametrize(
         "missing_oauth_var",

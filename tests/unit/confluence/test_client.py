@@ -3,9 +3,12 @@
 import os
 from unittest.mock import MagicMock, patch
 
+from requests.sessions import Session
+
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.ssl import NoProxyAdapter
 
 
 def test_init_with_basic_auth():
@@ -53,6 +56,7 @@ def test_init_with_basic_auth():
             client_cert=None,
             client_key=None,
             client_key_password=None,
+            no_proxy=None,
         )
 
 
@@ -100,6 +104,7 @@ def test_init_with_token_auth():
             client_cert=None,
             client_key=None,
             client_key_password=None,
+            no_proxy=None,
         )
 
 
@@ -241,6 +246,39 @@ def test_init_sets_proxies_and_no_proxy(monkeypatch):
     assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
 
 
+def test_init_configures_no_proxy_adapter_from_config(monkeypatch):
+    """Test that client no_proxy config is visible during SSL setup."""
+    mock_confluence = MagicMock()
+    mock_confluence._session = Session()
+    monkeypatch.setattr(
+        "mcp_atlassian.confluence.client.Confluence", lambda **kwargs: mock_confluence
+    )
+    monkeypatch.setattr(
+        "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor",
+        lambda **kwargs: MagicMock(),
+    )
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    config = ConfluenceConfig(
+        url="https://test.atlassian.net/wiki",
+        auth_type="basic",
+        username="user",
+        api_token="token",
+        https_proxy="https://proxy:8443",
+        no_proxy="test.atlassian.net",
+    )
+
+    ConfluenceClient(config=config)
+
+    assert os.environ["NO_PROXY"] == "test.atlassian.net"
+    assert mock_confluence._session.proxies["https"] == "https://proxy:8443"
+    assert isinstance(
+        mock_confluence._session.get_adapter("https://test.atlassian.net"),
+        NoProxyAdapter,
+    )
+
+
 def test_init_no_proxies(monkeypatch):
     """Test that ConfluenceClient does not set proxies if not configured."""
     # Patch Confluence and its _session
@@ -379,6 +417,7 @@ def test_confluence_fetcher_attachment_method_calls():
 
         # Test upload_attachment can be called
         with (
+            patch("os.getcwd", return_value="/path/to"),
             patch("os.path.exists", return_value=True),
             patch("os.path.isabs", return_value=True),
             patch("os.path.basename", return_value="test.txt"),
@@ -461,7 +500,52 @@ def test_confluence_fetcher_mro_order():
     assert hasattr(ConfluenceFetcher, "get_content_attachments")
 
 
-def test_confluence_client_sets_default_user_agent():
+# ---------------------------------------------------------------------------
+# mTLS client certificate auth tests
+# ---------------------------------------------------------------------------
+
+
+def test_init_cert_auth() -> None:
+    """Test that cert auth initializes without credentials and disables trust_env."""
+    config = ConfluenceConfig(
+        url="https://confluence.example.com",
+        auth_type="cert",
+        client_cert="/path/to/cert.pem",
+    )
+
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch(
+            "mcp_atlassian.confluence.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
+    ):
+        mock_session = MagicMock()
+        mock_session.headers = {}
+        mock_confluence.return_value._session = mock_session
+
+        ConfluenceClient(config=config)
+
+        mock_confluence.assert_called_once_with(
+            url="https://confluence.example.com",
+            cloud=False,
+            verify_ssl=True,
+            timeout=75,
+        )
+        assert mock_session.trust_env is False
+        mock_configure_ssl.assert_called_once_with(
+            service_name="Confluence",
+            url="https://confluence.example.com",
+            session=mock_session,
+            ssl_verify=True,
+            client_cert="/path/to/cert.pem",
+            client_key=None,
+            client_key_password=None,
+            no_proxy=None,
+        )
+
+
+def test_confluence_client_sets_default_user_agent() -> None:
     """An explicit User-Agent is set so WAFs don't block the requests default."""
     with (
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,

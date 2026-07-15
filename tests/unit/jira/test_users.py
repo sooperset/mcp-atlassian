@@ -146,27 +146,56 @@ class TestUsersMixin:
         # Verify self.jira.myself was called
         users_mixin.jira.myself.assert_called_once()
 
-    def test_get_account_id_already_account_id(self, users_mixin):
-        """Test that _get_account_id returns the input if it looks like an account ID."""
-        # Call the method with a string that looks like an account ID
-        account_id = users_mixin._get_account_id("5abcdef1234567890")
+    @pytest.mark.parametrize(
+        "account_id",
+        [
+            "5b10ac8d82e05b22cc7d4ef5",
+            "606b8fb83a516300764cb19d",
+            "aabbccdd11223344aabbccdd",
+            "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d",
+        ],
+    )
+    def test_get_account_id_already_account_id(self, users_mixin, account_id):
+        """Return recognized Cloud account ID formats without a user lookup."""
+        with (
+            patch.object(users_mixin, "_lookup_user_directly") as mock_direct,
+            patch.object(
+                users_mixin, "_lookup_user_by_permissions"
+            ) as mock_permissions,
+        ):
+            result = users_mixin._get_account_id(account_id)
 
-        # Verify result
-        assert account_id == "5abcdef1234567890"
-        # Verify no lookups were performed
-        users_mixin.jira.user_find_by_user_string.assert_not_called()
+        assert result == account_id
+        mock_direct.assert_not_called()
+        mock_permissions.assert_not_called()
 
-    def test_get_account_id_modern_cloud_format(self, users_mixin):
-        """Test that _get_account_id returns modern Cloud account IDs unchanged."""
-        # Call the method with a modern Atlassian Cloud account ID
-        account_id = users_mixin._get_account_id(
-            "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
-        )
+    @pytest.mark.parametrize(
+        "identifier",
+        [
+            "5abcdef1234567890",
+            "712020:",
+            "john@example.com",
+            "John Smith",
+            "jsmith",
+        ],
+    )
+    def test_get_account_id_non_account_identifier_uses_lookup(
+        self, users_mixin, identifier
+    ):
+        """Resolve identifiers that do not match a known account ID format."""
+        with (
+            patch.object(
+                users_mixin, "_lookup_user_directly", return_value="resolved-id"
+            ) as mock_direct,
+            patch.object(
+                users_mixin, "_lookup_user_by_permissions"
+            ) as mock_permissions,
+        ):
+            result = users_mixin._get_account_id(identifier)
 
-        # Verify result
-        assert account_id == "712020:f653aab5-cc61-4c57-8fa8-f7d73b94499d"
-        # Verify no lookups were performed
-        users_mixin.jira.user_find_by_user_string.assert_not_called()
+        assert result == "resolved-id"
+        mock_direct.assert_called_once_with(identifier)
+        mock_permissions.assert_not_called()
 
     def test_get_account_id_strips_accountid_prefix(self, users_mixin):
         """Test that _get_account_id strips the accountid: prefix."""
@@ -442,143 +471,185 @@ class TestUsersMixin:
 
     def test_lookup_user_by_permissions(self, users_mixin):
         """Test _lookup_user_by_permissions when user is found."""
-        # Mock requests.get
-        with patch("requests.get") as mock_get:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "users": [{"accountId": "permissions-account-id"}]
-            }
-            mock_get.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "users": [{"accountId": "permissions-account-id"}]
+        }
+        users_mixin.jira._session.get.return_value = mock_response
 
-            # Call the method
-            account_id = users_mixin._lookup_user_by_permissions("username")
+        # Call the method
+        account_id = users_mixin._lookup_user_by_permissions("username")
 
-            # Verify result
-            assert account_id == "permissions-account-id"
-            # Verify API call
-            mock_get.assert_called_once()
-            assert mock_get.call_args[0][0].endswith("/user/permission/search")
-            assert mock_get.call_args[1]["params"] == {
-                "query": "username",
-                "permissions": "BROWSE",
-            }
+        # Verify result
+        assert account_id == "permissions-account-id"
+        # Verify the Jira session was used (not bare requests.get)
+        users_mixin.jira._session.get.assert_called_once()
+        assert users_mixin.jira._session.get.call_args[0][0].endswith(
+            "/user/permission/search"
+        )
+        assert users_mixin.jira._session.get.call_args[1]["params"] == {
+            "query": "username",
+            "permissions": "BROWSE",
+        }
 
     def test_lookup_user_by_permissions_not_found(self, users_mixin):
         """Test _lookup_user_by_permissions when user is not found."""
-        # Mock requests.get
-        with patch("requests.get") as mock_get:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {"users": []}
-            mock_get.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"users": []}
+        users_mixin.jira._session.get.return_value = mock_response
 
-            # Call the method
-            account_id = users_mixin._lookup_user_by_permissions("nonexistent")
+        # Call the method
+        account_id = users_mixin._lookup_user_by_permissions("nonexistent")
 
-            # Verify result
-            assert account_id is None
+        # Verify result
+        assert account_id is None
 
     def test_lookup_user_by_permissions_jira_data_center(self, users_mixin):
         """Test _lookup_user_by_permissions when both 'key' and 'name' are available (Data Center)."""
-        # Mock requests.get
-        with patch("requests.get") as mock_get:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "users": [
-                    {
-                        "key": "data-center-permissions-key",
-                        "name": "data-center-permissions-name",
-                    }
-                ]
-            }
-            mock_get.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "users": [
+                {
+                    "key": "data-center-permissions-key",
+                    "name": "data-center-permissions-name",
+                }
+            ]
+        }
 
-            # Mock config.is_cloud to return False for Server/DC
-            users_mixin.config = MagicMock()
-            users_mixin.config.is_cloud = False
+        # Mock config.is_cloud to return False for Server/DC
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = False
+        users_mixin.jira._session.get.return_value = mock_response
 
-            # Call the method
-            account_id = users_mixin._lookup_user_by_permissions("username")
+        # Call the method
+        account_id = users_mixin._lookup_user_by_permissions("username")
 
-            # Verify result - should prioritize name for Server/DC
-            assert account_id == "data-center-permissions-name"
-            # Verify API call
-            mock_get.assert_called_once()
-            assert mock_get.call_args[0][0].endswith("/user/permission/search")
-            assert mock_get.call_args[1]["params"] == {
-                "query": "username",
-                "permissions": "BROWSE",
-            }
+        # Verify result - should prioritize name for Server/DC
+        assert account_id == "data-center-permissions-name"
+        # Verify the Jira session was used
+        users_mixin.jira._session.get.assert_called_once()
+        assert users_mixin.jira._session.get.call_args[0][0].endswith(
+            "/user/permission/search"
+        )
+        assert users_mixin.jira._session.get.call_args[1]["params"] == {
+            "query": "username",
+            "permissions": "BROWSE",
+        }
 
     def test_lookup_user_by_permissions_jira_data_center_key_fallback(
         self, users_mixin
     ):
         """Test _lookup_user_by_permissions when only 'key' is available (Data Center)."""
-        # Mock requests.get
-        with patch("requests.get") as mock_get:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "users": [{"key": "data-center-permissions-key"}]
-            }
-            mock_get.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "users": [{"key": "data-center-permissions-key"}]
+        }
 
-            # Mock config.is_cloud to return False for Server/DC
-            users_mixin.config = MagicMock()
-            users_mixin.config.is_cloud = False
+        # Mock config.is_cloud to return False for Server/DC
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = False
+        users_mixin.jira._session.get.return_value = mock_response
 
-            # Call the method
-            account_id = users_mixin._lookup_user_by_permissions("username")
+        # Call the method
+        account_id = users_mixin._lookup_user_by_permissions("username")
 
-            # Verify result - should fallback to key when name is missing
-            assert account_id == "data-center-permissions-key"
-            # Verify API call
-            mock_get.assert_called_once()
-            assert mock_get.call_args[0][0].endswith("/user/permission/search")
-            assert mock_get.call_args[1]["params"] == {
-                "query": "username",
-                "permissions": "BROWSE",
-            }
+        # Verify result - should fallback to key when name is missing
+        assert account_id == "data-center-permissions-key"
+        # Verify the Jira session was used
+        users_mixin.jira._session.get.assert_called_once()
+        assert users_mixin.jira._session.get.call_args[0][0].endswith(
+            "/user/permission/search"
+        )
+        assert users_mixin.jira._session.get.call_args[1]["params"] == {
+            "query": "username",
+            "permissions": "BROWSE",
+        }
 
     def test_lookup_user_by_permissions_error(self, users_mixin):
         """Test _lookup_user_by_permissions when API call fails."""
-        # Mock requests.get to raise exception
-        with patch("requests.get", side_effect=Exception("API error")):
-            # Call the method
-            account_id = users_mixin._lookup_user_by_permissions("error")
+        users_mixin.jira._session.get.side_effect = Exception("API error")
 
-            # Verify result
-            assert account_id is None
+        # Call the method
+        account_id = users_mixin._lookup_user_by_permissions("error")
+
+        # Verify result
+        assert account_id is None
 
     def test_lookup_user_by_permissions_jira_data_center_name_only(self, users_mixin):
         """Test _lookup_user_by_permissions when only 'name' is available (Data Center)."""
-        # Mock requests.get
-        with patch("requests.get") as mock_get:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "users": [{"name": "data-center-permissions-name"}]
-            }
-            mock_get.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "users": [{"name": "data-center-permissions-name"}]
+        }
 
-            # Mock config.is_cloud to return False for Server/DC
-            users_mixin.config = MagicMock()
-            users_mixin.config.is_cloud = False
+        # Mock config.is_cloud to return False for Server/DC
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = False
+        users_mixin.jira._session.get.return_value = mock_response
 
-            # Call the method
-            account_id = users_mixin._lookup_user_by_permissions("username")
+        # Call the method
+        account_id = users_mixin._lookup_user_by_permissions("username")
 
-            # Verify result - should use name when that's all that's available
-            assert account_id == "data-center-permissions-name"
-            # Verify API call
-            mock_get.assert_called_once()
-            assert mock_get.call_args[0][0].endswith("/user/permission/search")
-            assert mock_get.call_args[1]["params"] == {
-                "query": "username",
-                "permissions": "BROWSE",
-            }
+        # Verify result - should use name when that's all that's available
+        assert account_id == "data-center-permissions-name"
+        # Verify the Jira session was used
+        users_mixin.jira._session.get.assert_called_once()
+        assert users_mixin.jira._session.get.call_args[0][0].endswith(
+            "/user/permission/search"
+        )
+        assert users_mixin.jira._session.get.call_args[1]["params"] == {
+            "query": "username",
+            "permissions": "BROWSE",
+        }
+
+    def test_lookup_user_by_permissions_cert_auth(self, users_mixin):
+        """Regression: cert-auth must use the Jira session, not bare requests.get.
+
+        Under mTLS the session carries the client certificate.  A bare
+        requests.get() call would send empty Basic credentials and never
+        present the certificate, causing the endpoint to reject the request.
+        """
+        # Simulate cert-auth config — no username or API token available.
+        users_mixin.config = MagicMock()
+        users_mixin.config.url = "https://jira.example.com"
+        users_mixin.config.is_cloud = False
+        users_mixin.config.auth_type = "cert"
+        users_mixin.config.personal_token = None
+        users_mixin.config.username = None
+        users_mixin.config.api_token = None
+
+        # Attach a mock session that mimics an mTLS-configured session.
+        mock_session = MagicMock()
+        mock_session.cert = ("/path/to/cert.pem", "/path/to/key.pem")
+        users_mixin.jira._session = mock_session
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"users": [{"name": "cert-user"}]}
+        mock_session.get.return_value = mock_response
+
+        account_id = users_mixin._lookup_user_by_permissions("cert-user")
+
+        assert account_id == "cert-user"
+
+        # The session's get() must have been called — not bare requests.get.
+        mock_session.get.assert_called_once()
+        url_called, *_ = mock_session.get.call_args[0]
+        assert url_called.endswith("/user/permission/search")
+
+        # No explicit auth= or headers= must be passed; the session owns that.
+        call_kwargs = mock_session.get.call_args[1]
+        assert "auth" not in call_kwargs, (
+            "auth= must not be passed; the session already carries credentials"
+        )
+        assert "headers" not in call_kwargs, (
+            "headers= must not be passed; the session already carries credentials"
+        )
 
     def test_determine_user_api_params_server_dc_email_resolved_to_username(
         self, users_mixin

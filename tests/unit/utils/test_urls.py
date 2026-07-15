@@ -5,12 +5,38 @@ import socket
 from unittest.mock import patch
 
 import pytest
+import requests
 
 from mcp_atlassian.utils.urls import (
     is_atlassian_cloud_url,
+    make_ssrf_redirect_hook,
     resolve_relative_url,
     validate_url_for_ssrf,
 )
+
+
+@pytest.mark.parametrize(
+    ("location", "expected"),
+    [
+        ("/login", "https://jira.example.com/login"),
+        ("//cdn.example.com/file", "https://cdn.example.com/file"),
+    ],
+)
+def test_redirect_hook_resolves_location_before_validation(
+    location: str, expected: str
+) -> None:
+    """Relative and scheme-relative redirects are validated as absolute URLs."""
+    response = requests.Response()
+    response.status_code = 302
+    response.url = "https://jira.example.com/start"
+    response.headers["Location"] = location
+
+    with patch(
+        "mcp_atlassian.utils.urls.validate_url_for_ssrf", return_value=None
+    ) as validate:
+        assert make_ssrf_redirect_hook()(response) is response
+
+    validate.assert_called_once_with(expected)
 
 
 class TestResolveRelativeUrl:
@@ -328,3 +354,42 @@ class TestValidateUrlForSsrf:
         """IPv4-mapped IPv6 loopback is rejected."""
         result = validate_url_for_ssrf("http://[::ffff:127.0.0.1]")
         assert result is not None
+
+
+class TestSsrfBackslashBypassRegression:
+    """Regression (GHSA-hgcf) — backslash authority-confusion SSRF bypass.
+
+    ``validate_url_for_ssrf`` extracts the host via ``urlparse().hostname``
+    (``urls.py:92``), but ``requests`` (and browsers) parse a backslash in the
+    authority differently: ``urlparse("http://localhost\\@evil.com/").hostname`` is
+    ``"evil.com"`` (external, so validation passes), while ``requests`` connects to
+    ``localhost`` / ``127.0.0.1`` — the validator would approve a URL that
+    actually targets an internal host. These tests assert the secure outcome: the
+    backslash-confusion URL is blocked.
+    """
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize(
+        "url",
+        ["http://localhost\\@evil.com/", "http://127.0.0.1\\@evil.com/"],
+        ids=["localhost-backslash", "loopback-ip-backslash"],
+    )
+    @patch.dict(os.environ, {"MCP_ALLOWED_URL_DOMAINS": ""})
+    @patch("mcp_atlassian.utils.urls.socket.getaddrinfo")
+    def test_backslash_authority_confusion_is_blocked(
+        self, mock_getaddrinfo, url: str
+    ) -> None:
+        """A URL whose parsed host disagrees with its connection target is blocked."""
+        # DNS mock: evil.com resolves to a GLOBAL IP, so the *bare* host is "safe".
+        # This isolates the block to backslash normalization, not a DNS failure.
+        mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))
+        ]
+        # Sanity: the external host on its own passes validation under this mock.
+        assert validate_url_for_ssrf("http://evil.com/") is None
+        # The backslash-confusion URL parses to evil.com but really targets internal.
+        result = validate_url_for_ssrf(url)
+        assert result is not None, (
+            "URL with backslash authority confusion must be blocked — the parsed "
+            "host disagrees with the real connection target"
+        )

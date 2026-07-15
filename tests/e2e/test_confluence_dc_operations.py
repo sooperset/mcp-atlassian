@@ -26,6 +26,48 @@ class TestConfluenceDCBehavior:
         assert "/wiki" not in dc_instance.confluence_url
 
 
+class TestConfluenceDCPermissions:
+    """Cloud-only permission tools should fail clearly on DC."""
+
+    def test_check_content_permissions_requires_cloud(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+    ) -> None:
+        with pytest.raises(ValueError, match="only available for Confluence Cloud"):
+            confluence_fetcher.check_content_permissions(
+                content_id="1",
+                user_identifier="admin",
+                operation="read",
+            )
+
+    def test_get_space_permissions_requires_cloud(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+    ) -> None:
+        with pytest.raises(ValueError, match="only available for Confluence Cloud"):
+            confluence_fetcher.get_space_permissions(space_id="1")
+
+
+class TestConfluenceDCTemplates:
+    """Cloud-only template tools should fail clearly on DC."""
+
+    def test_template_operations_require_cloud(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+    ) -> None:
+        message = "only available for Confluence Cloud"
+        with pytest.raises(ValueError, match=message):
+            confluence_fetcher.list_page_templates()
+        with pytest.raises(ValueError, match=message):
+            confluence_fetcher.get_page_template("1")
+        with pytest.raises(ValueError, match=message):
+            confluence_fetcher.create_page_from_template(
+                space_key="E2E",
+                title="Not created",
+                template_id="1",
+            )
+
+
 class TestConfluenceDCStorageFormat:
     """Storage format content creation."""
 
@@ -49,6 +91,29 @@ class TestConfluenceDCStorageFormat:
         resource_tracker.add_confluence_page(page.id)
         assert page.id is not None
 
+    def test_markdown_task_lists_use_confluence_storage_macros(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=dc_instance.space_key,
+            title=f"E2E Task List {uid}",
+            body="- [ ] Todo item\n- [x] Done item",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        raw_page = confluence_fetcher.confluence.get_page_by_id(
+            page.id,
+            expand="body.storage",
+        )
+        storage_body = raw_page["body"]["storage"]["value"]
+        assert "<ac:task-list>" in storage_body
+        assert "<ac:task-status>incomplete</ac:task-status>" in storage_body
+        assert "<ac:task-status>complete</ac:task-status>" in storage_body
+
 
 class TestConfluenceDCAttachments:
     """Attachment upload/versioning through the fetcher API."""
@@ -58,7 +123,7 @@ class TestConfluenceDCAttachments:
         confluence_fetcher: ConfluenceFetcher,
         dc_instance: DCInstanceInfo,
         resource_tracker: DCResourceTracker,
-        tmp_path: Path,
+        workspace_tmp_path: Path,
     ) -> None:
         uid = uuid.uuid4().hex[:8]
         page = confluence_fetcher.create_page(
@@ -68,7 +133,7 @@ class TestConfluenceDCAttachments:
         )
         resource_tracker.add_confluence_page(page.id)
 
-        attachment_path = tmp_path / f"dc upload {uid} & notes #1.txt"
+        attachment_path = workspace_tmp_path / f"dc upload {uid} & notes #1.txt"
         attachment_path.write_text(f"first upload {uid}", encoding="utf-8")
 
         first = confluence_fetcher.upload_attachment(
@@ -142,6 +207,100 @@ class TestConfluenceDCPageHierarchy:
         assert any(page.id == child.id for page in children)
 
 
+class TestConfluenceDCPageLayout:
+    """Page width and table layout handling."""
+
+    def test_markdown_table_layout_and_page_width(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=dc_instance.space_key,
+            title=f"E2E Layout Test {uid}",
+            body="| Alpha | Beta |\n| --- | --- |\n| one | two |",
+            page_width="full-width",
+            table_layout="full-width",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        assert page.page_width == "full-width"
+
+        raw_page = confluence_fetcher.confluence.get_page_by_id(
+            page.id,
+            expand="body.storage,version",
+        )
+        storage_body = raw_page["body"]["storage"]["value"]
+        assert 'data-layout="full-width"' in storage_body
+        assert 'data-table-width="1800"' in storage_body
+
+
+class TestConfluenceDCCopyAndRestrictions:
+    """Page copy and restriction operations."""
+
+    def test_copy_page(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        source = confluence_fetcher.create_page(
+            space_key=dc_instance.space_key,
+            title=f"E2E Copy Source {uid}",
+            body=f"<p>DC copy source {uid}</p>",
+            is_markdown=False,
+            content_representation="storage",
+        )
+        resource_tracker.add_confluence_page(source.id)
+
+        copied = confluence_fetcher.copy_page(
+            source_page_id=source.id,
+            destination_space_key=dc_instance.space_key,
+            new_title=f"E2E Copy Target {uid}",
+        )
+        resource_tracker.add_confluence_page(copied.id)
+
+        assert copied.id != source.id
+        assert copied.title == f"E2E Copy Target {uid}"
+        copied_raw = confluence_fetcher.get_page_content(
+            copied.id,
+            convert_to_markdown=False,
+        )
+        assert f"DC copy source {uid}" in (copied_raw.content or "")
+
+    def test_set_and_get_page_restrictions(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=dc_instance.space_key,
+            title=f"E2E Restrictions Test {uid}",
+            body="<p>Restriction test.</p>",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        try:
+            result = confluence_fetcher.set_page_restrictions(
+                page.id,
+                read_users=[dc_instance.admin_username],
+                edit_users=[dc_instance.admin_username],
+            )
+            assert result["read"]["users"] == [dc_instance.admin_username]
+            assert result["update"]["users"] == [dc_instance.admin_username]
+
+            restrictions = confluence_fetcher.get_page_restrictions(page.id)
+            assert dc_instance.admin_username in restrictions["read"]["users"]
+            assert dc_instance.admin_username in restrictions["update"]["users"]
+        finally:
+            confluence_fetcher.set_page_restrictions(page.id)
+
+
 class TestConfluenceDCLabels:
     """Label operations."""
 
@@ -188,6 +347,36 @@ class TestConfluenceDCComments:
 
         comments = confluence_fetcher.get_page_comments(page.id)
         assert len(comments) > 0
+
+    def test_reply_to_comment_preserves_body(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        """Server/DC replies retain their body in the page comment thread."""
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=dc_instance.space_key,
+            title=f"E2E Reply Test {uid}",
+            body="<p>For reply testing.</p>",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        parent = confluence_fetcher.add_comment(
+            page_id=page.id,
+            content=f"E2E parent comment {uid}",
+        )
+        assert parent is not None
+
+        reply = confluence_fetcher.reply_to_comment(
+            comment_id=parent.id,
+            content=f"E2E reply body {uid}",
+        )
+        assert reply is not None
+
+        comments = confluence_fetcher.get_page_comments(page.id)
+        assert any(f"E2E reply body {uid}" in comment.body for comment in comments)
 
     def test_add_and_get_inline_comments(
         self,

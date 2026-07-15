@@ -1,6 +1,9 @@
 """Environment variable utility functions for MCP Atlassian."""
 
+import logging
 import os
+
+logger = logging.getLogger("mcp-atlassian.env")
 
 
 def is_env_truthy(env_var_name: str, default: str = "") -> bool:
@@ -51,6 +54,56 @@ def is_env_ssl_verify(env_var_name: str, default: str = "true") -> bool:
     return os.getenv(env_var_name, default).lower() not in ("false", "0", "no")
 
 
+def get_int_env(env_var_name: str, default: int) -> int:
+    """Read an environment variable as an integer, falling back to `default`.
+
+    Logs a warning and falls back to `default` if the variable is set to a
+    non-integer value.
+
+    Args:
+        env_var_name: Name of the environment variable to read
+        default: Value to return when the variable is unset or unparseable
+
+    Returns:
+        Parsed integer value, or `default`
+    """
+    raw = os.getenv(env_var_name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid int for %s=%r; using default %d", env_var_name, raw, default
+        )
+        return default
+
+
+def get_float_env(env_var_name: str, default: float) -> float:
+    """Read an environment variable as a float, falling back to `default`.
+
+    Logs a warning and falls back to `default` if the variable is set to a
+    non-float value.
+
+    Args:
+        env_var_name: Name of the environment variable to read
+        default: Value to return when the variable is unset or unparseable
+
+    Returns:
+        Parsed float value, or `default`
+    """
+    raw = os.getenv(env_var_name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid float for %s=%r; using default %s", env_var_name, raw, default
+        )
+        return default
+
+
 def get_custom_headers(env_var_name: str) -> dict[str, str]:
     """Parse custom headers from environment variable containing comma-separated key=value pairs.
 
@@ -91,3 +144,33 @@ def get_custom_headers(env_var_name: str) -> dict[str, str]:
             headers[key] = value
 
     return headers
+
+
+def get_header_names(env_var_name: str) -> list[str]:
+    """Parse comma-separated HTTP header names from an environment variable.
+
+    Args:
+        env_var_name: Name of the environment variable to read.
+
+    Returns:
+        List of parsed header names, preserving the first configured casing.
+    """
+    header_string = os.getenv(env_var_name)
+    if not header_string or not header_string.strip():
+        return []
+
+    header_names: list[str] = []
+    seen_names: set[str] = set()
+    for raw_name in header_string.split(","):
+        header_name = raw_name.strip()
+        if not header_name:
+            continue
+
+        normalized_name = header_name.lower()
+        if normalized_name in seen_names:
+            continue
+
+        seen_names.add(normalized_name)
+        header_names.append(header_name)
+
+    return header_names

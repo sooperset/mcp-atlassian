@@ -302,6 +302,57 @@ class TestPagesMixin:
             assert result.title == title
             assert result.content == "Page content"
 
+    def test_create_page_with_live_subtype_uses_v2_for_cloud_basic_auth(
+        self, pages_mixin
+    ):
+        """Test creating a Live Doc uses the v2 API for Cloud basic auth."""
+        space_key = "PROJ"
+        title = "Live Doc Test Page"
+        body = "<p>Live content</p>"
+        parent_id = "987654321"
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.create_page.return_value = {
+                "id": "live_123456789",
+                "title": title,
+                "subtype": "live",
+            }
+
+            with patch.object(
+                pages_mixin,
+                "get_page_content",
+                return_value=ConfluencePage(
+                    id="live_123456789",
+                    title=title,
+                    content="Live page content",
+                    space={"key": space_key, "name": "Project"},
+                ),
+            ):
+                result = pages_mixin.create_page(
+                    space_key,
+                    title,
+                    body,
+                    parent_id,
+                    is_markdown=False,
+                    subtype="live",
+                )
+
+                mock_v2_adapter.create_page.assert_called_once_with(
+                    space_key=space_key,
+                    title=title,
+                    body=body,
+                    parent_id=parent_id,
+                    representation="storage",
+                    subtype="live",
+                )
+                pages_mixin.confluence.create_page.assert_not_called()
+                assert isinstance(result, ConfluencePage)
+                assert result.id == "live_123456789"
+
     def test_create_page_error(self, pages_mixin):
         """Test error handling when creating a page."""
         # Arrange
@@ -1026,7 +1077,7 @@ class TestPagesMixin:
             # Assert
             # Verify markdown was converted
             pages_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
-                markdown_body, enable_heading_anchors=False
+                markdown_body, enable_heading_anchors=False, table_layout=None
             )
 
             # Verify create_page was called with the converted content
@@ -1113,7 +1164,7 @@ class TestPagesMixin:
             # Assert
             # Verify markdown was converted
             pages_mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
-                markdown_body, enable_heading_anchors=False
+                markdown_body, enable_heading_anchors=False, table_layout=None
             )
 
             # Verify update_page was called with the converted content
@@ -2855,6 +2906,117 @@ class TestPageWidth:
 
             mock_width.assert_called_once_with(page_id)
             assert page.page_width == "full-width"
+
+
+class TestCopyPage:
+    """Tests for copying Confluence pages."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_copy_page_cloud_uses_native_copy_endpoint(self, pages_mixin):
+        """Cloud copies use the native v1 copy endpoint."""
+        pages_mixin.config.url = "https://example.atlassian.net/wiki"
+        pages_mixin.config.auth_type = "basic"
+        pages_mixin.confluence.post.return_value = {"id": "copy-123"}
+
+        with patch.object(pages_mixin, "get_page_content") as mock_get_page:
+            mock_get_page.return_value = ConfluencePage(
+                id="copy-123",
+                title="Copied Page",
+            )
+
+            page = pages_mixin.copy_page(
+                source_page_id="source-123",
+                destination_space_key="DEST",
+                new_title="Copied Page",
+                destination_parent_id="parent-123",
+                copy_attachments=False,
+            )
+
+        pages_mixin.confluence.post.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/content/source-123/copy",
+            data={
+                "copyAttachments": False,
+                "copyPermissions": False,
+                "copyProperties": False,
+                "copyLabels": False,
+                "pageTitle": "Copied Page",
+                "destination": {"type": "parent_page", "value": "parent-123"},
+            },
+            absolute=True,
+        )
+        mock_get_page.assert_called_once_with("copy-123")
+        assert page.id == "copy-123"
+
+    def test_copy_page_cloud_oauth_uses_gateway_wiki_path(self, pages_mixin):
+        """Cloud OAuth copy calls include /wiki on the API gateway URL."""
+        pages_mixin.config.auth_type = "oauth"
+        pages_mixin.confluence.url = "https://api.atlassian.com/ex/confluence/cloud-1"
+        pages_mixin.confluence.post.return_value = {"id": "copy-123"}
+
+        with patch.object(pages_mixin, "get_page_content") as mock_get_page:
+            mock_get_page.return_value = ConfluencePage(
+                id="copy-123",
+                title="Copied Page",
+            )
+
+            pages_mixin.copy_page(
+                source_page_id="source-123",
+                destination_space_key="DEST",
+                new_title="Copied Page",
+            )
+
+        assert (
+            pages_mixin.confluence.post.call_args.args[0]
+            == "https://api.atlassian.com/ex/confluence/cloud-1/wiki"
+            "/rest/api/content/source-123/copy"
+        )
+
+    def test_copy_page_server_dc_falls_back_to_create_page(self, pages_mixin):
+        """Server/DC copies fetch storage and create a new page manually."""
+        pages_mixin.config.url = "https://confluence.example.com"
+        pages_mixin.config.auth_type = "pat"
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "body": {"storage": {"value": "<p>Source</p>"}},
+        }
+        pages_mixin.confluence.create_page.return_value = {"id": "copy-456"}
+
+        with patch.object(pages_mixin, "get_page_content") as mock_get_page:
+            mock_get_page.return_value = ConfluencePage(
+                id="copy-456",
+                title="Copied Page",
+            )
+
+            page = pages_mixin.copy_page(
+                source_page_id="source-456",
+                destination_space_key="DEST",
+                new_title="Copied Page",
+                destination_parent_id="parent-456",
+            )
+
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            "source-456", expand="body.storage,version,space"
+        )
+        pages_mixin.confluence.create_page.assert_called_once_with(
+            space="DEST",
+            title="Copied Page",
+            body="<p>Source</p>",
+            representation="storage",
+            parent_id="parent-456",
+        )
+        mock_get_page.assert_called_once_with("copy-456")
+        assert page.id == "copy-456"
 
 
 class TestPageHierarchy:
