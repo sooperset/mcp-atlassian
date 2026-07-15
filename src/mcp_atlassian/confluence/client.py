@@ -98,6 +98,19 @@ class ConfluenceClient:
                 verify_ssl=self.config.ssl_verify,
                 timeout=self.config.timeout,
             )
+        elif self.config.auth_type == "cert":
+            logger.debug(
+                f"Initializing Confluence client with mTLS certificate auth. "
+                f"URL: {self.config.url}, "
+                f"Cert configured: {bool(self.config.client_cert)}"
+            )
+            self.confluence = Confluence(
+                url=self.config.url,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
+            self.confluence._session.trust_env = False
         elif self.config.auth_type == "external":
             logger.debug(
                 f"Initializing Confluence client in external auth passthrough mode. "
