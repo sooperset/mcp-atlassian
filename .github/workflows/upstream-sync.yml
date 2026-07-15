@@ -1,0 +1,96 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'  # Every Monday at 08:00 UTC
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Sync from upstream
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/sooperset/mcp-atlassian.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Check for new commits
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "Upstream is $BEHIND commits ahead"
+
+      - name: Create sync branch
+        if: steps.check.outputs.behind != '0'
+        run: |
+          BRANCH="chore/upstream-sync-$(date +%Y%m%d)"
+          git checkout -b "$BRANCH"
+          git merge upstream/main --no-edit || true
+          echo "branch=$BRANCH" >> "$GITHUB_ENV"
+
+      - name: Check for merge conflicts
+        if: steps.check.outputs.behind != '0'
+        id: conflicts
+        run: |
+          CONFLICTS=$(git diff --name-only --diff-filter=U | wc -l | tr -d ' ')
+          echo "conflicts=$CONFLICTS" >> "$GITHUB_OUTPUT"
+          if [ "$CONFLICTS" -gt "0" ]; then
+            echo "⚠️ Merge conflicts detected in:"
+            git diff --name-only --diff-filter=U
+          fi
+
+      - name: Push sync branch
+        if: steps.check.outputs.behind != '0' && steps.conflicts.outputs.conflicts == '0'
+        run: git push -u origin "${{ env.branch }}"
+
+      - name: Create Pull Request
+        if: steps.check.outputs.behind != '0' && steps.conflicts.outputs.conflicts == '0'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: ${{ env.branch }}
+          title: "chore: sync upstream (${{ steps.check.outputs.behind }} commits)"
+          body: |
+            ## Upstream Sync
+
+            Merging **${{ steps.check.outputs.behind }}** new commits from [sooperset/mcp-atlassian](https://github.com/sooperset/mcp-atlassian).
+
+            ### Review Checklist
+            - [ ] No conflicts with HTEC customizations (pyproject.toml, README, workflows)
+            - [ ] Tests pass
+            - [ ] Version bump needed? (minor bump for feature additions)
+
+            ### After merging
+            1. Update version in `pyproject.toml` if needed
+            2. Tag with `htec-v<new_version>` to trigger release
+          labels: |
+            upstream-sync
+            automated
+
+      - name: Notify if conflicts
+        if: steps.check.outputs.behind != '0' && steps.conflicts.outputs.conflicts != '0'
+        run: |
+          echo "::warning::Upstream sync has merge conflicts. Manual resolution required."
+          echo "Run locally:"
+          echo "  git fetch upstream main"
+          echo "  git checkout -b chore/upstream-sync-$(date +%Y%m%d)"
+          echo "  git merge upstream/main"
+          echo "  # resolve conflicts"
+          echo "  git push -u origin chore/upstream-sync-$(date +%Y%m%d)"

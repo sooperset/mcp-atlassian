@@ -1,7 +1,7 @@
 [project]
-name = "mcp-atlassian"
-dynamic = ["version"]
-description = "The Model Context Protocol (MCP) Atlassian integration is an open-source implementation that bridges Atlassian products (Jira and Confluence) with AI language models following Anthropic's MCP specification. This project enables secure, contextual AI interactions with Atlassian tools while maintaining data privacy and security. Key features include:"
+name = "htec-mcp-atlassian"
+version = "1.0.0"
+description = "HTEC Group's MCP server for Atlassian (Jira & Confluence). Fork of mcp-atlassian with enterprise configuration and internal distribution."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -38,15 +38,24 @@ dependencies = [
 wpad = ["pypac>=0.17.2"]
 
 [[project.authors]]
+name = "HTEC Group"
+email = "platform@htecgroup.com"
+
+[[project.authors]]
 name = "sooperset"
 email = "soomiles.dev@gmail.com"
 
+[project.urls]
+Repository = "https://github.com/htecgroup/mcp-atlassian"
+Upstream = "https://github.com/sooperset/mcp-atlassian"
+
 [build-system]
-requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
 mcp-atlassian = "mcp_atlassian:main"
+htec-mcp-atlassian = "mcp_atlassian:main"
 
 [dependency-groups]
 dev = [
@@ -162,10 +171,8 @@ module = "pypac.*"
 ignore_missing_imports = true
 
 [tool.hatch.version]
-source = "uv-dynamic-versioning"
+path = "pyproject.toml"
+pattern = "^version = \"(?P<version>[^\"]+)\""
 
-[tool.uv-dynamic-versioning]
-vcs = "git"
-style = "pep440"
-bump = true
-fallback-version = "0.0.0"
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_atlassian"]
