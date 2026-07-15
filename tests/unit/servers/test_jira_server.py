@@ -471,10 +471,13 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_all_projects,
         get_board_issues,
         get_create_fields,
+        get_favourite_filters,
         get_field_options,
+        get_filter_by_id,
         get_issue,
         get_issue_images,
         get_link_types,
+        get_my_filters,
         get_project_components,
         get_project_fields,
         get_project_issue_types,
@@ -514,6 +517,9 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_project_issue_types)
     jira_sub_mcp.add_tool(get_create_fields)
     jira_sub_mcp.add_tool(get_all_projects)
+    jira_sub_mcp.add_tool(get_my_filters)
+    jira_sub_mcp.add_tool(get_favourite_filters)
+    jira_sub_mcp.add_tool(get_filter_by_id)
     jira_sub_mcp.add_tool(search_projects)
     jira_sub_mcp.add_tool(get_service_desk_for_project)
     jira_sub_mcp.add_tool(get_service_desk_queues)
@@ -1411,6 +1417,74 @@ async def test_get_project_components_tool(jira_client, mock_jira_fetcher):
     assert len(data) == 2
     assert data[0]["id"] == "10000"
     assert data[0]["name"] == "Backend"
+
+
+@pytest.mark.anyio
+async def test_get_my_filters_tool_filters_by_name(jira_client, mock_jira_fetcher):
+    """Test the saved-filter tool returns simplified, name-filtered results."""
+    first_filter = MagicMock()
+    first_filter.to_simplified_dict.return_value = {
+        "id": "10001",
+        "name": "My Open Bugs",
+        "jql": "assignee = currentUser()",
+        "favourite": True,
+    }
+    second_filter = MagicMock()
+    second_filter.to_simplified_dict.return_value = {
+        "id": "10002",
+        "name": "Sprint Backlog",
+        "jql": "sprint in openSprints()",
+        "favourite": False,
+    }
+    mock_jira_fetcher.get_my_filters.return_value = [first_filter, second_filter]
+
+    response = await jira_client.call_tool(
+        "jira_get_my_filters",
+        {"name_filter": "open bugs"},
+    )
+
+    data = json.loads(response.content[0].text)
+    assert data == [first_filter.to_simplified_dict.return_value]
+    mock_jira_fetcher.get_my_filters.assert_called_once_with()
+
+
+@pytest.mark.anyio
+async def test_get_favourite_filters_tool(jira_client, mock_jira_fetcher):
+    """Test the favourite-filter tool returns simplified filters."""
+    favourite_filter = MagicMock()
+    favourite_filter.to_simplified_dict.return_value = {
+        "id": "10001",
+        "name": "My Open Bugs",
+        "jql": "assignee = currentUser()",
+        "favourite": True,
+    }
+    mock_jira_fetcher.get_favourite_filters.return_value = [favourite_filter]
+
+    response = await jira_client.call_tool("jira_get_favourite_filters", {})
+
+    data = json.loads(response.content[0].text)
+    assert data == [favourite_filter.to_simplified_dict.return_value]
+    mock_jira_fetcher.get_favourite_filters.assert_called_once_with()
+
+
+@pytest.mark.anyio
+async def test_get_filter_by_id_tool_handles_not_found(jira_client, mock_jira_fetcher):
+    """Test the filter-by-ID tool converts a missing filter into an error result."""
+    mock_jira_fetcher.get_filter_by_id.side_effect = ValueError(
+        "Filter with ID '99999' not found."
+    )
+
+    response = await jira_client.call_tool(
+        "jira_get_filter_by_id",
+        {"filter_id": "99999"},
+    )
+
+    data = json.loads(response.content[0].text)
+    assert data == {
+        "success": False,
+        "error": "Filter with ID '99999' not found.",
+        "filter_id": "99999",
+    }
 
 
 @pytest.mark.anyio
