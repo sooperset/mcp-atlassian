@@ -5,10 +5,13 @@ import mimetypes
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import ParseResult, parse_qs, unquote, urljoin, urlparse
+
+from bs4 import BeautifulSoup
 
 from ..models.jira import JiraAttachment
 from ..utils.io import validate_safe_path
-from ..utils.media import ATTACHMENT_MAX_BYTES
+from ..utils.media import ATTACHMENT_MAX_BYTES, detect_mime_from_bytes
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
 
@@ -479,3 +482,233 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             "uploaded": uploaded,
             "failed": failed,
         }
+
+    def get_embedded_images(self, issue_key: str) -> dict[str, Any]:
+        """Fetch images embedded in the rich text editor (description + comments).
+
+        These are images pasted directly into Jira's editor that are NOT
+        stored as formal attachments.  They are served via internal servlets
+        like ``jeditor_file_provider`` and only appear as ``<img>`` tags in
+        the rendered HTML.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123').
+
+        Returns:
+            A dictionary with:
+                success (bool)
+                issue_key (str)
+                total (int)
+                images (list[dict]): each dict has 'filename',
+                    'content_type', 'size', 'data' (bytes), and 'source'
+                failed (list[dict]): each dict has 'filename' and 'error'
+        """
+        logger.info(f"Fetching embedded images for {issue_key}")
+
+        issue_data = self.jira.issue(
+            issue_key,
+            fields="description,comment",
+            expand="renderedFields",
+        )
+
+        if not isinstance(issue_data, dict):
+            msg = f"Unexpected return type from jira.issue: {type(issue_data)}"
+            logger.error(msg)
+            raise TypeError(msg)
+
+        rendered = issue_data.get("renderedFields") or {}
+        if not isinstance(rendered, dict):
+            msg = "Unexpected renderedFields value from jira.issue"
+            logger.error(msg)
+            raise TypeError(msg)
+        base_url = self.config.url
+
+        image_urls: list[dict[str, str]] = []
+
+        desc_html = rendered.get("description") or ""
+        if isinstance(desc_html, str):
+            for entry in _extract_embedded_image_urls(desc_html, base_url):
+                entry["source"] = "description"
+                image_urls.append(entry)
+
+        comment_field = rendered.get("comment")
+        if isinstance(comment_field, dict):
+            comments_list = comment_field.get("comments", [])
+        elif isinstance(comment_field, list):
+            comments_list = comment_field
+        else:
+            comments_list = []
+
+        if not isinstance(comments_list, list):
+            comments_list = []
+
+        for comment in comments_list:
+            if not isinstance(comment, dict):
+                continue
+            body_html = comment.get("body") or ""
+            if isinstance(body_html, str):
+                comment_id = comment.get("id", "")
+                for entry in _extract_embedded_image_urls(body_html, base_url):
+                    entry["source"] = "comment"
+                    entry["comment_id"] = str(comment_id)
+                    image_urls.append(entry)
+
+        if not image_urls:
+            return {
+                "success": True,
+                "issue_key": issue_key,
+                "total": 0,
+                "images": [],
+                "failed": [],
+                "message": "No embedded images found",
+            }
+
+        images: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        for img_info in image_urls:
+            url = img_info["url"]
+            filename = img_info["filename"]
+
+            data = self.fetch_attachment_content(url)
+            if data is None:
+                failed.append({"filename": filename, "error": "Fetch failed"})
+                continue
+
+            if len(data) > ATTACHMENT_MAX_BYTES:
+                failed.append(
+                    {
+                        "filename": filename,
+                        "error": (
+                            f"Image is {len(data)} bytes which exceeds "
+                            "the 50 MB inline limit."
+                        ),
+                    }
+                )
+                continue
+
+            content_type = (
+                detect_mime_from_bytes(data)
+                or mimetypes.guess_type(filename)[0]
+                or "image/png"
+            )
+            images.append(
+                {
+                    "filename": filename,
+                    "content_type": content_type,
+                    "size": len(data),
+                    "data": data,
+                    "source": img_info.get("source", "unknown"),
+                }
+            )
+
+        return {
+            "success": True,
+            "issue_key": issue_key,
+            "total": len(image_urls),
+            "images": images,
+            "failed": failed,
+        }
+
+
+def _extract_embedded_image_urls(html: str, base_url: str) -> list[dict[str, str]]:
+    """Extract embedded image URLs from rendered HTML.
+
+    Parses ``<img>`` tags and keeps only Jira's editor-image servlet URLs on
+    the configured Jira origin. Both absolute and relative image URLs are
+    supported.
+
+    Args:
+        html: Rendered HTML string from Jira's ``renderedFields``.
+        base_url: The Jira instance base URL for host comparison.
+
+    Returns:
+        List of ``{"url": ..., "filename": ...}`` dicts.
+    """
+    if not html:
+        return []
+
+    parsed_base = urlparse(base_url)
+    try:
+        base_origin = _url_origin(parsed_base)
+    except ValueError:
+        logger.warning("Configured Jira URL has an invalid port: %s", base_url)
+        return []
+
+    if base_origin is None:
+        return []
+
+    soup = BeautifulSoup(html, "html.parser")
+    results: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+
+    for img in soup.find_all("img"):
+        src = img.get("src")
+        if not src or not isinstance(src, str):
+            continue
+
+        src = src.strip()
+        if not src:
+            continue
+
+        absolute_url = urljoin(f"{base_url.rstrip('/')}/", src)
+        parsed_src = urlparse(absolute_url)
+        try:
+            src_origin = _url_origin(parsed_src)
+        except ValueError:
+            continue
+
+        if src_origin != base_origin or parsed_src.username or parsed_src.password:
+            continue
+
+        path_lower = parsed_src.path.lower()
+        is_editor_image = (
+            path_lower.rstrip("/").endswith("/plugins/servlet/jeditor_file_provider")
+            or "/plugins/servlet/ckupload/" in path_lower
+        )
+        if not is_editor_image:
+            continue
+
+        if absolute_url in seen_urls:
+            continue
+        seen_urls.add(absolute_url)
+
+        query_params = parse_qs(parsed_src.query)
+        file_name_list = next(
+            (
+                values
+                for key, values in query_params.items()
+                if key.lower() == "filename"
+            ),
+            [],
+        )
+        if file_name_list:
+            filename = file_name_list[0]
+        else:
+            basename = os.path.basename(unquote(parsed_src.path))
+            if basename and "." in basename:
+                filename = basename
+            else:
+                filename = f"embedded_{len(results)}.png"
+
+        filename = _safe_embedded_filename(filename, len(results))
+        results.append({"url": absolute_url, "filename": filename})
+
+    return results
+
+
+def _url_origin(parsed_url: ParseResult) -> tuple[str, str, int] | None:
+    """Return a normalized HTTP origin for a parsed URL."""
+    scheme = parsed_url.scheme.lower()
+    hostname = (parsed_url.hostname or "").lower()
+    if scheme not in {"http", "https"} or not hostname:
+        return None
+    default_port = 443 if scheme == "https" else 80
+    return scheme, hostname, parsed_url.port or default_port
+
+
+def _safe_embedded_filename(filename: str, index: int) -> str:
+    """Return a display-safe filename derived from Jira-rendered HTML."""
+    basename = os.path.basename(filename.replace("\\", "/"))
+    cleaned = "".join(char for char in basename if char >= " " and char != "\x7f")
+    return cleaned[:255] or f"embedded_{index}.png"

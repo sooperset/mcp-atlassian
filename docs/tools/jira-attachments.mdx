@@ -1,6 +1,6 @@
 ---
 title: "Jira Attachments"
-description: "Download attachments and render issue images"
+description: "Download attachments and render attached or editor-embedded images"
 ---
 
 ### Download Attachments
@@ -34,5 +34,21 @@ Get all images attached to a Jira issue as inline image content.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123'). Returns image attachments as inline ImageContent for LLM vision. |
+
+---
+
+### Get Issue Embedded Images
+
+Get images pasted directly into a Jira issue's description or comments as inline image content.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123'). Returns editor-embedded images that are not exposed as formal attachments. |
+
+<Tip>
+Use this together with `jira_get_issue_images` when an issue may contain both formal image attachments and images pasted into rich-text fields.
+</Tip>
 
 ---

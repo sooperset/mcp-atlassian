@@ -28,6 +28,35 @@ _IMAGE_EXTENSIONS = frozenset(
     {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"}
 )
 
+# Magic byte signatures for common image formats.
+_IMAGE_SIGNATURES: list[tuple[bytes, str]] = [
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"BM", "image/bmp"),
+]
+
+
+def detect_mime_from_bytes(data: bytes) -> str | None:
+    """Detect image MIME type from file magic bytes.
+
+    Checks the leading bytes of *data* against known image file
+    signatures.  WebP requires a special check because the magic
+    bytes are not contiguous.
+
+    Returns:
+        The detected MIME type string, or ``None`` when the format
+        is not recognised.
+    """
+    for signature, mime in _IMAGE_SIGNATURES:
+        if data[: len(signature)] == signature:
+            return mime
+    # WebP: starts with RIFF....WEBP
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
 
 def is_image_attachment(
     media_type: str | None, filename: str | None
