@@ -6,9 +6,9 @@ import json
 import logging
 from typing import Annotated, Any
 
-from fastmcp import Context, FastMCP
+from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
@@ -16,7 +16,9 @@ from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
 from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
+from mcp_atlassian.servers.async_utils import run_jira_fetcher_call
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
+from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
@@ -30,11 +32,13 @@ logger = logging.getLogger(__name__)
 # Regex patterns for Jira key validation.
 # Per Atlassian docs, Cloud project keys are 2-10 chars. Server/Data Center
 # allows longer keys (configurable). We accept any length to support both.
-# Underscores are also allowed to support non-standard project key formats
-ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d+$"
+# Underscores are also allowed to support non-standard project key formats.
+# Server/Data Center may use hyphens between numeric suffix segments
+# (e.g., B7-214-68901), but every segment must contain digits.
+ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*$"
 PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+$"
 
-jira_mcp = FastMCP(
+jira_mcp = ErrorPreservingFastMCP(
     name="Jira MCP Service",
     instructions="Provides tools for interacting with Atlassian Jira.",
 )
@@ -459,7 +463,7 @@ async def get_issue_watchers(
     tags={"jira", "write", "toolset:jira_watchers"},
     annotations={
         "title": "Add Issue Watcher",
-        "readOnlyHint": False,
+        "destructiveHint": False,
     },
 )
 @check_write_access
@@ -504,7 +508,7 @@ async def add_watcher(
     tags={"jira", "write", "toolset:jira_watchers"},
     annotations={
         "title": "Remove Issue Watcher",
-        "readOnlyHint": False,
+        "destructiveHint": True,
     },
 )
 @check_write_access
@@ -678,8 +682,9 @@ async def get_issue(
         expand_additions.append("names")
     expand = _merge_expand(expand, expand_additions)
 
-    # Fetch the issue (with augmented expand)
-    issue = jira.get_issue(
+    # Fetch the issue (with augmented expand) without blocking the event loop.
+    issue = await run_jira_fetcher_call(
+        jira.get_issue,
         issue_key=issue_key,
         fields=fields_list,
         expand=expand,
@@ -835,7 +840,8 @@ async def search(
     if use_display_names:
         expand = _merge_expand(expand, ["names"])
 
-    search_result = jira.search_issues(
+    search_result = await run_jira_fetcher_call(
+        jira.search_issues,
         jql=jql,
         fields=fields_list,
         limit=limit,
@@ -1184,17 +1190,22 @@ async def download_attachments(
 ) -> list[TextContent | EmbeddedResource]:
     """Download attachments from a Jira issue.
 
-    Returns attachment contents as base64-encoded embedded resources so that
-    they are available over the MCP protocol without requiring filesystem
-    access on the server.
+    Returns attachment contents as base64-encoded content so that they are
+    available over the MCP protocol without requiring filesystem access on
+    the server. Image attachments are returned as ``EmbeddedResource`` blobs;
+    all other attachments (documents, archives, etc.) are returned as
+    ``TextContent`` carrying a base64 payload, since many MCP clients only
+    forward ``EmbeddedResource`` blobs for recognized image MIME types and
+    otherwise drop the attachment (#1419).
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
 
     Returns:
-        A list containing a text summary and one EmbeddedResource per
-        successfully downloaded attachment.
+        A list containing a text summary, one EmbeddedResource per
+        downloaded image attachment, and one TextContent (base64 payload)
+        per downloaded non-image attachment.
     """
     jira = await get_jira_fetcher(ctx)
     result = jira.get_issue_attachment_contents(issue_key=issue_key)
@@ -1235,16 +1246,42 @@ async def download_attachments(
         mime_type = attachment.get("content_type", "application/octet-stream")
         downloaded += 1
 
-        contents.append(
-            EmbeddedResource(
-                type="resource",
-                resource=BlobResourceContents(
-                    uri=f"attachment:///{issue_key}/{filename}",
-                    mimeType=mime_type,
-                    blob=encoded,
-                ),
+        is_image, resolved_mime_type = is_image_attachment(mime_type, filename)
+        if is_image:
+            contents.append(
+                EmbeddedResource(
+                    type="resource",
+                    resource=BlobResourceContents(
+                        uri=f"attachment:///{issue_key}/{filename}",
+                        mimeType=resolved_mime_type,
+                        blob=encoded,
+                    ),
+                )
             )
-        )
+        else:
+            # Many MCP clients only forward EmbeddedResource blobs whose
+            # mimeType is a recognized image format, rejecting anything
+            # else (e.g. .zip) with "returned an image in an unsupported
+            # format" and dropping the attachment (#1419). TextContent is
+            # reliably forwarded, so non-image attachments carry their
+            # base64 payload there instead.
+            contents.append(
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "success": True,
+                            "issue_key": issue_key,
+                            "filename": filename,
+                            "mime_type": mime_type,
+                            "encoding": "base64",
+                            "content": encoded,
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
+            )
 
     summary: dict[str, Any] = {
         "success": True,
@@ -1668,7 +1705,7 @@ async def get_link_types(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_issues"},
-    annotations={"title": "Create Issue", "destructiveHint": True},
+    annotations={"title": "Create Issue", "destructiveHint": False},
 )
 @check_write_access
 async def create_issue(
@@ -1782,7 +1819,7 @@ async def create_issue(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_issues"},
-    annotations={"title": "Batch Create Issues", "destructiveHint": True},
+    annotations={"title": "Batch Create Issues", "destructiveHint": False},
 )
 @check_write_access
 async def batch_create_issues(
@@ -2238,7 +2275,7 @@ async def move_issue(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_comments"},
-    annotations={"title": "Add Comment", "destructiveHint": True},
+    annotations={"title": "Add Comment", "destructiveHint": False},
 )
 @check_write_access
 async def add_comment(
@@ -2250,7 +2287,13 @@ async def add_comment(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
-    body: Annotated[str, Field(description="Comment text in Markdown format")],
+    body: Annotated[
+        str,
+        Field(
+            description="Comment text in Markdown format",
+            validation_alias=AliasChoices("body", "comment"),
+        ),
+    ],
     visibility: Annotated[
         str | None,
         Field(
@@ -2267,9 +2310,16 @@ async def add_comment(
             description=(
                 "(Optional) For JSM/Service Desk issues only. "
                 "Set to true for customer-visible comment, "
-                "false for internal agent-only comment. "
-                "Uses the ServiceDesk API (plain text, not "
-                "Markdown). Cannot be combined with visibility."
+                "false for internal agent-only comment. Posted "
+                "via the ServiceDesk API as a raw string; Jira "
+                "Cloud renders it server-side and stores ADF "
+                "(markdown observed to render on Cloud, without "
+                "the client-side markdown-to-ADF guarantees of "
+                "the regular comment path). Cannot be combined "
+                "with visibility. If the issue's project is "
+                "listed in JIRA_INTERNAL_ONLY_PROJECTS, only "
+                "public=false is accepted — public=true or "
+                "omitting this field is rejected."
             )
         ),
     ] = None,
@@ -2288,13 +2338,23 @@ async def add_comment(
         JSON string representing the added comment object.
 
     Raises:
-        ValueError: If in read-only mode or Jira client unavailable.
+        ValueError: If in read-only mode, Jira client unavailable, or
+            the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
+            and public is not exactly False.
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    # Some MCP clients send omitted optional booleans as false. Keep normal
-    # Jira comments as the default and reserve ServiceDesk routing for true.
-    public_value = True if public is True else None
+    # A bare false is ambiguous here in a way it is not in the client API: some
+    # MCP clients auto-fill an omitted optional boolean as false. Honor it only
+    # for a project the operator declared internal-only, where it can only mean
+    # "internal" — that is the case the guard exists for, and dropping it there
+    # is what blocked internal comments entirely. Anywhere else, keep treating it
+    # as omitted, so those clients don't start routing ordinary Jira comments
+    # through the ServiceDesk API (which answers 403 for non-JSM issues) or
+    # tripping the public/visibility conflict on a restricted comment.
+    public_value = public
+    if public is False and not jira._is_internal_only_project(issue_key):
+        public_value = None
     result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -2335,7 +2395,10 @@ async def edit_comment(
         JSON string representing the updated comment object.
 
     Raises:
-        ValueError: If in read-only mode or Jira client unavailable.
+        ValueError: If in read-only mode, Jira client unavailable, or
+            the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
+            and the target comment is currently public (customer-visible)
+            — editing public comments there is blocked server-side.
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
@@ -2465,7 +2528,7 @@ async def link_to_epic(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_links"},
-    annotations={"title": "Create Issue Link", "destructiveHint": True},
+    annotations={"title": "Create Issue Link", "destructiveHint": False},
 )
 @check_write_access
 async def create_issue_link(
@@ -2491,7 +2554,17 @@ async def create_issue_link(
         ),
     ],
     comment: Annotated[
-        str | None, Field(description="(Optional) Comment to add to the link")
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comment to add to the link. Rejected when either "
+                "linked issue belongs to a project listed in "
+                "JIRA_INTERNAL_ONLY_PROJECTS (a link comment may be "
+                "customer-visible on JSM and cannot be forced internal): "
+                "create the link without a comment, then post an internal note "
+                "with jira_add_comment(public=false) on the relevant issue."
+            )
+        ),
     ] = None,
     comment_visibility: Annotated[
         str | None,
@@ -2518,7 +2591,9 @@ async def create_issue_link(
         JSON string indicating success or failure.
 
     Raises:
-        ValueError: If required fields are missing, invalid input, in read-only mode, or Jira client unavailable.
+        ValueError: If required fields are missing, invalid input, in read-only
+            mode, Jira client unavailable, or a comment is included and either
+            linked issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS.
     """
     jira = await get_jira_fetcher(ctx)
     if not all([link_type, inward_issue_key, outward_issue_key]):
@@ -2549,7 +2624,7 @@ async def create_issue_link(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_links"},
-    annotations={"title": "Create Remote Issue Link", "destructiveHint": True},
+    annotations={"title": "Create Remote Issue Link", "destructiveHint": False},
 )
 @check_write_access
 async def create_remote_issue_link(
@@ -2703,7 +2778,11 @@ async def transition_issue(
         Field(
             description=(
                 "(Optional) Comment to add during the transition in Markdown format. "
-                "This will be visible in the issue history."
+                "This will be visible in the issue history. Rejected for projects "
+                "listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be "
+                "customer-visible on JSM and cannot be forced internal): transition "
+                "without a comment, then post an internal note with "
+                "jira_add_comment(public=false)."
             ),
         ),
     ] = None,
@@ -2721,7 +2800,9 @@ async def transition_issue(
         JSON string representing the updated issue object.
 
     Raises:
-        ValueError: If required fields missing, invalid input, in read-only mode, or Jira client unavailable.
+        ValueError: If required fields missing, invalid input, in read-only mode,
+            Jira client unavailable, or a comment is provided for an issue whose
+            project is listed in JIRA_INTERNAL_ONLY_PROJECTS.
     """
     jira = await get_jira_fetcher(ctx)
     if not issue_key or not transition_id:
@@ -2746,7 +2827,7 @@ async def transition_issue(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_agile"},
-    annotations={"title": "Create Sprint", "destructiveHint": True},
+    annotations={"title": "Create Sprint", "destructiveHint": False},
 )
 @check_write_access
 async def create_sprint(
@@ -2853,7 +2934,7 @@ async def update_sprint(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_agile"},
-    annotations={"title": "Add Issues to Sprint", "readOnlyHint": False},
+    annotations={"title": "Add Issues to Sprint", "destructiveHint": True},
 )
 @check_write_access
 async def add_issues_to_sprint(
@@ -3572,7 +3653,7 @@ async def create_customer_request(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_projects"},
-    annotations={"title": "Create Version", "destructiveHint": True},
+    annotations={"title": "Create Version", "destructiveHint": False},
 )
 @check_write_access
 async def create_version(
@@ -3630,7 +3711,7 @@ async def create_version(
 @jira_mcp.tool(
     name="batch_create_versions",
     tags={"jira", "write", "toolset:jira_projects"},
-    annotations={"title": "Batch Create Versions", "destructiveHint": True},
+    annotations={"title": "Batch Create Versions", "destructiveHint": False},
 )
 @check_write_access
 async def batch_create_versions(
@@ -4301,3 +4382,100 @@ async def get_issues_development_info(
         logger.error(f"Error getting development info for issues: {str(e)}")
         error_result = {"success": False, "error": str(e)}
         return json.dumps(error_result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_project_analysis"},
+    annotations={
+        "title": "Get Project Epic Hierarchy",
+        "readOnlyHint": True,
+    },
+)
+async def get_project_epic_hierarchy(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+    max_epics: Annotated[
+        int,
+        Field(
+            description="Maximum number of epics to fetch (1-500)",
+            ge=1,
+            le=500,
+        ),
+    ] = 200,
+) -> str:
+    """Group a project's epics under their cross-project parent issues.
+
+    Fetches all epics in the project, detects their parent issue via
+    the parent field or inward issue links, then groups them by parent.
+    Epics with no detected parent appear under "Unlinked". Useful for
+    understanding how a project's epics roll up to initiatives in
+    another project.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        max_epics: Max epics to fetch.
+
+    Returns:
+        JSON string with grouped epic hierarchy.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_project_epic_hierarchy(
+        project_key=project_key,
+        max_epics=max_epics,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_project_analysis"},
+    annotations={
+        "title": "Get Cross-Project Dependencies",
+        "readOnlyHint": True,
+    },
+)
+async def get_cross_project_dependencies(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+    max_issues: Annotated[
+        int,
+        Field(
+            description="Maximum issues to scan for links (1-500)",
+            ge=1,
+            le=500,
+        ),
+    ] = 200,
+) -> str:
+    """Find all cross-project issue links for a project.
+
+    Scans issues in the project, extracts every issue link whose
+    target belongs to a different project, and groups them by target
+    project and link type. Useful for dependency analysis across
+    multi-project Jira setups.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        max_issues: Max issues to scan.
+
+    Returns:
+        JSON string with cross-project dependency map.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_cross_project_dependencies(
+        project_key=project_key,
+        max_issues=max_issues,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)

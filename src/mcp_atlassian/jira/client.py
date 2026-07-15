@@ -22,13 +22,14 @@ from mcp_atlassian.utils.logging import (
     mask_sensitive,
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
+from mcp_atlassian.utils.proxy import apply_proxy_configuration
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 from mcp_atlassian.utils.ssrf_adapter import mount_ssrf_pinning
 from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
 from mcp_atlassian.utils.user_agent import get_default_user_agent
 
 from ..models.jira.adf import markdown_to_adf
-from .config import JiraConfig
+from .config import JiraConfig, normalize_project_key
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
@@ -111,6 +112,35 @@ class JiraClient:
                 verify_ssl=self.config.ssl_verify,
                 timeout=self.config.timeout,
             )
+        elif self.config.auth_type == "cert":
+            logger.debug(
+                f"Initializing Jira client with mTLS certificate auth. "
+                f"URL: {self.config.url}, "
+                f"Cert configured: {bool(self.config.client_cert)}"
+            )
+            self.jira = Jira(
+                url=self.config.url,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
+            self.jira._session.trust_env = False
+        elif self.config.auth_type == "external":
+            logger.debug(
+                f"Initializing Jira client in external auth passthrough mode. "
+                f"URL: {self.config.url}"
+            )
+            session = Session()
+            session.trust_env = False
+            self.jira = Jira(
+                url=self.config.url,
+                session=session,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
+            # Ensure no Authorization header is carried over from defaults
+            self.jira._session.headers.pop("Authorization", None)
         else:  # basic auth
             logger.debug(
                 f"Initializing Jira client with Basic auth. "
@@ -158,7 +188,7 @@ class JiraClient:
         self.jira._session.hooks["response"].append(make_ssrf_redirect_hook())
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
-        mount_ssrf_pinning(self.jira._session)
+        mount_ssrf_pinning(self.jira._session, transport_url)
 
         # Apply opt-in HTTP hardening after SSL setup and after the pinning
         # adapter is mounted: these wrappers patch send() in place on whatever
@@ -169,20 +199,13 @@ class JiraClient:
         configure_rate_limit(self.jira._session, service="Jira")
         configure_circuit_breaker(self.jira._session, service="Jira")
 
-        # Proxy configuration
-        proxies = {}
-        if self.config.http_proxy:
-            proxies["http"] = self.config.http_proxy
-        if self.config.https_proxy:
-            proxies["https"] = self.config.https_proxy
-        if self.config.socks_proxy:
-            proxies["socks"] = self.config.socks_proxy
-        if proxies:
-            self.jira._session.proxies.update(proxies)
-            for k, v in proxies.items():
-                log_config_param(
-                    logger, "Jira", f"{k.upper()}_PROXY", v, sensitive=True
-                )
+        self.jira._session = apply_proxy_configuration(
+            logger=logger,
+            service_name="Jira",
+            session=self.jira._session,
+            config=self.config,
+            target_url=transport_url,
+        )
 
         # Set an explicit User-Agent so requests aren't blocked by WAFs that
         # reject the default ``python-requests/X.Y`` header. User-supplied
@@ -202,7 +225,7 @@ class JiraClient:
         self._current_user_account_id = None
 
         # Test authentication during initialization (in debug mode only)
-        if logger.isEnabledFor(logging.DEBUG):
+        if logger.isEnabledFor(logging.DEBUG) and self.config.auth_type != "external":
             try:
                 self._validate_authentication()
             except MCPAtlassianAuthenticationError:
@@ -289,7 +312,7 @@ class JiraClient:
 
         if self.config.is_cloud:
             try:
-                return markdown_to_adf(markdown_text)
+                return markdown_to_adf(markdown_text, jira_base_url=self.config.url)
             except Exception as e:
                 logger.warning(f"Error converting markdown to ADF: {e}")
                 return {
@@ -308,6 +331,34 @@ class JiraClient:
         except Exception as e:
             logger.warning(f"Error converting markdown to Jira format: {str(e)}")
             return markdown_text
+
+    @staticmethod
+    def _project_key_from_issue_key(issue_key: str) -> str:
+        """Extract the project key from an issue key (e.g. 'CC-123' -> 'CC').
+
+        Normalizes its own input the same way the configured keys are
+        normalized (surrounding whitespace and invisible characters, on the
+        issue key AND on the extracted key) so that padded inputs like
+        ' CC-1', '\\tCC-1' or 'CC -1' cannot slip past callers that
+        compare the result against a set of clean project keys. A
+        defense-in-depth check must not rely on the downstream API to
+        reject whitespace-padded keys, and both sides of the comparison have
+        to normalize identically or the guard silently stops matching.
+        """
+        return normalize_project_key(normalize_project_key(issue_key).split("-", 1)[0])
+
+    def _is_internal_only_project(self, issue_key: str) -> bool:
+        """Check whether issue_key's project is in JIRA_INTERNAL_ONLY_PROJECTS.
+
+        Returns False (no-op) whenever the env var is unset/empty, which is
+        the default for every deployment that hasn't opted in.
+        """
+        if not self.config.internal_only_projects:
+            return False
+        return (
+            self._project_key_from_issue_key(issue_key)
+            in self.config.internal_only_projects
+        )
 
     def _post_api3(
         self,

@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.proxy import DEFAULT_PROXY_WPAD_URL
 
 
 def test_from_env_success():
@@ -160,6 +161,7 @@ def test_from_env_proxy_settings():
             "HTTPS_PROXY": "https://proxy.example.com:8443",
             "SOCKS_PROXY": "socks5://user:pass@proxy.example.com:1080",
             "NO_PROXY": "localhost,127.0.0.1",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
         },
         clear=True,
     ):
@@ -168,6 +170,8 @@ def test_from_env_proxy_settings():
         assert config.https_proxy == "https://proxy.example.com:8443"
         assert config.socks_proxy == "socks5://user:pass@proxy.example.com:1080"
         assert config.no_proxy == "localhost,127.0.0.1"
+        assert config.proxy_wpad_enable is True
+        assert config.proxy_wpad_url == DEFAULT_PROXY_WPAD_URL
 
     # Service-specific overrides
     with patch.dict(
@@ -180,6 +184,9 @@ def test_from_env_proxy_settings():
             "CONFLUENCE_HTTPS_PROXY": "https://confluence-proxy.example.com:8443",
             "CONFLUENCE_SOCKS_PROXY": "socks5://user:pass@confluence-proxy.example.com:1080",
             "CONFLUENCE_NO_PROXY": "localhost,127.0.0.1,.internal.example.com",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
+            "ATLASSIAN_PROXY_WPAD_URL": "http://global-wpad.example.com/wpad.dat",
+            "CONFLUENCE_PROXY_WPAD_URL": "http://confluence-wpad.example.com/wpad.dat",
         },
         clear=True,
     ):
@@ -190,6 +197,27 @@ def test_from_env_proxy_settings():
             config.socks_proxy == "socks5://user:pass@confluence-proxy.example.com:1080"
         )
         assert config.no_proxy == "localhost,127.0.0.1,.internal.example.com"
+        assert config.proxy_wpad_enable is True
+        assert config.proxy_wpad_url == "http://confluence-wpad.example.com/wpad.dat"
+
+
+def test_from_env_service_specific_wpad_disable_overrides_global():
+    """Test Confluence can opt out of globally enabled WPAD/PAC."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "test_username",
+            "CONFLUENCE_API_TOKEN": "test_token",
+            "ATLASSIAN_PROXY_WPAD_ENABLE": "true",
+            "CONFLUENCE_PROXY_WPAD_ENABLE": "false",
+            "ATLASSIAN_PROXY_WPAD_URL": "http://global-wpad.example.com/wpad.dat",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.proxy_wpad_enable is False
+        assert config.proxy_wpad_url == "http://global-wpad.example.com/wpad.dat"
 
 
 def test_is_cloud_oauth_with_cloud_id():
@@ -360,3 +388,58 @@ def test_from_env_oauth_enable_with_server_url():
         assert config.url == "https://confluence.example.com"
         assert config.auth_type == "oauth"
         assert config.is_cloud is False
+
+
+# ---------------------------------------------------------------------------
+# mTLS client certificate auth tests
+# ---------------------------------------------------------------------------
+
+
+def test_from_env_cert_auth_server():
+    """Test cert auth type detected when CONFLUENCE_CLIENT_CERT is set on Server/DC."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://confluence.example.com",
+            "CONFLUENCE_CLIENT_CERT": "/path/to/cert.pem",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.auth_type == "cert"
+        assert config.client_cert == "/path/to/cert.pem"
+        assert config.is_cloud is False
+
+
+def test_from_env_cert_auth_precedence():
+    """PAT takes precedence over cert auth."""
+    with patch.dict(
+        os.environ,
+        {
+            "CONFLUENCE_URL": "https://confluence.example.com",
+            "CONFLUENCE_PERSONAL_TOKEN": "test_pat",
+            "CONFLUENCE_CLIENT_CERT": "/path/to/cert.pem",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.auth_type == "pat"
+
+
+def test_is_auth_configured_cert():
+    """is_auth_configured returns True for cert auth with client_cert set."""
+    config = ConfluenceConfig(
+        url="https://confluence.example.com",
+        auth_type="cert",
+        client_cert="/path/to/cert.pem",
+    )
+    assert config.is_auth_configured() is True
+
+
+def test_is_auth_configured_cert_missing():
+    """is_auth_configured returns False for cert auth without client_cert."""
+    config = ConfluenceConfig(
+        url="https://confluence.example.com",
+        auth_type="cert",
+    )
+    assert config.is_auth_configured() is False

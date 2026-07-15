@@ -330,6 +330,57 @@ class TestPagesMixin:
             assert result.title == title
             assert result.content == "Page content"
 
+    def test_create_page_with_live_subtype_uses_v2_for_cloud_basic_auth(
+        self, pages_mixin
+    ):
+        """Test creating a Live Doc uses the v2 API for Cloud basic auth."""
+        space_key = "PROJ"
+        title = "Live Doc Test Page"
+        body = "<p>Live content</p>"
+        parent_id = "987654321"
+
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.create_page.return_value = {
+                "id": "live_123456789",
+                "title": title,
+                "subtype": "live",
+            }
+
+            with patch.object(
+                pages_mixin,
+                "get_page_content",
+                return_value=ConfluencePage(
+                    id="live_123456789",
+                    title=title,
+                    content="Live page content",
+                    space={"key": space_key, "name": "Project"},
+                ),
+            ):
+                result = pages_mixin.create_page(
+                    space_key,
+                    title,
+                    body,
+                    parent_id,
+                    is_markdown=False,
+                    subtype="live",
+                )
+
+                mock_v2_adapter.create_page.assert_called_once_with(
+                    space_key=space_key,
+                    title=title,
+                    body=body,
+                    parent_id=parent_id,
+                    representation="storage",
+                    subtype="live",
+                )
+                pages_mixin.confluence.create_page.assert_not_called()
+                assert isinstance(result, ConfluencePage)
+                assert result.id == "live_123456789"
+
     def test_create_page_error(self, pages_mixin):
         """Test error handling when creating a page."""
         # Arrange

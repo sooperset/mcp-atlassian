@@ -89,6 +89,20 @@ def test_process_html_content_basic(preprocessor_with_confluence):
     assert processed_markdown.strip() == "Simple text"
 
 
+def test_process_html_content_preserves_confluence_date_lozenge(
+    preprocessor_with_confluence,
+):
+    """Date lozenges retain values stored only in datetime attributes."""
+    html = '<p>Meeting date: <time datetime="2026-02-04" /></p>'
+
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(html)
+    )
+
+    assert '<time datetime="2026-02-04">2026-02-04</time>' in processed_html
+    assert processed_markdown.strip() == "Meeting date: 2026-02-04"
+
+
 def test_process_html_content_with_user_mentions(preprocessor_with_confluence):
     """Test HTML content processing with user mentions."""
     html = """
@@ -137,6 +151,53 @@ def test_clean_jira_text_smart_links(preprocessor_with_jira):
     text = f"[Meeting Notes|{confluence_url}|smart-link]"
     cleaned = preprocessor_with_jira.clean_jira_text(text)
     assert cleaned == f"[Example Meeting Notes]({processed_url})"
+
+
+@pytest.mark.parametrize(
+    ("issue_key", "expected"),
+    [
+        (
+            "B7-214-68901",
+            "[B7-214-68901](https://example.atlassian.net/browse/B7-214-68901)",
+        ),
+        (
+            "B7-214--68901",
+            "[Issue](https://example.atlassian.net/browse/B7-214--68901)",
+        ),
+        (
+            "B7-214-",
+            "[Issue](https://example.atlassian.net/browse/B7-214-)",
+        ),
+        (
+            "B7-214-68901A",
+            "[Issue](https://example.atlassian.net/browse/B7-214-68901A)",
+        ),
+    ],
+)
+def test_clean_jira_text_smart_links_validate_hyphenated_issue_keys(
+    preprocessor_with_jira, issue_key, expected
+):
+    """Smart links preserve valid keys and reject malformed suffix segments."""
+    base_url = "https://example.atlassian.net"
+    text = f"[Issue|{base_url}/browse/{issue_key}|smart-link]"
+
+    assert preprocessor_with_jira.clean_jira_text(text) == expected
+
+
+def test_clean_jira_text_smart_links_strip_complete_hyphenated_issue_key(
+    preprocessor_with_jira,
+):
+    """Confluence smart-link titles strip the complete issue key."""
+    base_url = "https://example.atlassian.net"
+    confluence_url = (
+        f"{base_url}/wiki/spaces/PROJ/pages/987654321/"
+        "B7-214-68901+Example+Meeting+Notes"
+    )
+    text = f"[Meeting Notes|{confluence_url}|smart-link]"
+
+    assert preprocessor_with_jira._process_smart_links(text) == (
+        f"[Example Meeting Notes]({confluence_url})"
+    )
 
 
 def test_clean_jira_text_html_content(preprocessor_with_jira):
@@ -573,7 +634,7 @@ def hello():
     assert '<a href="https://example.com">Link text</a>' in result
     assert "ac:structured-macro" in result  # Code block macro
     assert 'ac:name="code"' in result
-    assert "python" in result
+    assert '<ac:parameter ac:name="language">py</ac:parameter>' in result
 
 
 def test_markdown_to_confluence_optional_anchor_generation():
@@ -858,13 +919,6 @@ def test_markdown_to_jira_preserves_underscores_in_url_targets(
         preprocessor_with_jira.markdown_to_jira("<https://example.com/foo_bar>")
         == "[https://example.com/foo_bar]"
     )
-
-
-def test_md2conf_elements_from_string_available():
-    """Test that elements_from_string is importable with fallback (issue #817)."""
-    from mcp_atlassian.preprocessing.confluence import elements_from_string
-
-    assert callable(elements_from_string)
 
 
 # Issue #893 regression tests - Code Block Content Corruption

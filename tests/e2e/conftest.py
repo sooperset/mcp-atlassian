@@ -588,6 +588,50 @@ def resource_tracker(
     )
 
 
+@pytest.fixture(scope="session")
+def jsm_dc_instance() -> DCInstanceInfo:
+    """Session-scoped info for the dedicated Jira Service Management DC instance.
+
+    JSM ships as a separate application, so it runs as its own instance rather
+    than on the Jira Software DC box used by the rest of the DC suite.
+    """
+    jsm_url = os.environ.get("DC_E2E_JSM_URL", "").strip()
+    if not jsm_url:
+        pytest.skip("DC JSM e2e requires DC_E2E_JSM_URL")
+
+    info = DCInstanceInfo(
+        jira_url=jsm_url,
+        admin_username=os.environ.get("DC_E2E_JSM_USERNAME", DEFAULT_ADMIN_USER),
+        admin_password=os.environ.get("DC_E2E_JSM_PASSWORD", DEFAULT_ADMIN_PASS),
+    )
+
+    # Same reason as dc_instance: the SSRF pinning adapter only trusts hosts
+    # named in the environment.
+    os.environ.setdefault("JIRA_URL", info.jira_url)
+
+    if not _check_dc_health(info.jira_url):
+        pytest.skip(f"Jira Service Management DC not reachable at {info.jira_url}")
+
+    return info
+
+
+@pytest.fixture(scope="session")
+def jsm_jira_fetcher(jsm_dc_instance: DCInstanceInfo) -> JiraFetcher:
+    """Session-scoped Jira fetcher for the JSM DC instance (basic auth)."""
+    config = _make_jira_basic_config(jsm_dc_instance)
+    return JiraFetcher(config=config)
+
+
+@pytest.fixture
+def jsm_resource_tracker(
+    jsm_jira_fetcher: JiraFetcher,
+) -> Generator[DCResourceTracker, None, None]:
+    """Resource tracker that cleans up against the JSM instance, not :8080."""
+    tracker = DCResourceTracker()
+    yield tracker
+    tracker.cleanup(jira_client=jsm_jira_fetcher)
+
+
 @pytest.fixture(scope="module")
 def dc_image_issue(
     dc_instance: DCInstanceInfo,

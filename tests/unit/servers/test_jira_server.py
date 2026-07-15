@@ -5,7 +5,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -462,6 +462,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         create_customer_request,
         create_issue,
         create_issue_link,
+        create_remote_issue_link,
         create_sprint,
         delete_issue,
         download_attachments,
@@ -544,6 +545,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(add_worklog)
     jira_sub_mcp.add_tool(link_to_epic)
     jira_sub_mcp.add_tool(create_issue_link)
+    jira_sub_mcp.add_tool(create_remote_issue_link)
     jira_sub_mcp.add_tool(remove_issue_link)
     jira_sub_mcp.add_tool(transition_issue)
     jira_sub_mcp.add_tool(create_sprint)
@@ -680,6 +682,28 @@ async def test_search(jira_client, mock_jira_fetcher):
         projects_filter=None,
         page_token=None,
     )
+
+
+@pytest.mark.anyio
+async def test_search_returns_error_details(jira_client, mock_jira_fetcher):
+    """Test that search tool failures preserve the original error message."""
+    mock_jira_fetcher.search_issues.side_effect = RuntimeError(
+        "Jira JQL rejected the query"
+    )
+
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_search",
+            {
+                "jql": "project = TEST",
+                "fields": "summary,status",
+                "limit": 10,
+                "start_at": 0,
+            },
+        )
+
+    assert "Error calling tool 'search'" in str(excinfo.value)
+    assert "Jira JQL rejected the query" in str(excinfo.value)
 
 
 @pytest.mark.anyio
@@ -938,6 +962,73 @@ async def test_create_issue(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool_arguments", "expected_link_data"),
+    [
+        pytest.param(
+            {
+                "issue_key": "TEST-123",
+                "url": "https://example.com/documentation",
+                "title": "Project documentation",
+            },
+            {
+                "object": {
+                    "url": "https://example.com/documentation",
+                    "title": "Project documentation",
+                }
+            },
+            id="web-link",
+        ),
+        pytest.param(
+            {
+                "issue_key": "TEST-123",
+                "url": (
+                    "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456/Plan"
+                ),
+                "title": "Team plan",
+                "summary": "Planning notes",
+                "relationship": "documentation",
+                "icon_url": "https://example.atlassian.net/favicon.ico",
+            },
+            {
+                "object": {
+                    "url": (
+                        "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456/Plan"
+                    ),
+                    "title": "Team plan",
+                    "summary": "Planning notes",
+                    "icon": {
+                        "url16x16": "https://example.atlassian.net/favicon.ico",
+                        "title": "Team plan",
+                    },
+                },
+                "relationship": "documentation",
+            },
+            id="confluence-link",
+        ),
+    ],
+)
+async def test_create_remote_issue_link(
+    jira_client,
+    mock_jira_fetcher,
+    tool_arguments: dict[str, str],
+    expected_link_data: dict[str, Any],
+) -> None:
+    """Regression test for creating web and Confluence links (#240)."""
+    mock_jira_fetcher.create_remote_issue_link.return_value = {"success": True}
+
+    response = await jira_client.call_tool(
+        "jira_create_remote_issue_link",
+        tool_arguments,
+    )
+
+    assert json.loads(response.content[0].text) == {"success": True}
+    mock_jira_fetcher.create_remote_issue_link.assert_called_once_with(
+        "TEST-123", expected_link_data
+    )
+
+
+@pytest.mark.anyio
 async def test_create_issue_accepts_json_string(jira_client, mock_jira_fetcher):
     """Ensure additional_fields can be a JSON string."""
     response = await jira_client.call_tool(
@@ -1062,6 +1153,7 @@ async def test_batch_create_issues_invalid_json(jira_client):
             "jira_batch_create_issues",
             {"issues": "{invalid json", "validate_only": False},
         )
+    assert "Error calling tool 'batch_create_issues'" in str(excinfo.value)
     assert "Invalid JSON" in str(excinfo.value)
 
 
@@ -1200,6 +1292,7 @@ async def test_no_fetcher_get_issue(no_fetcher_client_fixture, mock_request):
                 },
             )
     assert "Error calling tool 'get_issue'" in str(excinfo.value)
+    assert "Jira client (fetcher) not available" in str(excinfo.value)
 
 
 @pytest.mark.anyio
@@ -2122,11 +2215,16 @@ def test_issue_key_pattern_validation():
     assert re.match(ISSUE_KEY_PATTERN, "ABCDEFGHIJ-99")
     assert re.match(ISSUE_KEY_PATTERN, "D_DEV-123")
     assert re.match(ISSUE_KEY_PATTERN, "MY_PROJECT-1")
+    assert re.match(ISSUE_KEY_PATTERN, "B7-214-68901")
+    assert re.match(ISSUE_KEY_PATTERN, "PRJ-1-2-3")
     # Invalid issue keys
     assert not re.match(ISSUE_KEY_PATTERN, "a-1")
     assert not re.match(ISSUE_KEY_PATTERN, "PROJ")
     assert not re.match(ISSUE_KEY_PATTERN, "2ABC-1")
     assert not re.match(ISSUE_KEY_PATTERN, "A-1-2")
+    assert not re.match(ISSUE_KEY_PATTERN, "B7-214--68901")
+    assert not re.match(ISSUE_KEY_PATTERN, "B7-214-")
+    assert not re.match(ISSUE_KEY_PATTERN, "B7-214-68901A")
 
     # Valid project keys
     assert re.match(PROJECT_KEY_PATTERN, "PROJ")
@@ -2410,8 +2508,86 @@ async def test_download_attachments_allows_normal_size(jira_client, mock_jira_fe
     assert summary["success"] is True
     assert summary["downloaded"] == 1
     assert len(summary["failed"]) == 0
-    # Should have text summary + 1 embedded resource
+    # Should have text summary + 1 non-image attachment payload (TextContent)
     assert len(response.content) == 2
+
+
+@pytest.mark.anyio
+async def test_download_attachments_binary_uses_text_content(
+    jira_client, mock_jira_fetcher
+):
+    """Non-image attachments (e.g. .zip) must be returned as TextContent
+    carrying a base64 payload, not as an EmbeddedResource blob -- many MCP
+    clients reject non-image EmbeddedResource mime types outright (#1419)."""
+    import base64
+
+    zip_data = b"PK\x03\x04fake zip bytes"
+
+    mock_jira_fetcher.get_issue_attachment_contents.return_value = {
+        "success": True,
+        "issue_key": "TEST-123",
+        "total": 1,
+        "attachments": [
+            {
+                "filename": "archive.zip",
+                "content_type": "application/zip",
+                "size": len(zip_data),
+                "data": zip_data,
+            }
+        ],
+        "failed": [],
+    }
+
+    response = await jira_client.call_tool(
+        "jira_download_attachments",
+        {"issue_key": "TEST-123"},
+    )
+
+    assert len(response.content) == 2
+    payload_content = response.content[1]
+    # Must be TextContent (type="text"), not an EmbeddedResource (type="resource")
+    assert payload_content.type == "text"
+    payload = json.loads(payload_content.text)
+    assert payload["success"] is True
+    assert payload["filename"] == "archive.zip"
+    assert payload["mime_type"] == "application/zip"
+    assert payload["encoding"] == "base64"
+    assert base64.b64decode(payload["content"]) == zip_data
+
+
+@pytest.mark.anyio
+async def test_download_attachments_image_still_uses_embedded_resource(
+    jira_client, mock_jira_fetcher
+):
+    """Image attachments must keep going through EmbeddedResource -- only
+    the non-image path changes for #1419."""
+    image_data = b"\x89PNG\r\n\x1a\nfake png bytes"
+
+    mock_jira_fetcher.get_issue_attachment_contents.return_value = {
+        "success": True,
+        "issue_key": "TEST-123",
+        "total": 1,
+        "attachments": [
+            {
+                "filename": "screenshot.png",
+                "content_type": "image/png",
+                "size": len(image_data),
+                "data": image_data,
+            }
+        ],
+        "failed": [],
+    }
+
+    response = await jira_client.call_tool(
+        "jira_download_attachments",
+        {"issue_key": "TEST-123"},
+    )
+
+    assert len(response.content) == 2
+    resource_content = response.content[1]
+    # Must be EmbeddedResource (type="resource"), unchanged from before #1419
+    assert resource_content.type == "resource"
+    assert resource_content.resource.mimeType == "image/png"
 
 
 # ── jira_get_issue_images tests ──────────────────────────────────────
@@ -2577,7 +2753,9 @@ async def test_add_comment(jira_client, mock_jira_fetcher):
 async def test_add_comment_ignores_empty_optional_fields(
     jira_client, mock_jira_fetcher
 ):
-    """Test add_comment treats client default optional fields as omitted."""
+    """Test add_comment treats a client's default empty fields as omitted."""
+    mock_jira_fetcher._is_internal_only_project.return_value = False
+
     response = await jira_client.call_tool(
         "jira_add_comment",
         {
@@ -2598,10 +2776,34 @@ async def test_add_comment_ignores_empty_optional_fields(
 
 
 @pytest.mark.anyio
-async def test_add_comment_restricted_visibility_ignores_false_public_default(
+async def test_add_comment_accepts_comment_alias(jira_client, mock_jira_fetcher):
+    """Test add_comment accepts 'comment' as a compatibility alias for body."""
+    response = await jira_client.call_tool(
+        "jira_add_comment",
+        {"issue_key": "TEST-123", "comment": "Test comment body"},
+    )
+
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Test comment body", None, public=None
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["id"] == "10001"
+    assert result["body"] == "Test comment body"
+
+
+@pytest.mark.anyio
+async def test_add_comment_restricted_visibility_with_client_default_false(
     jira_client, mock_jira_fetcher
 ):
-    """Test add_comment can combine visibility with client default public=false."""
+    """A client's default public=false must not break a restricted comment.
+
+    Some MCP clients auto-fill omitted optional fields, sending public=false
+    alongside a real visibility. Forwarding that false would trip the
+    public/visibility conflict and break a restricted comment that used to work.
+    """
+    mock_jira_fetcher._is_internal_only_project.return_value = False
+
     response = await jira_client.call_tool(
         "jira_add_comment",
         {
@@ -2621,7 +2823,51 @@ async def test_add_comment_restricted_visibility_ignores_false_public_default(
 
     result = json.loads(response.content[0].text)
     assert result["id"] == "10001"
-    assert result["body"] == "Test comment body"
+
+
+@pytest.mark.anyio
+async def test_add_comment_forwards_false_for_internal_only_project(
+    jira_client, mock_jira_fetcher
+):
+    """On a listed project, public=false must survive to the client.
+
+    Dropping it here is what blocked internal comments outright: the guard only
+    accepts an exact False, so a coerced None read as "omitted" and was refused.
+    """
+    mock_jira_fetcher._is_internal_only_project.return_value = True
+    base_args = {"issue_key": "TEST-123", "body": "Test comment body"}
+
+    await jira_client.call_tool("jira_add_comment", {**base_args, "public": False})
+    await jira_client.call_tool("jira_add_comment", {**base_args, "public": True})
+    await jira_client.call_tool("jira_add_comment", base_args)
+
+    assert mock_jira_fetcher.add_comment.call_args_list == [
+        call("TEST-123", "Test comment body", None, public=False),
+        call("TEST-123", "Test comment body", None, public=True),
+        call("TEST-123", "Test comment body", None, public=None),
+    ]
+
+
+@pytest.mark.anyio
+async def test_add_comment_drops_client_default_false_on_ordinary_project(
+    jira_client, mock_jira_fetcher
+):
+    """On an unlisted project, a bare false stays "omitted".
+
+    Some MCP clients auto-fill an omitted optional boolean as false. Forwarding
+    that would route ordinary Jira comments through the ServiceDesk API, which
+    answers 403 for non-JSM issues. public=true still routes, as before.
+    """
+    mock_jira_fetcher._is_internal_only_project.return_value = False
+    base_args = {"issue_key": "TEST-123", "body": "Test comment body"}
+
+    await jira_client.call_tool("jira_add_comment", {**base_args, "public": False})
+    await jira_client.call_tool("jira_add_comment", {**base_args, "public": True})
+
+    assert mock_jira_fetcher.add_comment.call_args_list == [
+        call("TEST-123", "Test comment body", None, public=None),
+        call("TEST-123", "Test comment body", None, public=True),
+    ]
 
 
 @pytest.mark.anyio
