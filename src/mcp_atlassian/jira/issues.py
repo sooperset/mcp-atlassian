@@ -58,7 +58,11 @@ class IssuesMixin(
             if not isinstance(issue_data, dict):
                 return description_adf
 
-            current_description = issue_data.get("fields", {}).get("description")
+            issue_fields = issue_data.get("fields")
+            if not isinstance(issue_fields, dict):
+                return description_adf
+
+            current_description = issue_fields.get("description")
             if not isinstance(current_description, dict):
                 return description_adf
 

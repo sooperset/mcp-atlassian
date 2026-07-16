@@ -766,6 +766,215 @@ class TestEpicsMixin:
         ):
             epics_mixin.get_epic_issues("EPIC-123")
 
+    @pytest.mark.parametrize(
+        ("field_ids", "expected"),
+        [
+            ({"epic_name": "customfield_1"}, "customfield_1"),
+            ({"Epic Name": "customfield_2"}, "customfield_2"),
+            ({"other": "customfield_10011"}, "customfield_10011"),
+            ({"Team Epic Name": "customfield_3"}, "customfield_3"),
+            ({"summary": "summary"}, None),
+        ],
+    )
+    def test_get_epic_name_field_id(self, epics_mixin: EpicsMixin, field_ids, expected):
+        """Test Epic Name field lookup strategies."""
+        assert epics_mixin._get_epic_name_field_id(field_ids) == expected
+
+    @pytest.mark.parametrize(
+        ("field_ids", "expected"),
+        [
+            ({"epic_color": "customfield_1"}, "customfield_1"),
+            ({"epic_colour": "customfield_2"}, "customfield_2"),
+            ({"other": "customfield_10012"}, "customfield_10012"),
+            ({"Team Epic Colour": "customfield_3"}, "customfield_3"),
+            ({"summary": "summary"}, None),
+        ],
+    )
+    def test_get_epic_color_field_id(
+        self, epics_mixin: EpicsMixin, field_ids, expected
+    ):
+        """Test Epic Color field lookup strategies."""
+        assert epics_mixin._get_epic_color_field_id(field_ids) == expected
+
+    @pytest.mark.parametrize(
+        ("field_ids", "expected"),
+        [
+            ({"Epic Link": "customfield_1"}, "customfield_1"),
+            ({"Team Epic Link": "customfield_2"}, "customfield_2"),
+            ({"other": "customfield_10014"}, "customfield_10014"),
+            ({"system.epic-link": "customfield_3"}, "customfield_3"),
+        ],
+    )
+    def test_find_epic_link_field_known_strategies(
+        self, epics_mixin: EpicsMixin, field_ids, expected
+    ):
+        """Test Epic Link field lookup uses known names and IDs."""
+        assert epics_mixin._find_epic_link_field(field_ids) == expected
+
+    def test_find_epic_link_field_from_linked_issue(self, epics_mixin: EpicsMixin):
+        """Test Epic Link field inference from an issue linked to a sample Epic."""
+        epics_mixin._find_sample_epic = MagicMock(return_value=[{"key": "EPIC-1"}])
+        epics_mixin._find_issues_linked_to_epic = MagicMock(
+            return_value=[
+                {
+                    "fields": {
+                        "customfield_12345": "EPIC-1",
+                        "summary": "Linked issue",
+                    }
+                }
+            ]
+        )
+
+        result = epics_mixin._find_epic_link_field({})
+
+        assert result == "customfield_12345"
+
+    def test_find_epic_link_field_from_schema(self, epics_mixin: EpicsMixin):
+        """Test Epic Link field lookup falls back to field schema inspection."""
+        epics_mixin._find_sample_epic = MagicMock(return_value=[])
+        epics_mixin.jira.get_all_fields.return_value = [
+            {
+                "id": "customfield_54321",
+                "name": "Relationship",
+                "schema": {"custom": "com.example:epic-relationship"},
+            }
+        ]
+
+        result = epics_mixin._find_epic_link_field({})
+
+        assert result == "customfield_54321"
+
+    def test_find_epic_link_field_returns_none_after_errors(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Test Epic Link lookup returns None when discovery sources fail."""
+        epics_mixin._find_sample_epic = MagicMock(
+            side_effect=RuntimeError("search unavailable")
+        )
+        epics_mixin.jira.get_all_fields.side_effect = RuntimeError("fields unavailable")
+
+        assert epics_mixin._find_epic_link_field({}) is None
+
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            ({"issues": [{"key": "EPIC-1"}]}, [{"key": "EPIC-1"}]),
+            ({"issues": []}, []),
+            ([], []),
+        ],
+    )
+    def test_find_sample_epic(self, epics_mixin: EpicsMixin, response, expected):
+        """Test sample Epic discovery handles success, empty, and malformed responses."""
+        epics_mixin.jira.jql.return_value = response
+
+        assert epics_mixin._find_sample_epic() == expected
+
+    def test_find_issues_linked_to_epic_tries_queries(self, epics_mixin: EpicsMixin):
+        """Test linked issue discovery retries alternate JQL forms."""
+        epics_mixin.jira.jql.side_effect = [
+            RuntimeError("unsupported JQL"),
+            {"issues": []},
+            {"issues": [{"key": "TEST-1"}]},
+        ]
+
+        result = epics_mixin._find_issues_linked_to_epic("EPIC-1")
+
+        assert result == [{"key": "TEST-1"}]
+        assert epics_mixin.jira.jql.call_count == 3
+
+    def test_link_issue_to_epic_uses_common_field_fallback(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Test Epic linking caches a successful common custom field."""
+        epics_mixin.jira.get_issue.side_effect = [
+            {"key": "TEST-1"},
+            {"key": "EPIC-1", "fields": {"issuetype": {"name": "Epic"}}},
+        ]
+        epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        epics_mixin.jira.update_issue.side_effect = [
+            RuntimeError("parent unsupported"),
+            None,
+        ]
+        epics_mixin._field_ids_cache = None
+
+        result = epics_mixin.link_issue_to_epic("TEST-1", "EPIC-1")
+
+        assert result == epics_mixin.get_issue.return_value
+        assert epics_mixin.jira.update_issue.call_args_list[-1] == call(
+            issue_key="TEST-1",
+            update={"fields": {"customfield_10014": "EPIC-1"}},
+        )
+        assert epics_mixin._field_ids_cache == [
+            {"id": "customfield_10014", "name": "epic_link"}
+        ]
+
+    def test_update_epic_fields_falls_back_to_individual_updates(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Test Epic field updates retry fields individually after bulk failure."""
+        kwargs = {
+            "__epic_name_field": "customfield_1",
+            "__epic_name_value": "Epic name",
+            "__epic_color_field": "customfield_2",
+            "__epic_color_value": "blue",
+        }
+        epics_mixin.jira.update_issue.side_effect = [
+            RuntimeError("bulk update failed"),
+            None,
+            RuntimeError("color unavailable"),
+        ]
+
+        result = epics_mixin.update_epic_fields("EPIC-1", kwargs)
+
+        assert result == epics_mixin.get_issue.return_value
+        assert epics_mixin.jira.update_issue.call_args_list == [
+            call(
+                "EPIC-1",
+                update={
+                    "fields": {
+                        "customfield_1": "Epic name",
+                        "customfield_2": "blue",
+                    }
+                },
+            ),
+            call(
+                "EPIC-1",
+                update={"fields": {"customfield_1": "Epic name"}},
+            ),
+            call("EPIC-1", update={"fields": {"customfield_2": "blue"}}),
+        ]
+        epics_mixin.get_issue.assert_called_once_with("EPIC-1")
+
+    def test_update_epic_fields_uses_primary_update(self, epics_mixin: EpicsMixin):
+        """Test Epic field updates use one request when the bulk update succeeds."""
+        kwargs = {
+            "__epic_name_field": "customfield_1",
+            "__epic_name_value": "Epic name",
+            "__epic_team_field": "customfield_3",
+            "__epic_team_value": "Platform",
+        }
+
+        result = epics_mixin.update_epic_fields("EPIC-1", kwargs)
+
+        assert result == epics_mixin.get_issue.return_value
+        epics_mixin.jira.update_issue.assert_called_once_with(
+            "EPIC-1",
+            update={
+                "fields": {
+                    "customfield_1": "Epic name",
+                    "customfield_3": "Platform",
+                }
+            },
+        )
+
+    def test_update_epic_fields_without_stored_fields(self, epics_mixin: EpicsMixin):
+        """Test Epic updates without stored fields only refetch the issue."""
+        result = epics_mixin.update_epic_fields("EPIC-1", {})
+
+        assert result == epics_mixin.get_issue.return_value
+        epics_mixin.jira.update_issue.assert_not_called()
+        epics_mixin.get_issue.assert_called_once_with("EPIC-1")
+
 
 class TestEpicFieldDynamicDetection:
     """Regression tests for dynamic Epic Link field discovery."""
