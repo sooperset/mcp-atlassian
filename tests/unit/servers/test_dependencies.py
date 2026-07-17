@@ -1839,6 +1839,51 @@ class TestValidationCache:
         fetcher1.get_current_user_info.assert_called_once()
         fetcher2.get_current_user_info.assert_called_once()
 
+    @pytest.mark.parametrize("passthrough_header", ["X-SSO-User", "Cookie"])
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_different_passthrough_users_are_validated_separately(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        monkeypatch,
+        passthrough_header,
+    ):
+        """Passthrough identity must isolate shared PAT cache entries."""
+        monkeypatch.setenv("CONFLUENCE_PASSTHROUGH_HEADERS", passthrough_header)
+        service_headers = self._confluence_headers("shared-pat-token")
+        request1 = self._header_pat_request(service_headers)
+        request1.headers = Headers({passthrough_header: "user-a"})
+        request2 = self._header_pat_request(service_headers)
+        request2.headers = Headers({passthrough_header: "user-b"})
+
+        fetcher1 = _create_mock_fetcher(
+            ConfluenceFetcher,
+            validation_return={
+                "email": "user-a@example.com",
+                "displayName": "User A",
+            },
+        )
+        fetcher2 = _create_mock_fetcher(
+            ConfluenceFetcher,
+            validation_return={
+                "email": "user-b@example.com",
+                "displayName": "User B",
+            },
+        )
+        mock_confluence_fetcher_class.side_effect = [fetcher1, fetcher2]
+
+        mock_get_http_request.return_value = request1
+        await get_confluence_fetcher(mock_context)
+        mock_get_http_request.return_value = request2
+        await get_confluence_fetcher(mock_context)
+
+        fetcher1.get_current_user_info.assert_called_once()
+        fetcher2.get_current_user_info.assert_called_once()
+        assert request1.state.user_atlassian_email == "user-a@example.com"
+        assert request2.state.user_atlassian_email == "user-b@example.com"
+
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
     async def test_same_credential_different_url_both_validated(
