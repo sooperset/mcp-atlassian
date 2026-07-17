@@ -32,7 +32,7 @@ def test_stdio_homebrew_probe_exits_after_stdin_close() -> None:
     )
 
     result = subprocess.run(
-        ["uv", "run", "mcp-atlassian"],
+        ["uv", "run", "--frozen", "mcp-atlassian"],
         input=_build_probe_payload(),
         capture_output=True,
         text=True,
@@ -50,6 +50,7 @@ def test_stdio_homebrew_probe_exits_after_stdin_close() -> None:
 
     assert result.returncode == 0, combined_output[:1000]
     assert any('"id":1' in line for line in jsonrpc_lines), combined_output[:1000]
-    assert any('"id":2' in line and '"tools"' in line for line in jsonrpc_lines), (
-        combined_output[:1000]
-    )
+    # As of mcp-sdk 1.27, in-flight handlers are cancelled when the transport
+    # closes. Since stdin reaches EOF immediately after the last message, the
+    # tools/list response may be cancelled before reaching stdout. A clean exit
+    # and initialize response are sufficient to verify shutdown behavior.

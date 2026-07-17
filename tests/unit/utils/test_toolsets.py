@@ -181,27 +181,33 @@ class TestToolsetTagCompleteness:
 
     @pytest.fixture()
     def jira_tools(self):
-        """Get all registered Jira tools."""
+        """Get all registered Jira tools as a name-indexed dict."""
         import asyncio
 
         from mcp_atlassian.servers.jira import jira_mcp
 
+        async def _load() -> dict:
+            return {tool.name: tool for tool in await jira_mcp.list_tools()}
+
         loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(jira_mcp.get_tools())
+            return loop.run_until_complete(_load())
         finally:
             loop.close()
 
     @pytest.fixture()
     def confluence_tools(self):
-        """Get all registered Confluence tools."""
+        """Get all registered Confluence tools as a name-indexed dict."""
         import asyncio
 
         from mcp_atlassian.servers.confluence import confluence_mcp
 
+        async def _load() -> dict:
+            return {tool.name: tool for tool in await confluence_mcp.list_tools()}
+
         loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(confluence_mcp.get_tools())
+            return loop.run_until_complete(_load())
         finally:
             loop.close()
 
