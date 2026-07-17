@@ -769,7 +769,7 @@ class TestIssuesMixin:
             "rest/api/3/issue/TEST-123",
             params={"fields": "description", "updateHistory": "false"},
         )
-        issues_mixin.jira.get_issue.assert_called_once_with("TEST-123")
+        issues_mixin.jira.get_issue.assert_called_once_with("TEST-123", fields=None)
         assert document.key == "TEST-123"
 
     def test_update_issue_with_explicit_adf_does_not_fetch_current_description(
@@ -800,7 +800,97 @@ class TestIssuesMixin:
             "issue/TEST-123",
             {"fields": {"description": explicit_adf}},
         )
-        issues_mixin.jira.get_issue.assert_called_once_with("TEST-123")
+        issues_mixin.jira.get_issue.assert_called_once_with("TEST-123", fields=None)
+
+    def test_update_issue_return_fields_forwarded(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """return_fields is normalized and forwarded to the post-update re-fetch."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            summary="Updated Summary"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123",
+            fields={"summary": "Updated Summary"},
+            return_fields=["summary", "duedate"],
+        )
+
+        assert issues_mixin.jira.get_issue.call_args[1]["fields"] == ("summary,duedate")
+
+    def test_update_issue_return_fields_filter_standard_field_serialization(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """The requested standard field remains in the simplified response."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            summary="Updated Summary"
+        )
+
+        issue = issues_mixin.update_issue(
+            issue_key="TEST-123",
+            fields={"summary": "Updated Summary"},
+            return_fields=["summary"],
+        )
+
+        assert issue.to_simplified_dict() == {
+            "id": "12345",
+            "key": "TEST-123",
+            "summary": "Updated Summary",
+        }
+
+    def test_update_issue_return_fields_filter_custom_field_serialization(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """The requested custom field remains in the simplified response."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            customfield_10049="Custom value"
+        )
+
+        issue = issues_mixin.update_issue(
+            issue_key="TEST-123",
+            fields={"summary": "Updated Summary"},
+            return_fields=["customfield_10049"],
+        )
+
+        assert issue.to_simplified_dict() == {
+            "id": "12345",
+            "key": "TEST-123",
+            "customfield_10049": {"value": "Custom value"},
+        }
+
+    def test_update_issue_return_fields_none_by_default(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Omitting return_fields uses the API default field set."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            summary="Updated Summary"
+        )
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123", fields={"summary": "Updated Summary"}
+        )
+
+        assert issues_mixin.jira.get_issue.call_args[1]["fields"] is None
+
+    def test_update_issue_with_status_forwards_return_fields(
+        self, issues_mixin: IssuesMixin
+    ):
+        """return_fields is forwarded through the status-change re-fetch."""
+        issues_mixin.get_available_transitions = MagicMock(
+            return_value=[
+                {"id": "21", "name": "In Progress", "to_status": "In Progress"}
+            ]
+        )
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123",
+            status="In Progress",
+            return_fields="summary",
+        )
+
+        assert issues_mixin.jira.get_issue.call_args[1]["fields"] == "summary"
 
     def test_update_issue_with_status(self, issues_mixin: IssuesMixin):
         """Test updating an issue with a status change."""

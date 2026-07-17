@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pypac import get_pac
 from pypac.parser import MalformedPacError
-from requests import PreparedRequest
+from requests import PreparedRequest, Session
+from requests.adapters import HTTPAdapter
 from requests.exceptions import ProxyError
-from requests.sessions import Session
 
 from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
@@ -380,6 +380,10 @@ def test_apply_proxy_configuration_wraps_session_for_wpad():
     source_session.headers["X-Test"] = "1"
     source_session.cookies.set("cookie", "value")
     source_session.trust_env = False
+    response_hook = MagicMock()
+    source_session.hooks["response"].append(response_hook)
+    custom_adapter = HTTPAdapter()
+    source_session.mount("https://", custom_adapter)
 
     config = JiraConfig(
         url="https://test.atlassian.net",
@@ -427,6 +431,45 @@ def test_apply_proxy_configuration_wraps_session_for_wpad():
     assert pac_session.headers["X-Test"] == "1"
     assert pac_session.cookies.get("cookie") == "value"
     assert pac_session.trust_env is False
+    assert pac_session.hooks["response"] == [response_hook]
+    assert pac_session.get_adapter("https://example.com") is custom_adapter
+
+
+@pytest.mark.parametrize(
+    ("url", "expected_proxies"),
+    [
+        (
+            "https://external.example.com/api",
+            {
+                "http": "http://proxy.example.com:8080",
+                "https": "http://proxy.example.com:8080",
+            },
+        ),
+        (
+            "https://internal.example.com/api",
+            {"http": None, "https": None},
+        ),
+    ],
+)
+def test_pac_session_routes_requests_and_preserves_no_proxy(
+    url: str, expected_proxies: dict[str, str | None]
+) -> None:
+    """Test PAC evaluation routes requests while NO_PROXY forces direct access."""
+    pac = get_pac(
+        js=(
+            "function FindProxyForURL(url, host) { "
+            'return "PROXY proxy.example.com:8080"; }'
+        )
+    )
+    session = _NoProxyAwarePACSession(
+        pac=pac,
+        no_proxy="internal.example.com",
+    )
+
+    with patch.object(Session, "request", return_value=MagicMock()) as mock_request:
+        session.get(url)
+
+    assert mock_request.call_args.kwargs["proxies"] == expected_proxies
 
 
 def test_pac_session_no_proxy_handles_empty_proxy_mapping() -> None:
@@ -444,6 +487,28 @@ def test_pac_session_no_proxy_handles_empty_proxy_mapping() -> None:
 
     with patch.object(Session, "request", return_value=MagicMock()) as mock_request:
         session.get("https://internal.example.com/api", proxies={})
+
+    assert mock_request.call_args.kwargs["proxies"] == {
+        "http": None,
+        "https": None,
+    }
+
+
+def test_pac_session_no_proxy_handles_positional_proxy_mapping() -> None:
+    """A positional proxy map must be replaced without a duplicate argument."""
+    pac = get_pac(
+        js=(
+            "function FindProxyForURL(url, host) { "
+            'return "PROXY proxy.example.com:8080"; }'
+        )
+    )
+    session = _NoProxyAwarePACSession(
+        pac=pac,
+        no_proxy="internal.example.com",
+    )
+
+    with patch.object(Session, "request", return_value=MagicMock()) as mock_request:
+        session.request("GET", "https://internal.example.com/api", {})
 
     assert mock_request.call_args.kwargs["proxies"] == {
         "http": None,
@@ -504,6 +569,21 @@ def test_load_pac_file_is_cached():
         assert first is pac
         assert second is pac
         assert mock_get_pac.call_count == 1
+        mock_get_pac.assert_called_once_with(
+            url="http://wpad/wpad.dat",
+            session=mock_get_pac.call_args.kwargs["session"],
+            timeout=10,
+            allowed_content_types=[
+                "application/x-ns-proxy-autoconfig",
+                "application/x-javascript-config",
+                "application/x-javascript",
+                "text/plain",
+            ],
+        )
+        bootstrap_session = mock_get_pac.call_args.kwargs["session"]
+        assert bootstrap_session.verify is True
+        assert bootstrap_session.cert is None
+        assert bootstrap_session.trust_env is False
     finally:
         _load_pac_file.cache_clear()
 
