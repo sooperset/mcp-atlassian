@@ -62,6 +62,12 @@ spec:
         - {{ .Values.config.enabledTools | quote }}
         {{- end }}
         env:
+        {{- if eq .Values.authMode "external" }}
+        - name: ATLASSIAN_EXTERNAL_AUTH_ENABLE
+          value: "true"
+        - name: IGNORE_HEADER_AUTH
+          value: "true"
+        {{- end }}
         # Confluence Configuration
         {{- if .Values.confluence.enabled }}
         - name: CONFLUENCE_URL
@@ -104,6 +110,13 @@ spec:
             secretKeyRef:
               name: {{ include "mcp-atlassian.fullname" . }}
               key: confluence-custom-headers
+        {{- end }}
+        {{- if .Values.confluence.passthroughHeaders }}
+        - name: CONFLUENCE_PASSTHROUGH_HEADERS
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-passthrough-headers
         {{- end }}
         {{- end }}
 
@@ -149,6 +162,13 @@ spec:
             secretKeyRef:
               name: {{ include "mcp-atlassian.fullname" . }}
               key: jira-custom-headers
+        {{- end }}
+        {{- if .Values.jira.passthroughHeaders }}
+        - name: JIRA_PASSTHROUGH_HEADERS
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: jira-passthrough-headers
         {{- end }}
         {{- end }}
 
@@ -239,6 +259,14 @@ spec:
         - name: SOCKS_PROXY
           value: {{ .Values.proxy.socks }}
         {{- end }}
+        {{- if .Values.proxy.wpad.enabled }}
+        - name: ATLASSIAN_PROXY_WPAD_ENABLE
+          value: "true"
+        {{- end }}
+        {{- if .Values.proxy.wpad.url }}
+        - name: ATLASSIAN_PROXY_WPAD_URL
+          value: {{ .Values.proxy.wpad.url | quote }}
+        {{- end }}
         {{- if .Values.proxy.confluence.http }}
         - name: CONFLUENCE_HTTP_PROXY
           value: {{ .Values.proxy.confluence.http }}
@@ -251,6 +279,14 @@ spec:
         - name: CONFLUENCE_NO_PROXY
           value: {{ .Values.proxy.confluence.noProxy }}
         {{- end }}
+        {{- if ne .Values.proxy.confluence.wpad.enabled nil }}
+        - name: CONFLUENCE_PROXY_WPAD_ENABLE
+          value: {{ ternary "true" "false" .Values.proxy.confluence.wpad.enabled | quote }}
+        {{- end }}
+        {{- if .Values.proxy.confluence.wpad.url }}
+        - name: CONFLUENCE_PROXY_WPAD_URL
+          value: {{ .Values.proxy.confluence.wpad.url | quote }}
+        {{- end }}
         {{- if .Values.proxy.jira.http }}
         - name: JIRA_HTTP_PROXY
           value: {{ .Values.proxy.jira.http }}
@@ -262,6 +298,14 @@ spec:
         {{- if .Values.proxy.jira.noProxy }}
         - name: JIRA_NO_PROXY
           value: {{ .Values.proxy.jira.noProxy }}
+        {{- end }}
+        {{- if ne .Values.proxy.jira.wpad.enabled nil }}
+        - name: JIRA_PROXY_WPAD_ENABLE
+          value: {{ ternary "true" "false" .Values.proxy.jira.wpad.enabled | quote }}
+        {{- end }}
+        {{- if .Values.proxy.jira.wpad.url }}
+        - name: JIRA_PROXY_WPAD_URL
+          value: {{ .Values.proxy.jira.wpad.url | quote }}
         {{- end }}
         {{- end }}
 

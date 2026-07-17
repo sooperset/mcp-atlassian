@@ -16,6 +16,7 @@ from ..utils.http import (
 )
 from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
 from ..utils.oauth import configure_oauth_session
+from ..utils.proxy import apply_proxy_configuration
 from ..utils.ssl import configure_ssl_verification
 from ..utils.ssrf_adapter import mount_ssrf_pinning
 from ..utils.urls import make_ssrf_redirect_hook
@@ -97,6 +98,35 @@ class ConfluenceClient:
                 verify_ssl=self.config.ssl_verify,
                 timeout=self.config.timeout,
             )
+        elif self.config.auth_type == "cert":
+            logger.debug(
+                f"Initializing Confluence client with mTLS certificate auth. "
+                f"URL: {self.config.url}, "
+                f"Cert configured: {bool(self.config.client_cert)}"
+            )
+            self.confluence = Confluence(
+                url=self.config.url,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
+            self.confluence._session.trust_env = False
+        elif self.config.auth_type == "external":
+            logger.debug(
+                f"Initializing Confluence client in external auth passthrough mode. "
+                f"URL: {self.config.url}"
+            )
+            session = Session()
+            session.trust_env = False
+            self.confluence = Confluence(
+                url=self.config.url,
+                session=session,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
+            # Ensure no Authorization header is carried over from defaults
+            self.confluence._session.headers.pop("Authorization", None)
         else:  # basic auth
             logger.debug(
                 f"Initializing Confluence client with Basic auth. "
@@ -156,20 +186,13 @@ class ConfluenceClient:
         configure_rate_limit(self.confluence._session, service="Confluence")
         configure_circuit_breaker(self.confluence._session, service="Confluence")
 
-        # Proxy configuration
-        proxies = {}
-        if self.config.http_proxy:
-            proxies["http"] = self.config.http_proxy
-        if self.config.https_proxy:
-            proxies["https"] = self.config.https_proxy
-        if self.config.socks_proxy:
-            proxies["socks"] = self.config.socks_proxy
-        if proxies:
-            self.confluence._session.proxies.update(proxies)
-            for k, v in proxies.items():
-                log_config_param(
-                    logger, "Confluence", f"{k.upper()}_PROXY", v, sensitive=True
-                )
+        self.confluence._session = apply_proxy_configuration(
+            logger=logger,
+            service_name="Confluence",
+            session=self.confluence._session,
+            config=self.config,
+            target_url=transport_url,
+        )
 
         # Set an explicit User-Agent so requests aren't blocked by WAFs that
         # reject the default ``python-requests/X.Y`` header. User-supplied
@@ -186,7 +209,7 @@ class ConfluenceClient:
         self.preprocessor = ConfluencePreprocessor(base_url=self.config.url)
 
         # Test authentication during initialization (in debug mode only)
-        if logger.isEnabledFor(logging.DEBUG):
+        if logger.isEnabledFor(logging.DEBUG) and self.config.auth_type != "external":
             try:
                 self._validate_authentication()
             except MCPAtlassianAuthenticationError:

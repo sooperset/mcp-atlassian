@@ -105,7 +105,8 @@ persistence:
   size: 1Gi
   # existingClaim: ""
 
-# Authentication Mode: "api-token", "personal-token", "oauth", or "byot" (bring your own token)
+# Authentication Mode: "api-token", "personal-token", "oauth", "byot"
+# (bring your own token), or "external" (trusted proxy header passthrough).
 authMode: "api-token"
 
 # Confluence Configuration
@@ -131,6 +132,9 @@ confluence:
   # Custom headers (comma-separated key=value pairs)
   customHeaders: ""
 
+  # Incoming MCP request header names to pass through (comma-separated)
+  passthroughHeaders: ""
+
 # Jira Configuration
 jira:
   enabled: true
@@ -153,6 +157,9 @@ jira:
 
   # Custom headers (comma-separated key=value pairs)
   customHeaders: ""
+
+  # Incoming MCP request header names to pass through (comma-separated)
+  passthroughHeaders: ""
 
 # OAuth 2.0 Configuration (Cloud only)
 # Required when authMode: oauth or byot
@@ -204,16 +211,25 @@ proxy:
   https: ""
   noProxy: "localhost,127.0.0.1"
   socks: ""
+  wpad:
+    enabled: false
+    url: ""
 
   # Service-specific proxy overrides
   confluence:
     http: ""
     https: ""
     noProxy: ""
+    wpad:
+      enabled: null # Set true/false to override the global WPAD toggle for Confluence
+      url: ""
   jira:
     http: ""
     https: ""
     noProxy: ""
+    wpad:
+      enabled: null # Set true/false to override the global WPAD toggle for Jira
+      url: ""
 
 # Server Configuration
 config:

@@ -2,26 +2,22 @@
 
 import logging
 import re
-import shutil
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 from md2conf.converter import (
-    ConfluenceConverterOptions,
+    ConfluencePageCollection,
     ConfluenceStorageFormatConverter,
+    ConfluenceUserCollection,
+    ConverterOptions,
     attachment_name,
+    elements_from_strings,
     elements_to_string,
     markdown_to_html,
 )
 from md2conf.metadata import ConfluenceSiteMetadata
-
-# Handle md2conf API changes: elements_from_string may be renamed to elements_from_strings
-try:
-    from md2conf.converter import elements_from_string
-except ImportError:
-    from md2conf.converter import elements_from_strings as elements_from_string
 
 from .base import BasePreprocessor
 
@@ -30,6 +26,11 @@ logger = logging.getLogger("mcp-atlassian")
 
 class ConfluencePreprocessor(BasePreprocessor):
     """Handles text preprocessing for Confluence content."""
+
+    # Use a private-use sequence that is absent from the converted HTML so
+    # restoring an opt-out task list cannot remove user-supplied characters.
+    _TASK_MARKER_PREFIX = "\ue000"
+    _TASK_MARKER_PATTERN = re.compile(r"(<li\b[^>]*>)(\[[ xX]\])")
 
     def __init__(self, base_url: str) -> None:
         """
@@ -80,18 +81,32 @@ class ConfluencePreprocessor(BasePreprocessor):
         """
         try:
             # First convert markdown to HTML
-            html_content = markdown_to_html(markdown_content)
+            html_content = self._fix_attachment_images(
+                markdown_to_html(markdown_content)
+            )
+            task_marker_prefix: str | None = None
+            if not apply_task_lists:
+                task_marker_prefix = self._get_task_list_marker_prefix(html_content)
+                html_content = self._protect_task_list_markers(
+                    html_content, task_marker_prefix
+                )
 
-            # Create a temporary directory for any potential attachments
-            temp_dir = tempfile.mkdtemp()
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root_dir = Path(temp_dir)
+                path = root_dir / "temp.md"
+                path.write_text(markdown_content, encoding="utf-8")
 
-            try:
                 # Parse the HTML into an element tree
-                root = elements_from_string(html_content)
+                root = elements_from_strings([html_content])
+
+                parsed_url = urlparse(self.base_url)
+                base_path = parsed_url.path or "/wiki/"
+                if not base_path.endswith("/"):
+                    base_path += "/"
 
                 # Create converter options
-                options = ConfluenceConverterOptions(
-                    ignore_invalid_url=True,
+                options = ConverterOptions(
+                    force_valid_url=False,
                     heading_anchors=enable_heading_anchors,
                     render_mermaid=False,
                 )
@@ -99,12 +114,15 @@ class ConfluencePreprocessor(BasePreprocessor):
                 # Create a converter
                 converter = ConfluenceStorageFormatConverter(
                     options=options,
-                    path=Path(temp_dir) / "temp.md",
-                    root_dir=Path(temp_dir),
+                    path=path,
+                    root_dir=root_dir,
                     site_metadata=ConfluenceSiteMetadata(
-                        domain="", base_path="", space_key=None
+                        domain=parsed_url.netloc,
+                        base_path=base_path,
+                        space_key=None,
                     ),
-                    page_metadata={},
+                    page_metadata=ConfluencePageCollection(),
+                    user_metadata=ConfluenceUserCollection(),
                 )
 
                 # Transform the HTML to Confluence storage format
@@ -114,6 +132,12 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = self._fix_attachment_images(
                     str(elements_to_string(root))
                 )
+                if task_marker_prefix is not None:
+                    storage_format = self._restore_task_list_markers(
+                        storage_format, task_marker_prefix
+                    )
+                if apply_task_lists:
+                    storage_format = self._normalize_task_list_bodies(storage_format)
 
                 if apply_task_lists:
                     storage_format = self._apply_task_lists(storage_format)
@@ -122,9 +146,6 @@ class ConfluencePreprocessor(BasePreprocessor):
                         storage_format, table_layout
                     )
                 return storage_format
-            finally:
-                # Clean up the temporary directory
-                shutil.rmtree(temp_dir, ignore_errors=True)
 
         except Exception as e:
             logger.error(f"Error converting markdown to Confluence storage format: {e}")
@@ -141,6 +162,29 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = self._apply_table_layout(storage_format, table_layout)
 
             return storage_format
+
+    @classmethod
+    def _get_task_list_marker_prefix(cls, html_content: str) -> str:
+        """Return a private-use marker sequence absent from the HTML."""
+        marker_prefix = cls._TASK_MARKER_PREFIX
+        while marker_prefix in html_content:
+            marker_prefix += cls._TASK_MARKER_PREFIX
+        return marker_prefix
+
+    @classmethod
+    def _protect_task_list_markers(cls, html_content: str, marker_prefix: str) -> str:
+        """Prevent md2conf from converting task lists when requested."""
+        return cls._TASK_MARKER_PATTERN.sub(rf"\1{marker_prefix}\2", html_content)
+
+    @classmethod
+    def _restore_task_list_markers(cls, storage_html: str, marker_prefix: str) -> str:
+        """Remove task-list conversion sentinels from converted HTML."""
+        return storage_html.replace(marker_prefix, "")
+
+    @staticmethod
+    def _normalize_task_list_bodies(storage_html: str) -> str:
+        """Match legacy task-body whitespace after md2conf 0.6 conversion."""
+        return re.sub(r"(<ac:task-body>)[ \t]+", r"\1", storage_html)
 
     @classmethod
     def _apply_task_lists(cls, storage_html: str) -> str:

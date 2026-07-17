@@ -4,7 +4,6 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import requests
 from requests.exceptions import HTTPError
 from unidecode import unidecode
 
@@ -297,20 +296,10 @@ class UsersMixin(JiraClient):
             url = f"{self.config.url}/rest/api/2/user/permission/search"
             params = {"query": username, "permissions": "BROWSE"}
 
-            auth = None
-            headers = {}
-            if self.config.auth_type == "pat":
-                headers["Authorization"] = f"Bearer {self.config.personal_token}"
-            else:
-                auth = (self.config.username or "", self.config.api_token or "")
-
-            response = requests.get(
-                url,
-                params=params,
-                auth=auth,
-                headers=headers,
-                verify=self.config.ssl_verify,
-            )
+            # Use the configured Jira session so that cert, proxy, and all
+            # other session-level settings (mTLS, custom headers, SSL adapters)
+            # are applied consistently regardless of auth type.
+            response = self.jira._session.get(url, params=params)
 
             if response.status_code == 200:
                 data = response.json()

@@ -500,7 +500,52 @@ def test_confluence_fetcher_mro_order():
     assert hasattr(ConfluenceFetcher, "get_content_attachments")
 
 
-def test_confluence_client_sets_default_user_agent():
+# ---------------------------------------------------------------------------
+# mTLS client certificate auth tests
+# ---------------------------------------------------------------------------
+
+
+def test_init_cert_auth() -> None:
+    """Test that cert auth initializes without credentials and disables trust_env."""
+    config = ConfluenceConfig(
+        url="https://confluence.example.com",
+        auth_type="cert",
+        client_cert="/path/to/cert.pem",
+    )
+
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch(
+            "mcp_atlassian.confluence.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
+    ):
+        mock_session = MagicMock()
+        mock_session.headers = {}
+        mock_confluence.return_value._session = mock_session
+
+        ConfluenceClient(config=config)
+
+        mock_confluence.assert_called_once_with(
+            url="https://confluence.example.com",
+            cloud=False,
+            verify_ssl=True,
+            timeout=75,
+        )
+        assert mock_session.trust_env is False
+        mock_configure_ssl.assert_called_once_with(
+            service_name="Confluence",
+            url="https://confluence.example.com",
+            session=mock_session,
+            ssl_verify=True,
+            client_cert="/path/to/cert.pem",
+            client_key=None,
+            client_key_password=None,
+            no_proxy=None,
+        )
+
+
+def test_confluence_client_sets_default_user_agent() -> None:
     """An explicit User-Agent is set so WAFs don't block the requests default."""
     with (
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,

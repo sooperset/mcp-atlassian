@@ -541,6 +541,33 @@ class TestMarkdownToAdf:
         ]
         assert mention_ids == [a, b]
 
+    @pytest.mark.parametrize(
+        ("issue_key", "should_link"),
+        [
+            ("PROJ-123", True),
+            ("B7-214-68901", True),
+            ("B7-214--68901", False),
+            ("B7-214-68901A", False),
+        ],
+    )
+    def test_jira_issue_key_links_to_browse_url(
+        self, issue_key: str, should_link: bool
+    ) -> None:
+        """Valid Jira issue keys become links without matching malformed keys."""
+        result = markdown_to_adf(
+            f"Blocked by {issue_key}.",
+            jira_base_url="https://jira.example.com/",
+        )
+        para = result["content"][0]
+        issue_node = next(n for n in para["content"] if issue_key in n.get("text", ""))
+        link_marks = [m for m in issue_node.get("marks", []) if m["type"] == "link"]
+        if should_link:
+            assert link_marks[0]["attrs"]["href"] == (
+                f"https://jira.example.com/browse/{issue_key}"
+            )
+        else:
+            assert not link_marks
+
     # -- Code blocks --------------------------------------------------------
 
     def test_code_block_with_lang(self):
