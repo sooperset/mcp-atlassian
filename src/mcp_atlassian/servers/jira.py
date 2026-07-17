@@ -2026,6 +2026,25 @@ async def update_issue(
             default=None,
         ),
     ] = None,
+    return_fields: Annotated[
+        str,
+        Field(
+            description=(
+                "(Optional) Controls which fields of the updated issue are returned, "
+                "to reduce response size and token usage. Defaults to '*all' (the "
+                "complete issue, which can be very large). "
+                "TOKEN-SAVING TIP: after an update you usually do NOT need the whole "
+                "issue back. Pass a comma-separated list of just the field(s) you care "
+                "about (e.g., 'summary,duedate'), or a single light field such as "
+                "'status' for a minimal confirmation - this can cut the response by "
+                "thousands of tokens. The issue 'key' is always returned regardless. "
+                "If you later need other fields, fetch them on demand with "
+                "jira_get_issue (which also supports field filtering). "
+                "Use '*all' only when you genuinely need the full updated issue."
+            ),
+            default="*all",
+        ),
+    ] = "*all",
 ) -> str:
     """Update an existing Jira issue including changing status, adding Epic links, updating fields, etc.
 
@@ -2036,6 +2055,7 @@ async def update_issue(
         additional_fields: Optional JSON string of additional fields.
         components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
+        return_fields: Fields to include in the returned issue. Comma-separated list to trim the response and save tokens, or '*all' (default) for the full issue.
 
     Returns:
         JSON string representing the updated issue object and attachment results.
@@ -2045,6 +2065,10 @@ async def update_issue(
     """
     jira = await get_jira_fetcher(ctx)
     update_fields = _parse_additional_fields(fields)
+
+    return_fields_list: str | list[str] | None = return_fields
+    if return_fields and return_fields != "*all":
+        return_fields_list = [f.strip() for f in return_fields.split(",")]
 
     # Parse components from comma-separated string to list
     components_list = None
@@ -2083,7 +2107,9 @@ async def update_issue(
         all_updates["attachments"] = attachment_paths
 
     try:
-        issue = jira.update_issue(issue_key=issue_key, **all_updates)
+        issue = jira.update_issue(
+            issue_key=issue_key, return_fields=return_fields_list, **all_updates
+        )
         result = issue.to_simplified_dict()
         if (
             hasattr(issue, "custom_fields")

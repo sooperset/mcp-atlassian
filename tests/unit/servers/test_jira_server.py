@@ -2459,6 +2459,50 @@ async def test_update_issue_components_with_additional_fields(
     assert call_kwargs["labels"] == ["urgent"]
 
 
+@pytest.mark.anyio
+async def test_update_issue_passes_return_fields(jira_client, mock_jira_fetcher):
+    """return_fields CSV is parsed to a list and forwarded to update_issue."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary": "Updated"}',
+            "return_fields": "summary,duedate",
+        },
+    )
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["return_fields"] == ["summary", "duedate"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_return_fields_all(jira_client, mock_jira_fetcher):
+    """return_fields='*all' is forwarded verbatim (not split into a list)."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary": "Updated"}',
+            "return_fields": "*all",
+        },
+    )
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["return_fields"] == "*all"
+
+
+@pytest.mark.anyio
+async def test_update_issue_default_return_fields(jira_client, mock_jira_fetcher):
+    """Omitting return_fields defaults to '*all' (backward-compatible full issue)."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary": "Updated"}',
+        },
+    )
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["return_fields"] == "*all"
+
+
 # --- Tests for download_attachments 50 MB size limit ---
 
 
