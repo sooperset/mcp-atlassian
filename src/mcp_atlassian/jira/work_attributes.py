@@ -19,22 +19,27 @@ class WorkAttributeMixin(JiraClient):
     with the Tempo Timesheets plugin installed.
     """
 
-    def get_work_attributes(self) -> list[JiraWorkAttribute]:
-        """
-        Get all Tempo Work Attribute types.
+    def _ensure_server_mode(self) -> None:
+        """Ensure Tempo Core endpoints are used only on Jira Server/DC."""
+        if self.config.is_cloud:
+            raise NotImplementedError(
+                "Tempo Core Work Attribute endpoints are only available on "
+                "Jira Server/Data Center."
+            )
 
-        Returns a list of all configured work attribute types.
-        Each attribute defines a category that can be assigned to
-        worklog entries (e.g., "Work Mode", "Cost Category").
+    def get_work_attributes(self) -> list[JiraWorkAttribute]:
+        """Get all Tempo Core work attribute definitions.
 
         Returns:
-            List of JiraWorkAttribute models
+            Configured work attributes, or an empty list when the Tempo API
+            returns an unusable response.
 
         Raises:
-            Exception: If there's an error fetching work attributes
+            NotImplementedError: If connected to Jira Cloud.
         """
+        self._ensure_server_mode()
         try:
-            url = "/rest/tempo-core/1/work-attribute"
+            url = "rest/tempo-core/1/work-attribute"
             result = self.jira.get(url)  # type: ignore[attr-defined]
 
             if not isinstance(result, list):
@@ -44,7 +49,11 @@ class WorkAttributeMixin(JiraClient):
                 )
                 return []
 
-            return [JiraWorkAttribute.from_api_response(attr) for attr in result]
+            return [
+                JiraWorkAttribute.from_api_response(attr)
+                for attr in result
+                if isinstance(attr, dict)
+            ]
         except Exception as e:
             logger.warning("Error fetching work attributes: %s", str(e))
             return []
@@ -63,10 +72,15 @@ class WorkAttributeMixin(JiraClient):
             List of JiraWorkAttributeValue models
 
         Raises:
-            Exception: If there's an error fetching attribute values
+            ValueError: If attribute_id is not greater than zero.
+            NotImplementedError: If connected to Jira Cloud.
         """
+        if attribute_id <= 0:
+            raise ValueError("attribute_id must be greater than zero")
+
+        self._ensure_server_mode()
         try:
-            url = f"/rest/tempo-core/1/work-attribute/{attribute_id}/values"
+            url = f"rest/tempo-core/1/work-attribute/{attribute_id}/static-list-value"
             result = self.jira.get(url)  # type: ignore[attr-defined]
 
             if not isinstance(result, list):
@@ -76,7 +90,11 @@ class WorkAttributeMixin(JiraClient):
                 )
                 return []
 
-            return [JiraWorkAttributeValue.from_api_response(value) for value in result]
+            return [
+                JiraWorkAttributeValue.from_api_response(value)
+                for value in result
+                if isinstance(value, dict)
+            ]
         except Exception as e:
             logger.warning(
                 "Error fetching work attribute values for id=%s: %s",

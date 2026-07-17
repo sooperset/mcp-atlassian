@@ -1,149 +1,156 @@
-"""
-Jira work attribute models.
-
-This module provides Pydantic models for Tempo Core Work Attributes
-used in Jira Time Tracking. Work attributes allow teams to categorize
-and tag worklog entries with custom attributes like "Work Mode",
-"Cost Category", etc.
-
-See https://apidocs.tempo.io for Tempo Core API documentation.
-"""
+"""Jira work attribute models."""
 
 from typing import Any
 
-from ..base import ApiModel, TimestampMixin
+from ..base import ApiModel
 from ..constants import EMPTY_STRING
 
 
-class JiraWorkAttribute(ApiModel, TimestampMixin):
-    """
-    Model representing a Tempo Core Work Attribute type.
+def _as_int(value: Any) -> int:
+    """Convert an API value to an integer, defaulting invalid values to zero."""
+    try:
+        return int(value) if value is not None else 0
+    except (TypeError, ValueError):
+        return 0
 
-    Work attributes define the available categories/fields that can be
-    assigned to worklog entries. Examples include "Work Mode" (Office/Remote),
-    "Cost Category" (Billable/Non-Billable), etc.
 
-    Attributes:
-        id: Unique identifier for the work attribute
-        name: Human-readable name of the attribute
-        type: The attribute type (e.g., 'singleselect', 'multiselect', 'text')
-        description: Optional description of the attribute
-        is_required: Whether this attribute must be provided when adding a worklog
-    """
+def _as_bool(value: Any) -> bool:
+    """Convert the API's boolean representations to a Python boolean."""
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes"}
+    return bool(value)
 
-    id: int = 0
+
+class JiraWorkAttributeType(ApiModel):
+    """A Tempo work attribute type."""
+
     name: str = EMPTY_STRING
-    type: str = EMPTY_STRING
-    description: str = EMPTY_STRING
-    is_required: bool = False
+    value: str = EMPTY_STRING
+    system_type: bool = False
 
     @classmethod
     def from_api_response(
         cls, data: dict[str, Any], **kwargs: Any
-    ) -> "JiraWorkAttribute":
-        """
-        Create a JiraWorkAttribute from a Tempo Core API response.
-
-        Args:
-            data: The work attribute data from the Tempo Core API
-            **kwargs: Additional context parameters (unused)
-
-        Returns:
-            A JiraWorkAttribute instance
-        """
-        if not data:
-            return cls()
-
+    ) -> "JiraWorkAttributeType":
+        """Create a work attribute type from a Tempo API response."""
         if not isinstance(data, dict):
             return cls()
 
-        attribute_id = data.get("id", 0)
-        if attribute_id is not None:
-            attribute_id = int(attribute_id)
-
-        is_required = data.get("isRequired", False)
-        if isinstance(is_required, str):
-            is_required = is_required.lower() in ("true", "1", "yes")
-
         return cls(
-            id=attribute_id,
-            name=data.get("name", EMPTY_STRING),
-            type=data.get("type", EMPTY_STRING),
-            description=data.get("description", EMPTY_STRING),
-            is_required=is_required,
+            name=str(data.get("name", EMPTY_STRING)),
+            value=str(data.get("value", EMPTY_STRING)),
+            system_type=_as_bool(data.get("systemType", False)),
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
-        """Convert to simplified dictionary for API response."""
+        """Convert the type to a simplified response dictionary."""
         return {
-            "id": self.id,
             "name": self.name,
-            "type": self.type,
-            "description": self.description,
-            "is_required": self.is_required,
+            "value": self.value,
+            "system_type": self.system_type,
         }
 
 
 class JiraWorkAttributeValue(ApiModel):
-    """
-    Model representing a value for a Tempo Core Work Attribute.
-
-    Each work attribute type has associated values. For example, a
-    "singleselect" attribute might have values like "Office", "Remote",
-    "On-site", etc.
-
-    Attributes:
-        id: Unique identifier for the value
-        name: Human-readable name of the value
-        color: Optional color code for UI display
-        work_attribute_id: ID of the parent work attribute this value belongs to
-    """
+    """A static-list value for a Tempo work attribute."""
 
     id: int = 0
     name: str = EMPTY_STRING
-    color: str = EMPTY_STRING
+    value: str = EMPTY_STRING
+    removed: bool = False
+    sequence: int = 0
     work_attribute_id: int = 0
 
     @classmethod
     def from_api_response(
         cls, data: dict[str, Any], **kwargs: Any
     ) -> "JiraWorkAttributeValue":
-        """
-        Create a JiraWorkAttributeValue from a Tempo Core API response.
-
-        Args:
-            data: The work attribute value data from the Tempo Core API
-            **kwargs: Additional context parameters (unused)
-
-        Returns:
-            A JiraWorkAttributeValue instance
-        """
-        if not data:
-            return cls()
-
+        """Create a static-list value from a Tempo API response."""
         if not isinstance(data, dict):
             return cls()
 
-        value_id = data.get("id", 0)
-        if value_id is not None:
-            value_id = int(value_id)
-
-        work_attribute_id = data.get("workAttributeId", 0)
-        if work_attribute_id is not None:
-            work_attribute_id = int(work_attribute_id)
-
+        value = data.get("value", EMPTY_STRING)
         return cls(
-            id=value_id,
-            name=data.get("name", EMPTY_STRING),
-            color=data.get("color", EMPTY_STRING),
-            work_attribute_id=work_attribute_id,
+            id=_as_int(data.get("id")),
+            name=str(data.get("name", value)),
+            value=str(value),
+            removed=_as_bool(data.get("removed", False)),
+            sequence=_as_int(data.get("sequence")),
+            work_attribute_id=_as_int(data.get("workAttributeId")),
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
-        """Convert to simplified dictionary for API response."""
+        """Convert the value to a simplified response dictionary."""
         return {
             "id": self.id,
             "name": self.name,
-            "color": self.color,
+            "value": self.value,
+            "removed": self.removed,
+            "sequence": self.sequence,
             "work_attribute_id": self.work_attribute_id,
+        }
+
+
+class JiraWorkAttribute(ApiModel):
+    """A Tempo work attribute definition."""
+
+    id: int = 0
+    key: str = EMPTY_STRING
+    name: str = EMPTY_STRING
+    type: JiraWorkAttributeType | None = None
+    external_url: str = EMPTY_STRING
+    required: bool = False
+    sequence: int = 0
+    static_list_values: list[JiraWorkAttributeValue] = []
+
+    @classmethod
+    def from_api_response(
+        cls, data: dict[str, Any], **kwargs: Any
+    ) -> "JiraWorkAttribute":
+        """Create a work attribute from a Tempo API response."""
+        if not isinstance(data, dict):
+            return cls()
+
+        type_data = data.get("type")
+        attribute_type: JiraWorkAttributeType | None = None
+        if isinstance(type_data, dict):
+            attribute_type = JiraWorkAttributeType.from_api_response(type_data)
+        elif type_data is not None:
+            attribute_type = JiraWorkAttributeType(value=str(type_data))
+
+        values = data.get("staticListValues", [])
+        static_list_values = (
+            [
+                JiraWorkAttributeValue.from_api_response(value)
+                for value in values
+                if isinstance(value, dict)
+            ]
+            if isinstance(values, list)
+            else []
+        )
+
+        return cls(
+            id=_as_int(data.get("id")),
+            key=str(data.get("key", EMPTY_STRING)),
+            name=str(data.get("name", EMPTY_STRING)),
+            type=attribute_type,
+            external_url=str(data.get("externalUrl", EMPTY_STRING)),
+            required=_as_bool(data.get("required", data.get("isRequired", False))),
+            sequence=_as_int(data.get("sequence")),
+            static_list_values=static_list_values,
+        )
+
+    def to_simplified_dict(self) -> dict[str, Any]:
+        """Convert the work attribute to a simplified response dictionary."""
+        return {
+            "id": self.id,
+            "key": self.key,
+            "name": self.name,
+            "type": self.type.to_simplified_dict() if self.type else None,
+            "external_url": self.external_url,
+            "required": self.required,
+            "sequence": self.sequence,
+            "static_list_values": [
+                value.to_simplified_dict() for value in self.static_list_values
+            ],
         }

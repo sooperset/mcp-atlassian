@@ -1,324 +1,278 @@
-"""Unit tests for Tempo Core Work Attributes functionality."""
+"""Unit tests for Tempo Core work attribute support."""
 
 from unittest.mock import MagicMock
 
 import pytest
 
 from mcp_atlassian.jira.work_attributes import WorkAttributeMixin
-from mcp_atlassian.models.jira import JiraWorkAttribute, JiraWorkAttributeValue
+from mcp_atlassian.jira.worklog import WorklogMixin
+from mcp_atlassian.models.jira import (
+    JiraWorkAttribute,
+    JiraWorkAttributeType,
+    JiraWorkAttributeValue,
+)
 from mcp_atlassian.models.jira.worklog import JiraWorklog
 
 
 class TestJiraWorkAttribute:
-    """Tests for JiraWorkAttribute model."""
+    """Tests for Tempo work attribute models."""
 
-    def test_from_api_response_valid(self):
-        """Test creating a JiraWorkAttribute from valid API response."""
-        data = {
-            "id": 45,
-            "name": "Work Mode",
-            "type": "singleselect",
-            "description": "Where the work was performed",
-            "isRequired": False,
-        }
-        attr = JiraWorkAttribute.from_api_response(data)
+    def test_from_api_response(self):
+        """Parse the nested type and static-list values from Tempo."""
+        attribute = JiraWorkAttribute.from_api_response(
+            {
+                "id": 45,
+                "key": "_WorkMode_",
+                "name": "Work Mode",
+                "type": {
+                    "name": "STATIC_LIST",
+                    "value": "STATIC_LIST",
+                    "systemType": False,
+                },
+                "externalUrl": "",
+                "required": False,
+                "sequence": 1,
+                "staticListValues": [
+                    {
+                        "id": 123,
+                        "name": "Office",
+                        "value": "office",
+                        "removed": False,
+                        "sequence": 1,
+                        "workAttributeId": 45,
+                    }
+                ],
+            }
+        )
 
-        assert attr.id == 45
-        assert attr.name == "Work Mode"
-        assert attr.type == "singleselect"
-        assert attr.description == "Where the work was performed"
-        assert attr.is_required is False
-
-    def test_from_api_response_required(self):
-        """Test parsing isRequired as string."""
-        data = {
-            "id": 46,
-            "name": "Cost Category",
-            "type": "multiselect",
-            "isRequired": "true",
-        }
-        attr = JiraWorkAttribute.from_api_response(data)
-
-        assert attr.is_required is True
-
-    def test_from_api_response_empty(self):
-        """Test creating empty JiraWorkAttribute."""
-        attr = JiraWorkAttribute.from_api_response(None)
-        assert attr.id == 0
-        assert attr.name == ""
-
-    def test_from_api_response_non_dict(self):
-        """Test handling non-dict input."""
-        attr = JiraWorkAttribute.from_api_response("invalid")
-        assert attr.id == 0
+        assert attribute.id == 45
+        assert attribute.key == "_WorkMode_"
+        assert attribute.type == JiraWorkAttributeType(
+            name="STATIC_LIST", value="STATIC_LIST", system_type=False
+        )
+        assert attribute.static_list_values[0] == JiraWorkAttributeValue(
+            id=123,
+            name="Office",
+            value="office",
+            removed=False,
+            sequence=1,
+            work_attribute_id=45,
+        )
 
     def test_to_simplified_dict(self):
-        """Test converting to simplified dictionary."""
-        attr = JiraWorkAttribute(
+        """Serialize an attribute using the repository's response names."""
+        attribute = JiraWorkAttribute(
             id=45,
+            key="_WorkMode_",
             name="Work Mode",
-            type="singleselect",
-            description="Where the work was performed",
-            is_required=False,
+            type=JiraWorkAttributeType(
+                name="STATIC_LIST", value="STATIC_LIST", system_type=False
+            ),
+            required=False,
         )
-        result = attr.to_simplified_dict()
 
-        assert result == {
+        assert attribute.to_simplified_dict() == {
             "id": 45,
+            "key": "_WorkMode_",
             "name": "Work Mode",
-            "type": "singleselect",
-            "description": "Where the work was performed",
-            "is_required": False,
+            "type": {
+                "name": "STATIC_LIST",
+                "value": "STATIC_LIST",
+                "system_type": False,
+            },
+            "external_url": "",
+            "required": False,
+            "sequence": 0,
+            "static_list_values": [],
         }
+
+    @pytest.mark.parametrize("data", [None, "invalid"])
+    def test_from_api_response_invalid(self, data):
+        """Return an empty model for malformed response items."""
+        attribute = JiraWorkAttribute.from_api_response(data)
+
+        assert attribute == JiraWorkAttribute()
 
 
 class TestJiraWorkAttributeValue:
-    """Tests for JiraWorkAttributeValue model."""
+    """Tests for static-list values."""
 
-    def test_from_api_response_valid(self):
-        """Test creating a JiraWorkAttributeValue from valid API response."""
-        data = {
-            "id": 123,
-            "name": "Office",
-            "color": "#36B37E",
-            "workAttributeId": 45,
-        }
-        value = JiraWorkAttributeValue.from_api_response(data)
-
-        assert value.id == 123
-        assert value.name == "Office"
-        assert value.color == "#36B37E"
-        assert value.work_attribute_id == 45
-
-    def test_from_api_response_empty(self):
-        """Test creating empty JiraWorkAttributeValue."""
-        value = JiraWorkAttributeValue.from_api_response(None)
-        assert value.id == 0
-        assert value.name == ""
-
-    def test_from_api_response_non_dict(self):
-        """Test handling non-dict input."""
-        value = JiraWorkAttributeValue.from_api_response("invalid")
-        assert value.id == 0
-
-    def test_to_simplified_dict(self):
-        """Test converting to simplified dictionary."""
-        value = JiraWorkAttributeValue(
-            id=123,
-            name="Office",
-            color="#36B37E",
-            work_attribute_id=45,
+    def test_from_api_response(self):
+        """Parse the static-list value response shape."""
+        value = JiraWorkAttributeValue.from_api_response(
+            {
+                "id": 123,
+                "name": "Office",
+                "value": "office",
+                "removed": False,
+                "sequence": 1,
+                "workAttributeId": 45,
+            }
         )
-        result = value.to_simplified_dict()
 
-        assert result == {
+        assert value.to_simplified_dict() == {
             "id": 123,
             "name": "Office",
-            "color": "#36B37E",
+            "value": "office",
+            "removed": False,
+            "sequence": 1,
             "work_attribute_id": 45,
         }
 
 
 class TestJiraWorklogWithAttributes:
-    """Tests for JiraWorklog with worklog attributes support."""
+    """Tests for attributes returned on Jira worklogs."""
 
     def test_from_api_response_with_attributes(self):
-        """Test parsing worklog with attributes."""
-        data = {
-            "id": "10001",
-            "author": {
-                "displayName": "John Doe",
-                "emailAddress": "john@example.com",
-            },
-            "comment": "Fixed the bug",
-            "created": "2024-01-15T10:00:00.000+0000",
-            "updated": "2024-01-15T10:00:00.000+0000",
-            "started": "2024-01-15T09:00:00.000+0000",
-            "timeSpent": "2 hours",
-            "timeSpentSeconds": 7200,
-            "attributes": {"45": "123"},
-        }
-        worklog = JiraWorklog.from_api_response(data)
+        """Preserve Tempo's worklog attributes map."""
+        worklog = JiraWorklog.from_api_response(
+            {
+                "id": "10001",
+                "timeSpent": "2 hours",
+                "timeSpentSeconds": 7200,
+                "attributes": {
+                    "_WorkMode_": {"value": "office"},
+                },
+            }
+        )
 
-        assert worklog.attributes is not None
-        assert worklog.attributes == {"45": "123"}
-        assert "attributes" in worklog.to_simplified_dict()
+        assert worklog.attributes == {
+            "_WorkMode_": {"value": "office"},
+        }
+        assert worklog.to_simplified_dict()["attributes"] == worklog.attributes
 
     def test_from_api_response_without_attributes(self):
-        """Test parsing worklog without attributes."""
-        data = {
-            "id": "10002",
-            "author": {
-                "displayName": "Jane Doe",
-                "emailAddress": "jane@example.com",
-            },
-            "comment": "Working on feature",
-            "timeSpent": "1 day",
-            "timeSpentSeconds": 28800,
-        }
-        worklog = JiraWorklog.from_api_response(data)
+        """Keep attributes optional for ordinary Jira worklogs."""
+        worklog = JiraWorklog.from_api_response(
+            {
+                "id": "10002",
+                "timeSpent": "1 day",
+                "timeSpentSeconds": 28800,
+            }
+        )
 
         assert worklog.attributes is None
 
 
 class TestWorkAttributeMixin:
-    """Tests for WorkAttributeMixin."""
+    """Tests for Tempo Core REST calls."""
 
-    @pytest.fixture
-    def mixin(self):
-        """Create a WorkAttributeMixin with mocked Jira client."""
-        mock_config = MagicMock()
-        mock_config.is_cloud = False
-
-        mock_jira = MagicMock()
-        mock_jira.get = MagicMock()
-
-        mixin = MagicMock(spec=WorkAttributeMixin)
-        mixin.config = mock_config
-        mixin.jira = mock_jira
-
+    @staticmethod
+    def _mixin(*, is_cloud: bool = False) -> WorkAttributeMixin:
+        """Create a mixin with a mocked Jira client."""
+        mixin = WorkAttributeMixin.__new__(WorkAttributeMixin)
+        mixin.config = MagicMock(is_cloud=is_cloud)
+        mixin.jira = MagicMock()
         return mixin
 
-    def test_get_work_attributes_success(self, mixin):
-        """Test successful retrieval of work attributes."""
-        # Mock the API response
+    def test_get_work_attributes_success(self):
+        """Fetch work attributes from the documented Tempo endpoint."""
+        mixin = self._mixin()
         mixin.jira.get.return_value = [
-            {"id": 45, "name": "Work Mode", "type": "singleselect"},
-            {"id": 46, "name": "Cost Category", "type": "multiselect"},
+            {"id": 45, "key": "_WorkMode_", "name": "Work Mode"}
         ]
 
-        # Call the actual method on the real mixin class
-        # We need to properly set up the mixin
-        from mcp_atlassian.jira.work_attributes import WorkAttributeMixin
+        result = mixin.get_work_attributes()
 
-        # Create a partial instance for testing
-        class TestMixin(WorkAttributeMixin):
-            def __init__(self):
-                self.config = MagicMock()
-                self.config.is_cloud = False
-                self.jira = MagicMock()
-
-        test_mixin = TestMixin()
-        test_mixin.jira.get.return_value = [
-            {"id": 45, "name": "Work Mode", "type": "singleselect"},
-        ]
-
-        result = test_mixin.get_work_attributes()
-
-        assert len(result) == 1
-        assert isinstance(result[0], JiraWorkAttribute)
+        mixin.jira.get.assert_called_once_with("rest/tempo-core/1/work-attribute")
         assert result[0].id == 45
-        assert result[0].name == "Work Mode"
+        assert result[0].key == "_WorkMode_"
 
-    def test_get_work_attributes_empty(self, mixin):
-        """Test handling empty work attributes response."""
-        from mcp_atlassian.jira.work_attributes import WorkAttributeMixin
-
-        class TestMixin(WorkAttributeMixin):
-            def __init__(self):
-                self.config = MagicMock()
-                self.config.is_cloud = False
-                self.jira = MagicMock()
-
-        test_mixin = TestMixin()
-        test_mixin.jira.get.return_value = []
-
-        result = test_mixin.get_work_attributes()
-
-        assert result == []
-
-    def test_get_work_attributes_invalid_response(self, mixin):
-        """Test handling invalid response type."""
-        from mcp_atlassian.jira.work_attributes import WorkAttributeMixin
-
-        class TestMixin(WorkAttributeMixin):
-            def __init__(self):
-                self.config = MagicMock()
-                self.config.is_cloud = False
-                self.jira = MagicMock()
-
-        test_mixin = TestMixin()
-        test_mixin.jira.get.return_value = "invalid"
-
-        result = test_mixin.get_work_attributes()
-
-        assert result == []
-
-    def test_get_work_attribute_values_success(self, mixin):
-        """Test successful retrieval of work attribute values."""
-        from mcp_atlassian.jira.work_attributes import WorkAttributeMixin
-
-        class TestMixin(WorkAttributeMixin):
-            def __init__(self):
-                self.config = MagicMock()
-                self.config.is_cloud = False
-                self.jira = MagicMock()
-
-        test_mixin = TestMixin()
-        test_mixin.jira.get.return_value = [
-            {"id": 123, "name": "Office", "color": "#36B37E", "workAttributeId": 45},
-            {"id": 124, "name": "Remote", "color": "#579DFF", "workAttributeId": 45},
+    def test_get_work_attribute_values_success(self):
+        """Fetch static-list values from the documented Tempo endpoint."""
+        mixin = self._mixin()
+        mixin.jira.get.return_value = [
+            {
+                "id": 123,
+                "name": "Office",
+                "value": "office",
+                "workAttributeId": 45,
+            }
         ]
 
-        result = test_mixin.get_work_attribute_values(attribute_id=45)
+        result = mixin.get_work_attribute_values(attribute_id=45)
 
-        assert len(result) == 2
-        assert isinstance(result[0], JiraWorkAttributeValue)
-        assert result[0].id == 123
-        assert result[0].name == "Office"
-        assert result[1].name == "Remote"
+        mixin.jira.get.assert_called_once_with(
+            "rest/tempo-core/1/work-attribute/45/static-list-value"
+        )
+        assert result[0].value == "office"
 
-    def test_get_work_attribute_values_empty(self, mixin):
-        """Test handling empty attribute values response."""
-        from mcp_atlassian.jira.work_attributes import WorkAttributeMixin
+    @pytest.mark.parametrize("method_name", ["get_work_attributes"])
+    def test_cloud_endpoints_are_rejected(self, method_name):
+        """Tempo Core work attribute endpoints must not run on Cloud."""
+        mixin = self._mixin(is_cloud=True)
 
-        class TestMixin(WorkAttributeMixin):
-            def __init__(self):
-                self.config = MagicMock()
-                self.config.is_cloud = False
-                self.jira = MagicMock()
+        with pytest.raises(NotImplementedError):
+            getattr(mixin, method_name)()
 
-        test_mixin = TestMixin()
-        test_mixin.jira.get.return_value = []
+        mixin.jira.get.assert_not_called()
 
-        result = test_mixin.get_work_attribute_values(attribute_id=45)
+    def test_invalid_attribute_id_is_rejected(self):
+        """Reject invalid path parameters before making a request."""
+        mixin = self._mixin()
 
-        assert result == []
+        with pytest.raises(ValueError, match="greater than zero"):
+            mixin.get_work_attribute_values(attribute_id=0)
+
+        mixin.jira.get.assert_not_called()
 
 
 class TestAddWorklogWithAttributes:
-    """Tests for add_worklog with worklog_attributes parameter."""
+    """Tests for creating Tempo worklogs with attributes."""
 
-    def test_add_worklog_data_with_attributes(self):
-        """Test that worklog_data includes worklogAttributes when provided."""
-        from mcp_atlassian.jira.worklog import WorklogMixin
+    @staticmethod
+    def _mixin(*, is_cloud: bool = False) -> WorklogMixin:
+        """Create a worklog mixin with a mocked Jira client."""
+        mixin = WorklogMixin.__new__(WorklogMixin)
+        mixin.config = MagicMock(is_cloud=is_cloud)
+        mixin.jira = MagicMock()
+        return mixin
 
-        class TestMixin(WorklogMixin):
-            def __init__(self):
-                self.config = MagicMock()
-                self.config.is_cloud = False
-                self.jira = MagicMock()
+    def test_add_worklog_uses_tempo_endpoint(self):
+        """Send attributes using Tempo's payload and endpoint contract."""
+        mixin = self._mixin()
+        mixin.jira.post.return_value = [
+            {
+                "tempoWorklogId": 10001,
+                "jiraWorklogId": 20001,
+                "timeSpent": "2 hours",
+                "timeSpentSeconds": 7200,
+                "dateCreated": "2024-01-15T10:00:00.000+0000",
+                "dateUpdated": "2024-01-15T10:00:00.000+0000",
+                "startDate": "2024-01-15T09:00:00.000+0000",
+                "workerKey": "jdoe",
+                "attributes": {"_WorkMode_": {"value": "office"}},
+            }
+        ]
 
-        test_mixin = TestMixin()
-        test_mixin.jira.resource_url.return_value = (
-            "https://jira.example.com/rest/api/2/issue"
-        )
-        test_mixin.jira.post.return_value = {
-            "id": "10001",
-            "timeSpent": "2 hours",
-            "timeSpentSeconds": 7200,
-            "author": {"displayName": "Test User"},
-        }
-
-        result = test_mixin.add_worklog(
+        result = mixin.add_worklog(
             issue_key="PROJ-123",
             time_spent="2h",
-            worklog_attributes={"45": "123"},
+            started="2024-01-15T09:00:00.000+0000",
+            worklog_attributes={"_WorkMode_": {"value": "office"}},
         )
 
-        # Check that post was called with attributes in data
-        call_args = test_mixin.jira.post.call_args
-        assert call_args is not None
-        data_arg = call_args[1]["data"] if "data" in call_args[1] else call_args[0][1]
-        assert "worklogAttributes" in data_arg
-        assert data_arg["worklogAttributes"] == {"45": "123"}
+        mixin.jira.post.assert_called_once_with(
+            "rest/tempo-timesheets/4/worklogs",
+            data={
+                "originTaskId": "PROJ-123",
+                "timeSpentSeconds": 7200,
+                "started": "2024-01-15T09:00:00.000+0000",
+                "attributes": {"_WorkMode_": {"value": "office"}},
+            },
+        )
+        assert result["id"] == 20001
+        assert result["attributes"] == {"_WorkMode_": {"value": "office"}}
+
+    def test_add_worklog_attributes_rejected_on_cloud(self):
+        """Don't send the DC-only Tempo payload to Jira Cloud."""
+        mixin = self._mixin(is_cloud=True)
+
+        with pytest.raises(Exception, match="only available"):
+            mixin.add_worklog(
+                issue_key="PROJ-123",
+                time_spent="2h",
+                worklog_attributes={"_WorkMode_": {"value": "office"}},
+            )
+
+        mixin.jira.post.assert_not_called()

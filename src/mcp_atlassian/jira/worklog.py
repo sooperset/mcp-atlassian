@@ -95,6 +95,12 @@ class WorklogMixin(JiraClient):
             Exception: If there's an error adding the worklog
         """
         try:
+            if worklog_attributes and self.config.is_cloud:
+                raise NotImplementedError(
+                    "Tempo worklog attributes are only available on "
+                    "Jira Server/Data Center."
+                )
+
             # Convert time_spent string to seconds
             time_spent_seconds = self._parse_time_spent(time_spent)
 
@@ -123,8 +129,6 @@ class WorklogMixin(JiraClient):
                 worklog_data["comment"] = comment
             if started:
                 worklog_data["started"] = started
-            if worklog_attributes:
-                worklog_data["worklogAttributes"] = worklog_attributes
 
             # Step 3: Prepare query parameters for remaining estimate
             params = {}
@@ -135,7 +139,16 @@ class WorklogMixin(JiraClient):
                 remaining_estimate_updated = True
 
             # Step 4: Add the worklog with remaining estimate adjustment
-            if isinstance(worklog_data.get("comment"), dict) and self.config.is_cloud:
+            if worklog_attributes:
+                result = self._post_tempo_worklog(
+                    issue_key=issue_key,
+                    time_spent_seconds=time_spent_seconds,
+                    comment=comment,
+                    started=started,
+                    remaining_estimate=remaining_estimate,
+                    worklog_attributes=worklog_attributes,
+                )
+            elif isinstance(worklog_data.get("comment"), dict) and self.config.is_cloud:
                 result = self._post_api3(
                     f"issue/{issue_key}/worklog",
                     data=worklog_data,
@@ -157,21 +170,75 @@ class WorklogMixin(JiraClient):
                 if isinstance(comment_raw, dict)
                 else comment_raw
             )
+            author_data = result.get("author")
+            if isinstance(author_data, dict):
+                author = author_data.get("displayName", "Unknown")
+            else:
+                author = result.get("workerKey", "Unknown")
+
+            created = result.get("created", result.get("dateCreated", ""))
+            updated = result.get("updated", result.get("dateUpdated", ""))
+            started_value = result.get("started", result.get("startDate", ""))
             return {
-                "id": result.get("id"),
+                "id": result.get(
+                    "id",
+                    result.get("jiraWorklogId", result.get("tempoWorklogId")),
+                ),
                 "comment": self._clean_text(comment_text or ""),
-                "created": str(parse_date(result.get("created", ""))),
-                "updated": str(parse_date(result.get("updated", ""))),
-                "started": str(parse_date(result.get("started", ""))),
+                "created": str(parse_date(created)),
+                "updated": str(parse_date(updated)),
+                "started": str(parse_date(started_value)),
                 "time_spent": result.get("timeSpent", ""),
                 "time_spent_seconds": result.get("timeSpentSeconds", 0),
-                "author": result.get("author", {}).get("displayName", "Unknown"),
+                "author": author,
                 "original_estimate_updated": original_estimate_updated,
                 "remaining_estimate_updated": remaining_estimate_updated,
+                **(
+                    {"attributes": result["attributes"]}
+                    if "attributes" in result
+                    else {}
+                ),
             }
         except Exception as e:
             logger.error(f"Error adding worklog to issue {issue_key}: {str(e)}")
             raise Exception(f"Error adding worklog: {str(e)}") from e
+
+    def _post_tempo_worklog(
+        self,
+        issue_key: str,
+        time_spent_seconds: int,
+        comment: str | None,
+        started: str | None,
+        remaining_estimate: str | None,
+        worklog_attributes: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create a Data Center worklog through Tempo when attributes are set."""
+        worklog_data: dict[str, Any] = {
+            "originTaskId": issue_key,
+            "timeSpentSeconds": time_spent_seconds,
+            "attributes": worklog_attributes,
+        }
+        if comment:
+            worklog_data["comment"] = comment
+        if started:
+            worklog_data["started"] = started
+        if remaining_estimate:
+            worklog_data["remainingEstimate"] = self._parse_time_spent(
+                remaining_estimate
+            )
+
+        result = self.jira.post(  # type: ignore[attr-defined]
+            "rest/tempo-timesheets/4/worklogs",
+            data=worklog_data,
+        )
+        if isinstance(result, list):
+            if not result or not isinstance(result[0], dict):
+                raise TypeError("Unexpected return value from Tempo worklog endpoint")
+            result = result[0]
+
+        if not isinstance(result, dict):
+            raise TypeError("Unexpected return value from Tempo worklog endpoint")
+        return result
 
     def get_worklog(self, issue_key: str) -> dict[str, Any]:
         """

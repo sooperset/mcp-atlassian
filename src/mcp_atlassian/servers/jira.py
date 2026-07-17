@@ -2479,10 +2479,9 @@ async def add_worklog(
         Field(
             description=(
                 "(Optional) JSON string of worklog attributes for Tempo Core Work Attributes. "
-                'For single-select: \'{"45": "123"}\' (attribute_id -> value_id). '
-                'For multi-select: \'{"45": ["123", "124"]}\'. '
-                "Use jira_get_work_attributes to find available attribute IDs and "
-                "jira_get_work_attribute_values to find available values."
+                'Example: \'{"_WorklogCategory_": {"value": "Bugfixing"}}\'. '
+                "Use jira_get_work_attributes to find available attribute keys and "
+                "jira_get_work_attribute_values to find static-list values."
             )
         ),
     ] = None,
@@ -2497,7 +2496,9 @@ async def add_worklog(
         started: Optional start time in ISO format.
         original_estimate: Optional new original estimate.
         remaining_estimate: Optional new remaining estimate.
-        worklog_attributes: Optional JSON string of Tempo Work Attributes.
+        worklog_attributes: Optional JSON object mapping Tempo attribute keys to
+            objects containing their values, for example
+            ``{"_WorklogCategory_": {"value": "Bugfixing"}}``.
 
     Returns:
         JSON string representing the added worklog object.
@@ -2506,7 +2507,7 @@ async def add_worklog(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    # Parse worklog_attributes from JSON string if provided
+    # Parse worklog_attributes from JSON string if provided.
     parsed_attributes = None
     if worklog_attributes:
         try:
@@ -4543,7 +4544,7 @@ async def get_work_attributes(
         ),
     ] = None,
 ) -> str:
-    """Get all Tempo Core Work Attribute types configured in Jira.
+    """Get all Tempo Core Work Attribute definitions configured in Jira.
 
     Work attributes allow teams to categorize and tag worklog entries
     with custom attributes like "Work Mode" (Office/Remote), "Cost Category"
@@ -4595,11 +4596,10 @@ async def get_work_attribute_values(
         ),
     ] = None,
 ) -> str:
-    """Get all values for a specific Tempo Core Work Attribute.
+    """Get all static-list values for a specific Tempo Core Work Attribute.
 
-    Each work attribute type has associated values that can be assigned
-    to worklog entries. For example, a "singleselect" attribute might
-    have values like "Office", "Remote", "On-site", etc.
+    Static-list work attributes have values that can be assigned to worklog
+    entries, such as "Office", "Remote", and "On-site".
 
     Use ``get_work_attributes`` first to find available attribute IDs.
 

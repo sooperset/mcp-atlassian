@@ -21,6 +21,8 @@ from src.mcp_atlassian.models.jira import (
     JiraRequestTypeField,
     JiraRequestTypeFieldsResult,
     JiraRequestTypesResult,
+    JiraWorkAttribute,
+    JiraWorkAttributeValue,
 )
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
@@ -497,6 +499,8 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_sprints_from_board,
         get_transitions,
         get_user_profile,
+        get_work_attribute_values,
+        get_work_attributes,
         get_worklog,
         link_to_epic,
         move_issue,
@@ -536,6 +540,8 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_request_types)
     jira_sub_mcp.add_tool(get_request_type_fields)
     jira_sub_mcp.add_tool(get_transitions)
+    jira_sub_mcp.add_tool(get_work_attributes)
+    jira_sub_mcp.add_tool(get_work_attribute_values)
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
     jira_sub_mcp.add_tool(get_issue_images)
@@ -2996,6 +3002,73 @@ async def test_add_worklog(jira_client, mock_jira_fetcher):
     result = json.loads(response.content[0].text)
     assert result["worklog"]["time_spent"] == "1h 30m"
     assert result["worklog"]["time_spent_seconds"] == 5400
+
+
+@pytest.mark.anyio
+async def test_add_worklog_with_attributes(jira_client, mock_jira_fetcher):
+    """Test that the server parses Tempo worklog attributes JSON."""
+    attributes = '{"_WorkMode_": {"value": "office"}}'
+
+    response = await jira_client.call_tool(
+        "jira_add_worklog",
+        {
+            "issue_key": "TEST-123",
+            "time_spent": "1h",
+            "worklog_attributes": attributes,
+        },
+    )
+
+    mock_jira_fetcher.add_worklog.assert_called_once_with(
+        issue_key="TEST-123",
+        time_spent="1h",
+        comment=None,
+        started=None,
+        original_estimate=None,
+        remaining_estimate=None,
+        worklog_attributes={"_WorkMode_": {"value": "office"}},
+    )
+    assert json.loads(response.content[0].text)["message"] == (
+        "Worklog added successfully"
+    )
+
+
+@pytest.mark.anyio
+async def test_get_work_attributes(jira_client, mock_jira_fetcher):
+    """Test that the work attribute tool serializes model results."""
+    mock_jira_fetcher.get_work_attributes.return_value = [
+        JiraWorkAttribute(id=45, key="_WorkMode_", name="Work Mode")
+    ]
+
+    response = await jira_client.call_tool("jira_get_work_attributes", {})
+
+    mock_jira_fetcher.get_work_attributes.assert_called_once_with()
+    result = json.loads(response.content[0].text)
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert result["attributes"][0]["key"] == "_WorkMode_"
+
+
+@pytest.mark.anyio
+async def test_get_work_attribute_values(jira_client, mock_jira_fetcher):
+    """Test that the work attribute values tool serializes model results."""
+    mock_jira_fetcher.get_work_attribute_values.return_value = [
+        JiraWorkAttributeValue(
+            id=123,
+            name="Office",
+            value="office",
+            work_attribute_id=45,
+        )
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_work_attribute_values", {"attribute_id": 45}
+    )
+
+    mock_jira_fetcher.get_work_attribute_values.assert_called_once_with(attribute_id=45)
+    result = json.loads(response.content[0].text)
+    assert result["success"] is True
+    assert result["attribute_id"] == 45
+    assert result["values"][0]["value"] == "office"
 
 
 @pytest.mark.anyio
