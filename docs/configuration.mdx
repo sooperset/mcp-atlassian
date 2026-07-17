@@ -156,6 +156,8 @@ For mTLS, replace the personal token variables with client certificate variables
 | `CONFLUENCE_CLIENT_KEY_PASSWORD` | Not supported for encrypted private keys; decrypt the key before use |
 | `CONFLUENCE_SSL_VERIFY` | SSL verification (`true`/`false`) |
 | `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE` | Use OS native trust store (`true`/`false`, default: `true`) |
+| `MCP_ATLASSIAN_VALIDATION_CACHE_TTL` | Multi-user credential validation cache lifetime in seconds (`0` disables, default: `300`) |
+| `MCP_ATLASSIAN_VALIDATION_CACHE_MAXSIZE` | Maximum cached multi-user credential validations (default: `100`) |
 
 <Warning>
 Encrypted private keys are not supported. Setting `JIRA_CLIENT_KEY_PASSWORD` or

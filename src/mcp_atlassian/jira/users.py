@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, TypeVar
 from requests.exceptions import HTTPError
 from unidecode import unidecode
 
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.utils.decorators import handle_auth_errors
 
@@ -90,6 +91,17 @@ class UsersMixin(JiraClient):
             self._current_user_account_id = account_id
             return account_id
         except HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code == 429:
+                logger.warning(
+                    "Jira token validation was rate-limited (429) while "
+                    "calling myself()."
+                )
+                raise MCPAtlassianAuthenticationError(
+                    "Jira token validation was rate-limited (429) while "
+                    "validating credentials. Retry after backing off, or "
+                    "increase MCP_ATLASSIAN_VALIDATION_CACHE_TTL to reduce "
+                    "validation call frequency."
+                ) from http_err
             response_content = ""
             if http_err.response is not None:
                 try:
