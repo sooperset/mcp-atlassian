@@ -179,9 +179,11 @@ class TestSharedAuthentication:
                 ):
                     # Mock the current user validation
                     mock_jira_instance = MagicMock()
-                    mock_jira_instance.get_current_user_account_id.return_value = (
-                        "user123"
-                    )
+                    mock_jira_instance.get_current_user_details.return_value = {
+                        "accountId": "user123",
+                        "emailAddress": "test@example.com",
+                        "displayName": "Test User",
+                    }
                     mock_jira_fetcher.return_value = mock_jira_instance
 
                     mock_confluence_instance = MagicMock()
@@ -447,9 +449,11 @@ class TestConcurrentServiceInitialization:
                 ):
                     # Mock fetcher instances
                     mock_jira_instance = MagicMock()
-                    mock_jira_instance.get_current_user_account_id.return_value = (
-                        "user123"
-                    )
+                    mock_jira_instance.get_current_user_details.return_value = {
+                        "accountId": "user123",
+                        "emailAddress": "test@example.com",
+                        "displayName": "Test User",
+                    }
                     mock_jira_fetcher.return_value = mock_jira_instance
 
                     mock_confluence_instance = MagicMock()

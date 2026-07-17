@@ -315,8 +315,8 @@ class TestDevelopmentMixin:
         assert "error" in results[1]
         assert results[1]["pullRequests"] == []
 
-    def test_get_issue_development_info_plugin_not_found(self, development_mixin):
         """Test 404 response returns descriptive error message without raising."""
+        development_mixin.jira.get_issue.side_effect = None
         development_mixin.jira.get_issue.return_value = {
             "id": "12345",
             "key": "TEST-123",

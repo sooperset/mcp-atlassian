@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from requests.exceptions import HTTPError
 from unidecode import unidecode
@@ -41,9 +41,96 @@ def normalize_text(text: str | None) -> str:
 class UsersMixin(JiraClient):
     """Mixin for Jira user operations."""
 
-    def get_current_user_account_id(self) -> str:
+    def get_current_user_details(self) -> dict[str, Any]:
+        """Get the full user details dict for the current user.
+
+        Returns the raw ``myself()`` API response as a dictionary.
+        Also caches the account ID for subsequent calls to
+        :meth:`get_current_user_account_id`.
+
+        Returns:
+            dict: Full user details from the Jira ``myself`` endpoint,
+                including keys like ``emailAddress``, ``displayName``,
+                ``accountId`` (Cloud) or ``key``/``name`` (Server/DC).
+
+        Raises:
+            Exception: If unable to get the current user details.
         """
-        Get the account ID of the current user.
+        # If we already have cached myself_data, return it
+        if getattr(self, "_current_user_details", None) is not None:
+            return self._current_user_details
+
+        try:
+            logger.debug("Calling self.jira.myself() to get current user details.")
+            myself_data = self.jira.myself()
+
+            if not isinstance(myself_data, dict):
+                error_msg = "Failed to get user data: response was not a dictionary."
+                logger.error(
+                    f"{error_msg} Response type:"
+                    f" {type(myself_data)},"
+                    f" Response: {str(myself_data)[:200]}"
+                )
+                raise Exception(error_msg)
+
+            logger.debug(f"Received myself_data: {str(myself_data)[:500]}")
+
+            # Cache the full details
+            self._current_user_details = myself_data
+
+            # Also cache account_id for get_current_user_account_id
+            account_id = self._extract_account_id(myself_data)
+            if account_id:
+                self._current_user_account_id = account_id
+
+            return myself_data
+        except HTTPError as http_err:
+            response_content = ""
+            if http_err.response is not None:
+                try:
+                    response_content = http_err.response.text
+                except Exception:
+                    response_content = "(could not decode response content)"
+            logger.error(
+                f"HTTPError getting current user details:"
+                f" {http_err}."
+                f" Response: {response_content[:500]}"
+            )
+            error_msg = f"Unable to get current user details: {http_err}"
+            raise Exception(error_msg) from http_err
+        except Exception as e:
+            logger.error(
+                f"Error getting current user details: {e}",
+                exc_info=True,
+            )
+            error_msg = f"Unable to get current user details: {e}"
+            raise Exception(error_msg) from e
+
+    def _extract_account_id(self, myself_data: dict[str, Any]) -> str | None:
+        """Extract account ID from myself_data dict.
+
+        Args:
+            myself_data: The raw response from the myself endpoint.
+
+        Returns:
+            The account ID string, or None if not found.
+        """
+        if isinstance(myself_data.get("accountId"), str):
+            return myself_data["accountId"]
+        elif isinstance(myself_data.get("key"), str):
+            logger.info(
+                "Using 'key' instead of 'accountId' for Jira Data Center/Server"
+            )
+            return myself_data["key"]
+        elif isinstance(myself_data.get("name"), str):
+            logger.info(
+                "Using 'name' instead of 'accountId' for Jira Data Center/Server"
+            )
+            return myself_data["name"]
+        return None
+
+    def get_current_user_account_id(self) -> str:
+        """Get the account ID of the current user.
 
         Returns:
             str: Account ID of the current user.
@@ -55,56 +142,23 @@ class UsersMixin(JiraClient):
             return self._current_user_account_id
 
         try:
-            logger.debug(
-                "Calling self.jira.myself() to get current user details for account ID."
-            )
-            myself_data = self.jira.myself()
-
-            if not isinstance(myself_data, dict):
-                error_msg = "Failed to get user data: response was not a dictionary."
-                logger.error(
-                    f"{error_msg} Response type: {type(myself_data)}, Response: {str(myself_data)[:200]}"
-                )
-                raise Exception(error_msg)
-
-            logger.debug(f"Received myself_data: {str(myself_data)[:500]}")
-
-            account_id = None
-            if isinstance(myself_data.get("accountId"), str):
-                account_id = myself_data["accountId"]
-            elif isinstance(myself_data.get("key"), str):
-                logger.info(
-                    "Using 'key' instead of 'accountId' for Jira Data Center/Server"
-                )
-                account_id = myself_data["key"]
-            elif isinstance(myself_data.get("name"), str):
-                logger.info(
-                    "Using 'name' instead of 'accountId' for Jira Data Center/Server"
-                )
-                account_id = myself_data["name"]
-
-            if account_id is None:
-                error_msg = f"Could not find accountId, key, or name in user data: {str(myself_data)[:200]}"
-                raise ValueError(error_msg)
-
-            self._current_user_account_id = account_id
-            return account_id
-        except HTTPError as http_err:
-            response_content = ""
-            if http_err.response is not None:
-                try:
-                    response_content = http_err.response.text
-                except Exception:
-                    response_content = "(could not decode response content)"
-            logger.error(
-                f"HTTPError getting current user account ID: {http_err}. Response: {response_content[:500]}"
-            )
-            error_msg = f"Unable to get current user account ID: {http_err}"
-            raise Exception(error_msg) from http_err
+            myself_data = self.get_current_user_details()
         except Exception as e:
-            logger.error(f"Error getting current user account ID: {e}", exc_info=True)
-            error_msg = f"Unable to get current user account ID: {e}"
+            error_msg = f"Unable to get current user account ID: {e.__cause__ or e}"
             raise Exception(error_msg) from e
+
+        account_id = self._extract_account_id(myself_data)
+
+        if account_id is None:
+            error_msg = (
+                "Unable to get current user account ID:"
+                " Could not find accountId, key, or name in"
+                f" user data: {str(myself_data)[:200]}"
+            )
+            raise Exception(error_msg)
+
+        self._current_user_account_id = account_id
+        return account_id
 
     def _get_account_id(self, assignee: str) -> str:
         """

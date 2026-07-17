@@ -116,6 +116,59 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 
 **93 tools total** — See [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) for the complete list.
 
+## Audit Logging
+
+The MCP Atlassian server includes built-in audit logging that records every tool call. Each log entry follows the format:
+
+```
+<source_ip> <tool_name> <username> <request_body>
+```
+
+For example:
+```
+192.168.1.100 jira_get_issue user@example.com {"issue_key": "PROJ-123"}
+```
+
+Audit logs are emitted to a dedicated `mcp-atlassian.audit` logger at the INFO level, allowing operators to route them independently of application logs.
+
+### Configuration
+
+| Environment Variable | Type | Default | Description |
+|---------------------|------|---------|-------------|
+| `MCP_AUDIT_LOG_ENABLED` | bool (`true`, `1`, `yes` / `false`, `0`, `no`) | `true` | Enable or disable audit middleware registration |
+| `MCP_AUDIT_SENSITIVE_FIELDS` | comma-separated string | _(none)_ | Additional field name substrings to mask in logged request bodies |
+| `MCP_AUDIT_MAX_BODY_LENGTH` | integer (≥ 64) | `2048` | Maximum characters for the serialized request body before truncation |
+
+### Sensitive Field Masking
+
+By default, any tool argument whose name contains one of the following substrings (case-insensitive) will have its value masked in the log output:
+
+- `token`
+- `password`
+- `secret`
+- `key`
+- `credential`
+- `auth`
+
+To add custom patterns, set `MCP_AUDIT_SENSITIVE_FIELDS` to a comma-separated list of additional substrings:
+
+```bash
+MCP_AUDIT_SENSITIVE_FIELDS=ssn,account_number,private
+```
+
+Custom patterns are combined with the defaults. Masking applies to top-level arguments and one level of nested dictionaries.
+
+### Username Resolution
+
+The `<username>` field in audit log entries is resolved based on the authentication method:
+
+| Auth Method | Username Source | Fallback |
+|-------------|---------------|----------|
+| Basic | Email from decoded `Authorization` header (portion before `:`) | `anonymous` |
+| PAT (Personal Access Token) | `user_atlassian_email` from request state | `pat-user` |
+| OAuth | `user_atlassian_email` from request state | `oauth-user` |
+| None (unauthenticated) | — | `anonymous` |
+
 ## Security
 
 Never share API tokens. Keep `.env` files secure. See [SECURITY.md](SECURITY.md).

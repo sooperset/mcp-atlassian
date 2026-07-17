@@ -44,6 +44,7 @@ from mcp_atlassian.utils.toolsets import (
 )
 from mcp_atlassian.utils.urls import is_atlassian_cloud_url, validate_url_for_ssrf
 
+from .audit import create_audit_middleware
 from .client_storage import build_oauth_client_storage_from_env
 from .confluence import confluence_mcp
 from .context import MainAppContext
@@ -388,7 +389,7 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         return app
 
 
-token_validation_cache: TTLCache[
+token_validation_cache: TTLCache[  # type: ignore[type-arg]
     int, tuple[bool, str | None, JiraFetcher | None, ConfluenceFetcher | None]
 ] = TTLCache(maxsize=100, ttl=300)
 
@@ -870,6 +871,12 @@ main_mcp = AtlassianMCP(
     lifespan=main_lifespan,
     auth=_build_auth_provider(),
 )
+
+# Register audit logging middleware before tools are mounted
+audit_mw = create_audit_middleware()
+if audit_mw is not None:
+    main_mcp.add_middleware(audit_mw)
+
 main_mcp.mount(jira_mcp, "jira")
 main_mcp.mount(confluence_mcp, "confluence")
 
