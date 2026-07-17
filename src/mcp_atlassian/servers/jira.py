@@ -2442,12 +2442,23 @@ async def add_worklog(
             )
         ),
     ] = None,
-    # Add original_estimate and remaining_estimate as per original tool
     original_estimate: Annotated[
         str | None, Field(description="(Optional) New value for the original estimate")
     ] = None,
     remaining_estimate: Annotated[
         str | None, Field(description="(Optional) New value for the remaining estimate")
+    ] = None,
+    worklog_attributes: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON string of worklog attributes for Tempo Core Work Attributes. "
+                'For single-select: \'{"45": "123"}\' (attribute_id -> value_id). '
+                'For multi-select: \'{"45": ["123", "124"]}\'. '
+                "Use jira_get_work_attributes to find available attribute IDs and "
+                "jira_get_work_attribute_values to find available values."
+            )
+        ),
     ] = None,
 ) -> str:
     """Add a worklog entry to a Jira issue.
@@ -2460,7 +2471,7 @@ async def add_worklog(
         started: Optional start time in ISO format.
         original_estimate: Optional new original estimate.
         remaining_estimate: Optional new remaining estimate.
-
+        worklog_attributes: Optional JSON string of Tempo Work Attributes.
 
     Returns:
         JSON string representing the added worklog object.
@@ -2469,6 +2480,16 @@ async def add_worklog(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
+    # Parse worklog_attributes from JSON string if provided
+    parsed_attributes = None
+    if worklog_attributes:
+        try:
+            parsed_attributes = json.loads(worklog_attributes)
+            if not isinstance(parsed_attributes, dict):
+                raise ValueError("worklog_attributes must be a JSON object.")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"worklog_attributes is not valid JSON: {e}") from e
+
     # add_worklog returns dict
     worklog_result = jira.add_worklog(
         issue_key=issue_key,
@@ -2477,6 +2498,7 @@ async def add_worklog(
         started=started,
         original_estimate=original_estimate,
         remaining_estimate=remaining_estimate,
+        worklog_attributes=parsed_attributes,
     )
     result = {"message": "Worklog added successfully", "worklog": worklog_result}
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -4478,4 +4500,111 @@ async def get_cross_project_dependencies(
         project_key=project_key,
         max_issues=max_issues,
     )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_worklog"},
+    annotations={"title": "Get Work Attributes", "readOnlyHint": True},
+)
+async def get_work_attributes(
+    ctx: Context,
+    _: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Dummy parameter to satisfy zero-arg tool requirements.",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Get all Tempo Core Work Attribute types configured in Jira.
+
+    Work attributes allow teams to categorize and tag worklog entries
+    with custom attributes like "Work Mode" (Office/Remote), "Cost Category"
+    (Billable/Non-Billable), etc.
+
+    These attributes are managed by the Tempo Timesheets plugin and are
+    only available on Jira Server/Data Center.
+
+    Returns:
+        JSON string representing a list of work attribute objects.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        attributes = jira.get_work_attributes()
+        result = {
+            "success": True,
+            "attributes": [attr.to_simplified_dict() for attr in attributes],
+            "count": len(attributes),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching work attributes: {str(e)}")
+        result = {
+            "success": False,
+            "error": str(e),
+            "attributes": [],
+            "count": 0,
+        }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_worklog"},
+    annotations={"title": "Get Work Attribute Values", "readOnlyHint": True},
+)
+async def get_work_attribute_values(
+    ctx: Context,
+    attribute_id: Annotated[
+        int,
+        Field(description="The Tempo Work Attribute ID (e.g., 45)"),
+    ],
+    _: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Dummy parameter to satisfy zero-arg tool requirements.",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Get all values for a specific Tempo Core Work Attribute.
+
+    Each work attribute type has associated values that can be assigned
+    to worklog entries. For example, a "singleselect" attribute might
+    have values like "Office", "Remote", "On-site", etc.
+
+    Use ``get_work_attributes`` first to find available attribute IDs.
+
+    Args:
+        ctx: The FastMCP context.
+        attribute_id: The Tempo Work Attribute ID.
+
+    Returns:
+        JSON string representing a list of work attribute value objects.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        values = jira.get_work_attribute_values(attribute_id=attribute_id)
+        result = {
+            "success": True,
+            "attribute_id": attribute_id,
+            "values": [v.to_simplified_dict() for v in values],
+            "count": len(values),
+        }
+    except Exception as e:
+        logger.error(
+            f"Error fetching work attribute values for id={attribute_id}: {str(e)}"
+        )
+        result = {
+            "success": False,
+            "error": str(e),
+            "attribute_id": attribute_id,
+            "values": [],
+            "count": 0,
+        }
     return json.dumps(result, indent=2, ensure_ascii=False)

@@ -77,6 +77,33 @@ Add a worklog entry to a Jira issue.
 | `started` | `string` | No | (Optional) Start time in ISO format. If not provided, the current time will be used. Example: '2023-08-01T12:00:00.000+0000' |
 | `original_estimate` | `string` | No | (Optional) New value for the original estimate |
 | `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |
+| `worklog_attributes` | `string` | No | (Optional) JSON string of Tempo Worklog Attributes. For single-select: `{"45": "123"}` (attribute_id → value_id). For multi-select: `{"45": ["123", "124"]}`. Use `jira_get_work_attributes` to find available attribute IDs and `jira_get_work_attribute_values` to find available values. |
+
+---
+
+### Get Work Attributes
+
+Get all Tempo Core Work Attribute types configured in Jira.
+
+<Note>Available only for Jira Server/Data Center with Tempo Timesheets plugin installed.</Note>
+
+**Parameters:**
+
+(None - no parameters required)
+
+---
+
+### Get Work Attribute Values
+
+Get all values for a specific Tempo Core Work Attribute.
+
+<Note>Available only for Jira Server/Data Center with Tempo Timesheets plugin installed.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `attribute_id` | `integer` | Yes | The Tempo Work Attribute ID (e.g., 45) |
 
 ---
 
