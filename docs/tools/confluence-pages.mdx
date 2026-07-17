@@ -272,6 +272,41 @@ Replace view and edit restrictions for a Confluence page.
 
 ---
 
+### Get Content Properties
+
+Get all key-value metadata stored on a Confluence page, or retrieve one property by key.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | The ID of the Confluence page |
+| `key` | `string` | No | A specific property key. Omit it to return all properties. |
+
+---
+
+### Set Content Property
+
+Create or update key-value metadata on a Confluence page. Existing property versions are incremented automatically.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | The ID of the Confluence page |
+| `key` | `string` | Yes | The property key to create or update |
+| `value` | `string` | Yes | The property value encoded as JSON, such as `"full-width"` or `{"version": 2}` |
+
+**Example:**
+
+```json
+{"page_id": "12345678", "key": "editor", "value": "{\"version\": 2}"}
+```
+
+---
+
 ### Get Page Diff
 
 Get a unified diff between two versions of a Confluence page.

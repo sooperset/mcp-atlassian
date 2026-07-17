@@ -253,6 +253,6 @@ class TestToolsetTagCompleteness:
 
     def test_confluence_tool_count(self, confluence_tools):
         """Verify expected number of Confluence tools."""
-        assert len(confluence_tools) == 35, (
-            f"Expected 35 Confluence tools, got {len(confluence_tools)}"
+        assert len(confluence_tools) == 37, (
+            f"Expected 37 Confluence tools, got {len(confluence_tools)}"
         )

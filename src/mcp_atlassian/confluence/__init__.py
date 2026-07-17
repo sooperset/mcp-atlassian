@@ -11,6 +11,7 @@ from .config import ConfluenceConfig
 from .labels import LabelsMixin
 from .pages import PagesMixin
 from .permissions import PermissionsMixin
+from .properties import PropertiesMixin
 from .restrictions import RestrictionsMixin
 from .search import SearchMixin
 from .spaces import SpacesMixin
@@ -30,6 +31,7 @@ class ConfluenceFetcher(
     TemplatesMixin,
     PermissionsMixin,
     RestrictionsMixin,
+    PropertiesMixin,
 ):
     """Main entry point for Confluence operations, providing backward compatibility.
 
@@ -48,6 +50,7 @@ class ConfluenceFetcher(
     - TemplatesMixin: Template operations
     - PermissionsMixin: Permission inspection operations (Cloud only)
     - RestrictionsMixin: Page restriction operations
+    - PropertiesMixin: Content property operations
     """
 
     pass
@@ -59,6 +62,7 @@ __all__ = [
     "ConfluenceClient",
     "AnalyticsMixin",
     "PermissionsMixin",
+    "PropertiesMixin",
     "RestrictionsMixin",
     "TemplatesMixin",
 ]

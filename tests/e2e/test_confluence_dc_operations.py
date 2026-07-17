@@ -237,6 +237,39 @@ class TestConfluenceDCPageLayout:
         assert 'data-table-width="1800"' in storage_body
 
 
+class TestConfluenceDCContentProperties:
+    """Arbitrary content-property operations."""
+
+    def test_create_read_and_update_content_property(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=dc_instance.space_key,
+            title=f"DC E2E Content Property {uid}",
+            body="<p>Content property test.</p>",
+        )
+        resource_tracker.add_confluence_page(page.id)
+        key = f"mcp-atlassian-e2e-{uid}"
+
+        created = confluence_fetcher.set_content_property(
+            page.id, key, {"status": "created"}
+        )
+        assert created == {key: {"status": "created"}}
+        assert confluence_fetcher.get_content_properties(page.id, key) == created
+
+        updated = confluence_fetcher.set_content_property(
+            page.id, key, {"status": "updated"}
+        )
+        assert updated == {key: {"status": "updated"}}
+        assert confluence_fetcher.get_content_properties(page.id)[key] == {
+            "status": "updated"
+        }
+
+
 class TestConfluenceDCCopyAndRestrictions:
     """Page copy and restriction operations."""
 

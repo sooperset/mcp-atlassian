@@ -242,6 +242,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         download_content_attachments,
         get_attachments,
         get_comments,
+        get_content_properties,
         get_labels,
         get_page,
         get_page_children,
@@ -252,6 +253,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         list_page_templates,
         search,
         search_user,
+        set_content_property,
         update_page,
         update_page_section,
         upload_attachment,
@@ -295,6 +297,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(download_content_attachments)
     confluence_sub_mcp.add_tool(delete_attachment)
     confluence_sub_mcp.add_tool(get_page_images)
+    confluence_sub_mcp.add_tool(get_content_properties)
+    confluence_sub_mcp.add_tool(set_content_property)
     confluence_sub_mcp.add_tool(check_content_permissions)
     confluence_sub_mcp.add_tool(get_space_permissions)
     confluence_sub_mcp.add_tool(list_page_templates)
@@ -323,6 +327,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         download_content_attachments,
         get_attachments,
         get_comments,
+        get_content_properties,
         get_labels,
         get_page,
         get_page_children,
@@ -333,6 +338,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         list_page_templates,
         search,
         search_user,
+        set_content_property,
         update_page,
         update_page_section,
         upload_attachment,
@@ -378,6 +384,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(download_content_attachments)
     confluence_sub_mcp.add_tool(delete_attachment)
     confluence_sub_mcp.add_tool(get_page_images)
+    confluence_sub_mcp.add_tool(get_content_properties)
+    confluence_sub_mcp.add_tool(set_content_property)
     confluence_sub_mcp.add_tool(check_content_permissions)
     confluence_sub_mcp.add_tool(get_space_permissions)
     confluence_sub_mcp.add_tool(list_page_templates)
@@ -1688,3 +1696,56 @@ async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     summary = json.loads(response.content[0].text)
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
+
+
+# --- content property tool tests ---
+
+
+@pytest.mark.anyio
+async def test_get_content_properties(client, mock_confluence_fetcher):
+    """Test retrieving a single content property through the read tool."""
+    mock_confluence_fetcher.get_content_properties.return_value = {
+        "editor": {"version": 2}
+    }
+
+    response = await client.call_tool(
+        "confluence_get_content_properties",
+        {"page_id": "123456", "key": "editor"},
+    )
+
+    mock_confluence_fetcher.get_content_properties.assert_called_once_with(
+        "123456", "editor"
+    )
+    assert json.loads(response.content[0].text) == {"editor": {"version": 2}}
+
+
+@pytest.mark.anyio
+async def test_set_content_property(client, mock_confluence_fetcher):
+    """Test parsing a JSON object before setting a content property."""
+    mock_confluence_fetcher.set_content_property.return_value = {
+        "editor": {"version": 2}
+    }
+
+    response = await client.call_tool(
+        "confluence_set_content_property",
+        {"page_id": "123456", "key": "editor", "value": '{"version": 2}'},
+    )
+
+    mock_confluence_fetcher.set_content_property.assert_called_once_with(
+        "123456", "editor", {"version": 2}
+    )
+    assert json.loads(response.content[0].text) == {"editor": {"version": 2}}
+
+
+@pytest.mark.anyio
+async def test_set_content_property_rejects_invalid_json(
+    client, mock_confluence_fetcher
+):
+    """Test rejecting property values that are not valid JSON."""
+    with pytest.raises(ToolError, match="must be a valid JSON string"):
+        await client.call_tool(
+            "confluence_set_content_property",
+            {"page_id": "123456", "key": "editor", "value": "not-json"},
+        )
+
+    mock_confluence_fetcher.set_content_property.assert_not_called()

@@ -119,6 +119,8 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_copy_page",
         "confluence_get_page_restrictions",
         "confluence_set_page_restrictions",
+        "confluence_get_content_properties",
+        "confluence_set_content_property",
         "confluence_get_page_diff",
     ],
     "confluence-search": [
