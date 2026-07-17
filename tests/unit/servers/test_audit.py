@@ -8,6 +8,8 @@ Feature: tool-call-audit-logging
 
 import asyncio
 import copy
+import io
+import logging
 import os
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2832,25 +2834,40 @@ class TestLogLevelAndLoggerName:
 
         Validates: Requirements 5.2
         """
+        from mcp_atlassian.servers.audit import audit_logger
+
         middleware = ToolCallLoggingMiddleware()
         context = MagicMock()
         context.message = MagicMock()
         context.message.name = "test_tool"
-        context.message.arguments = {"key": "value"}
+        context.message.arguments = {"summary": "value"}
 
         call_next = AsyncMock(return_value=MagicMock())
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        application_logger = logging.getLogger("mcp-atlassian")
+        original_application_level = application_logger.level
+        original_propagate = audit_logger.propagate
+        audit_logger.addHandler(handler)
+        audit_logger.propagate = False
+        application_logger.setLevel(logging.WARNING)
 
-        with (
-            patch(
+        try:
+            with patch(
                 "mcp_atlassian.servers.audit.get_http_request",
                 side_effect=RuntimeError("no request"),
-            ),
-            patch("mcp_atlassian.servers.audit.audit_logger") as mock_logger,
-        ):
-            asyncio.run(middleware.on_call_tool(context, call_next))
+            ):
+                asyncio.run(middleware.on_call_tool(context, call_next))
+        finally:
+            audit_logger.removeHandler(handler)
+            audit_logger.propagate = original_propagate
+            application_logger.setLevel(original_application_level)
 
-        mock_logger.info.assert_called_once()
-        mock_logger.warning.assert_not_called()
+        assert audit_logger.level == logging.INFO
+        assert (
+            stream.getvalue().strip()
+            == 'unknown test_tool anonymous {"summary": "value"}'
+        )
 
     def test_logger_name_is_mcp_atlassian_audit(self) -> None:
         """Audit logger uses 'mcp-atlassian.audit' name.

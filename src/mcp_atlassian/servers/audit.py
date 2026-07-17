@@ -25,16 +25,16 @@ from mcp_atlassian.utils.logging import mask_sensitive
 
 # Dedicated audit logger, separate from application logs
 audit_logger = logging.getLogger("mcp-atlassian.audit")
+# The application logger defaults to WARNING. Keep audit records at INFO so
+# the dedicated logger is not filtered by the parent logger's level.
+audit_logger.setLevel(logging.INFO)
 
 # Default sensitive field patterns (case-insensitive substring match)
 DEFAULT_SENSITIVE_PATTERNS: list[str] = [
     "token",
     "password",
     "secret",
-    "api_key",
-    "apikey",
-    "secret_key",
-    "private_key",
+    "key",
     "credential",
     "auth",
 ]

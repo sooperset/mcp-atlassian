@@ -5,6 +5,7 @@ import json
 import pytest
 
 from mcp_atlassian.servers.audit import ToolCallLoggingMiddleware
+from mcp_atlassian.utils.logging import mask_sensitive
 
 
 @pytest.fixture
@@ -49,6 +50,26 @@ class TestSerializeBodyBasic:
         result = middleware._serialize_body(args)
         for ch in result:
             assert ch >= " " and ch != "\x7f", f"Control character found: {repr(ch)}"
+
+
+class TestSensitiveFieldContract:
+    """Regression tests for the documented default sensitive fields."""
+
+    def test_key_fields_are_masked(self) -> None:
+        """Literal key fields are masked, including in nested arguments."""
+        value = "encryption-value-that-must-not-leak"
+        arguments = {
+            "key": value,
+            "settings": {"encryption_key": value},
+        }
+
+        result = ToolCallLoggingMiddleware()._mask_arguments(arguments)
+
+        expected = mask_sensitive(value)
+        assert result["key"] == expected
+        assert result["settings"]["encryption_key"] == expected
+        assert result["key"] != value
+        assert result["settings"]["encryption_key"] != value
 
 
 class TestSerializeBodyTruncation:
