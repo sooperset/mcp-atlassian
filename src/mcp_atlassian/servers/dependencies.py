@@ -168,6 +168,24 @@ def _validation_cache_scope(config: JiraConfig | ConfluenceConfig) -> str:
     return f"url\x00{url if isinstance(url, str) else ''}"
 
 
+def _passthrough_cache_scope(passthrough_headers: dict[str, str]) -> str:
+    """Hash the effective passthrough headers for validation cache scoping.
+
+    Passthrough headers can identify the user even when the Atlassian token is
+    shared. Keep their values out of the cache itself and out of logs by using
+    only a stable digest of the normalized header names and values.
+    """
+    normalized_headers = sorted(
+        (header_name.lower(), header_value)
+        for header_name, header_value in passthrough_headers.items()
+    )
+    header_material = "\x00".join(
+        f"{header_name}\x00{header_value}"
+        for header_name, header_value in normalized_headers
+    )
+    return hashlib.sha256(header_material.encode()).hexdigest()
+
+
 def _validate_with_cache(
     cache_key: tuple[str, str],
     validation_cache: TTLCache[tuple[str, str], Any],
@@ -410,9 +428,13 @@ def _merge_passthrough_headers(
 
 
 def _with_request_passthrough_headers(
-    request: Request, spec: _ServiceSpec, config: Any
+    request: Request,
+    spec: _ServiceSpec,
+    config: Any,
+    passthrough_headers: dict[str, str] | None = None,
 ) -> Any:
-    passthrough_headers = _get_request_passthrough_headers(request, spec, config)
+    if passthrough_headers is None:
+        passthrough_headers = _get_request_passthrough_headers(request, spec, config)
     if not passthrough_headers:
         return config
 
@@ -485,14 +507,28 @@ def _create_and_validate(
     """
     fn_name = f"get_{spec.name.lower()}_fetcher"
     auth_desc = "header-based" if auth_branch == "header_pat" else "user"
-    credential = _credential_for_cache(config)
-    cache_key = (
-        _validation_cache_key(spec, credential, _validation_cache_scope(config))
-        if credential and _validation_cache is not None
-        else None
-    )
     try:
-        config = _with_request_passthrough_headers(request, spec, config)
+        request_passthrough_headers = _get_request_passthrough_headers(
+            request, spec, config
+        )
+        config = _with_request_passthrough_headers(
+            request,
+            spec,
+            config,
+            request_passthrough_headers,
+        )
+        credential = _credential_for_cache(config)
+        cache_scope = _validation_cache_scope(config)
+        if request_passthrough_headers:
+            cache_scope = (
+                f"{cache_scope}\x00passthrough\x00"
+                f"{_passthrough_cache_scope(request_passthrough_headers)}"
+            )
+        cache_key = (
+            _validation_cache_key(spec, credential, cache_scope)
+            if credential and _validation_cache is not None
+            else None
+        )
         fetcher = spec.fetcher_class(config=config)
         if attach_ssrf_hook:
             session = spec.get_session(fetcher)
