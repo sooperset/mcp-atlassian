@@ -71,10 +71,10 @@ class _ServiceSpec:
 # request.state, so credential validation (a network call to Atlassian) was
 # firing once per request instead of once per credential. This cache dedupes
 # that call across requests for the configured TTL. Only a SHA-256 digest of
-# the credential AND target URL is ever used as a key -- raw tokens are never
-# stored, and the URL is included because header-based PAT auth accepts the
-# base URL per-request, so the same credential string could otherwise be
-# validated against the wrong instance's cached result.
+# the credential AND effective validation target is ever used as a key -- raw
+# tokens are never stored. Header-based PAT auth uses a per-request base URL,
+# while Cloud OAuth uses the tenant-specific Cloud ID rather than its fixed
+# configured URL.
 # ---------------------------------------------------------------------------
 
 
@@ -152,21 +152,20 @@ def _validation_cache_key(
 def _validation_cache_scope(config: JiraConfig | ConfluenceConfig) -> str:
     """Return the target identity to include in a validation cache key.
 
-    Cloud OAuth requests share the same API hostname, so the URL alone does
-    not identify the tenant. Include the effective Cloud ID as well as the
-    configured URL and Data Center OAuth base URL.
+    Cloud OAuth requests share the same API hostname, so the configured URL
+    does not identify the tenant. Use the effective Cloud ID for Cloud OAuth,
+    the OAuth base URL for Data Center OAuth, and the configured URL for other
+    authentication modes.
     """
     oauth_config = getattr(config, "oauth_config", None)
     cloud_id = getattr(oauth_config, "cloud_id", None)
     oauth_base_url = getattr(oauth_config, "base_url", None)
-    return "\x00".join(
-        value if isinstance(value, str) else ""
-        for value in (
-            getattr(config, "url", ""),
-            cloud_id,
-            oauth_base_url,
-        )
-    )
+    if config.auth_type == "oauth" and isinstance(cloud_id, str) and cloud_id:
+        return f"cloud-oauth\x00{cloud_id}"
+    if config.auth_type == "oauth" and isinstance(oauth_base_url, str):
+        return f"dc-oauth\x00{oauth_base_url}"
+    url = getattr(config, "url", "")
+    return f"url\x00{url if isinstance(url, str) else ''}"
 
 
 def _validate_with_cache(

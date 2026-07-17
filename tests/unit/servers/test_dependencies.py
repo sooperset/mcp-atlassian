@@ -19,6 +19,7 @@ from mcp_atlassian.servers.dependencies import (
     _create_user_config_for_fetcher,
     _resolve_bearer_auth_type,
     _validation_cache,
+    _validation_cache_scope,
     get_confluence_fetcher,
     get_jira_fetcher,
 )
@@ -2025,6 +2026,42 @@ class TestValidationCache:
 
         fetcher1.get_current_user_info.assert_called_once()
         fetcher2.get_current_user_info.assert_called_once()
+
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    def test_cloud_oauth_scope_ignores_configured_url(
+        self, mock_confluence_fetcher_class
+    ):
+        """Cloud OAuth validation is scoped by tenant, not the config URL."""
+        shared_token = "shared-oauth-token"
+
+        def make_config(url: str) -> ConfluenceConfig:
+            return ConfluenceConfig(
+                url=url,
+                auth_type="oauth",
+                oauth_config=OAuthConfig(
+                    client_id="client-id",
+                    client_secret="client-secret",
+                    redirect_uri="http://localhost/callback",
+                    scope="read:confluence-content.all",
+                    cloud_id="cloud-a",
+                    access_token=shared_token,
+                ),
+            )
+
+        config1 = make_config("https://configured-a.atlassian.net")
+        config2 = make_config("https://configured-b.atlassian.net")
+        assert _validation_cache_scope(config1) == _validation_cache_scope(config2)
+
+        fetcher1 = _create_mock_fetcher(ConfluenceFetcher)
+        fetcher2 = _create_mock_fetcher(ConfluenceFetcher)
+        mock_confluence_fetcher_class.side_effect = [fetcher1, fetcher2]
+        spec = _confluence_spec()
+
+        _create_and_validate(MockFastMCP.create_request(), spec, config1, "oauth")
+        _create_and_validate(MockFastMCP.create_request(), spec, config2, "oauth")
+
+        fetcher1.get_current_user_info.assert_called_once()
+        fetcher2.get_current_user_info.assert_not_called()
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
