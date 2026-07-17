@@ -540,6 +540,7 @@ class TestJiraConfluenceAuthFlows:
                 oauth_config = OAuthConfig.from_env()
                 oauth_config.access_token = "shared-token"
                 oauth_config.cloud_id = "test-cloud-id"
+                oauth_config.expires_at = time.time() + 3600
 
                 # Create both clients with same OAuth config
                 jira_config = JiraConfig(
