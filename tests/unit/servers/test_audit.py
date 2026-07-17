@@ -887,7 +887,7 @@ class TestProperty4SensitiveFieldMasking:
             )
 
 
-# --- Strategies for Property 5: Depth-limited nested masking ---
+# --- Strategies for Property 5: Recursive nested masking ---
 
 # Generate nested dictionaries with sensitive keys at various depths
 nested_dict_values = st.one_of(
@@ -897,14 +897,13 @@ nested_dict_values = st.one_of(
 )
 
 
-class TestProperty5DepthLimitedNestedMasking:
-    """Feature: tool-call-audit-logging, Property 5: Depth-limited nested masking.
+class TestProperty5RecursiveNestedMasking:
+    """Feature: tool-call-audit-logging, Property 5: Recursive nested masking.
 
     For any tool call argument that is a dictionary and whose key does
     NOT match a sensitive pattern, the middleware SHALL inspect the
-    nested dictionary's keys and mask values whose keys match a
-    sensitive pattern — but SHALL NOT recurse beyond one additional
-    level of depth.
+    nested dictionary's keys and mask values whose keys match a sensitive
+    pattern at any depth, including dictionaries contained in sequences.
 
     **Validates: Requirements 4.5, 4.6**
     """
@@ -921,11 +920,10 @@ class TestProperty5DepthLimitedNestedMasking:
         nested_sensitive_key: str,
         nested_value: Any,
     ) -> None:
-        """Sensitive keys in nested dicts (1 level deep) are masked.
+        """Sensitive keys in nested dicts are masked.
 
-        When a top-level key is non-sensitive and its value is a dict,
-        the middleware inspects nested keys and masks those matching
-        sensitive patterns.
+        When a top-level key is non-sensitive and its value is a dict, the
+        middleware recursively masks nested keys matching sensitive patterns.
 
         Validates: Requirements 4.5, 4.6
         """
@@ -1027,17 +1025,14 @@ class TestProperty5DepthLimitedNestedMasking:
         deep_value=nested_dict_values,
     )
     @settings(max_examples=100)
-    def test_depth_beyond_one_level_not_masked(
+    def test_sensitive_keys_at_arbitrary_depth_are_masked(
         self,
         outer_key: str,
         mid_key: str,
         deep_sensitive_key: str,
         deep_value: Any,
     ) -> None:
-        """Sensitive keys at depth > 1 are NOT masked.
-
-        The middleware only inspects one level of nesting. Sensitive
-        keys at deeper levels (depth 2+) are left unchanged.
+        """Sensitive keys at depth greater than one are also masked.
 
         Validates: Requirements 4.5, 4.6
         """
@@ -1047,11 +1042,11 @@ class TestProperty5DepthLimitedNestedMasking:
         middleware = ToolCallLoggingMiddleware()
         result = middleware._mask_arguments(arguments)
 
-        # The deep nested dict should be left as-is (not recursed into)
-        assert result[outer_key][mid_key] == {deep_sensitive_key: deep_value}, (
-            f"Expected depth-2 dict to remain unchanged "
-            f"({{{deep_sensitive_key!r}: {deep_value!r}}}), "
-            f"got {result[outer_key][mid_key]!r}"
+        expected = mask_sensitive(str(deep_value))
+        assert result[outer_key][mid_key][deep_sensitive_key] == expected, (
+            f"Expected depth-2 key {deep_sensitive_key!r} to be masked to "
+            f"{expected!r}, got "
+            f"{result[outer_key][mid_key][deep_sensitive_key]!r}"
         )
 
     @given(
