@@ -1495,6 +1495,7 @@ dependencies = [
     { name = "markdownify" },
     { name = "mcp" },
     { name = "pydantic" },
+    { name = "pypac" },
     { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "requests", extra = ["socks"] },
