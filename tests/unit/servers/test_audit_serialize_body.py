@@ -71,6 +71,37 @@ class TestSensitiveFieldContract:
         assert result["key"] != value
         assert result["settings"]["encryption_key"] != value
 
+    def test_nested_mappings_and_sequences_are_recursively_masked(self) -> None:
+        """Mask secrets at arbitrary depth, including mappings in lists."""
+        value = "deep-secret-value-that-must-not-leak"
+        arguments = {
+            "request": [
+                {"metadata": {"details": {"password": value}}},
+                [{"api_token": value}],
+            ],
+            "safe": "retained",
+        }
+
+        result = ToolCallLoggingMiddleware()._mask_arguments(arguments)
+
+        expected = mask_sensitive(value)
+        assert result["request"][0]["metadata"]["details"]["password"] == (expected)
+        assert result["request"][1][0]["api_token"] == expected
+        assert result["safe"] == "retained"
+        assert arguments["request"][0]["metadata"]["details"]["password"] == (value)
+
+
+@pytest.mark.parametrize("separator", ("\x85", "\u2028", "\u2029"))
+def test_unicode_line_separators_do_not_create_log_lines(separator: str) -> None:
+    """Unicode line separators are escaped in the complete audit record."""
+    arguments = {"description": f"before{separator}after"}
+    body = ToolCallLoggingMiddleware()._serialize_body(arguments)
+    log_entry = f"192.0.2.1 example_tool audit-user {body}"
+
+    assert separator not in log_entry
+    assert log_entry.splitlines() == [log_entry]
+    assert json.loads(body)["description"] == arguments["description"]
+
 
 class TestSerializeBodyTruncation:
     """Tests for body truncation behavior."""

@@ -14,6 +14,7 @@ import base64
 import json
 import logging
 import os
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import mcp.types as mt
@@ -206,13 +207,35 @@ class ToolCallLoggingMiddleware(Middleware):
         email = decoded.split(":", 1)[0]
         return email if email else "anonymous"
 
-    def _mask_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Mask sensitive fields in tool call arguments.
+    def _mask_nested_value(self, value: Any) -> Any:
+        """Copy a nested value while masking sensitive mapping fields."""
+        if isinstance(value, Mapping):
+            return {
+                key: (
+                    mask_sensitive(str(nested_value))
+                    if self._is_sensitive_key(str(key))
+                    else self._mask_nested_value(nested_value)
+                )
+                for key, nested_value in value.items()
+            }
 
-        Performs case-insensitive substring matching of field names
-        against configured sensitive patterns. For top-level values
-        that are dictionaries and whose key does NOT match a sensitive
-        pattern, inspects nested keys one level deep.
+        if isinstance(value, Sequence) and not isinstance(
+            value, str | bytes | bytearray
+        ):
+            masked_items = (self._mask_nested_value(item) for item in value)
+            return (
+                tuple(masked_items) if isinstance(value, tuple) else list(masked_items)
+            )
+
+        return value
+
+    def _mask_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Mask sensitive fields recursively in tool call arguments.
+
+        Performs case-insensitive substring matching of field names against
+        configured sensitive patterns. Mapping and sequence values are copied
+        recursively so sensitive fields cannot be hidden inside a deep object
+        or a list.
 
         Args:
             arguments: The tool call arguments dictionary.
@@ -220,22 +243,14 @@ class ToolCallLoggingMiddleware(Middleware):
         Returns:
             A new dictionary with sensitive values masked.
         """
-        masked: dict[str, Any] = {}
-        for key, value in arguments.items():
-            if self._is_sensitive_key(key):
-                masked[key] = mask_sensitive(str(value))
-            elif isinstance(value, dict):
-                # Inspect nested dict keys (1 level deep only)
-                nested: dict[str, Any] = {}
-                for nested_key, nested_value in value.items():
-                    if self._is_sensitive_key(nested_key):
-                        nested[nested_key] = mask_sensitive(str(nested_value))
-                    else:
-                        nested[nested_key] = nested_value
-                masked[key] = nested
-            else:
-                masked[key] = value
-        return masked
+        return {
+            key: (
+                mask_sensitive(str(value))
+                if self._is_sensitive_key(key)
+                else self._mask_nested_value(value)
+            )
+            for key, value in arguments.items()
+        }
 
     def _serialize_body(
         self,
@@ -266,8 +281,10 @@ class ToolCallLoggingMiddleware(Middleware):
         if original_length is None:
             original_length = len(str(arguments))
 
-        # JSON-serialize with repr fallback for non-serializable values
-        serialized = json.dumps(arguments, default=repr, ensure_ascii=False)
+        # Escape all non-ASCII characters so Unicode line/control separators
+        # cannot become physical log-line boundaries. The repr fallback is
+        # still JSON-encoded and receives the same protection.
+        serialized = json.dumps(arguments, default=repr, ensure_ascii=True)
 
         # Remove newlines and control characters for single-line output
         serialized = "".join(ch for ch in serialized if ch >= " " and ch != "\x7f")
