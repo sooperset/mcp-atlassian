@@ -8,7 +8,6 @@ dependencies = [
     "anyio>=4.0.0",
     "atlassian-python-api>=4.0.0",
     "requests[socks]>=2.31.0",
-    "pypac>=0.17.2",
     "beautifulsoup4>=4.12.3",
     "httpx>=0.28.0",
     "mcp>=1.8.0,<2.0.0",

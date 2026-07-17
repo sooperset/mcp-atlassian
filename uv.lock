@@ -1551,7 +1551,7 @@ requires-dist = [
     { name = "markdownify", specifier = ">=0.11.6" },
     { name = "mcp", specifier = ">=1.8.0,<2.0.0" },
     { name = "pydantic", specifier = ">=2.10.6,<3.0" },
-    { name = "pypac", specifier = ">=0.17.2" },
+    { name = "pypac", marker = "extra == 'wpad'", specifier = ">=0.17.2" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "requests", extras = ["socks"], specifier = ">=2.31.0" },

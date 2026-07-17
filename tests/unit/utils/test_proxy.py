@@ -494,6 +494,28 @@ def test_pac_session_no_proxy_handles_empty_proxy_mapping() -> None:
     }
 
 
+def test_pac_session_no_proxy_handles_positional_proxy_mapping() -> None:
+    """A positional proxy map must be replaced without a duplicate argument."""
+    pac = get_pac(
+        js=(
+            "function FindProxyForURL(url, host) { "
+            'return "PROXY proxy.example.com:8080"; }'
+        )
+    )
+    session = _NoProxyAwarePACSession(
+        pac=pac,
+        no_proxy="internal.example.com",
+    )
+
+    with patch.object(Session, "request", return_value=MagicMock()) as mock_request:
+        session.request("GET", "https://internal.example.com/api", {})
+
+    assert mock_request.call_args.kwargs["proxies"] == {
+        "http": None,
+        "https": None,
+    }
+
+
 def test_apply_proxy_configuration_raises_for_malformed_pac():
     """Test malformed PAC files produce a clear service-specific error."""
     config = JiraConfig(
@@ -564,6 +586,20 @@ def test_load_pac_file_is_cached():
         assert bootstrap_session.trust_env is False
     finally:
         _load_pac_file.cache_clear()
+
+
+def test_load_pac_file_requires_optional_wpad_dependency(monkeypatch):
+    """PAC loading explains how to enable WPAD when the extra is absent."""
+    _load_pac_file.cache_clear()
+    monkeypatch.setattr("mcp_atlassian.utils.proxy.get_pac", None)
+
+    with pytest.raises(ValueError, match=r"mcp-atlassian\[wpad\]"):
+        _load_pac_file(
+            "http://wpad/wpad.dat",
+            verify=True,
+            cert=None,
+            trust_env=False,
+        )
 
 
 class TestNoProxyAdapter:
