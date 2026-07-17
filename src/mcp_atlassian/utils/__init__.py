@@ -21,7 +21,13 @@ from .media import (
 # Export OAuth utilities
 from .oauth import OAuthConfig, configure_oauth_session
 from .ssl import SSLIgnoreAdapter, configure_ssl_verification
-from .urls import is_atlassian_cloud_url, resolve_relative_url, validate_url_for_ssrf
+from .ssrf_adapter import mount_ssrf_pinning
+from .urls import (
+    is_atlassian_cloud_url,
+    make_ssrf_redirect_hook,
+    resolve_relative_url,
+    validate_url_for_ssrf,
+)
 
 # Export all utility functions for backward compatibility
 __all__ = [
@@ -31,6 +37,8 @@ __all__ = [
     "is_atlassian_cloud_url",
     "is_image_attachment",
     "is_read_only_mode",
+    "make_ssrf_redirect_hook",
+    "mount_ssrf_pinning",
     "validate_safe_path",
     "setup_logging",
     "parse_date",

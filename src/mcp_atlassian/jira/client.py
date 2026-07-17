@@ -17,6 +17,7 @@ from mcp_atlassian.utils.logging import (
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.ssl import configure_ssl_verification
+from mcp_atlassian.utils.ssrf_adapter import mount_ssrf_pinning
 
 from ..models.jira.adf import markdown_to_adf
 from .config import JiraConfig
@@ -135,6 +136,11 @@ class JiraClient:
             client_key=self.config.client_key,
             client_key_password=self.config.client_key_password,
         )
+
+        # Mount SSRF DNS-pinning adapter to prevent DNS-rebinding TOCTOU bypass.
+        # Must be called AFTER configure_ssl_verification so the pinning adapter
+        # inherits the SSL verification settings.
+        mount_ssrf_pinning(self.jira._session)
 
         # Proxy configuration
         proxies = {}
