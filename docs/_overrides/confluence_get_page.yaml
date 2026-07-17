@@ -1,4 +1,4 @@
 example: |
   {"page_id": "12345678", "include_metadata": true}
 tips: |
-  Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date.
+  Content is returned in Markdown format by default. Set `convert_to_markdown` to `false` to retrieve exact Confluence storage XHTML when macro preservation matters, including embedded Jira card-vs-list rendering, task metadata, and page layout details. Use `include_metadata` for labels, version info, and last modified date.
