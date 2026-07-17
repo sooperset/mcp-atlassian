@@ -1157,6 +1157,7 @@ class IssuesMixin(
             if not issue_key:
                 raise ValueError("Issue key is required")
 
+            return_fields_param = self._normalize_return_fields(return_fields)
             update_fields = fields or {}
             attachments_result = None
             preserve_description_media = False
@@ -1272,9 +1273,7 @@ class IssuesMixin(
                     # Continue with the update even if attachments fail
 
             # Get the updated issue data and convert to JiraIssue model
-            issue_data = self.jira.get_issue(
-                issue_key, fields=self._normalize_return_fields(return_fields)
-            )
+            issue_data = self.jira.get_issue(issue_key, fields=return_fields_param)
             if isinstance(issue_data, str):
                 # atlassian-python-api can return a string on Jira Server/DC
                 # when response.json() fails. Try parsing it as JSON first.
@@ -1295,7 +1294,9 @@ class IssuesMixin(
                 )
                 logger.error(msg)
                 raise TypeError(msg)
-            issue = JiraIssue.from_api_response(issue_data)
+            issue = JiraIssue.from_api_response(
+                issue_data, requested_fields=return_fields_param
+            )
 
             # Add attachment results to the response if available
             if attachments_result:
@@ -1411,7 +1412,9 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(issue_data)
+            return JiraIssue.from_api_response(
+                issue_data, requested_fields=return_fields_param
+            )
 
         # Get available transitions (uses TransitionsMixin's normalized implementation)
         transitions = self.get_available_transitions(issue_key)  # type: ignore[attr-defined]
@@ -1510,7 +1513,9 @@ class IssuesMixin(
             msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
             logger.error(msg)
             raise TypeError(msg)
-        return JiraIssue.from_api_response(issue_data)
+        return JiraIssue.from_api_response(
+            issue_data, requested_fields=return_fields_param
+        )
 
     def delete_issue(self, issue_key: str) -> bool:
         """

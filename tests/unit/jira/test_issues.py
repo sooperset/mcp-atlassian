@@ -816,6 +816,46 @@ class TestIssuesMixin:
 
         assert issues_mixin.jira.get_issue.call_args[1]["fields"] == ("summary,duedate")
 
+    def test_update_issue_return_fields_filter_standard_field_serialization(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """The requested standard field remains in the simplified response."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            summary="Updated Summary"
+        )
+
+        issue = issues_mixin.update_issue(
+            issue_key="TEST-123",
+            fields={"summary": "Updated Summary"},
+            return_fields=["summary"],
+        )
+
+        assert issue.to_simplified_dict() == {
+            "id": "12345",
+            "key": "TEST-123",
+            "summary": "Updated Summary",
+        }
+
+    def test_update_issue_return_fields_filter_custom_field_serialization(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """The requested custom field remains in the simplified response."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            customfield_10049="Custom value"
+        )
+
+        issue = issues_mixin.update_issue(
+            issue_key="TEST-123",
+            fields={"summary": "Updated Summary"},
+            return_fields=["customfield_10049"],
+        )
+
+        assert issue.to_simplified_dict() == {
+            "id": "12345",
+            "key": "TEST-123",
+            "customfield_10049": {"value": "Custom value"},
+        }
+
     def test_update_issue_return_fields_none_by_default(
         self, issues_mixin: IssuesMixin, make_issue_data
     ):
