@@ -1155,3 +1155,21 @@ class TestListParagraphSeparation:
         markdown = "Intro\n\n```\nline\n- not a list\n```\n"
         preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
         assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_indented_code_content_is_not_modified(self):
+        """Indented code blocks must not be treated as lists."""
+        markdown = "Intro\n    - not a list\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_shorter_fence_does_not_end_longer_fence(self):
+        """A closing fence must be at least as long as its opening fence."""
+        markdown = "Intro\n````\n- not a list\n```\n- still code\n````\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_thematic_break_is_not_treated_as_a_list(self):
+        """Thematic breaks must not trigger list separation."""
+        markdown = "Intro\n* * *\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown

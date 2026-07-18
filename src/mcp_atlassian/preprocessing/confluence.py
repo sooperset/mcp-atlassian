@@ -31,10 +31,13 @@ class ConfluencePreprocessor(BasePreprocessor):
     # restoring an opt-out task list cannot remove user-supplied characters.
     _TASK_MARKER_PREFIX = "\ue000"
     _TASK_MARKER_PATTERN = re.compile(r"(<li\b[^>]*>)(\[[ xX]\])")
-    _LIST_LINE_PATTERN = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+")
-    _HEADING_LINE_PATTERN = re.compile(r"^\s*#{1,6}\s+")
-    _BLOCKQUOTE_LINE_PATTERN = re.compile(r"^\s*>")
-    _FENCE_LINE_PATTERN = re.compile(r"^(`{3,}|~{3,})")
+    _LIST_LINE_PATTERN = re.compile(r"^ {0,3}(?:[-*+]|\d+\.)[ \t]+")
+    _THEMATIC_BREAK_PATTERN = re.compile(
+        r"^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$"
+    )
+    _HEADING_LINE_PATTERN = re.compile(r"^ {0,3}#{1,6}[ \t]+")
+    _BLOCKQUOTE_LINE_PATTERN = re.compile(r"^ {0,3}>")
+    _FENCE_LINE_PATTERN = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
 
     def __init__(self, base_url: str) -> None:
         """
@@ -182,19 +185,26 @@ class ConfluencePreprocessor(BasePreprocessor):
         result: list[str] = []
         in_fence = False
         fence_char: str | None = None
+        fence_length = 0
         previous_line: str | None = None
 
         for line in lines:
-            stripped = line.lstrip()
-            fence_match = cls._FENCE_LINE_PATTERN.match(stripped)
+            line_content = line.rstrip("\r\n")
+            fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
             if fence_match:
-                marker = fence_match.group(1)[0]
+                marker = fence_match.group("marker")
                 if not in_fence:
                     in_fence = True
-                    fence_char = marker
-                elif fence_char == marker:
+                    fence_char = marker[0]
+                    fence_length = len(marker)
+                elif (
+                    fence_char == marker[0]
+                    and len(marker) >= fence_length
+                    and not fence_match.group("info").strip()
+                ):
                     in_fence = False
                     fence_char = None
+                    fence_length = 0
                 result.append(line)
                 previous_line = line
                 continue
@@ -206,9 +216,9 @@ class ConfluencePreprocessor(BasePreprocessor):
 
             if (
                 previous_line is not None
-                and cls._LIST_LINE_PATTERN.match(line)
+                and cls._is_list_line(line)
                 and previous_line.strip()
-                and not cls._LIST_LINE_PATTERN.match(previous_line)
+                and not cls._is_list_line(previous_line)
                 and not cls._HEADING_LINE_PATTERN.match(previous_line)
                 and not cls._BLOCKQUOTE_LINE_PATTERN.match(previous_line)
             ):
@@ -218,6 +228,15 @@ class ConfluencePreprocessor(BasePreprocessor):
             previous_line = line
 
         return "".join(result)
+
+    @classmethod
+    def _is_list_line(cls, line: str) -> bool:
+        """Return whether a line starts a Markdown list rather than a rule."""
+        line_content = line.rstrip("\r\n")
+        return bool(
+            cls._LIST_LINE_PATTERN.match(line_content)
+            and not cls._THEMATIC_BREAK_PATTERN.fullmatch(line_content)
+        )
 
     @classmethod
     def _get_task_list_marker_prefix(cls, html_content: str) -> str:
