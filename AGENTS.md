@@ -56,6 +56,7 @@ uv run pytest --cov=src/mcp_atlassian --cov-report=term-missing  # coverage
 5. **Commits**: Use trailers for attribution, never mention tools/AI
 6. **Commit types**: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `ci` — scopes: `jira`, `confluence`, `server`, `auth`, `docker`, `docs`
 7. **File hygiene**: Prefer editing existing files over creating new ones
+8. **Tool docs**: After changing tool signatures or registrations, run `uv run python scripts/generate_tool_docs.py` and commit the diff; CI (`Docs / check`) enforces this
 
 ---
 
