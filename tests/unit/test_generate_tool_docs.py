@@ -77,6 +77,72 @@ def test_attachment_and_jira_guidance_are_preserved_in_overrides() -> None:
     assert "return_fields" in jira_tips
 
 
+@pytest.mark.parametrize(
+    ("category", "tool_names"),
+    [
+        (
+            "confluence-permissions",
+            [
+                "confluence_check_content_permissions",
+                "confluence_get_space_permissions",
+            ],
+        ),
+        (
+            "confluence-templates",
+            [
+                "confluence_list_page_templates",
+                "confluence_get_page_template",
+                "confluence_create_page_from_template",
+            ],
+        ),
+    ],
+)
+def test_cloud_only_guidance_survives_page_regeneration(
+    tmp_path: Path,
+    category: str,
+    tool_names: list[str],
+) -> None:
+    """Generated pages retain Cloud-only and Server/Data Center guidance."""
+    overrides = load_overrides(Path("docs/_overrides"))
+    category_docs = {
+        category: [
+            ToolDoc(
+                name=tool_name,
+                display_name=tool_name,
+                description="Tool description.",
+                is_write=tool_name == "confluence_create_page_from_template",
+                override=overrides[tool_name],
+            )
+            for tool_name in tool_names
+        ]
+    }
+    counts = ToolCounts(
+        total_tools=5,
+        jira_tools=0,
+        confluence_tools=5,
+        core_tools=0,
+        total_toolsets=2,
+        jira_toolsets=0,
+        confluence_toolsets=2,
+        core_toolsets=0,
+    )
+
+    rendered = render_pages(
+        category_docs,
+        {"jira": [], "confluence": []},
+        counts,
+        TEMPLATE_DIR,
+        tmp_path / "docs" / "tools",
+        tmp_path / "docs" / "tools-reference.mdx",
+    )
+    output = rendered[tmp_path / "docs" / "tools" / f"{category}.mdx"]
+
+    assert output.count("This tool is only available for Confluence Cloud.") == len(
+        tool_names
+    )
+    assert output.count("raises `ValueError`") == len(tool_names)
+
+
 def test_category_template_renders_notes_and_safe_nested_json() -> None:
     """Generated tables and note overrides remain valid MDX."""
     environment = Environment(
