@@ -66,15 +66,16 @@ def test_tool_override_preserves_legacy_positional_fields() -> None:
     override = ToolOverride(
         "legacy example",
         "legacy tips",
-        "legacy notes",
         "legacy platform notes",
+        notes="legacy notes",
+        examples=["additional example"],
     )
 
     assert override.example == "legacy example"
     assert override.tips == "legacy tips"
     assert override.notes == "legacy notes"
     assert override.platform_notes == "legacy platform notes"
-    assert override.all_examples == ["legacy example"]
+    assert override.all_examples == ["legacy example", "additional example"]
 
 
 def test_attachment_and_jira_guidance_are_preserved_in_overrides() -> None:
@@ -298,6 +299,8 @@ def _write_count_documents(root: Path, counts: ToolCounts) -> None:
     (root / "docs" / "configuration.mdx").write_text(
         f"# Restrict to core tools only (~{counts.core_tools} tools across "
         f"{counts.core_toolsets} core toolsets)\n"
+        f"In v0.22.0, the default will change from all toolsets to "
+        f"{counts.core_toolsets} core toolsets only.\n"
     )
 
 
@@ -321,6 +324,12 @@ def _write_count_documents(root: Path, counts: ToolCounts) -> None:
             "docs/configuration.mdx",
             "6 core toolsets",
             "30 core toolsets",
+            "core_toolsets",
+        ),
+        (
+            "docs/configuration.mdx",
+            "to 6 core toolsets only",
+            "to 30 core toolsets only",
             "core_toolsets",
         ),
     ],
@@ -356,6 +365,51 @@ def test_check_counts_rejects_valid_number_in_wrong_context(
     error = capsys.readouterr().err
     assert relative_path in error
     assert f"for {metric}" in error
+
+
+def test_check_mode_rejects_stale_warning_core_toolset_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The CLI check must validate the second core-toolset count as well."""
+    counts = ToolCounts(
+        total_tools=100,
+        jira_tools=60,
+        confluence_tools=40,
+        core_tools=20,
+        total_toolsets=30,
+        jira_toolsets=18,
+        confluence_toolsets=12,
+        core_toolsets=6,
+    )
+    _write_count_documents(tmp_path, counts)
+    path = tmp_path / "docs" / "configuration.mdx"
+    path.write_text(
+        path.read_text().replace(
+            "to 6 core toolsets only",
+            "to 30 core toolsets only",
+        )
+    )
+
+    async def fake_get_all_tools() -> dict[str, dict[str, object]]:
+        return {}
+
+    monkeypatch.setattr(generator, "ROOT", tmp_path)
+    monkeypatch.setattr(generator, "OVERRIDES_DIR", tmp_path / "overrides")
+    monkeypatch.setattr(generator, "get_all_tools", fake_get_all_tools)
+    monkeypatch.setattr(generator, "get_tool_counts", lambda tools: counts)
+    monkeypatch.setattr(generator, "check_coverage", lambda tools: True)
+    monkeypatch.setattr(generator, "build_tool_docs", lambda tools, overrides: {})
+    monkeypatch.setattr(generator, "build_toolset_docs", lambda tools: {})
+    monkeypatch.setattr(generator, "check_generated_pages", lambda *args: True)
+    monkeypatch.setattr(generator.sys, "argv", ["generate_tool_docs.py", "--check"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        generator.main()
+
+    assert exc_info.value.code == 1
+    assert "docs/configuration.mdx" in capsys.readouterr().err
 
 
 def test_check_generated_pages_detects_stale_toolset_membership(

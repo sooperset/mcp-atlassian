@@ -252,9 +252,9 @@ class ToolOverride:
 
     example: str | None = None
     tips: str | None = None
-    notes: str | None = None
     platform_notes: str | None = None
-    examples: list[str] = field(default_factory=list)
+    notes: str | None = field(default=None, kw_only=True)
+    examples: list[str] = field(default_factory=list, kw_only=True)
 
     @property
     def all_examples(self) -> list[str]:
@@ -772,6 +772,15 @@ COUNT_RULES = (
         ),
         "core_toolsets",
         group=2,
+    ),
+    CountRule(
+        "docs/configuration.mdx",
+        re.compile(
+            r"default will change from all toolsets to (\d+)\s+core toolsets?"
+            r"\s+only",
+            re.IGNORECASE,
+        ),
+        "core_toolsets",
     ),
 )
 
