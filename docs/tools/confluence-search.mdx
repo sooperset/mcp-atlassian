@@ -24,17 +24,15 @@ Search Confluence content using simple terms or CQL.
 Supports both CQL queries and simple text search. Simple text uses `siteSearch` by default with automatic fallback to `text` search.
 </Tip>
 
-
 <Warning>
 CQL syntax may differ slightly between Cloud and Server/DC. Personal spaces use `space="~username"` (quoted).
 </Warning>
-
 
 ---
 
 ### Search User
 
-Search Confluence users using CQL.
+Search Confluence users using CQL (Cloud) or group member API (Server/DC).
 
 **Parameters:**
 
@@ -45,7 +43,7 @@ Search Confluence users using CQL.
 | `group_name` | `string` | No | Group to search within on Server/DC instances (default: 'confluence-users'). Ignored on Cloud. |
 
 <Tip>
-On Server/DC, user search falls back to group member enumeration. Use `group_name` to search within a specific group if the default 'confluence-users' doesn't include all users.
+On Server/DC, user search falls back to group member enumeration. Use `group_name` to search within a specific group if the default `confluence-users` doesn't include all users.
 </Tip>
 
 ---

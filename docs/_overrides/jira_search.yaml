@@ -2,5 +2,9 @@ example: |
   {"jql": "project = PROJ AND status = 'In Progress' ORDER BY updated DESC", "limit": 20}
 tips: |
   Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
+
+  Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`. If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
+
+  Cloud supports cursor-based pagination via `page_token` for deterministic results across large datasets. The token is returned in the `next_page_token` field of search results.
 platform_notes: |
   Some JQL functions (e.g., `issueHistory()`) are Cloud-only.

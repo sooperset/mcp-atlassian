@@ -1,0 +1,4 @@
+example: |
+  {"comment_id": "67890", "body": "Thanks for the feedback! I've updated the section."}
+tips: |
+  Get comment IDs from `confluence_get_comments`. Replies are threaded under the parent comment.

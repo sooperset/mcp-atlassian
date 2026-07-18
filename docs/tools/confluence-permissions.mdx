@@ -3,43 +3,49 @@ title: "Confluence Permissions"
 description: "Inspect content and space permissions"
 ---
 
-<Note>These tools are only available for Confluence Cloud. Server/Data Center uses different permission APIs.</Note>
-
 ### Check Content Permissions
 
-Check whether a user or group can perform an operation on Confluence content.
+Check whether a user or group can perform an operation on specific content.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `content_id` | `string` | Yes | Confluence content ID, such as a page, blog post, comment, or attachment ID. |
-| `user_identifier` | `string` | Yes | Account ID for `subject_type="user"` or group ID for `subject_type="group"`. |
-| `operation` | `string` | Yes | Operation to check, such as `read`, `update`, or `delete`. |
-| `subject_type` | `string` | No | Subject type to check. Defaults to `user`; use `group` for group checks. |
-
+| `content_id` | `string` | Yes | Confluence content ID (page, blog post, comment, or attachment). Example: '123456789' |
+| `user_identifier` | `string` | Yes | Account ID of the user (for subject_type='user') or group ID (for subject_type='group'). Example user account ID: '5b10a2844c20165700ede21g' |
+| `operation` | `string` | Yes | The operation to check. Common values: 'read', 'update', 'delete', 'export', 'purge', 'administer', 'create_or_delete_from_view'. |
+| `subject_type` | `string` | No | Whether the subject is a 'user' or a 'group'. Defaults to 'user'. |
 **Example:**
 
 ```json
 {"content_id": "12345678", "user_identifier": "5b10a2844c20165700ede21g", "operation": "read"}
 ```
 
+<Warning>
+This tool is only available for Confluence Cloud. Calling it on Server/Data Center raises `ValueError` because those deployments use different permission APIs.
+</Warning>
+
 ---
 
 ### Get Space Permissions
 
-List permission assignments for a Confluence space.
+List all permission assignments for a Confluence space.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `space_id` | `string` | Yes | Numeric Confluence space ID. This is the internal space ID, not the space key. |
+| `space_id` | `string` | Yes | Numeric ID of the Confluence space. This is the internal space ID, not the space key. Example: '98304'. You can find the space ID from the Confluence REST API (GET /wiki/api/v2/spaces) or from the space URL. |
 | `limit` | `integer` | No | Maximum number of permission entries to return. Defaults to 25. |
-| `cursor` | `string` | No | Pagination cursor from a previous response. |
-
+| `cursor` | `string` | No | Optional pagination cursor from a previous response. |
 **Example:**
 
 ```json
 {"space_id": "98304", "limit": 50}
 ```
+
+<Warning>
+This tool is only available for Confluence Cloud. Calling it on Server/Data Center raises `ValueError` because those deployments use different permission APIs.
+</Warning>
+
+---

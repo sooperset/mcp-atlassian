@@ -1,0 +1,2 @@
+platform_notes: |
+  This tool is only available for Confluence Cloud. Calling it on Server/Data Center raises `ValueError` because those deployments do not expose the template REST API.

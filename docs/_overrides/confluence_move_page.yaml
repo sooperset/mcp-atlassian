@@ -1,0 +1,6 @@
+example: |
+  {"page_id": "12345678", "target_parent_id": "98765432"}
+tips: |
+  Use `target_space_key` to move pages between spaces. Omit `target_parent_id` with a space key to move to the space root.
+platform_notes: |
+  At least one of `target_parent_id` or `target_space_key` must be provided.

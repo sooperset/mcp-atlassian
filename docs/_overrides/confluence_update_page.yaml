@@ -2,3 +2,5 @@ example: |
   {"page_id": "12345678", "title": "Updated Title", "content": "## Updated Content\n\nNew information...", "is_minor_edit": true}
 tips: |
   Set `is_minor_edit: true` to skip notification emails. The page version is auto-incremented.
+notes: |
+  Exactly one of `content` or `content_file` must be provided.

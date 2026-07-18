@@ -1,0 +1,2 @@
+notes: |
+  On Confluence Cloud, attachment downloads automatically use the v1 REST endpoint (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.

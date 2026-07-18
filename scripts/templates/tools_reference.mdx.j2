@@ -1,0 +1,114 @@
+---
+title: "Tools Reference"
+description: "Overview of all {{ counts.total_tools }} MCP tools for Jira and Confluence — organized by category with quick links"
+---
+
+MCP Atlassian provides **{{ counts.total_tools }} tools** for interacting with Jira and Confluence. Tools are organized by category below.
+
+## Jira Tools
+
+<CardGroup cols={2}>
+  <Card title="Issues" icon="ticket" href="/docs/tools/jira-issues">
+    Create, read, update, delete, and transition issues
+  </Card>
+  <Card title="Search & Fields" icon="magnifying-glass" href="/docs/tools/jira-search-fields">
+    Search with JQL, explore fields and options
+  </Card>
+  <Card title="Agile" icon="chart-kanban" href="/docs/tools/jira-agile">
+    Boards, sprints, and agile management
+  </Card>
+  <Card title="Comments & Worklogs" icon="comment" href="/docs/tools/jira-comments-worklogs">
+    Comments, worklogs, changelogs, user profiles
+  </Card>
+  <Card title="Links & Versions" icon="link" href="/docs/tools/jira-links-versions">
+    Issue links, epic links, versions, components
+  </Card>
+  <Card title="Attachments" icon="paperclip" href="/docs/tools/jira-attachments">
+    Download attachments and render images
+  </Card>
+  <Card title="Service Desk" icon="headset" href="/docs/tools/jira-service-desk">
+    Customer requests, service desks, and queues
+  </Card>
+  <Card title="Forms & Metrics" icon="chart-line" href="/docs/tools/jira-forms-metrics">
+    ProForma forms, SLA, dates, development info
+  </Card>
+</CardGroup>
+
+## Confluence Tools
+
+<CardGroup cols={2}>
+  <Card title="Pages" icon="file-lines" href="/docs/tools/confluence-pages">
+    Create, read, update, delete pages
+  </Card>
+  <Card title="Search" icon="magnifying-glass" href="/docs/tools/confluence-search">
+    Search content with CQL, find users
+  </Card>
+  <Card title="Attachments" icon="paperclip" href="/docs/tools/confluence-attachments">
+    Upload, download, manage attachments
+  </Card>
+  <Card title="Comments & Labels" icon="tag" href="/docs/tools/confluence-comments">
+    Comments, labels, page analytics
+  </Card>
+  <Card title="Permissions" icon="shield" href="/docs/tools/confluence-permissions">
+    Inspect content and space permissions
+  </Card>
+  <Card title="Templates" icon="copy" href="/docs/tools/confluence-templates">
+    List page templates and create pages from them
+  </Card>
+</CardGroup>
+
+## Tool Access Control
+
+### Toolset Groups
+
+Toolsets group related tools for easier management via `TOOLSETS` env var or `--toolsets` flag.
+
+**Jira Toolsets ({{ counts.jira_toolsets }}):**
+
+| Toolset | Core | Tools |
+|---------|:----:|-------|
+{% for toolset in toolsets.jira -%}
+| `{{ toolset.name }}` | {{ "Yes" if toolset.core else "No" }} | {% for tool_name in toolset.tools %}`{{ tool_name }}`{% if not loop.last %}, {% endif %}{% endfor %} |
+{% endfor %}
+
+**Confluence Toolsets ({{ counts.confluence_toolsets }}):**
+
+| Toolset | Core | Tools |
+|---------|:----:|-------|
+{% for toolset in toolsets.confluence -%}
+| `{{ toolset.name }}` | {{ "Yes" if toolset.core else "No" }} | {% for tool_name in toolset.tools %}`{{ tool_name }}`{% if not loop.last %}, {% endif %}{% endfor %} |
+{% endfor %}
+
+```bash
+# All toolsets are enabled when TOOLSETS is not set.
+# To restrict to core toolsets plus specific extras:
+TOOLSETS=default,jira_agile,jira_attachments
+
+# Enable all toolsets ({{ counts.total_tools }} tools)
+TOOLSETS=all
+
+# Command line
+uvx mcp-atlassian --toolsets "default,jira_agile"
+```
+
+### Enable Specific Tools
+
+Use `ENABLED_TOOLS` environment variable or `--enabled-tools` flag:
+
+```bash
+# Environment variable
+ENABLED_TOOLS="confluence_search,jira_get_issue,jira_search"
+
+# Command line
+uvx mcp-atlassian --enabled-tools "confluence_search,jira_get_issue,jira_search"
+```
+
+### Read-Only Mode
+
+Disable all write operations:
+
+```bash
+READ_ONLY_MODE=true
+```
+
+When enabled, only read operations are available regardless of `ENABLED_TOOLS` setting.

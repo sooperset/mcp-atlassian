@@ -1,0 +1,4 @@
+example: |
+  {"space_id": "98304", "limit": 50}
+platform_notes: |
+  This tool is only available for Confluence Cloud. Calling it on Server/Data Center raises `ValueError` because those deployments use different permission APIs.
