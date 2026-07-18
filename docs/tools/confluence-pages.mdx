@@ -60,6 +60,10 @@ Create a new Confluence page.
 Use Markdown for content — it's auto-converted to Confluence storage format. Specify `parent_id` to create as a child page. Set `subtype` to `live` on Confluence Cloud to create a Live Doc.
 </Tip>
 
+<Note>
+Exactly one of `content` or `content_file` must be provided.
+</Note>
+
 ---
 
 ### Update Page
@@ -94,6 +98,10 @@ Update an existing Confluence page.
 <Tip>
 Set `is_minor_edit: true` to skip notification emails. The page version is auto-incremented.
 </Tip>
+
+<Note>
+Exactly one of `content` or `content_file` must be provided.
+</Note>
 
 ---
 
@@ -173,6 +181,14 @@ Update a single section of a Confluence page without affecting the rest.
 | `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
 | `version_comment` | `string` | No | Optional comment for this version |
 
+<Tip>
+Use this instead of `confluence_update_page` when the page contains macros, layouts, task lists, or other Confluence-specific elements you don't want to lose. The tool fetches the page as raw storage XML, surgically replaces only the target section, and writes the full XML back — so everything outside the section is preserved exactly.
+</Tip>
+
+<Warning>
+`heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised.
+</Warning>
+
 ---
 
 ### Move Page
@@ -189,6 +205,14 @@ Move a Confluence page to a new parent or space.
 | `target_parent_id` | `string` | No | Target parent page ID. If omitted with target_space_key, moves to space root. |
 | `target_space_key` | `string` | No | Target space key for cross-space moves |
 | `position` | `string` | No | Position: 'append' (default, move as child of target), 'above' (move before target as sibling), or 'below' (move after target as sibling) |
+
+<Tip>
+Use `target_space_key` to move pages between spaces. Omit `target_parent_id` with a space key to move to the space root.
+</Tip>
+
+<Warning>
+At least one of `target_parent_id` or `target_space_key` must be provided.
+</Warning>
 
 ---
 
@@ -238,6 +262,10 @@ Set view and edit restrictions on a Confluence page.
 | `edit_users` | `array` | No | (Optional) Account IDs (Cloud) or usernames (Server/DC) allowed to edit the page. |
 | `edit_groups` | `array` | No | (Optional) Group names allowed to edit the page. |
 
+<Warning>
+Omitting all restriction lists or passing empty lists removes all page restrictions.
+</Warning>
+
 ---
 
 ### Get Page Version Diff
@@ -251,5 +279,9 @@ Get a unified diff between two versions of a Confluence page.
 | `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
 | `from_version` | `integer` | Yes | Source version number |
 | `to_version` | `integer` | Yes | Target version number |
+
+<Tip>
+Use `confluence_get_page_history` to discover available version numbers. The diff is in unified format, showing additions and removals between versions.
+</Tip>
 
 ---

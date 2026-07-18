@@ -22,7 +22,7 @@ Upload an attachment to Confluence content (page or blog post).
 **Example:**
 
 ```json
-{"page_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
+{"content_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
 ```
 
 <Tip>
@@ -87,6 +87,10 @@ Download an attachment from Confluence as an embedded resource.
 |-----------|------|----------|-------------|
 | `attachment_id` | `string` | Yes | The ID of the attachment to download (e.g., 'att123456789'). Find attachment IDs using get_attachments tool. Example workflow: get_attachments(content_id) → use returned ID here. |
 
+<Note>
+On Confluence Cloud, attachment downloads automatically use the v1 REST endpoint (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.
+</Note>
+
 ---
 
 ### Download All Content Attachments
@@ -124,5 +128,9 @@ Get all images attached to a Confluence page as inline image content.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `content_id` | `string` | Yes | The ID of the Confluence page or blog post to retrieve images from. Example: '123456789' |
+
+<Note>
+On Confluence Cloud, images are fetched via the v1 REST endpoint automatically (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.
+</Note>
 
 ---

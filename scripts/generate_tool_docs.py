@@ -252,6 +252,7 @@ class ToolOverride:
 
     example: str | None = None
     tips: str | None = None
+    notes: str | None = None
     platform_notes: str | None = None
 
 
@@ -389,6 +390,7 @@ def load_overrides(overrides_dir: Path) -> dict[str, ToolOverride]:
         overrides[tool_name] = ToolOverride(
             example=data.get("example"),
             tips=data.get("tips"),
+            notes=data.get("notes"),
             platform_notes=data.get("platform_notes"),
         )
 
@@ -518,15 +520,58 @@ def _escape_mdx_in_table(text: str) -> str:
     fails to build the page. This wraps brace-containing segments in backticks
     so they render as inline code instead of being parsed as JSX.
     """
-    if not text or "{" not in text:
+    if not text or ("{" not in text and "}" not in text):
         return text
-    # Wrap JSON-like brace groups (including nested) in backticks.
-    # Matches: {"key": "value"} or [{"a": 1}] patterns not already in backticks.
-    return re.sub(
-        r"(?<!`)(\[?\{[^}]*\}]?)(?!`)",
-        r"`\1`",
-        text,
-    )
+
+    def find_matching_brace(start: int) -> int | None:
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(text)):
+            char = text[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return index
+        return None
+
+    escaped: list[str] = []
+    in_code = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "`":
+            in_code = not in_code
+            escaped.append(char)
+            index += 1
+        elif char == "{" and not in_code:
+            end = find_matching_brace(index)
+            if end is None:
+                escaped.append("&#123;")
+                index += 1
+            else:
+                escaped.extend(("`", text[index : end + 1], "`"))
+                index = end + 1
+        elif char == "}" and not in_code:
+            escaped.append("&#125;")
+            index += 1
+        else:
+            escaped.append(char)
+            index += 1
+
+    return "".join(escaped)
 
 
 def generate_pages(

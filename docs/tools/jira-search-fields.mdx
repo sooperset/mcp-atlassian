@@ -27,6 +27,10 @@ Search Jira issues using JQL (Jira Query Language).
 
 <Tip>
 Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
+
+Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`. If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
+
+Cloud supports cursor-based pagination via `page_token` for deterministic results across large datasets. The token is returned in the `next_page_token` field of search results.
 </Tip>
 
 <Warning>
@@ -73,6 +77,15 @@ Get allowed option values for a custom field.
 | `contains` | `string` | No | Case-insensitive substring filter on option values. Also matches child values in cascading selects. |
 | `return_limit` | `integer` | No | Maximum number of results to return (applied after filtering). |
 | `values_only` | `boolean` | No | If true, return only value strings in a compact JSON format instead of full option objects. |
+**Example:**
+
+```json
+{"field_id": "customfield_10001", "contains": "high", "return_limit": 5, "values_only": true}
+```
+
+<Tip>
+Use `contains` to filter large option lists (e.g., hundreds of values). Combine with `values_only: true` for a compact response.
+</Tip>
 
 ---
 

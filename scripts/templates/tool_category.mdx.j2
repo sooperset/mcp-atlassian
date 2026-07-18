@@ -31,6 +31,12 @@ description: "{{ category.description }}"
 {{ tool.override.tips | trim }}
 </Tip>
 {% endif %}
+{% if tool.override and tool.override.notes %}
+
+<Note>
+{{ tool.override.notes | trim }}
+</Note>
+{% endif %}
 {% if tool.override and tool.override.platform_notes %}
 
 <Warning>

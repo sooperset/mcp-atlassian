@@ -1,0 +1,2 @@
+tips: |
+  Use `confluence_get_page_history` to discover available version numbers. The diff is in unified format, showing additions and removals between versions.

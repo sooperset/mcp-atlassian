@@ -26,7 +26,9 @@ Get details of a specific Jira issue.
 ```
 
 <Tip>
-Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content.
+Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content. Use `include: "all"` to inline common enrichments that otherwise require separate tool calls.
+
+Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`. If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
 </Tip>
 
 <Warning>
@@ -51,7 +53,7 @@ Create a new Jira issue with optional Epic link or parent for subtasks.
 | `assignee` | `string` | No | (Optional) Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...') |
 | `description` | `string` | No | Issue description in Markdown format. On Jira Cloud, use '`{expand:Title}`...`{expand}`' for a collapsible section. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names to assign (e.g., 'Frontend,API') |
-| `additional_fields` | `string` | No | (Optional) JSON string of additional fields to set. Examples: - Set priority: `{"priority": {"name": "High"}`} - Add labels: `{"labels": ["frontend", "urgent"]}` - Link to parent (for any issue type): `{"parent": "PROJ-123"}` - Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}` - Set Fix Version/s: `{"fixVersions": [{"id": "10020"}]`} - Custom fields: `{"customfield_10010": "value"}` |
+| `additional_fields` | `string` | No | (Optional) JSON string of additional fields to set. Examples: - Set priority: `{"priority": {"name": "High"}}` - Add labels: `{"labels": ["frontend", "urgent"]}` - Link to parent (for any issue type): `{"parent": "PROJ-123"}` - Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}` - Set Fix Version/s: `{"fixVersions": [{"id": "10020"}]}` - Custom fields: `{"customfield_10010": "value"}` |
 **Example:**
 
 ```json
@@ -59,7 +61,7 @@ Create a new Jira issue with optional Epic link or parent for subtasks.
 ```
 
 <Tip>
-Use Markdown in the description — it's automatically converted to ADF (Cloud) or wiki markup (Server/DC). For epics, provide `epic_name` parameter.
+Use Markdown in the description — it's automatically converted to ADF (Cloud) or wiki markup (Server/DC). On Jira Cloud, mention users with `[~accountid:ACCOUNT_ID]` or `@[Display Name](accountid:ACCOUNT_ID)`. Use `{expand:Title}` and `{expand}` around content to create a collapsible section on Jira Cloud. For epics, provide `epic_name` parameter.
 </Tip>
 
 <Warning>
@@ -91,6 +93,8 @@ Update an existing Jira issue including changing status, adding Epic links, upda
 ```
 
 <Tip>
+Save response tokens: after an update you rarely need the whole issue back. Set `return_fields` to only the field(s) you changed (e.g., `return_fields: "duedate"`) — this can cut thousands of tokens. Use `*all` only when you need the full updated issue.
+
 Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.
 </Tip>
 
@@ -138,6 +142,10 @@ Move a Jira issue to a different project (Jira Cloud only).
 | `issue_key` | `string` | Yes | Jira issue key to move (e.g., 'PROJ-123') |
 | `target_project_key` | `string` | Yes | Key of the target project (e.g., 'OTHERPROJ'). The issue will keep its current issue type and may receive a new key in the target project. |
 
+<Warning>
+This tool is only available for Jira Cloud. The target project must support the issue's current type. Jira may assign a new issue key in the target project.
+</Warning>
+
 ---
 
 ### Batch Create Issues
@@ -167,7 +175,7 @@ Transition a Jira issue to a new status.
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `transition_id` | `string` | Yes | ID of the transition to perform. Use the jira_get_transitions tool first to get the available transition IDs for the issue. Example values: '11', '21', '31' |
-| `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: '`{"resolution": {"name": "Fixed"}`}' |
+| `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: '`{"resolution": {"name": "Fixed"}}`' |
 | `comment` | `string` | No | (Optional) Comment to add during the transition in Markdown format. This will be visible in the issue history. Rejected for projects listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be customer-visible on JSM and cannot be forced internal): transition without a comment, then post an internal note with jira_add_comment(public=false). |
 **Example:**
 
