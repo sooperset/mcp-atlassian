@@ -291,6 +291,16 @@ class ToolsetDoc:
     tools: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class CountRule:
+    """A documented count expression and the registry metric it represents."""
+
+    relative_path: str
+    pattern: re.Pattern[str]
+    metric: str
+    group: int = 1
+
+
 # ---------------------------------------------------------------------------
 # Tool introspection
 # ---------------------------------------------------------------------------
@@ -574,15 +584,15 @@ def _escape_mdx_in_table(text: str) -> str:
     return "".join(escaped)
 
 
-def generate_pages(
+def render_pages(
     category_docs: dict[str, list[ToolDoc]],
     toolset_docs: dict[str, list[ToolsetDoc]],
     counts: ToolCounts,
     template_dir: Path,
     output_dir: Path,
     reference_output: Path,
-) -> None:
-    """Render category and tools-reference MDX pages from Jinja2 templates."""
+) -> dict[Path, str]:
+    """Render category and tools-reference MDX pages without writing them."""
     env = Environment(  # noqa: S701 — MDX output, not HTML; autoescape not needed
         loader=FileSystemLoader(str(template_dir)),
         keep_trailing_newline=True,
@@ -594,7 +604,7 @@ def generate_pages(
     category_template = env.get_template("tool_category.mdx.j2")
     reference_template = env.get_template("tools_reference.mdx.j2")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    rendered_pages: dict[Path, str] = {}
 
     for cat, tool_docs in category_docs.items():
         meta = CATEGORY_META[cat]
@@ -603,12 +613,33 @@ def generate_pages(
             tools=tool_docs,
         )
         out_path = output_dir / f"{cat}.mdx"
-        out_path.write_text(rendered)
-        print(f"  wrote {out_path}")
+        rendered_pages[out_path] = rendered
 
     rendered = reference_template.render(toolsets=toolset_docs, counts=counts)
-    reference_output.write_text(rendered)
-    print(f"  wrote {reference_output}")
+    rendered_pages[reference_output] = rendered
+    return rendered_pages
+
+
+def generate_pages(
+    category_docs: dict[str, list[ToolDoc]],
+    toolset_docs: dict[str, list[ToolsetDoc]],
+    counts: ToolCounts,
+    template_dir: Path,
+    output_dir: Path,
+    reference_output: Path,
+) -> None:
+    """Render category and tools-reference MDX pages from Jinja2 templates."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for out_path, rendered in render_pages(
+        category_docs,
+        toolset_docs,
+        counts,
+        template_dir,
+        output_dir,
+        reference_output,
+    ).items():
+        out_path.write_text(rendered)
+        print(f"  wrote {out_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -655,62 +686,119 @@ def check_coverage(tools: dict[str, dict[str, Any]]) -> bool:
     return ok
 
 
-COUNT_FILES = (
-    "README.md",
-    ".env.example",
-    "docs.json",
-    "docs/tools-reference.mdx",
-    "docs/configuration.mdx",
-)
-TOOL_COUNT_PATTERN = re.compile(r"~?(\d+)\s+(?:MCP\s+)?tools?\b", re.IGNORECASE)
-TOOLSET_COUNT_PATTERNS = (
-    re.compile(r"(\d+)\s+(?:core\s+)?toolsets?\b", re.IGNORECASE),
-    re.compile(r"\b(?:Jira|Confluence)\s+Toolsets\s+\((\d+)\)", re.IGNORECASE),
+COUNT_RULES = (
+    CountRule(
+        "README.md",
+        re.compile(r"\*\*(\d+)\s+tools?\s+total\*\*", re.IGNORECASE),
+        "total_tools",
+    ),
+    CountRule(
+        ".env.example",
+        re.compile(r"Only core tools \(~?(\d+)\s+tools?\)", re.IGNORECASE),
+        "core_tools",
+    ),
+    CountRule(
+        ".env.example",
+        re.compile(r"All (\d+)\s+toolsets? \((\d+)\s+tools?\)", re.IGNORECASE),
+        "total_toolsets",
+    ),
+    CountRule(
+        ".env.example",
+        re.compile(r"All (\d+)\s+toolsets? \((\d+)\s+tools?\)", re.IGNORECASE),
+        "total_tools",
+        group=2,
+    ),
+    CountRule(
+        ".env.example",
+        re.compile(
+            r"If unset, all toolsets are enabled \((\d+)\s+tools?\)",
+            re.IGNORECASE,
+        ),
+        "total_tools",
+    ),
+    CountRule(
+        "docs.json",
+        re.compile(r"all (\d+)\s+tools? enabled by default", re.IGNORECASE),
+        "total_tools",
+    ),
+    CountRule(
+        "docs/tools-reference.mdx",
+        re.compile(r'description: "Overview of all (\d+) MCP tools?', re.IGNORECASE),
+        "total_tools",
+    ),
+    CountRule(
+        "docs/tools-reference.mdx",
+        re.compile(r"provides \*\*(\d+)\s+tools?\*\*", re.IGNORECASE),
+        "total_tools",
+    ),
+    CountRule(
+        "docs/tools-reference.mdx",
+        re.compile(r"\*\*Jira Toolsets \((\d+)\):\*\*", re.IGNORECASE),
+        "jira_toolsets",
+    ),
+    CountRule(
+        "docs/tools-reference.mdx",
+        re.compile(
+            r"\*\*Confluence Toolsets \((\d+)\):\*\*",
+            re.IGNORECASE,
+        ),
+        "confluence_toolsets",
+    ),
+    CountRule(
+        "docs/tools-reference.mdx",
+        re.compile(r"Enable all toolsets \((\d+)\s+tools?\)", re.IGNORECASE),
+        "total_tools",
+    ),
+    CountRule(
+        "docs/configuration.mdx",
+        re.compile(
+            r"core tools only \(~?(\d+)\s+tools? across (\d+)\s+core toolsets?\)",
+            re.IGNORECASE,
+        ),
+        "core_tools",
+    ),
+    CountRule(
+        "docs/configuration.mdx",
+        re.compile(
+            r"core tools only \(~?(\d+)\s+tools? across (\d+)\s+core toolsets?\)",
+            re.IGNORECASE,
+        ),
+        "core_toolsets",
+        group=2,
+    ),
 )
 
-
-def _format_expected(values: set[int]) -> str:
-    """Format expected count values for a deterministic error message."""
-    return "{" + ", ".join(str(value) for value in sorted(values)) + "}"
+COUNT_FILES = tuple(dict.fromkeys(rule.relative_path for rule in COUNT_RULES))
 
 
 def check_counts(tools: dict[str, dict[str, Any]]) -> bool:
     """Verify documented tool and toolset counts match live registries."""
     counts = get_tool_counts(tools)
-    allowed_tools = {
-        counts.total_tools,
-        counts.jira_tools,
-        counts.confluence_tools,
-        counts.core_tools,
-    }
-    allowed_toolsets = {
-        counts.total_toolsets,
-        counts.jira_toolsets,
-        counts.confluence_toolsets,
-        counts.core_toolsets,
-    }
 
     ok = True
-    for relative_path in COUNT_FILES:
-        path = ROOT / relative_path
-        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
-            matches = [
-                (match, allowed_tools) for match in TOOL_COUNT_PATTERN.finditer(line)
-            ]
-            matches.extend(
-                (match, allowed_toolsets)
-                for pattern in TOOLSET_COUNT_PATTERNS
-                for match in pattern.finditer(line)
+    for rule in COUNT_RULES:
+        path = ROOT / rule.relative_path
+        text = path.read_text()
+        matches = list(rule.pattern.finditer(text))
+        if not matches:
+            print(
+                f"ERROR: {rule.relative_path}: no {rule.metric} count found",
+                file=sys.stderr,
             )
-            for match, allowed in matches:
-                found = int(match.group(1))
-                if found not in allowed:
-                    print(
-                        f"{relative_path}:{line_number}: found {found}, "
-                        f"expected one of {_format_expected(allowed)}",
-                        file=sys.stderr,
-                    )
-                    ok = False
+            ok = False
+            continue
+
+        expected = getattr(counts, rule.metric)
+        for match in matches:
+            found = int(match.group(rule.group))
+            line_number = text.count("\n", 0, match.start()) + 1
+            if found != expected:
+                print(
+                    f"ERROR: {rule.relative_path}:{line_number}: found {found} "
+                    f"for {rule.metric}, expected {expected}",
+                    file=sys.stderr,
+                )
+                ok = False
 
     if ok:
         print(
@@ -718,6 +806,62 @@ def check_counts(tools: dict[str, dict[str, Any]]) -> bool:
             f"({counts.total_tools} tools, {counts.total_toolsets} toolsets)."
         )
 
+    return ok
+
+
+def _display_path(path: Path) -> str:
+    """Return a repository-relative path when possible."""
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def check_generated_pages(
+    category_docs: dict[str, list[ToolDoc]],
+    toolset_docs: dict[str, list[ToolsetDoc]],
+    counts: ToolCounts,
+    template_dir: Path,
+    output_dir: Path,
+    reference_output: Path,
+) -> bool:
+    """Verify committed generated pages match a fresh render exactly."""
+    rendered_pages = render_pages(
+        category_docs,
+        toolset_docs,
+        counts,
+        template_dir,
+        output_dir,
+        reference_output,
+    )
+    committed_paths = set(output_dir.glob("*.mdx"))
+    committed_paths.add(reference_output)
+    ok = True
+
+    for path, rendered in rendered_pages.items():
+        if not path.is_file():
+            print(
+                f"ERROR: generated documentation is missing: {_display_path(path)}",
+                file=sys.stderr,
+            )
+        elif path.read_text() != rendered:
+            print(
+                f"ERROR: generated documentation is out of date: {_display_path(path)}",
+                file=sys.stderr,
+            )
+        else:
+            continue
+        ok = False
+
+    for path in sorted(committed_paths - set(rendered_pages)):
+        print(
+            f"ERROR: unexpected generated documentation file: {_display_path(path)}",
+            file=sys.stderr,
+        )
+        ok = False
+
+    if ok:
+        print("OK: generated tool documentation is up to date.")
     return ok
 
 
@@ -740,7 +884,7 @@ def main() -> None:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Verify tool mappings and documented counts (no files written).",
+        help="Verify tool mappings, counts, and generated pages (no files written).",
     )
     args = parser.parse_args()
 
@@ -749,7 +893,19 @@ def main() -> None:
     if args.check:
         coverage_ok = check_coverage(tools)
         counts_ok = check_counts(tools)
-        sys.exit(0 if coverage_ok and counts_ok else 1)
+        overrides = load_overrides(OVERRIDES_DIR)
+        category_docs = build_tool_docs(tools, overrides)
+        toolset_docs = build_toolset_docs(tools)
+        counts = get_tool_counts(tools)
+        generated_ok = check_generated_pages(
+            category_docs,
+            toolset_docs,
+            counts,
+            TEMPLATE_DIR,
+            OUTPUT_DIR,
+            REFERENCE_OUTPUT,
+        )
+        sys.exit(0 if coverage_ok and counts_ok and generated_ok else 1)
 
     overrides = load_overrides(OVERRIDES_DIR)
     category_docs = build_tool_docs(tools, overrides)

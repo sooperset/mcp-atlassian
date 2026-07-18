@@ -5,14 +5,20 @@ from pathlib import Path
 import pytest
 from jinja2 import Environment, FileSystemLoader
 
+import scripts.generate_tool_docs as generator
 from scripts.generate_tool_docs import (
     CATEGORY_META,
     TEMPLATE_DIR,
+    ToolCounts,
     ToolDoc,
     ToolOverride,
     ToolParam,
+    ToolsetDoc,
     _escape_mdx_in_table,
+    check_counts,
+    check_generated_pages,
     load_overrides,
+    render_pages,
 )
 
 
@@ -105,3 +111,152 @@ def test_category_template_renders_notes_and_safe_nested_json() -> None:
 
     assert 'Nested JSON: `{"outer": {"inner": "value"}}`' in rendered
     assert "<Note>\nCloud-specific guidance.\n</Note>" in rendered
+
+
+def _write_count_documents(root: Path, counts: ToolCounts) -> None:
+    """Write count-bearing documents with the supplied registry values."""
+    (root / "docs").mkdir()
+    (root / "README.md").write_text(f"**{counts.total_tools} tools total**\n")
+    (root / ".env.example").write_text(
+        f"# Only core tools (~{counts.core_tools} tools)\n"
+        f"# All {counts.total_toolsets} toolsets ({counts.total_tools} tools)\n"
+        f"# If unset, all toolsets are enabled ({counts.total_tools} tools).\n"
+    )
+    (root / "docs.json").write_text(
+        f'{{"description": "all {counts.total_tools} tools enabled by default"}}\n'
+    )
+    (root / "docs" / "tools-reference.mdx").write_text(
+        f'---\ndescription: "Overview of all {counts.total_tools} MCP tools"\n---\n'
+        f"MCP Atlassian provides **{counts.total_tools} tools**.\n"
+        f"**Jira Toolsets ({counts.jira_toolsets}):**\n"
+        f"**Confluence Toolsets ({counts.confluence_toolsets}):**\n"
+        f"# Enable all toolsets ({counts.total_tools} tools)\n"
+    )
+    (root / "docs" / "configuration.mdx").write_text(
+        f"# Restrict to core tools only (~{counts.core_tools} tools across "
+        f"{counts.core_toolsets} core toolsets)\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "old_text", "new_text", "metric"),
+    [
+        ("README.md", "**100 tools total**", "**60 tools total**", "total_tools"),
+        (
+            ".env.example",
+            "Only core tools (~20 tools)",
+            "Only core tools (~100 tools)",
+            "core_tools",
+        ),
+        (
+            "docs/tools-reference.mdx",
+            "**Jira Toolsets (18):**",
+            "**Jira Toolsets (30):**",
+            "jira_toolsets",
+        ),
+        (
+            "docs/configuration.mdx",
+            "6 core toolsets",
+            "30 core toolsets",
+            "core_toolsets",
+        ),
+    ],
+)
+def test_check_counts_rejects_valid_number_in_wrong_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    relative_path: str,
+    old_text: str,
+    new_text: str,
+    metric: str,
+) -> None:
+    """A valid registry count must still fail when used for another metric."""
+    counts = ToolCounts(
+        total_tools=100,
+        jira_tools=60,
+        confluence_tools=40,
+        core_tools=20,
+        total_toolsets=30,
+        jira_toolsets=18,
+        confluence_toolsets=12,
+        core_toolsets=6,
+    )
+    _write_count_documents(tmp_path, counts)
+    path = tmp_path / relative_path
+    path.write_text(path.read_text().replace(old_text, new_text))
+
+    monkeypatch.setattr(generator, "ROOT", tmp_path)
+    monkeypatch.setattr(generator, "get_tool_counts", lambda tools: counts)
+
+    assert not check_counts({})
+    error = capsys.readouterr().err
+    assert relative_path in error
+    assert f"for {metric}" in error
+
+
+def test_check_generated_pages_detects_stale_toolset_membership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Freshness checks catch stale membership even when all counts are unchanged."""
+    counts = ToolCounts(
+        total_tools=1,
+        jira_tools=1,
+        confluence_tools=0,
+        core_tools=1,
+        total_toolsets=2,
+        jira_toolsets=1,
+        confluence_toolsets=1,
+        core_toolsets=2,
+    )
+    category_docs = {
+        "jira-issues": [
+            ToolDoc(
+                name="jira_example_tool",
+                display_name="Example Tool",
+                description="An example tool.",
+                is_write=False,
+            )
+        ]
+    }
+    toolset_docs = {
+        "jira": [
+            ToolsetDoc(
+                name="jira_issues",
+                core=True,
+                tools=["jira_example_tool"],
+            )
+        ],
+        "confluence": [
+            ToolsetDoc(name="confluence_pages", core=True),
+        ],
+    }
+    output_dir = tmp_path / "docs" / "tools"
+    reference_output = tmp_path / "docs" / "tools-reference.mdx"
+    monkeypatch.setattr(generator, "ROOT", tmp_path)
+
+    rendered = render_pages(
+        category_docs,
+        toolset_docs,
+        counts,
+        TEMPLATE_DIR,
+        output_dir,
+        reference_output,
+    )
+    for path, content in rendered.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    reference_output.write_text(
+        reference_output.read_text().replace("`jira_example_tool`", "`stale_jira_tool`")
+    )
+
+    assert not check_generated_pages(
+        category_docs,
+        toolset_docs,
+        counts,
+        TEMPLATE_DIR,
+        output_dir,
+        reference_output,
+    )
