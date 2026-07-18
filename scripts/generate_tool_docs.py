@@ -251,9 +251,15 @@ class ToolOverride:
     """Optional YAML sidecar overrides for a tool."""
 
     example: str | None = None
+    examples: list[str] = field(default_factory=list)
     tips: str | None = None
     notes: str | None = None
     platform_notes: str | None = None
+
+    @property
+    def all_examples(self) -> list[str]:
+        """Return legacy and list examples in rendering order."""
+        return ([self.example] if self.example else []) + self.examples
 
 
 @dataclass
@@ -399,6 +405,7 @@ def load_overrides(overrides_dir: Path) -> dict[str, ToolOverride]:
             data = yaml.safe_load(f) or {}
         overrides[tool_name] = ToolOverride(
             example=data.get("example"),
+            examples=data.get("examples") or [],
             tips=data.get("tips"),
             notes=data.get("notes"),
             platform_notes=data.get("platform_notes"),

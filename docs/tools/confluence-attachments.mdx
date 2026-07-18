@@ -19,10 +19,14 @@ Upload an attachment to Confluence content (page or blog post).
 | `filename` | `string` | No | (Optional) Attachment filename, including extension (e.g. 'report.pdf'). Required when using 'content_base64'; it determines the attachment title and file type. Ignored when 'file_path' is used. |
 | `comment` | `string` | No | (Optional) A comment describing this attachment or version. Visible in the attachment history. Example: 'Updated Q4 2024 figures' |
 | `minor_edit` | `boolean` | No | (Optional) Whether this is a minor edit. If true, watchers are not notified. Default is false. |
-**Example:**
+**Examples:**
 
 ```json
 {"content_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
+```
+
+```json
+{"content_id": "12345678", "content_base64": "SGVsbG8=", "filename": "hello.txt"}
 ```
 
 <Tip>

@@ -52,13 +52,13 @@ def test_escape_mdx_in_table_handles_json_braces(
 
 
 def test_upload_attachment_override_matches_tool_parameter() -> None:
-    """The upload example must use the registered content ID parameter."""
+    """The upload examples must use the registered content ID parameter."""
     overrides = load_overrides(Path("docs/_overrides"))
-    example = overrides["confluence_upload_attachment"].example
+    examples = overrides["confluence_upload_attachment"].examples
 
-    assert example is not None
-    assert '"content_id"' in example
-    assert '"page_id"' not in example
+    assert len(examples) == 2
+    assert all('"content_id"' in example for example in examples)
+    assert all('"page_id"' not in example for example in examples)
 
 
 def test_attachment_and_jira_guidance_are_preserved_in_overrides() -> None:
@@ -75,6 +75,81 @@ def test_attachment_and_jira_guidance_are_preserved_in_overrides() -> None:
     jira_tips = overrides["jira_update_issue"].tips
     assert jira_tips is not None
     assert "return_fields" in jira_tips
+
+
+def _render_override_category(
+    tmp_path: Path,
+    category: str,
+    tool_names: list[str],
+) -> str:
+    """Render one category using its checked-in overrides."""
+    overrides = load_overrides(Path("docs/_overrides"))
+    category_docs = {
+        category: [
+            ToolDoc(
+                name=tool_name,
+                display_name=tool_name,
+                description="Tool description.",
+                is_write=False,
+                override=overrides[tool_name],
+            )
+            for tool_name in tool_names
+        ]
+    }
+    counts = ToolCounts(
+        total_tools=len(tool_names),
+        jira_tools=len(tool_names) if category.startswith("jira-") else 0,
+        confluence_tools=(len(tool_names) if category.startswith("confluence-") else 0),
+        core_tools=0,
+        total_toolsets=0,
+        jira_toolsets=0,
+        confluence_toolsets=0,
+        core_toolsets=0,
+    )
+    output_dir = tmp_path / "docs" / "tools"
+    rendered = render_pages(
+        category_docs,
+        {"jira": [], "confluence": []},
+        counts,
+        TEMPLATE_DIR,
+        output_dir,
+        tmp_path / "docs" / "tools-reference.mdx",
+    )
+    return rendered[output_dir / f"{category}.mdx"]
+
+
+def test_jira_create_metadata_guidance_survives_page_regeneration(
+    tmp_path: Path,
+) -> None:
+    """Generated Jira docs retain response fields, workflow, and examples."""
+    output = _render_override_category(
+        tmp_path,
+        "jira-search-fields",
+        ["jira_get_project_issue_types", "jira_get_create_fields"],
+    )
+
+    assert "ID, name, description, subtask flag" in output
+    assert "untranslated name when Jira provides one" in output
+    assert "field ID, name, required flag, and schema" in output
+    assert "`jira_get_field_options`" in output
+    assert "allowed values for a custom field" in output
+    assert '{"project_key": "PROJ"}' in output
+    assert '{"project_key": "PROJ", "issue_type_id": "10002"}' in output
+
+
+def test_upload_attachment_examples_survive_page_regeneration(
+    tmp_path: Path,
+) -> None:
+    """Generated Confluence docs retain both supported upload input forms."""
+    output = _render_override_category(
+        tmp_path,
+        "confluence-attachments",
+        ["confluence_upload_attachment"],
+    )
+
+    assert '"file_path": "/path/to/diagram.png"' in output
+    assert '"content_base64": "SGVsbG8="' in output
+    assert '"filename": "hello.txt"' in output
 
 
 @pytest.mark.parametrize(
@@ -167,7 +242,11 @@ def test_category_template_renders_notes_and_safe_nested_json() -> None:
                 description='Nested JSON: {"outer": {"inner": "value"}}',
             )
         ],
-        override=ToolOverride(notes="Cloud-specific guidance."),
+        override=ToolOverride(
+            example='{"legacy": true}\n',
+            examples=['{"list": true}\n'],
+            notes="Cloud-specific guidance.",
+        ),
     )
 
     rendered = environment.get_template("tool_category.mdx.j2").render(
@@ -176,6 +255,8 @@ def test_category_template_renders_notes_and_safe_nested_json() -> None:
     )
 
     assert 'Nested JSON: `{"outer": {"inner": "value"}}`' in rendered
+    assert '{"legacy": true}' in rendered
+    assert '{"list": true}' in rendered
     assert "<Note>\nCloud-specific guidance.\n</Note>" in rendered
 
 

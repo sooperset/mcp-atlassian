@@ -1,0 +1,4 @@
+example: |
+  {"project_key": "PROJ"}
+notes: |
+  The response includes each type's ID, name, description, subtask flag, and untranslated name when Jira provides one.
