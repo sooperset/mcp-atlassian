@@ -31,6 +31,10 @@ class ConfluencePreprocessor(BasePreprocessor):
     # restoring an opt-out task list cannot remove user-supplied characters.
     _TASK_MARKER_PREFIX = "\ue000"
     _TASK_MARKER_PATTERN = re.compile(r"(<li\b[^>]*>)(\[[ xX]\])")
+    _LIST_LINE_PATTERN = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+")
+    _HEADING_LINE_PATTERN = re.compile(r"^\s*#{1,6}\s+")
+    _BLOCKQUOTE_LINE_PATTERN = re.compile(r"^\s*>")
+    _FENCE_LINE_PATTERN = re.compile(r"^(`{3,}|~{3,})")
 
     def __init__(self, base_url: str) -> None:
         """
@@ -79,6 +83,7 @@ class ConfluencePreprocessor(BasePreprocessor):
         Returns:
             Confluence storage format (XHTML) string
         """
+        markdown_content = self._ensure_list_paragraph_separation(markdown_content)
         try:
             # First convert markdown to HTML
             html_content = self._fix_attachment_images(
@@ -162,6 +167,57 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = self._apply_table_layout(storage_format, table_layout)
 
             return storage_format
+
+    @classmethod
+    def _ensure_list_paragraph_separation(cls, markdown_content: str) -> str:
+        """Insert blank lines before lists that directly follow paragraph lines.
+
+        Python-Markdown (used by md2conf) does not implement CommonMark's rule
+        that a list may interrupt a paragraph without a blank line in between.
+        """
+        if not markdown_content:
+            return markdown_content
+
+        lines = markdown_content.splitlines(keepends=True)
+        result: list[str] = []
+        in_fence = False
+        fence_char: str | None = None
+        previous_line: str | None = None
+
+        for line in lines:
+            stripped = line.lstrip()
+            fence_match = cls._FENCE_LINE_PATTERN.match(stripped)
+            if fence_match:
+                marker = fence_match.group(1)[0]
+                if not in_fence:
+                    in_fence = True
+                    fence_char = marker
+                elif fence_char == marker:
+                    in_fence = False
+                    fence_char = None
+                result.append(line)
+                previous_line = line
+                continue
+
+            if in_fence:
+                result.append(line)
+                previous_line = line
+                continue
+
+            if (
+                previous_line is not None
+                and cls._LIST_LINE_PATTERN.match(line)
+                and previous_line.strip()
+                and not cls._LIST_LINE_PATTERN.match(previous_line)
+                and not cls._HEADING_LINE_PATTERN.match(previous_line)
+                and not cls._BLOCKQUOTE_LINE_PATTERN.match(previous_line)
+            ):
+                result.append("\n")
+
+            result.append(line)
+            previous_line = line
+
+        return "".join(result)
 
     @classmethod
     def _get_task_list_marker_prefix(cls, html_content: str) -> str:

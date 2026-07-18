@@ -1104,3 +1104,59 @@ class TestTaskLists:
 
         assert "<ac:task-list>" in result
         assert 'data-table-width="1800"' in result
+
+
+class TestListParagraphSeparation:
+    """Tests for list-after-paragraph preprocessing in markdown conversion."""
+
+    def _convert(self, md: str) -> str:
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        return preprocessor.markdown_to_confluence_storage(md)
+
+    def test_list_after_bold_header_renders_as_ul(self):
+        """Issue #1493: list immediately after bold paragraph line."""
+        result = self._convert(
+            "**Header:**\n- item one\n- item two\n\nSome other paragraph.\n"
+        )
+        assert "<ul>" in result
+        assert "item one" in result
+        assert "item two" in result
+        assert "Header:</strong> - item one" not in result
+
+    def test_ordered_list_after_paragraph_renders_as_ol(self):
+        """Ordered lists after a paragraph line are also separated."""
+        result = self._convert("**Header:**\n1. item one\n2. item two\n")
+        assert "<ol" in result
+        assert "item one" in result
+        assert "item two" in result
+        assert "1. item one" not in result
+
+    def test_existing_blank_line_is_not_doubled(self):
+        """Content that already has a blank line before the list is unchanged."""
+        with_blank = self._convert("**Header:**\n\n- item one\n- item two\n")
+        without_blank = self._convert("**Header:**\n- item one\n- item two\n")
+        assert with_blank == without_blank
+
+    def test_heading_followed_by_list_is_unchanged(self):
+        """ATX headings already allow lists without an extra blank line."""
+        result = self._convert("# Header\n- item one\n- item two\n")
+        assert "<h1>" in result
+        assert "<ul>" in result
+
+    def test_nested_list_items_are_not_split(self):
+        """Only the first list item after a paragraph gets a separator."""
+        result = self._convert(
+            "**Header:**\n- item one\n  - nested\n- item two\n"
+        )
+        assert "<ul>" in result
+        assert "nested" in result
+        assert "item two" in result
+
+    def test_code_fence_content_is_not_modified(self):
+        """Fenced code blocks must not get injected blank lines."""
+        markdown = "Intro\n\n```\nline\n- not a list\n```\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert (
+            preprocessor._ensure_list_paragraph_separation(markdown)
+            == markdown
+        )
