@@ -1,9 +1,9 @@
 ---
 title: "Tools Reference"
-description: "Overview of all 96 MCP tools for Jira and Confluence — organized by category with quick links"
+description: "Overview of all 98 MCP tools for Jira and Confluence — organized by category with quick links"
 ---
 
-MCP Atlassian provides **96 tools** for interacting with Jira and Confluence. Tools are organized by category below.
+MCP Atlassian provides **98 tools** for interacting with Jira and Confluence. Tools are organized by category below.
 
 ## Jira Tools
 
@@ -63,45 +63,46 @@ MCP Atlassian provides **96 tools** for interacting with Jira and Confluence. To
 
 Toolsets group related tools for easier management via `TOOLSETS` env var or `--toolsets` flag.
 
-**Jira Toolsets (15):**
+**Jira Toolsets (16):**
 
 | Toolset | Core | Tools |
 |---------|:----:|-------|
-| `jira_issues` | Yes | `jira_get_issue`, `jira_search`, `jira_get_project_issues`, `jira_create_issue`, `jira_update_issue`, `jira_delete_issue`, `jira_move_issue`, `jira_batch_create_issues`, `jira_batch_get_changelogs` |
+| `jira_issues` | Yes | `jira_get_issue`, `jira_search`, `jira_get_project_issues`, `jira_create_issue`, `jira_batch_create_issues`, `jira_batch_get_changelogs`, `jira_update_issue`, `jira_assign_issue`, `jira_delete_issue`, `jira_move_issue` |
 | `jira_fields` | Yes | `jira_search_fields`, `jira_get_field_options` |
 | `jira_comments` | Yes | `jira_add_comment`, `jira_edit_comment` |
 | `jira_transitions` | Yes | `jira_get_transitions`, `jira_transition_issue` |
-| `jira_projects` | No | `jira_get_all_projects`, `jira_get_project_versions`, `jira_get_project_components`, `jira_create_version`, `jira_batch_create_versions`, `jira_update_version` |
-| `jira_agile` | No | `jira_get_agile_boards`, `jira_get_board_issues`, `jira_get_sprints_from_board`, `jira_get_sprint_issues`, `jira_create_sprint`, `jira_update_sprint`, `jira_add_issues_to_sprint` |
+| `jira_projects` | No | `jira_get_project_issue_types`, `jira_get_create_fields`, `jira_get_project_versions`, `jira_get_project_components`, `jira_get_all_projects`, `jira_search_projects`, `jira_get_project_fields`, `jira_create_version`, `jira_batch_create_versions`, `jira_update_version` |
+| `jira_agile` | No | `jira_get_agile_boards`, `jira_get_board_issues`, `jira_get_sprints_from_board`, `jira_get_sprint_issues`, `jira_create_sprint`, `jira_update_sprint`, `jira_add_issues_to_sprint`, `jira_move_issues_to_backlog` |
 | `jira_links` | No | `jira_get_link_types`, `jira_link_to_epic`, `jira_create_issue_link`, `jira_create_remote_issue_link`, `jira_remove_issue_link` |
 | `jira_worklog` | No | `jira_get_worklog`, `jira_add_worklog` |
 | `jira_attachments` | No | `jira_download_attachments`, `jira_get_issue_images` |
-| `jira_users` | No | `jira_get_user_profile` |
+| `jira_users` | No | `jira_get_user_profile`, `jira_search_assignable_users` |
 | `jira_watchers` | No | `jira_get_issue_watchers`, `jira_add_watcher`, `jira_remove_watcher` |
 | `jira_service_desk` | No | `jira_get_service_desk_for_project`, `jira_get_service_desk_queues`, `jira_get_queue_issues`, `jira_get_request_types`, `jira_get_request_type_fields`, `jira_create_customer_request` |
 | `jira_forms` | No | `jira_get_issue_proforma_forms`, `jira_get_proforma_form_details`, `jira_update_proforma_form_answers` |
 | `jira_metrics` | No | `jira_get_issue_dates`, `jira_get_issue_sla` |
 | `jira_development` | No | `jira_get_issue_development_info`, `jira_get_issues_development_info` |
+| `jira_project_analysis` | No | `jira_get_project_epic_hierarchy`, `jira_get_cross_project_dependencies` |
 
 **Confluence Toolsets (8):**
 
 | Toolset | Core | Tools |
 |---------|:----:|-------|
-| `confluence_pages` | Yes | `confluence_search`, `confluence_get_page`, `confluence_get_page_children`, `confluence_get_space_page_tree`, `confluence_get_page_history`, `confluence_create_page`, `confluence_update_page`, `confluence_update_page_section`, `confluence_delete_page`, `confluence_move_page`, `confluence_copy_page`, `confluence_get_page_restrictions`, `confluence_set_page_restrictions`, `confluence_get_page_diff` |
-| `confluence_comments` | Yes | `confluence_get_comments`, `confluence_add_comment`, `confluence_reply_to_comment` |
+| `confluence_pages` | Yes | `confluence_search`, `confluence_get_page`, `confluence_get_page_children`, `confluence_get_space_page_tree`, `confluence_create_page`, `confluence_update_page`, `confluence_update_page_section`, `confluence_delete_page`, `confluence_move_page`, `confluence_get_page_history`, `confluence_get_page_diff`, `confluence_get_page_restrictions`, `confluence_set_page_restrictions`, `confluence_copy_page` |
+| `confluence_comments` | Yes | `confluence_get_comments`, `confluence_add_comment`, `confluence_reply_to_comment`, `confluence_get_inline_comments`, `confluence_add_inline_comment` |
 | `confluence_labels` | No | `confluence_get_labels`, `confluence_add_label` |
 | `confluence_users` | No | `confluence_search_user` |
 | `confluence_analytics` | No | `confluence_get_page_views` |
 | `confluence_attachments` | No | `confluence_upload_attachment`, `confluence_upload_attachments`, `confluence_get_attachments`, `confluence_download_attachment`, `confluence_download_content_attachments`, `confluence_delete_attachment`, `confluence_get_page_images` |
-| `confluence_permissions` | No | `confluence_check_content_permissions`, `confluence_get_space_permissions` |
 | `confluence_templates` | No | `confluence_list_page_templates`, `confluence_get_page_template`, `confluence_create_page_from_template` |
+| `confluence_permissions` | No | `confluence_check_content_permissions`, `confluence_get_space_permissions` |
 
 ```bash
 # All toolsets are enabled when TOOLSETS is not set.
 # To restrict to core toolsets plus specific extras:
 TOOLSETS=default,jira_agile,jira_attachments
 
-# Enable all toolsets (96 tools)
+# Enable all toolsets (98 tools)
 TOOLSETS=all
 
 # Command line

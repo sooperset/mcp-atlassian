@@ -6,16 +6,17 @@ tool metadata, then renders per-category MDX pages via a Jinja2 template.
 
 Usage:
     python scripts/generate_tool_docs.py           # generate docs/tools/*.mdx
-    python scripts/generate_tool_docs.py --check   # verify all tools are mapped
+    python scripts/generate_tool_docs.py --check   # verify mappings and counts
 
 CI usage:
-    python scripts/generate_tool_docs.py --check   # exits 1 if any tool is undocumented
+    python scripts/generate_tool_docs.py --check   # exits 1 on mapping/count drift
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -84,6 +85,8 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_create_version",
         "jira_batch_create_versions",
         "jira_update_version",
+        "jira_get_project_epic_hierarchy",
+        "jira_get_cross_project_dependencies",
     ],
     "jira-attachments": [
         "jira_download_attachments",
@@ -175,7 +178,8 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     "jira-links-versions": {
         "title": "Jira Links & Versions",
         "description": (
-            "Issue links, epic links, remote links, versions, and components"
+            "Issue links, epic links, remote links, versions, components, and "
+            "cross-project and epic hierarchy analysis"
         ),
     },
     "jira-attachments": {
@@ -261,6 +265,29 @@ class ToolDoc:
     is_write: bool
     parameters: list[ToolParam] = field(default_factory=list)
     override: ToolOverride | None = None
+
+
+@dataclass(frozen=True)
+class ToolCounts:
+    """Registered tool and toolset counts used in generated documentation."""
+
+    total_tools: int
+    jira_tools: int
+    confluence_tools: int
+    core_tools: int
+    total_toolsets: int
+    jira_toolsets: int
+    confluence_toolsets: int
+    core_toolsets: int
+
+
+@dataclass
+class ToolsetDoc:
+    """A registered toolset and its introspected tools."""
+
+    name: str
+    core: bool
+    tools: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +453,58 @@ def build_tool_docs(
     return category_docs
 
 
+def get_tool_counts(tools: dict[str, dict[str, Any]]) -> ToolCounts:
+    """Calculate tool and toolset counts from their live registries."""
+    from mcp_atlassian.utils.toolsets import (
+        ALL_TOOLSETS,
+        CONFLUENCE_TOOLSETS,
+        DEFAULT_TOOLSETS,
+        JIRA_TOOLSETS,
+        get_toolset_tag,
+    )
+
+    return ToolCounts(
+        total_tools=len(tools),
+        jira_tools=sum(name.startswith("jira_") for name in tools),
+        confluence_tools=sum(name.startswith("confluence_") for name in tools),
+        core_tools=sum(
+            get_toolset_tag(info["tags"]) in DEFAULT_TOOLSETS for info in tools.values()
+        ),
+        total_toolsets=len(ALL_TOOLSETS),
+        jira_toolsets=len(JIRA_TOOLSETS),
+        confluence_toolsets=len(CONFLUENCE_TOOLSETS),
+        core_toolsets=len(DEFAULT_TOOLSETS),
+    )
+
+
+def build_toolset_docs(
+    tools: dict[str, dict[str, Any]],
+) -> dict[str, list[ToolsetDoc]]:
+    """Group introspected tools by the registered toolset definitions."""
+    from mcp_atlassian.utils.toolsets import (
+        CONFLUENCE_TOOLSETS,
+        DEFAULT_TOOLSETS,
+        JIRA_TOOLSETS,
+        get_toolset_tag,
+    )
+
+    toolsets_by_name = {
+        name: ToolsetDoc(name=name, core=name in DEFAULT_TOOLSETS)
+        for name in [*JIRA_TOOLSETS, *CONFLUENCE_TOOLSETS]
+    }
+    for tool_name, info in tools.items():
+        toolset_name = get_toolset_tag(info["tags"])
+        if toolset_name not in toolsets_by_name:
+            message = f"Tool '{tool_name}' references unknown toolset '{toolset_name}'"
+            raise ValueError(message)
+        toolsets_by_name[toolset_name].tools.append(tool_name)
+
+    return {
+        "jira": [toolsets_by_name[name] for name in JIRA_TOOLSETS],
+        "confluence": [toolsets_by_name[name] for name in CONFLUENCE_TOOLSETS],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Page generation
 # ---------------------------------------------------------------------------
@@ -439,8 +518,6 @@ def _escape_mdx_in_table(text: str) -> str:
     fails to build the page. This wraps brace-containing segments in backticks
     so they render as inline code instead of being parsed as JSX.
     """
-    import re
-
     if not text or "{" not in text:
         return text
     # Wrap JSON-like brace groups (including nested) in backticks.
@@ -454,10 +531,13 @@ def _escape_mdx_in_table(text: str) -> str:
 
 def generate_pages(
     category_docs: dict[str, list[ToolDoc]],
+    toolset_docs: dict[str, list[ToolsetDoc]],
+    counts: ToolCounts,
     template_dir: Path,
     output_dir: Path,
+    reference_output: Path,
 ) -> None:
-    """Render MDX pages from tool docs and Jinja2 template."""
+    """Render category and tools-reference MDX pages from Jinja2 templates."""
     env = Environment(  # noqa: S701 — MDX output, not HTML; autoescape not needed
         loader=FileSystemLoader(str(template_dir)),
         keep_trailing_newline=True,
@@ -466,19 +546,24 @@ def generate_pages(
     )
     env.filters["escape_pipe"] = lambda s: s.replace("|", "\\|") if s else s
     env.filters["escape_mdx"] = _escape_mdx_in_table
-    template = env.get_template("tool_category.mdx.j2")
+    category_template = env.get_template("tool_category.mdx.j2")
+    reference_template = env.get_template("tools_reference.mdx.j2")
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for cat, tool_docs in category_docs.items():
         meta = CATEGORY_META[cat]
-        rendered = template.render(
+        rendered = category_template.render(
             category=meta,
             tools=tool_docs,
         )
         out_path = output_dir / f"{cat}.mdx"
         out_path.write_text(rendered)
         print(f"  wrote {out_path}")
+
+    rendered = reference_template.render(toolsets=toolset_docs, counts=counts)
+    reference_output.write_text(rendered)
+    print(f"  wrote {reference_output}")
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +610,72 @@ def check_coverage(tools: dict[str, dict[str, Any]]) -> bool:
     return ok
 
 
+COUNT_FILES = (
+    "README.md",
+    ".env.example",
+    "docs.json",
+    "docs/tools-reference.mdx",
+    "docs/configuration.mdx",
+)
+TOOL_COUNT_PATTERN = re.compile(r"~?(\d+)\s+(?:MCP\s+)?tools?\b", re.IGNORECASE)
+TOOLSET_COUNT_PATTERNS = (
+    re.compile(r"(\d+)\s+(?:core\s+)?toolsets?\b", re.IGNORECASE),
+    re.compile(r"\b(?:Jira|Confluence)\s+Toolsets\s+\((\d+)\)", re.IGNORECASE),
+)
+
+
+def _format_expected(values: set[int]) -> str:
+    """Format expected count values for a deterministic error message."""
+    return "{" + ", ".join(str(value) for value in sorted(values)) + "}"
+
+
+def check_counts(tools: dict[str, dict[str, Any]]) -> bool:
+    """Verify documented tool and toolset counts match live registries."""
+    counts = get_tool_counts(tools)
+    allowed_tools = {
+        counts.total_tools,
+        counts.jira_tools,
+        counts.confluence_tools,
+        counts.core_tools,
+    }
+    allowed_toolsets = {
+        counts.total_toolsets,
+        counts.jira_toolsets,
+        counts.confluence_toolsets,
+        counts.core_toolsets,
+    }
+
+    ok = True
+    for relative_path in COUNT_FILES:
+        path = ROOT / relative_path
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            matches = [
+                (match, allowed_tools) for match in TOOL_COUNT_PATTERN.finditer(line)
+            ]
+            matches.extend(
+                (match, allowed_toolsets)
+                for pattern in TOOLSET_COUNT_PATTERNS
+                for match in pattern.finditer(line)
+            )
+            for match, allowed in matches:
+                found = int(match.group(1))
+                if found not in allowed:
+                    print(
+                        f"{relative_path}:{line_number}: found {found}, "
+                        f"expected one of {_format_expected(allowed)}",
+                        file=sys.stderr,
+                    )
+                    ok = False
+
+    if ok:
+        print(
+            "OK: documented tool and toolset counts match the live registries "
+            f"({counts.total_tools} tools, {counts.total_toolsets} toolsets)."
+        )
+
+    return ok
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -533,6 +684,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 OUTPUT_DIR = ROOT / "docs" / "tools"
 OVERRIDES_DIR = ROOT / "docs" / "_overrides"
+REFERENCE_OUTPUT = ROOT / "docs" / "tools-reference.mdx"
 
 
 def main() -> None:
@@ -543,21 +695,35 @@ def main() -> None:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Verify all tools are mapped (no files written).",
+        help="Verify tool mappings and documented counts (no files written).",
     )
     args = parser.parse_args()
 
     tools = asyncio.run(get_all_tools())
 
     if args.check:
-        sys.exit(0 if check_coverage(tools) else 1)
+        coverage_ok = check_coverage(tools)
+        counts_ok = check_counts(tools)
+        sys.exit(0 if coverage_ok and counts_ok else 1)
 
     overrides = load_overrides(OVERRIDES_DIR)
     category_docs = build_tool_docs(tools, overrides)
+    toolset_docs = build_toolset_docs(tools)
+    counts = get_tool_counts(tools)
 
     total = sum(len(docs) for docs in category_docs.values())
-    print(f"Generating {len(category_docs)} pages for {total} tools...")
-    generate_pages(category_docs, TEMPLATE_DIR, OUTPUT_DIR)
+    print(
+        f"Generating {len(category_docs)} category pages and tools reference "
+        f"for {total} tools..."
+    )
+    generate_pages(
+        category_docs,
+        toolset_docs,
+        counts,
+        TEMPLATE_DIR,
+        OUTPUT_DIR,
+        REFERENCE_OUTPUT,
+    )
     print("Done.")
 
 
