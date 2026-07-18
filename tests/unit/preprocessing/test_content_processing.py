@@ -1145,9 +1145,7 @@ class TestListParagraphSeparation:
 
     def test_nested_list_items_are_not_split(self):
         """Only the first list item after a paragraph gets a separator."""
-        result = self._convert(
-            "**Header:**\n- item one\n  - nested\n- item two\n"
-        )
+        result = self._convert("**Header:**\n- item one\n  - nested\n- item two\n")
         assert "<ul>" in result
         assert "nested" in result
         assert "item two" in result
@@ -1156,7 +1154,4 @@ class TestListParagraphSeparation:
         """Fenced code blocks must not get injected blank lines."""
         markdown = "Intro\n\n```\nline\n- not a list\n```\n"
         preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
-        assert (
-            preprocessor._ensure_list_paragraph_separation(markdown)
-            == markdown
-        )
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
