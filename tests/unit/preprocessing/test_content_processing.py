@@ -1173,3 +1173,32 @@ class TestListParagraphSeparation:
         markdown = "Intro\n* * *\n"
         preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
         assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_numbered_prose_after_paragraph_is_not_split(self):
+        """Only ordered lists starting at 1 may interrupt a paragraph."""
+        markdown = "Intro\n2. prose\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_empty_bullet_after_paragraph_is_not_split(self):
+        """Blank list markers must not interrupt a paragraph."""
+        markdown = "Intro\n- \n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_pre_html_block_content_is_preserved(self):
+        """Raw HTML blocks must not get injected blank lines."""
+        markdown = "<pre>\nline\n- literal\n</pre>\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_numbered_prose_stays_paragraph_in_storage(self):
+        """Regression: mid-paragraph numbering must not become an ordered list."""
+        result = self._convert("Intro\n2. prose\n")
+        assert "<ol" not in result
+        assert "2. prose" in result
+
+    def test_empty_bullet_stays_paragraph_in_storage(self):
+        """Regression: blank bullets must not become empty list items."""
+        result = self._convert("Intro\n- \n")
+        assert "<ul>" not in result

@@ -38,6 +38,10 @@ class ConfluencePreprocessor(BasePreprocessor):
     _HEADING_LINE_PATTERN = re.compile(r"^ {0,3}#{1,6}[ \t]+")
     _BLOCKQUOTE_LINE_PATTERN = re.compile(r"^ {0,3}>")
     _FENCE_LINE_PATTERN = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
+    _UNORDERED_LIST_INTERRUPT_PATTERN = re.compile(r"^ {0,3}[-*+][ \t]+\S")
+    _ORDERED_LIST_INTERRUPT_PATTERN = re.compile(r"^ {0,3}1\.[ \t]+\S")
+    _HTML_BLOCK_OPEN_PATTERN = re.compile(r"^<([A-Za-z][\w:-]*)(?:\s[^>]*)?>\s*$")
+    _HTML_BLOCK_CLOSE_PATTERN = re.compile(r"^</([A-Za-z][\w:-]*)>\s*$")
 
     def __init__(self, base_url: str) -> None:
         """
@@ -186,10 +190,26 @@ class ConfluencePreprocessor(BasePreprocessor):
         in_fence = False
         fence_char: str | None = None
         fence_length = 0
+        html_block_tag: str | None = None
         previous_line: str | None = None
 
         for line in lines:
             line_content = line.rstrip("\r\n")
+            if html_block_tag is not None:
+                close_match = cls._HTML_BLOCK_CLOSE_PATTERN.match(line_content)
+                if close_match and close_match.group(1).lower() == html_block_tag:
+                    html_block_tag = None
+                result.append(line)
+                previous_line = line
+                continue
+
+            html_open_match = cls._HTML_BLOCK_OPEN_PATTERN.match(line_content)
+            if html_open_match:
+                html_block_tag = html_open_match.group(1).lower()
+                result.append(line)
+                previous_line = line
+                continue
+
             fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
             if fence_match:
                 marker = fence_match.group("marker")
@@ -216,7 +236,7 @@ class ConfluencePreprocessor(BasePreprocessor):
 
             if (
                 previous_line is not None
-                and cls._is_list_line(line)
+                and cls._may_interrupt_paragraph_list_line(line)
                 and previous_line.strip()
                 and not cls._is_list_line(previous_line)
                 and not cls._HEADING_LINE_PATTERN.match(previous_line)
@@ -236,6 +256,17 @@ class ConfluencePreprocessor(BasePreprocessor):
         return bool(
             cls._LIST_LINE_PATTERN.match(line_content)
             and not cls._THEMATIC_BREAK_PATTERN.fullmatch(line_content)
+        )
+
+    @classmethod
+    def _may_interrupt_paragraph_list_line(cls, line: str) -> bool:
+        """Return whether a list may interrupt a paragraph without a blank line."""
+        line_content = line.rstrip("\r\n")
+        if cls._THEMATIC_BREAK_PATTERN.fullmatch(line_content):
+            return False
+        return bool(
+            cls._UNORDERED_LIST_INTERRUPT_PATTERN.match(line_content)
+            or cls._ORDERED_LIST_INTERRUPT_PATTERN.match(line_content)
         )
 
     @classmethod
