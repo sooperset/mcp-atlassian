@@ -123,20 +123,6 @@ class TestConfluencePage:
         # URL should be included
         assert "url" in simplified
 
-    def test_subtype_is_preserved_in_simplified_dict(self):
-        """Test that Cloud page subtypes survive model conversion."""
-        page = ConfluencePage.from_api_response(
-            {
-                "id": "live-123",
-                "title": "Live Doc",
-                "type": "page",
-                "subtype": "live",
-            }
-        )
-
-        assert page.subtype == "live"
-        assert page.to_simplified_dict()["subtype"] == "live"
-
     def test_to_simplified_dict_includes_version_author_and_date(
         self, confluence_page_data
     ):
@@ -160,6 +146,20 @@ class TestConfluencePage:
         assert simplified["version"] == 3
         assert "version_author" not in simplified
         assert "version_date" not in simplified
+
+    def test_subtype_is_preserved_in_simplified_dict(self):
+        """Test that Cloud page subtypes survive model conversion."""
+        page = ConfluencePage.from_api_response(
+            {
+                "id": "live-123",
+                "title": "Live Doc",
+                "type": "page",
+                "subtype": "live",
+            }
+        )
+
+        assert page.subtype == "live"
+        assert page.to_simplified_dict()["subtype"] == "live"
 
     def test_from_api_response_with_expandable_space(self):
         """Test creating a ConfluencePage from data with space info in _expandable."""
