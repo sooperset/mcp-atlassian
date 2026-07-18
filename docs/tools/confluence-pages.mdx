@@ -23,7 +23,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 ```
 
 <Tip>
-Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date.
+Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date. When Confluence supplies version details, the response metadata includes `version_author` (the author display name) and `version_date` (the raw ISO 8601 version timestamp).
 </Tip>
 
 ---
@@ -191,7 +191,7 @@ Use this instead of `confluence_update_page` when the page contains macros, layo
 </Tip>
 
 <Warning>
-`heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised.
+`heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised without updating the page.
 </Warning>
 
 ---
