@@ -251,10 +251,10 @@ class ToolOverride:
     """Optional YAML sidecar overrides for a tool."""
 
     example: str | None = None
-    examples: list[str] = field(default_factory=list)
     tips: str | None = None
     notes: str | None = None
     platform_notes: str | None = None
+    examples: list[str] = field(default_factory=list)
 
     @property
     def all_examples(self) -> list[str]:

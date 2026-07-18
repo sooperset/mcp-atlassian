@@ -61,6 +61,22 @@ def test_upload_attachment_override_matches_tool_parameter() -> None:
     assert all('"page_id"' not in example for example in examples)
 
 
+def test_tool_override_preserves_legacy_positional_fields() -> None:
+    """Adding list examples must not reorder the existing dataclass API."""
+    override = ToolOverride(
+        "legacy example",
+        "legacy tips",
+        "legacy notes",
+        "legacy platform notes",
+    )
+
+    assert override.example == "legacy example"
+    assert override.tips == "legacy tips"
+    assert override.notes == "legacy notes"
+    assert override.platform_notes == "legacy platform notes"
+    assert override.all_examples == ["legacy example"]
+
+
 def test_attachment_and_jira_guidance_are_preserved_in_overrides() -> None:
     """Important manual guidance survives documentation regeneration."""
     overrides = load_overrides(Path("docs/_overrides"))
