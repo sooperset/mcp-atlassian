@@ -1,5 +1,5 @@
 example: |
-  {"issue_key": "PROJ-123", "fields": "summary,status,assignee", "comment_limit": 5}
+  {"issue_key": "PROJ-123", "fields": "summary,status,assignee", "comment_limit": 5, "include": "remote_links,transitions"}
 tips: |
   Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content. Use `include: "all"` to inline common enrichments that otherwise require separate tool calls.
 

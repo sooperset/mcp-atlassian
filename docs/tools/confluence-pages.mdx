@@ -180,6 +180,11 @@ Update a single section of a Confluence page without affecting the rest.
 | `content_format` | `string` | No | (Optional) Format of new_content. Options: 'markdown' (default) or 'storage' (raw Confluence storage XML). Use 'storage' to insert macros or elements that markdown cannot express. |
 | `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
 | `version_comment` | `string` | No | Optional comment for this version |
+**Example:**
+
+```json
+{"page_id": "12345678", "heading_text": "Weekly Update", "new_content": "- Shipped v2.1\n- Started v2.2 planning", "version_comment": "Weekly sync"}
+```
 
 <Tip>
 Use this instead of `confluence_update_page` when the page contains macros, layouts, task lists, or other Confluence-specific elements you don't want to lose. The tool fetches the page as raw storage XML, surgically replaces only the target section, and writes the full XML back — so everything outside the section is preserved exactly.
@@ -205,6 +210,11 @@ Move a Confluence page to a new parent or space.
 | `target_parent_id` | `string` | No | Target parent page ID. If omitted with target_space_key, moves to space root. |
 | `target_space_key` | `string` | No | Target space key for cross-space moves |
 | `position` | `string` | No | Position: 'append' (default, move as child of target), 'above' (move before target as sibling), or 'below' (move after target as sibling) |
+**Example:**
+
+```json
+{"page_id": "12345678", "target_parent_id": "98765432"}
+```
 
 <Tip>
 Use `target_space_key` to move pages between spaces. Omit `target_parent_id` with a space key to move to the space root.
@@ -231,6 +241,11 @@ Copy a Confluence page to a new location.
 | `new_title` | `string` | Yes | Title for the new copied page |
 | `destination_parent_id` | `string` | No | (Optional) Parent page ID in the destination space. When omitted the page is created at the space root. |
 | `copy_attachments` | `boolean` | No | (Optional) Whether to copy attachments to the new page. Defaults to true. Only supported on Confluence Cloud. |
+**Example:**
+
+```json
+{"source_page_id": "12345678", "destination_space_key": "DOCS", "new_title": "Copied Runbook", "destination_parent_id": "98765432"}
+```
 
 ---
 
@@ -279,6 +294,11 @@ Get a unified diff between two versions of a Confluence page.
 | `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
 | `from_version` | `integer` | Yes | Source version number |
 | `to_version` | `integer` | Yes | Target version number |
+**Example:**
+
+```json
+{"page_id": "12345678", "from_version": 1, "to_version": 3}
+```
 
 <Tip>
 Use `confluence_get_page_history` to discover available version numbers. The diff is in unified format, showing additions and removals between versions.

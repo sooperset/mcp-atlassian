@@ -22,7 +22,7 @@ Get details of a specific Jira issue.
 **Example:**
 
 ```json
-{"issue_key": "PROJ-123", "fields": "summary,status,assignee", "comment_limit": 5}
+{"issue_key": "PROJ-123", "fields": "summary,status,assignee", "comment_limit": 5, "include": "remote_links,transitions"}
 ```
 
 <Tip>
@@ -141,6 +141,11 @@ Move a Jira issue to a different project (Jira Cloud only).
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key to move (e.g., 'PROJ-123') |
 | `target_project_key` | `string` | Yes | Key of the target project (e.g., 'OTHERPROJ'). The issue will keep its current issue type and may receive a new key in the target project. |
+**Example:**
+
+```json
+{"issue_key": "PROJ-123", "target_project_key": "OTHERPROJ"}
+```
 
 <Warning>
 This tool is only available for Jira Cloud. The target project must support the issue's current type. Jira may assign a new issue key in the target project.
