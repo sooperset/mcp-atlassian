@@ -172,6 +172,48 @@ async def test_streamable_http_path_is_normalized_without_trailing_slash():
     assert app.state.path == "/mcp"
 
 
+@pytest.mark.parametrize(
+    ("transport", "path", "expected_endpoints"),
+    [
+        ("http", "/http-alias/", {("POST", "/http-alias")}),
+        ("streamable-http", "/custom-mcp/", {("POST", "/custom-mcp")}),
+        (
+            "sse",
+            "/custom-sse/",
+            {("GET", "/custom-sse"), ("POST", "/messages")},
+        ),
+    ],
+)
+def test_http_app_configures_auth_for_transport_endpoints(
+    transport, path, expected_endpoints
+):
+    app = main_mcp.http_app(transport=transport, path=path)
+    middleware = next(
+        item for item in app.user_middleware if item.cls is UserTokenMiddleware
+    )
+
+    assert middleware.kwargs["auth_endpoints"] == frozenset(expected_endpoints)
+
+
+@pytest.mark.security_regression
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("GET", "/sse"), ("POST", "/messages/?session_id=missing")],
+)
+async def test_sse_app_rejects_unauthenticated_transport_requests_by_default(
+    method, path, monkeypatch
+):
+    monkeypatch.delenv("ALLOW_GLOBAL_CRED_FALLBACK", raising=False)
+    app = main_mcp.http_app(transport="sse")
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.request(method, path)
+
+    assert response.status_code == 401
+
+
 class TestUserTokenMiddleware:
     """Tests for the UserTokenMiddleware class."""
 
@@ -633,6 +675,68 @@ class TestUserTokenMiddleware:
             )
             is True
         )
+
+    @pytest.mark.parametrize(
+        ("method", "path", "expected"),
+        [
+            ("GET", "/custom-sse/", True),
+            ("POST", "/messages/", True),
+            ("POST", "/custom-mcp/", True),
+            ("GET", "/healthz", False),
+            ("POST", "/unrelated", False),
+        ],
+    )
+    def test_should_process_auth_uses_configured_transport_endpoints(
+        self, middleware, method, path, expected
+    ):
+        middleware.auth_endpoints = frozenset(
+            {
+                ("GET", "/custom-sse"),
+                ("POST", "/messages"),
+                ("POST", "/custom-mcp"),
+            }
+        )
+
+        assert (
+            middleware._should_process_auth(
+                {"type": "http", "method": method, "path": path}
+            )
+            is expected
+        )
+
+    @pytest.mark.anyio
+    async def test_missing_auth_is_allowed_when_global_fallback_is_enabled(
+        self, middleware, mock_scope, mock_receive, mock_send, monkeypatch
+    ):
+        monkeypatch.setenv("ALLOW_GLOBAL_CRED_FALLBACK", "true")
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        mock_send.assert_not_called()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("method", "path"), [("GET", "/sse"), ("POST", "/messages/")]
+    )
+    async def test_sse_transport_processes_valid_authentication(
+        self, middleware, mock_scope, mock_receive, mock_send, method, path
+    ):
+        middleware.auth_endpoints = frozenset({("GET", "/sse"), ("POST", "/messages")})
+        mock_scope.update(
+            {
+                "method": method,
+                "path": path,
+                "headers": [(b"authorization", b"Bearer user-token")],
+            }
+        )
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_token"] == "user-token"
+        assert passed_scope["state"]["user_atlassian_auth_type"] == "oauth"
 
     @pytest.mark.anyio
     @pytest.mark.parametrize(

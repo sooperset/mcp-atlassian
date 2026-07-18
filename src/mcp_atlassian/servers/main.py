@@ -386,12 +386,22 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         allowed_origins: list[str] | None = None,
     ) -> StarletteWithLifespan:
         final_path = path
-        if transport == "streamable-http":
+        auth_endpoints: frozenset[tuple[str, str]]
+        if transport in ("http", "streamable-http"):
             configured_path = path or fastmcp_settings.streamable_http_path
             final_path = self._normalize_http_path(configured_path)
             self._active_streamable_http_path = final_path
+            auth_endpoints = frozenset({("POST", final_path)})
+        else:
+            sse_path = self._normalize_http_path(path or fastmcp_settings.sse_path)
+            message_path = self._normalize_http_path(fastmcp_settings.message_path)
+            auth_endpoints = frozenset({("GET", sse_path), ("POST", message_path)})
 
-        user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=self)
+        user_token_mw = Middleware(
+            UserTokenMiddleware,
+            mcp_server_ref=self,
+            auth_endpoints=auth_endpoints,
+        )
         final_middleware_list = [user_token_mw]
         if middleware:
             final_middleware_list.extend(middleware)
@@ -418,10 +428,14 @@ class UserTokenMiddleware:
     """
 
     def __init__(
-        self, app: ASGIApp, mcp_server_ref: Optional["AtlassianMCP"] = None
+        self,
+        app: ASGIApp,
+        mcp_server_ref: Optional["AtlassianMCP"] = None,
+        auth_endpoints: frozenset[tuple[str, str]] | None = None,
     ) -> None:
         self.app = app
         self.mcp_server_ref = mcp_server_ref
+        self.auth_endpoints = auth_endpoints
         if not self.mcp_server_ref:
             logger.warning(
                 "UserTokenMiddleware initialized without mcp_server_ref. "
@@ -537,13 +551,19 @@ class UserTokenMiddleware:
 
     def _should_process_auth(self, scope: Scope) -> bool:
         """Check if this request should be processed for authentication."""
-        if not self.mcp_server_ref or scope.get("method") != "POST":
+        if not self.mcp_server_ref:
             return False
 
         try:
-            mcp_path = self.mcp_server_ref.get_streamable_http_path()
+            method = scope.get("method", "").upper()
             request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
-            return request_path == mcp_path
+            if self.auth_endpoints is not None:
+                return (method, request_path) in self.auth_endpoints
+
+            return (
+                method == "POST"
+                and request_path == self.mcp_server_ref.get_streamable_http_path()
+            )
         except (AttributeError, ValueError) as e:
             logger.warning(f"Error checking auth path: {e}")
             return False
