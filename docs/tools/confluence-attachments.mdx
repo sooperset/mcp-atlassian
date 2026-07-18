@@ -92,7 +92,7 @@ Download an attachment from Confluence as an embedded resource.
 | `attachment_id` | `string` | Yes | The ID of the attachment to download (e.g., 'att123456789'). Find attachment IDs using get_attachments tool. Example workflow: get_attachments(content_id) → use returned ID here. |
 
 <Note>
-On Confluence Cloud, attachment downloads automatically use the v1 REST endpoint (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.
+On Confluence Cloud, attachment downloads automatically use the v1 REST endpoint (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Set `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1` explicitly only to override the automatic Cloud/Server/DC choice.
 </Note>
 
 ---

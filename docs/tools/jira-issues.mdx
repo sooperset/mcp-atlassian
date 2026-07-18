@@ -26,7 +26,7 @@ Get details of a specific Jira issue.
 ```
 
 <Tip>
-Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content. Use `include: "all"` to inline common enrichments that otherwise require separate tool calls.
+Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content. Use `include: "all"` to inline common enrichments that otherwise require separate tool calls. The response includes `browse_url`, a direct link to the issue in the Jira web UI.
 
 Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`. If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
 </Tip>

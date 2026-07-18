@@ -24,7 +24,7 @@ Add a comment to a Jira issue.
 ```
 
 <Tip>
-Supports Markdown formatting. On Jira Cloud, mention users with `[~accountid:ACCOUNT_ID]` or `@[Display Name](accountid:ACCOUNT_ID)`. Use `visibility` parameter for restricted comments (e.g., service desk internal notes).
+Supports Markdown formatting. On Jira Cloud, mention users with `[~accountid:ACCOUNT_ID]` or `@[Display Name](accountid:ACCOUNT_ID)`. Use `visibility` parameter for restricted comments (e.g., service desk internal notes). The generated schema lists `body`, but callers may use `comment` as an equivalent input alias for the same comment text.
 </Tip>
 
 ---
