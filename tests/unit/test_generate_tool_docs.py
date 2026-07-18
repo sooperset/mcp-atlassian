@@ -170,6 +170,75 @@ def test_upload_attachment_examples_survive_page_regeneration(
 
 
 @pytest.mark.parametrize(
+    ("category", "tool_name", "expected_example"),
+    [
+        (
+            "confluence-comments",
+            "confluence_reply_to_comment",
+            '{"comment_id": "67890", "body": "Thanks for the feedback! '
+            "I've updated the section.\"}",
+        ),
+        (
+            "confluence-pages",
+            "confluence_update_page_section",
+            '{"page_id": "12345678", "heading_text": "Weekly Update", '
+            '"new_content": "- Shipped v2.1\\n- Started v2.2 planning", '
+            '"version_comment": "Weekly sync"}',
+        ),
+        (
+            "confluence-pages",
+            "confluence_move_page",
+            '{"page_id": "12345678", "target_parent_id": "98765432"}',
+        ),
+        (
+            "confluence-pages",
+            "confluence_copy_page",
+            '{"source_page_id": "12345678", "destination_space_key": "DOCS", '
+            '"new_title": "Copied Runbook", "destination_parent_id": '
+            '"98765432"}',
+        ),
+        (
+            "confluence-pages",
+            "confluence_get_page_diff",
+            '{"page_id": "12345678", "from_version": 1, "to_version": 3}',
+        ),
+        (
+            "confluence-permissions",
+            "confluence_check_content_permissions",
+            '{"content_id": "12345678", "user_identifier": '
+            '"5b10a2844c20165700ede21g", "operation": "read"}',
+        ),
+        (
+            "confluence-permissions",
+            "confluence_get_space_permissions",
+            '{"space_id": "98304", "limit": 50}',
+        ),
+        (
+            "jira-issues",
+            "jira_move_issue",
+            '{"issue_key": "PROJ-123", "target_project_key": "OTHERPROJ"}',
+        ),
+        (
+            "jira-issues",
+            "jira_get_issue",
+            '{"issue_key": "PROJ-123", "fields": "summary,status,assignee", '
+            '"comment_limit": 5, "include": "remote_links,transitions"}',
+        ),
+    ],
+)
+def test_restored_examples_survive_page_regeneration(
+    tmp_path: Path,
+    category: str,
+    tool_name: str,
+    expected_example: str,
+) -> None:
+    """Regenerated pages retain every restored runnable JSON example."""
+    output = _render_override_category(tmp_path, category, [tool_name])
+
+    assert expected_example in output
+
+
+@pytest.mark.parametrize(
     ("category", "tool_names"),
     [
         (
