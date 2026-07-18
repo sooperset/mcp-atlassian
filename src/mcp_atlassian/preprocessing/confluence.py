@@ -40,8 +40,72 @@ class ConfluencePreprocessor(BasePreprocessor):
     _FENCE_LINE_PATTERN = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
     _UNORDERED_LIST_INTERRUPT_PATTERN = re.compile(r"^ {0,3}[-*+][ \t]+\S")
     _ORDERED_LIST_INTERRUPT_PATTERN = re.compile(r"^ {0,3}1\.[ \t]+\S")
-    _HTML_BLOCK_OPEN_PATTERN = re.compile(r"^<([A-Za-z][\w:-]*)(?:\s[^>]*)?>\s*$")
-    _HTML_BLOCK_CLOSE_PATTERN = re.compile(r"^</([A-Za-z][\w:-]*)>\s*$")
+    _HTML_BLOCK_TAGS = frozenset(
+        {
+            "address",
+            "article",
+            "aside",
+            "blockquote",
+            "body",
+            "caption",
+            "center",
+            "colgroup",
+            "dd",
+            "details",
+            "dialog",
+            "dir",
+            "div",
+            "dl",
+            "dt",
+            "fieldset",
+            "figcaption",
+            "figure",
+            "footer",
+            "form",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "head",
+            "header",
+            "html",
+            "iframe",
+            "legend",
+            "li",
+            "main",
+            "menu",
+            "menuitem",
+            "nav",
+            "ol",
+            "p",
+            "pre",
+            "script",
+            "section",
+            "summary",
+            "table",
+            "tbody",
+            "td",
+            "tfoot",
+            "th",
+            "thead",
+            "title",
+            "tr",
+            "ul",
+            "style",
+            "textarea",
+        }
+    )
+    _HTML_BLOCK_OPEN_PATTERN = re.compile(
+        r"^ {0,3}<(?P<tag>[A-Za-z][\w:-]*)(?:\s[^>]*)?>",
+        re.IGNORECASE,
+    )
+    _HTML_TAG_PATTERN = re.compile(
+        r"<(?P<closing>/)?(?P<tag>[A-Za-z][\w:-]*)(?:\s[^>]*)?\s*/?>",
+        re.IGNORECASE,
+    )
+    _HTML_COMMENT_OPEN_PATTERN = re.compile(r"^ {0,3}<!--")
 
     def __init__(self, base_url: str) -> None:
         """
@@ -191,25 +255,12 @@ class ConfluencePreprocessor(BasePreprocessor):
         fence_char: str | None = None
         fence_length = 0
         html_block_tag: str | None = None
+        html_block_depth = 0
+        in_html_comment = False
         previous_line: str | None = None
 
         for line in lines:
             line_content = line.rstrip("\r\n")
-            if html_block_tag is not None:
-                close_match = cls._HTML_BLOCK_CLOSE_PATTERN.match(line_content)
-                if close_match and close_match.group(1).lower() == html_block_tag:
-                    html_block_tag = None
-                result.append(line)
-                previous_line = line
-                continue
-
-            html_open_match = cls._HTML_BLOCK_OPEN_PATTERN.match(line_content)
-            if html_open_match:
-                html_block_tag = html_open_match.group(1).lower()
-                result.append(line)
-                previous_line = line
-                continue
-
             fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
             if fence_match:
                 marker = fence_match.group("marker")
@@ -234,6 +285,41 @@ class ConfluencePreprocessor(BasePreprocessor):
                 previous_line = line
                 continue
 
+            if in_html_comment:
+                result.append(line)
+                if "-->" in line_content:
+                    in_html_comment = False
+                previous_line = line
+                continue
+
+            if html_block_tag is not None:
+                result.append(line)
+                html_block_depth += cls._html_block_depth_delta(
+                    line_content, html_block_tag
+                )
+                if html_block_depth <= 0:
+                    html_block_tag = None
+                    html_block_depth = 0
+                previous_line = line
+                continue
+
+            if cls._HTML_COMMENT_OPEN_PATTERN.match(line_content):
+                result.append(line)
+                in_html_comment = "-->" not in line_content
+                previous_line = line
+                continue
+
+            html_open_match = cls._HTML_BLOCK_OPEN_PATTERN.match(line_content)
+            if html_open_match:
+                tag = html_open_match.group("tag").lower()
+                if tag in cls._HTML_BLOCK_TAGS:
+                    html_block_depth = cls._html_block_depth_delta(line_content, tag)
+                    if html_block_depth > 0:
+                        html_block_tag = tag
+                result.append(line)
+                previous_line = line
+                continue
+
             if (
                 previous_line is not None
                 and cls._may_interrupt_paragraph_list_line(line)
@@ -242,12 +328,35 @@ class ConfluencePreprocessor(BasePreprocessor):
                 and not cls._HEADING_LINE_PATTERN.match(previous_line)
                 and not cls._BLOCKQUOTE_LINE_PATTERN.match(previous_line)
             ):
-                result.append("\n")
+                result.append(cls._line_ending(line, previous_line))
 
             result.append(line)
             previous_line = line
 
         return "".join(result)
+
+    @staticmethod
+    def _line_ending(line: str, previous_line: str) -> str:
+        """Return the line-ending convention used by adjacent input lines."""
+        for candidate in (line, previous_line):
+            if candidate.endswith("\r\n"):
+                return "\r\n"
+            if candidate.endswith(("\n", "\r")):
+                return candidate[-1]
+        return "\n"
+
+    @classmethod
+    def _html_block_depth_delta(cls, line: str, tag: str) -> int:
+        """Return the open-minus-close count for one HTML block tag line."""
+        depth_delta = 0
+        for match in cls._HTML_TAG_PATTERN.finditer(line):
+            if match.group("tag").lower() != tag:
+                continue
+            if match.group("closing"):
+                depth_delta -= 1
+            elif not match.group(0).rstrip().endswith("/>"):
+                depth_delta += 1
+        return depth_delta
 
     @classmethod
     def _is_list_line(cls, line: str) -> bool:
