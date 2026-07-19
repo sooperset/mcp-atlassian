@@ -699,6 +699,51 @@ class TestEpicsMixin:
         assert isinstance(result, list)
         assert not result
 
+    def test_get_epic_issues_empty_issuefunction_falls_through_real_model(
+        self, epics_mixin
+    ):
+        """An empty issueFunction result must not short-circuit the fallback.
+
+        Regression: ``JiraSearchResult`` is a populated Pydantic model and is
+        therefore always truthy, so a bare ``if search_result:`` accepted an
+        empty METHOD 1 result and returned ``[]`` without ever trying the
+        parent / Epic Link strategies. This uses the REAL model (not a mock
+        with ``__bool__``) to prove the empty result falls through.
+        """
+        from mcp_atlassian.models.jira import JiraSearchResult
+
+        epics_mixin.jira.get_issue.return_value = {
+            "key": "EPIC-123",
+            "fields": {"issuetype": {"name": "Epic"}},
+        }
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": "customfield_10014", "parent": "parent"}
+        )
+
+        def search_side_effect(jql, **kwargs):
+            if "issueFunction" in jql:
+                # Real model, empty issues -> truthy but must be treated as
+                # "no results" and fall through.
+                return JiraSearchResult(issues=[], total=0, start_at=0)
+            if "parent" in jql:
+                return JiraSearchResult(
+                    issues=[
+                        JiraIssue(key="CHILD-1", summary="Child 1"),
+                        JiraIssue(key="CHILD-2", summary="Child 2"),
+                    ],
+                    total=2,
+                    start_at=0,
+                )
+            return JiraSearchResult(issues=[], total=0, start_at=0)
+
+        epics_mixin.search_issues = MagicMock(side_effect=search_side_effect)
+
+        result = epics_mixin.get_epic_issues("EPIC-123")
+
+        # Fell through to the parent strategy instead of returning [].
+        assert [i.key for i in result] == ["CHILD-1", "CHILD-2"]
+        assert epics_mixin.search_issues.call_count >= 2
+
     def test_get_epic_issues_fallback_jql(self, epics_mixin):
         """Test get_epic_issues with fallback JQL queries."""
         # Setup mocks
