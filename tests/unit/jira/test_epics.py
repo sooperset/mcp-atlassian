@@ -1031,3 +1031,214 @@ class TestEpicFieldDynamicDetection:
             key="TEST-123",
             id="123456",
         )
+
+
+class TestGetEpicSummary:
+    """Tests for EpicsMixin.get_epic_summary and _fetch_epic_children."""
+
+    def _child(
+        self,
+        key: str,
+        *,
+        status: str = "Open",
+        done: bool = False,
+        assignee_account: str | None = None,
+        assignee_name: str | None = None,
+        issue_type: str = "Story",
+    ) -> JiraIssue:
+        from mcp_atlassian.models.jira.common import (
+            JiraIssueType,
+            JiraStatus,
+            JiraStatusCategory,
+            JiraUser,
+        )
+
+        category = JiraStatusCategory(
+            key="done" if done else "indeterminate",
+            name="Done" if done else "In Progress",
+        )
+        assignee = None
+        if assignee_account or assignee_name:
+            assignee = JiraUser(
+                account_id=assignee_account,
+                display_name=assignee_name or "Unknown",
+            )
+        return JiraIssue(
+            key=key,
+            summary=f"Summary {key}",
+            status=JiraStatus(name=status, category=category),
+            assignee=assignee,
+            issue_type=JiraIssueType(name=issue_type),
+        )
+
+    @pytest.fixture
+    def epics_mixin(self, jira_fetcher: JiraFetcher) -> EpicsMixin:
+        mixin = jira_fetcher
+        # is_cloud is a read-only property on the real config; use a mock
+        # so tests can toggle Cloud vs Server/DC pagination behavior.
+        mixin.config = MagicMock()
+        mixin.config.is_cloud = True
+        return mixin
+
+    def test_aggregates_by_status_assignee_type(self, epics_mixin: EpicsMixin):
+        children = [
+            self._child(
+                "C-1",
+                status="Done",
+                done=True,
+                assignee_account="acc-1",
+                assignee_name="Alice",
+            ),
+            self._child(
+                "C-2",
+                status="Done",
+                done=True,
+                assignee_account="acc-1",
+                assignee_name="Alice",
+            ),
+            self._child("C-3", status="Open", issue_type="Bug"),
+        ]
+        epics_mixin.get_epic_issues = MagicMock(return_value=children)
+
+        result = epics_mixin.get_epic_summary("EPIC-1")
+
+        assert result["total_children"] == 3
+        assert result["by_status"] == {"Done": 2, "Open": 1}
+        assert result["by_type"] == {"Story": 2, "Bug": 1}
+        # Assignee aggregated by account id, with an explicit unassigned bucket.
+        assert result["by_assignee"] == {"acc-1": 2, "unassigned": 1}
+        assert result["assignee_names"] == {"acc-1": "Alice"}
+        assert result["partial"] is False
+        assert result["truncated"] is False
+        assert "children" not in result
+
+    def test_completion_uses_done_category_not_status_name(
+        self, epics_mixin: EpicsMixin
+    ):
+        # A child whose status NAME isn't "Done" but whose category IS done
+        # must count toward completion; a localized non-English name works too.
+        children = [
+            self._child("C-1", status="完了", done=True),
+            self._child("C-2", status="Open", done=False),
+        ]
+        epics_mixin.get_epic_issues = MagicMock(return_value=children)
+
+        result = epics_mixin.get_epic_summary("EPIC-1")
+
+        assert result["completion_percentage"] == 50.0
+
+    def test_server_dc_falls_back_to_display_name_for_assignee(
+        self, epics_mixin: EpicsMixin
+    ):
+        # Server/DC issues carry no account id; the display name is the key.
+        epics_mixin.config.is_cloud = False
+        children = [self._child("C-1", assignee_name="Bob Server")]
+        epics_mixin.get_epic_issues = MagicMock(return_value=children)
+
+        result = epics_mixin.get_epic_summary("EPIC-1")
+
+        assert result["by_assignee"] == {"Bob Server": 1}
+        assert result["assignee_names"] == {"Bob Server": "Bob Server"}
+
+    def test_include_children_emits_compact_rows(self, epics_mixin: EpicsMixin):
+        children = [self._child("C-1", status="Done", done=True, assignee_name="Alice")]
+        epics_mixin.get_epic_issues = MagicMock(return_value=children)
+
+        result = epics_mixin.get_epic_summary("EPIC-1", include_children=True)
+
+        assert result["children"] == [
+            {"key": "C-1", "status": "Done", "assignee": "Alice"}
+        ]
+
+    def test_truncated_when_cap_reached(self, epics_mixin: EpicsMixin):
+        # One more child than the cap: the sentinel fetch (max_children + 1)
+        # returns 6, proving there are additional children beyond the cap.
+        children = [self._child(f"C-{i}") for i in range(6)]
+        epics_mixin.get_epic_issues = MagicMock(return_value=children)
+
+        result = epics_mixin.get_epic_summary("EPIC-1", max_children=5)
+
+        assert result["truncated"] is True
+        # Truncated data is partial: no authoritative completion %, and only
+        # the capped prefix is aggregated.
+        assert result["partial"] is True
+        assert result["reason"] == "truncated"
+        assert result["completion_percentage"] is None
+        assert result["total_children"] == 5
+
+    def test_exactly_max_children_is_not_truncated(self, epics_mixin: EpicsMixin):
+        # An epic with EXACTLY the cap of children must not false-positive as
+        # truncated (the sentinel fetch returns exactly max_children, not more).
+        children = [self._child(f"C-{i}", done=(i == 0)) for i in range(5)]
+        epics_mixin.get_epic_issues = MagicMock(return_value=children)
+
+        result = epics_mixin.get_epic_summary("EPIC-1", max_children=5)
+
+        assert result["truncated"] is False
+        assert result["partial"] is False
+        assert result["total_children"] == 5
+        assert result["completion_percentage"] == 20.0
+
+    def test_max_children_hard_capped_in_library(self, epics_mixin: EpicsMixin):
+        # A direct call above the hard ceiling must not fan out unbounded:
+        # the requested limit is clamped to _MAX_EPIC_SUMMARY_CHILDREN.
+        from mcp_atlassian.jira.epics import _MAX_EPIC_SUMMARY_CHILDREN
+
+        epics_mixin.get_epic_issues = MagicMock(return_value=[])
+
+        epics_mixin.get_epic_summary("EPIC-1", max_children=1_000_000)
+
+        # The (sentinel) fetch limit is capped at the ceiling + 1, never 1e6.
+        first_call = epics_mixin.get_epic_issues.call_args_list[0]
+        assert first_call.kwargs["limit"] == _MAX_EPIC_SUMMARY_CHILDREN + 1
+
+    def test_partial_on_fetch_failure(self, epics_mixin: EpicsMixin):
+        epics_mixin.get_epic_issues = MagicMock(side_effect=Exception("Jira outage"))
+
+        result = epics_mixin.get_epic_summary("EPIC-1")
+
+        assert result["partial"] is True
+        assert result["reason"] == "fetch_failed"
+        # Never assert an authoritative completion % on partial data.
+        assert result["completion_percentage"] is None
+        assert result["total_children"] is None
+
+    def test_no_children_is_distinct_from_fetch_failure(self, epics_mixin: EpicsMixin):
+        epics_mixin.get_epic_issues = MagicMock(return_value=[])
+
+        result = epics_mixin.get_epic_summary("EPIC-1")
+
+        assert result["partial"] is False
+        assert result["total_children"] == 0
+        assert result["completion_percentage"] == 0.0
+        assert "reason" not in result
+
+    def test_server_dc_pages_with_start(self, epics_mixin: EpicsMixin):
+        epics_mixin.config.is_cloud = False
+        page1 = [self._child(f"C-{i}") for i in range(50)]
+        page2 = [self._child(f"C-{i}") for i in range(50, 60)]
+        epics_mixin.get_epic_issues = MagicMock(side_effect=[page1, page2])
+
+        result = epics_mixin.get_epic_summary("EPIC-1", max_children=200)
+
+        assert result["total_children"] == 60
+        assert epics_mixin.get_epic_issues.call_count == 2
+        # Second call pages with start at the raw row offset (50), not a
+        # deduped count.
+        second_call = epics_mixin.get_epic_issues.call_args_list[1]
+        assert second_call.kwargs["start"] == 50
+
+    def test_server_dc_dedupes_overlapping_pages(self, epics_mixin: EpicsMixin):
+        # Unstable JQL ordering can repeat a child across pages; it must be
+        # counted once, and paging must advance by the raw offset regardless.
+        epics_mixin.config.is_cloud = False
+        page1 = [self._child(f"C-{i}") for i in range(50)]
+        page2 = [self._child("C-49")] + [self._child(f"C-{i}") for i in range(50, 59)]
+        epics_mixin.get_epic_issues = MagicMock(side_effect=[page1, page2])
+
+        result = epics_mixin.get_epic_summary("EPIC-1", max_children=200)
+
+        # 50 + 9 unique (C-49 duplicate dropped), not 60.
+        assert result["total_children"] == 59
+        second_call = epics_mixin.get_epic_issues.call_args_list[1]
+        assert second_call.kwargs["start"] == 50

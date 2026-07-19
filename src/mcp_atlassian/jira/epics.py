@@ -1,9 +1,11 @@
 """Module for Jira epic operations."""
 
 import logging
+from collections import Counter
 from typing import Any
 
 from ..models.jira import JiraIssue
+from ..utils.pagination import clamp_limit
 from .client import JiraClient
 from .protocols import (
     FieldsOperationsProto,
@@ -13,6 +15,11 @@ from .protocols import (
 )
 
 logger = logging.getLogger("mcp-jira")
+
+# Hard ceiling on children aggregated by get_epic_summary. Enforced in the
+# library (not just the MCP parameter) so a direct call cannot fan out
+# unbounded; clamp_limit() is a no-op unless separately configured.
+_MAX_EPIC_SUMMARY_CHILDREN = 500
 
 
 class EpicsMixin(
@@ -647,6 +654,202 @@ class EpicsMixin(
             # Wrap other exceptions
             logger.error(f"Error getting issues for epic {epic_key}: {str(e)}")
             raise Exception(f"Error getting epic issues: {str(e)}") from e
+
+    def _fetch_epic_children(self, epic_key: str, max_children: int) -> list[JiraIssue]:
+        """Fetch an epic's children using the cross-edition fallback chain.
+
+        Delegates to :meth:`get_epic_issues`, which tries several
+        strategies (``issuesScopedToEpic``, the ``parent`` field,
+        discovered custom fields, the Epic Link name, issue links, and
+        common field IDs) so this works across Cloud, Server/Data
+        Center, and instances with non-standard epic configurations.
+
+        On Cloud, ``search_issues`` paginates internally, so the first
+        call returns up to ``max_children``. On Server/DC each response
+        caps at 50, so we page with ``start`` until we have enough or a
+        short page signals the end.
+
+        Args:
+            epic_key: The epic's issue key.
+            max_children: Upper bound on the number of children fetched.
+
+        Returns:
+            List of child ``JiraIssue`` objects, at most ``max_children``.
+        """
+        page_size = 50
+        first_limit = (
+            max_children if self.config.is_cloud else min(page_size, max_children)
+        )
+        first_page = self.get_epic_issues(epic_key, start=0, limit=first_limit)
+
+        if self.config.is_cloud:
+            return first_page[:max_children]
+
+        # Server/DC: page with an explicit row offset (not the deduped count,
+        # which would drift and re-request overlapping windows). Dedupe by
+        # key so unstable JQL ordering across pages can't double-count a
+        # child. Keep paging only while the previous page came back full — a
+        # short page means we've reached the end.
+        unique: dict[str, JiraIssue] = {}
+        for issue in first_page:
+            if issue.key and issue.key not in unique:
+                unique[issue.key] = issue
+
+        offset = len(first_page)
+        last_page_size = len(first_page)
+        last_request = first_limit
+        while last_page_size >= last_request and len(unique) < max_children:
+            remaining = max_children - len(unique)
+            last_request = min(page_size, remaining)
+            page = self.get_epic_issues(epic_key, start=offset, limit=last_request)
+            last_page_size = len(page)
+            if not page:
+                break
+            offset += len(page)
+            for issue in page:
+                if issue.key and issue.key not in unique:
+                    unique[issue.key] = issue
+
+        return list(unique.values())[:max_children]
+
+    def get_epic_summary(
+        self, epic_key: str, *, max_children: int = 100, include_children: bool = False
+    ) -> dict[str, Any]:
+        """Aggregate an epic's children by status, assignee, and type.
+
+        Designed to back the ``epic_summary`` section of
+        ``jira_get_issue``. The caller is expected to have already
+        confirmed ``epic_key`` refers to an Epic (via
+        :meth:`_is_epic_issue_type`); this method does not re-fetch the
+        epic itself.
+
+        Fetching children turns a single-issue read into a fan-out, so
+        the result is bounded and never overstates completeness:
+
+        * ``truncated`` is ``True`` when the epic has more children than
+          the cap. Detection uses a sentinel fetch of ``max_children + 1``
+          so an epic with *exactly* ``max_children`` children is not a
+          false positive.
+        * ``partial`` is ``True`` (with ``completion_percentage`` left
+          ``None``) whenever the aggregation is over incomplete data —
+          either the children could not be fetched (``reason:
+          "fetch_failed"``) or the cap truncated them (``reason:
+          "truncated"``). A completion percentage is only reported when
+          every child was counted.
+        * ``completion_percentage`` is derived from the stable ``done``
+          status *category*, not localized status names.
+        * assignees are aggregated by account id where available, with
+          an explicit ``unassigned`` bucket; ``assignee_names`` maps ids
+          back to display names for readability.
+
+        Args:
+            epic_key: The epic's issue key.
+            max_children: Upper bound on children to aggregate (1-500;
+                values above the hard cap are clamped).
+            include_children: When ``True``, add a compact ``children``
+                list (key, status, assignee) — never full issue objects.
+
+        Returns:
+            A dict with ``total_children``, ``by_status``,
+            ``by_assignee`` (+ ``assignee_names``), ``by_type``,
+            ``completion_percentage``, ``partial``, and ``truncated``;
+            plus ``children`` when requested.
+        """
+        # Enforce the hard cap in the library itself: clamp_limit() is a
+        # no-op unless configured, so a direct call must not be able to
+        # fan out unbounded above the documented ceiling.
+        max_children = clamp_limit(max_children, context="jira.get_epic_summary")
+        max_children = max(1, min(max_children, _MAX_EPIC_SUMMARY_CHILDREN))
+
+        try:
+            # Fetch one past the cap so "exactly max" and "more than max"
+            # are distinguishable without extra metadata plumbing.
+            fetched = self._fetch_epic_children(epic_key, max_children + 1)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not fetch children for epic {epic_key}: {e}")
+            return {
+                "total_children": None,
+                "by_status": {},
+                "by_assignee": {},
+                "assignee_names": {},
+                "by_type": {},
+                "completion_percentage": None,
+                "partial": True,
+                "reason": "fetch_failed",
+                "truncated": False,
+            }
+
+        truncated = len(fetched) > max_children
+        children = fetched[:max_children]
+
+        by_status: Counter[str] = Counter()
+        by_assignee: Counter[str] = Counter()
+        by_type: Counter[str] = Counter()
+        assignee_names: dict[str, str] = {}
+        done_count = 0
+        children_output: list[dict[str, Any]] = []
+
+        for child in children:
+            status_name = child.status.name if child.status else "Unknown"
+            if (
+                child.status
+                and child.status.category
+                and child.status.category.key == "done"
+            ):
+                done_count += 1
+            by_status[status_name] += 1
+
+            if child.assignee and child.assignee.account_id:
+                assignee_key = child.assignee.account_id
+            elif child.assignee and child.assignee.display_name:
+                # Server/DC issues have no account id; fall back to name.
+                assignee_key = child.assignee.display_name
+            else:
+                assignee_key = "unassigned"
+            if child.assignee and assignee_key != "unassigned":
+                assignee_names[assignee_key] = child.assignee.display_name
+            by_assignee[assignee_key] += 1
+
+            type_name = child.issue_type.name if child.issue_type else "Unknown"
+            by_type[type_name] += 1
+
+            if include_children:
+                children_output.append(
+                    {
+                        "key": child.key,
+                        "status": status_name,
+                        "assignee": (
+                            child.assignee.display_name
+                            if child.assignee
+                            else "Unassigned"
+                        ),
+                    }
+                )
+
+        total = len(children)
+        # A percentage over a truncated prefix would read as authoritative
+        # while covering only part of the epic — withhold it when partial.
+        completion: float | None
+        if truncated:
+            completion = None
+        else:
+            completion = round(done_count / total * 100, 1) if total else 0.0
+
+        result: dict[str, Any] = {
+            "total_children": total,
+            "by_status": dict(by_status),
+            "by_assignee": dict(by_assignee),
+            "assignee_names": assignee_names,
+            "by_type": dict(by_type),
+            "completion_percentage": completion,
+            "partial": truncated,
+            "truncated": truncated,
+        }
+        if truncated:
+            result["reason"] = "truncated"
+        if include_children:
+            result["children"] = children_output
+        return result
 
     def _find_epic_link_field(self, field_ids: dict[str, str]) -> str | None:
         """
