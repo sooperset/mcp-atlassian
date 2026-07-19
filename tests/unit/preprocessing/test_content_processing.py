@@ -1267,9 +1267,7 @@ class TestListParagraphSeparation:
     def test_processing_resumes_after_remaining_block(self, tag):
         """List separation resumes after each remaining raw block tag."""
         markdown = f"<{tag}>\nline\n- literal\n</{tag}>\nIntro\n- item\n"
-        expected = (
-            f"<{tag}>\nline\n- literal\n</{tag}>\nIntro\n\n- item\n"
-        )
+        expected = f"<{tag}>\nline\n- literal\n</{tag}>\nIntro\n\n- item\n"
         preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
         assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
 

@@ -394,10 +394,7 @@ class ConfluencePreprocessor(BasePreprocessor):
                         html_block_depth = cls._html_block_depth_delta(
                             line_content, tag
                         )
-                    if (
-                        tag not in cls._HTML_VOID_BLOCK_TAGS
-                        and html_block_depth > 0
-                    ):
+                    if tag not in cls._HTML_VOID_BLOCK_TAGS and html_block_depth > 0:
                         html_block_tag = tag
                 result.append(line)
                 previous_line = line
@@ -433,9 +430,7 @@ class ConfluencePreprocessor(BasePreprocessor):
         return False
 
     @staticmethod
-    def _html_declaration_is_closed(
-        line: str, *, has_internal_subset: bool
-    ) -> bool:
+    def _html_declaration_is_closed(line: str, *, has_internal_subset: bool) -> bool:
         """Return whether a declaration closes on the current line."""
         quote: str | None = None
         for index, character in enumerate(line):
