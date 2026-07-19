@@ -47,6 +47,7 @@ class ConfluencePreprocessor(BasePreprocessor):
             "aside",
             "blockquote",
             "body",
+            "canvas",
             "caption",
             "center",
             "colgroup",
@@ -62,6 +63,7 @@ class ConfluencePreprocessor(BasePreprocessor):
             "figure",
             "footer",
             "form",
+            "group",
             "h1",
             "h2",
             "h3",
@@ -71,18 +73,26 @@ class ConfluencePreprocessor(BasePreprocessor):
             "head",
             "header",
             "html",
+            "hgroup",
             "iframe",
             "legend",
             "li",
             "main",
             "menu",
             "menuitem",
+            "math",
+            "map",
             "nav",
+            "noscript",
             "noframes",
             "noembed",
             "ol",
+            "object",
+            "option",
+            "output",
             "p",
             "pre",
+            "progress",
             "script",
             "section",
             "summary",
@@ -95,10 +105,13 @@ class ConfluencePreprocessor(BasePreprocessor):
             "title",
             "tr",
             "ul",
+            "video",
+            "hr",
             "style",
             "textarea",
         }
     )
+    _HTML_VOID_BLOCK_TAGS = frozenset({"hr"})
     _HTML_BLOCK_OPEN_PATTERN = re.compile(
         r"^ {0,3}<(?P<tag>[A-Za-z][\w:-]*)(?:\s[^>]*)?>",
         re.IGNORECASE,
@@ -264,26 +277,12 @@ class ConfluencePreprocessor(BasePreprocessor):
         in_html_comment = False
         in_processing_instruction = False
         in_cdata = False
+        in_html_declaration = False
+        html_declaration_has_internal_subset = False
         previous_line: str | None = None
 
         for line in lines:
             line_content = line.rstrip("\r\n")
-
-            if in_fence:
-                fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
-                if fence_match:
-                    marker = fence_match.group("marker")
-                    if (
-                        fence_char == marker[0]
-                        and len(marker) >= fence_length
-                        and not fence_match.group("info").strip()
-                    ):
-                        in_fence = False
-                        fence_char = None
-                        fence_length = 0
-                result.append(line)
-                previous_line = line
-                continue
 
             if in_html_comment:
                 result.append(line)
@@ -306,6 +305,17 @@ class ConfluencePreprocessor(BasePreprocessor):
                 previous_line = line
                 continue
 
+            if in_html_declaration:
+                result.append(line)
+                if cls._html_declaration_is_closed(
+                    line_content,
+                    has_internal_subset=html_declaration_has_internal_subset,
+                ):
+                    in_html_declaration = False
+                    html_declaration_has_internal_subset = False
+                previous_line = line
+                continue
+
             if html_block_tag is not None:
                 result.append(line)
                 html_block_depth += cls._html_block_depth_delta(
@@ -314,6 +324,22 @@ class ConfluencePreprocessor(BasePreprocessor):
                 if html_block_depth <= 0:
                     html_block_tag = None
                     html_block_depth = 0
+                previous_line = line
+                continue
+
+            if in_fence:
+                fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
+                if fence_match:
+                    marker = fence_match.group("marker")
+                    if (
+                        fence_char == marker[0]
+                        and len(marker) >= fence_length
+                        and not fence_match.group("info").strip()
+                    ):
+                        in_fence = False
+                        fence_char = None
+                        fence_length = 0
+                result.append(line)
                 previous_line = line
                 continue
 
@@ -337,6 +363,16 @@ class ConfluencePreprocessor(BasePreprocessor):
 
             if cls._HTML_DECLARATION_OPEN_PATTERN.match(line_content):
                 result.append(line)
+                html_declaration_has_internal_subset = (
+                    cls._html_declaration_contains_internal_subset(line_content)
+                )
+                if not cls._html_declaration_is_closed(
+                    line_content,
+                    has_internal_subset=html_declaration_has_internal_subset,
+                ):
+                    in_html_declaration = True
+                else:
+                    html_declaration_has_internal_subset = False
                 previous_line = line
                 continue
 
@@ -354,8 +390,14 @@ class ConfluencePreprocessor(BasePreprocessor):
             if html_open_match:
                 tag = html_open_match.group("tag").lower()
                 if tag in cls._HTML_BLOCK_TAGS:
-                    html_block_depth = cls._html_block_depth_delta(line_content, tag)
-                    if html_block_depth > 0:
+                    if tag not in cls._HTML_VOID_BLOCK_TAGS:
+                        html_block_depth = cls._html_block_depth_delta(
+                            line_content, tag
+                        )
+                    if (
+                        tag not in cls._HTML_VOID_BLOCK_TAGS
+                        and html_block_depth > 0
+                    ):
                         html_block_tag = tag
                 result.append(line)
                 previous_line = line
@@ -375,6 +417,40 @@ class ConfluencePreprocessor(BasePreprocessor):
             previous_line = line
 
         return "".join(result)
+
+    @staticmethod
+    def _html_declaration_contains_internal_subset(line: str) -> bool:
+        """Return whether a declaration opens an internal subset."""
+        quote: str | None = None
+        for character in line:
+            if quote is not None:
+                if character == quote:
+                    quote = None
+            elif character in {"'", '"'}:
+                quote = character
+            elif character == "[":
+                return True
+        return False
+
+    @staticmethod
+    def _html_declaration_is_closed(
+        line: str, *, has_internal_subset: bool
+    ) -> bool:
+        """Return whether a declaration closes on the current line."""
+        quote: str | None = None
+        for index, character in enumerate(line):
+            if quote is not None:
+                if character == quote:
+                    quote = None
+                continue
+            if character in {"'", '"'}:
+                quote = character
+            elif has_internal_subset:
+                if character == "]" and line[index + 1 : index + 2] == ">":
+                    return True
+            elif character == ">":
+                return True
+        return False
 
     @staticmethod
     def _line_ending(line: str, previous_line: str) -> str:

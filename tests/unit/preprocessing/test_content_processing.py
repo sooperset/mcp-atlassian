@@ -1219,6 +1219,60 @@ class TestListParagraphSeparation:
         preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
         assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
 
+    def test_void_block_html_tag_does_not_start_a_block(self):
+        """Python-Markdown's void block tag must not suppress later lists."""
+        markdown = "<hr>\nIntro\n- item\n"
+        expected = "<hr>\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            "canvas",
+            "group",
+            "hgroup",
+            "map",
+            "math",
+            "noscript",
+            "object",
+            "option",
+            "output",
+            "progress",
+            "video",
+        ],
+    )
+    def test_remaining_python_markdown_block_content_is_preserved(self, tag):
+        """All Python-Markdown raw block tags preserve literal list markers."""
+        markdown = f"<{tag}>\nline\n- literal\n</{tag}>\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            "canvas",
+            "group",
+            "hgroup",
+            "map",
+            "math",
+            "noscript",
+            "object",
+            "option",
+            "output",
+            "progress",
+            "video",
+        ],
+    )
+    def test_processing_resumes_after_remaining_block(self, tag):
+        """List separation resumes after each remaining raw block tag."""
+        markdown = f"<{tag}>\nline\n- literal\n</{tag}>\nIntro\n- item\n"
+        expected = (
+            f"<{tag}>\nline\n- literal\n</{tag}>\nIntro\n\n- item\n"
+        )
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
     def test_inserted_separator_preserves_crlf_line_endings(self):
         """Injected blank lines must use the document's existing newline style."""
         markdown = "Intro\r\n- item\r\n"
@@ -1255,7 +1309,9 @@ class TestListParagraphSeparation:
         "block",
         [
             '<?target version="1.0"?>',
+            "<?target\nline\n- literal\n?>",
             "<![CDATA[\nline\n- literal\n]]>",
+            "<!DOCTYPE root [\nline\n- literal\n]>",
             "<noframes>\nline\n- literal\n</noframes>",
         ],
     )
@@ -1269,7 +1325,9 @@ class TestListParagraphSeparation:
         "block",
         [
             '<?target version="1.0"?>',
+            "<?target\nline\n- literal\n?>",
             "<![CDATA[\nline\n- literal\n]]>",
+            "<!DOCTYPE root [\nline\n- literal\n]>",
             "<noframes>\nline\n- literal\n</noframes>",
         ],
     )
