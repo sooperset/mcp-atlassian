@@ -720,8 +720,8 @@ class IssuesMixin(
             # Process **kwargs using the dynamic field map
             self._process_additional_fields(fields, kwargs_copy)
 
-            # Create the issue (use v3 API on Cloud for ADF description)
-            has_adf = isinstance(fields.get("description"), dict)
+            # Create the issue (use v3 API on Cloud for any ADF field)
+            has_adf = self._contains_adf_document(fields)
             if has_adf and self.config.is_cloud:
                 response = self._post_api3("issue", {"fields": fields})
             else:
@@ -1105,6 +1105,23 @@ class IssuesMixin(
             logger.error(f"Error creating {issue_type}: {error_msg}")
 
     @staticmethod
+    def _contains_adf_document(fields: dict[str, Any]) -> bool:
+        """Check whether issue fields contain an Atlassian Document Format value.
+
+        Args:
+            fields: Issue fields prepared for a create or update request.
+
+        Returns:
+            True when a top-level field is an ADF document.
+        """
+        return any(
+            isinstance(value, dict)
+            and value.get("version") == 1
+            and value.get("type") == "doc"
+            for value in fields.values()
+        )
+
+    @staticmethod
     def _normalize_return_fields(
         return_fields: str | list[str] | tuple[str, ...] | set[str] | None,
     ) -> str | None:
@@ -1241,9 +1258,9 @@ class IssuesMixin(
                     field_kwargs = {key: value}
                     self._process_additional_fields(update_fields, field_kwargs)
 
-            # Update the issue fields (use v3 API on Cloud for ADF description)
+            # Update the issue fields (use v3 API on Cloud for any ADF field)
             if update_fields:
-                has_adf = isinstance(update_fields.get("description"), dict)
+                has_adf = self._contains_adf_document(update_fields)
                 if has_adf and self.config.is_cloud:
                     if preserve_description_media:
                         update_fields["description"] = (
@@ -1929,8 +1946,17 @@ class IssuesMixin(
             return []
 
         try:
-            # Call Jira's bulk create endpoint
-            response = self.jira.create_issues(issue_updates)
+            # Call Jira's bulk create endpoint, using v3 when any field is ADF.
+            has_adf = any(
+                self._contains_adf_document(issue_update["fields"])
+                for issue_update in issue_updates
+            )
+            if has_adf and self.config.is_cloud:
+                response = self._post_api3(
+                    "issue/bulk", {"issueUpdates": issue_updates}
+                )
+            else:
+                response = self.jira.create_issues(issue_updates)
             if not isinstance(response, dict):
                 msg = f"Unexpected return value type from `jira.create_issues`: {type(response)}"
                 logger.error(msg)

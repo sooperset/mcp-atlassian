@@ -499,6 +499,18 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             if schema_handler:
                 return schema_handler(value, field_id, field_definition)
 
+        # Rich-text custom fields accept Markdown the same way the description field does:
+        # convert to ADF on Cloud, wiki markup on Server. The ':textarea' custom type is the
+        # reliable signal for a multi-line rich-text field; single-line ':textfield' is left
+        # as-is. Without this, Markdown is sent verbatim and renders as literal text (#554).
+        if (
+            schema_type == "string"
+            and isinstance(schema_custom, str)
+            and schema_custom.endswith(":textarea")
+            and isinstance(value, str)
+        ):
+            return self._markdown_to_jira(value)
+
         # 3. Default: return as-is
         return value
 
