@@ -78,6 +78,8 @@ class ConfluencePreprocessor(BasePreprocessor):
             "menu",
             "menuitem",
             "nav",
+            "noframes",
+            "noembed",
             "ol",
             "p",
             "pre",
@@ -106,6 +108,9 @@ class ConfluencePreprocessor(BasePreprocessor):
         re.IGNORECASE,
     )
     _HTML_COMMENT_OPEN_PATTERN = re.compile(r"^ {0,3}<!--")
+    _HTML_PROCESSING_INSTRUCTION_OPEN_PATTERN = re.compile(r"^ {0,3}<\?")
+    _HTML_DECLARATION_OPEN_PATTERN = re.compile(r"^ {0,3}<!(?!--|\[)")
+    _HTML_CDATA_OPEN_PATTERN = re.compile(r"^ {0,3}<!\[CDATA\[")
 
     def __init__(self, base_url: str) -> None:
         """
@@ -257,30 +262,25 @@ class ConfluencePreprocessor(BasePreprocessor):
         html_block_tag: str | None = None
         html_block_depth = 0
         in_html_comment = False
+        in_processing_instruction = False
+        in_cdata = False
         previous_line: str | None = None
 
         for line in lines:
             line_content = line.rstrip("\r\n")
-            fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
-            if fence_match:
-                marker = fence_match.group("marker")
-                if not in_fence:
-                    in_fence = True
-                    fence_char = marker[0]
-                    fence_length = len(marker)
-                elif (
-                    fence_char == marker[0]
-                    and len(marker) >= fence_length
-                    and not fence_match.group("info").strip()
-                ):
-                    in_fence = False
-                    fence_char = None
-                    fence_length = 0
-                result.append(line)
-                previous_line = line
-                continue
 
             if in_fence:
+                fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
+                if fence_match:
+                    marker = fence_match.group("marker")
+                    if (
+                        fence_char == marker[0]
+                        and len(marker) >= fence_length
+                        and not fence_match.group("info").strip()
+                    ):
+                        in_fence = False
+                        fence_char = None
+                        fence_length = 0
                 result.append(line)
                 previous_line = line
                 continue
@@ -289,6 +289,20 @@ class ConfluencePreprocessor(BasePreprocessor):
                 result.append(line)
                 if "-->" in line_content:
                     in_html_comment = False
+                previous_line = line
+                continue
+
+            if in_processing_instruction:
+                result.append(line)
+                if "?>" in line_content:
+                    in_processing_instruction = False
+                previous_line = line
+                continue
+
+            if in_cdata:
+                result.append(line)
+                if "]]>" in line_content:
+                    in_cdata = False
                 previous_line = line
                 continue
 
@@ -306,6 +320,33 @@ class ConfluencePreprocessor(BasePreprocessor):
             if cls._HTML_COMMENT_OPEN_PATTERN.match(line_content):
                 result.append(line)
                 in_html_comment = "-->" not in line_content
+                previous_line = line
+                continue
+
+            if cls._HTML_CDATA_OPEN_PATTERN.match(line_content):
+                result.append(line)
+                in_cdata = "]]>" not in line_content
+                previous_line = line
+                continue
+
+            if cls._HTML_PROCESSING_INSTRUCTION_OPEN_PATTERN.match(line_content):
+                result.append(line)
+                in_processing_instruction = "?>" not in line_content
+                previous_line = line
+                continue
+
+            if cls._HTML_DECLARATION_OPEN_PATTERN.match(line_content):
+                result.append(line)
+                previous_line = line
+                continue
+
+            fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
+            if fence_match:
+                marker = fence_match.group("marker")
+                in_fence = True
+                fence_char = marker[0]
+                fence_length = len(marker)
+                result.append(line)
                 previous_line = line
                 continue
 

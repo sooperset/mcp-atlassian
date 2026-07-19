@@ -1236,3 +1236,46 @@ class TestListParagraphSeparation:
         """Regression: blank bullets must not become empty list items."""
         result = self._convert("Intro\n- \n")
         assert "<ul>" not in result
+
+    def test_unmatched_fence_inside_pre_does_not_suppress_later_list(self):
+        """Fence-like literals inside <pre> must not leave in_fence set."""
+        markdown = "<pre>\nline\n```\n- literal\n</pre>\nIntro\n- item\n"
+        expected = "<pre>\nline\n```\n- literal\n</pre>\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    def test_unmatched_fence_inside_comment_does_not_suppress_later_list(self):
+        """Fence-like literals inside comments must not leave in_fence set."""
+        markdown = "<!--\nline\n```\n- literal\n-->\nIntro\n- item\n"
+        expected = "<!--\nline\n```\n- literal\n-->\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            "<?target version=\"1.0\"?>",
+            "<![CDATA[\nline\n- literal\n]]>",
+            "<noframes>\nline\n- literal\n</noframes>",
+        ],
+    )
+    def test_special_raw_html_blocks_are_preserved(self, block):
+        """Processing instructions, CDATA, and noframes must stay byte-for-byte."""
+        markdown = f"{block}\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            "<?target version=\"1.0\"?>",
+            "<![CDATA[\nline\n- literal\n]]>",
+            "<noframes>\nline\n- literal\n</noframes>",
+        ],
+    )
+    def test_processing_resumes_after_special_raw_html_blocks(self, block):
+        """A later real list still receives its paragraph separator."""
+        markdown = f"{block}\nIntro\n- item\n"
+        expected = f"{block}\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
