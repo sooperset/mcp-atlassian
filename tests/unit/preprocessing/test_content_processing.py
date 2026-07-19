@@ -1254,7 +1254,7 @@ class TestListParagraphSeparation:
     @pytest.mark.parametrize(
         "block",
         [
-            "<?target version=\"1.0\"?>",
+            '<?target version="1.0"?>',
             "<![CDATA[\nline\n- literal\n]]>",
             "<noframes>\nline\n- literal\n</noframes>",
         ],
@@ -1268,7 +1268,7 @@ class TestListParagraphSeparation:
     @pytest.mark.parametrize(
         "block",
         [
-            "<?target version=\"1.0\"?>",
+            '<?target version="1.0"?>',
             "<![CDATA[\nline\n- literal\n]]>",
             "<noframes>\nline\n- literal\n</noframes>",
         ],
