@@ -1140,6 +1140,21 @@ class TestGetEpicSummary:
         assert result["by_assignee"] == {"Bob Server": 1}
         assert result["assignee_names"] == {"Bob Server": "Bob Server"}
 
+    def test_empty_assignee_uses_canonical_unassigned_bucket(
+        self, epics_mixin: EpicsMixin
+    ) -> None:
+        from mcp_atlassian.models.jira.common import JiraStatus, JiraUser
+
+        child = self._child("C-1")
+        child.assignee = JiraUser()
+        child.status = JiraStatus(name="Open")
+        epics_mixin.get_epic_issues = MagicMock(return_value=[child])
+
+        result = epics_mixin.get_epic_summary("EPIC-1")
+
+        assert result["by_assignee"] == {"unassigned": 1}
+        assert result["assignee_names"] == {}
+
     def test_include_children_emits_compact_rows(self, epics_mixin: EpicsMixin):
         children = [self._child("C-1", status="Done", done=True, assignee_name="Alice")]
         epics_mixin.get_epic_issues = MagicMock(return_value=children)

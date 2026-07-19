@@ -799,15 +799,20 @@ class EpicsMixin(
                 done_count += 1
             by_status[status_name] += 1
 
+            assignee_name = (
+                child.assignee.display_name.strip() if child.assignee else ""
+            )
             if child.assignee and child.assignee.account_id:
                 assignee_key = child.assignee.account_id
-            elif child.assignee and child.assignee.display_name:
+            elif assignee_name and assignee_name.casefold() != "unassigned":
                 # Server/DC issues have no account id; fall back to name.
-                assignee_key = child.assignee.display_name
+                assignee_key = assignee_name
             else:
+                # Empty assignee objects can still be returned by Jira for an
+                # unassigned issue; keep the bucket stable across editions.
                 assignee_key = "unassigned"
             if child.assignee and assignee_key != "unassigned":
-                assignee_names[assignee_key] = child.assignee.display_name
+                assignee_names[assignee_key] = assignee_name
             by_assignee[assignee_key] += 1
 
             type_name = child.issue_type.name if child.issue_type else "Unknown"
