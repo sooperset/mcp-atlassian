@@ -1658,19 +1658,43 @@ class TestAdmonitionAndExpandBlocks:
         """
         assert preprocessor.clean_jira_text(jira_markup) == expected
 
-    def test_user_authored_matching_bold_line_is_sanitized(self, preprocessor):
-        """A user-authored bold line that mimics a macro heading is NOT exempt.
+    @pytest.mark.parametrize(
+        ("label", "html_markup", "expected"),
+        [
+            ("▸ Expand", "<b>bold</b>", "**bold**"),
+            (
+                "▸ Expand",
+                '<a href="https://example.com">link</a>',
+                "[link](https://example.com)",
+            ),
+            ("▸ Expand", "<script>alert(1)</script>", None),
+            ("ℹ️ Info", "<b>bold</b>", "**bold**"),
+            (
+                "ℹ️ Info",
+                '<a href="https://example.com">link</a>',
+                "[link](https://example.com)",
+            ),
+            ("ℹ️ Info", "<script>alert(1)</script>", None),
+        ],
+    )
+    def test_user_authored_matching_bold_line_uses_html_conversion(
+        self, preprocessor, label, html_markup, expected
+    ):
+        """Matching user text isn't protected as a generated macro heading.
 
-        Heading protection is scoped to headings generated from Jira macros
-        (via a private sentinel), so ordinary text that merely starts with a
-        macro label still flows through _convert_html_to_markdown — its HTML
-        is stripped/converted rather than passed through raw.
+        Only headings emitted by ``_convert_macro_blocks`` are protected from
+        the HTML pass. Ordinary bold Jira text with the same visible prefix
+        must still convert or remove nested HTML through that existing path.
         """
-        result = preprocessor.clean_jira_text(
-            "*▸ Expand: <script>alert(1)</script>*<p>body</p>"
-        )
-        assert "<script>" not in result, result
-        assert "alert(1)" not in result, result  # script tag + payload stripped
+        result = preprocessor.clean_jira_text(f"*{label}: {html_markup}*<p>body</p>")
+
+        assert "<b>" not in result and "</b>" not in result, result
+        assert "<a " not in result and "</a>" not in result, result
+        assert "<script>" not in result and "</script>" not in result, result
+        if expected is None:
+            assert "alert(1)" not in result, result
+        else:
+            assert expected in result, result
         assert "body" in result, result
 
     def test_generated_heading_survives_body_html(self, preprocessor):
