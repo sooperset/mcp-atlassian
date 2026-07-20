@@ -51,6 +51,7 @@ _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
         "changelog",
         "comments",
         "worklogs",
+        "worklog_attributes",
     }
 )
 _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
@@ -60,11 +61,14 @@ _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
     "changelog": "changelogs",
     "comments": "comments",
     "worklogs": "worklogs",
+    "worklog_attributes": "worklog_attributes",
 }
 _GET_ISSUE_INCLUDE_ALIASES = {
     "comment": "comments",
     "worklog": "worklogs",
+    "work_attributes": "worklog_attributes",
 }
+_GET_ISSUE_INCLUDE_ALL_SECTIONS = _GET_ISSUE_INCLUDE_SECTIONS - {"worklog_attributes"}
 
 
 def _parse_get_issue_include(include: str | None) -> set[str]:
@@ -78,7 +82,7 @@ def _parse_get_issue_include(include: str | None) -> set[str]:
         if not section:
             continue
         if section == "all":
-            sections.update(_GET_ISSUE_INCLUDE_SECTIONS)
+            sections.update(_GET_ISSUE_INCLUDE_ALL_SECTIONS)
             continue
 
         section = _GET_ISSUE_INCLUDE_ALIASES.get(section, section)
@@ -621,7 +625,8 @@ async def get_issue(
                 "(Optional) Comma-separated sections to inline "
                 "in the response, avoiding extra tool calls. "
                 "Supported: all, remote_links, transitions, "
-                "watchers, changelog, comments, worklogs"
+                "watchers, changelog, comments, worklogs, "
+                "worklog_attributes"
             ),
             default=None,
         ),
@@ -643,8 +648,8 @@ async def get_issue(
 
     Includes Epic links and relationship information. Use the
     ``include`` parameter to inline enrichments (remote_links,
-    transitions, watchers, changelog, comments, worklogs) so that
-    separate tool calls are not needed.
+    transitions, watchers, changelog, comments, worklogs, and
+    worklog_attributes) so that separate tool calls are not needed.
 
     Args:
         ctx: The FastMCP context.
@@ -654,7 +659,9 @@ async def get_issue(
         comment_limit: Maximum number of comments.
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
-        include: Comma-separated enrichment sections to inline.
+        include: Comma-separated enrichment sections to inline. Use
+            ``worklog_attributes`` to include the Tempo Core work attribute
+            catalog and static-list values on Jira Server/Data Center.
         use_display_names: Opt into human-readable custom field keys.
 
     Returns:
@@ -731,6 +738,12 @@ async def get_issue(
             result["worklogs"] = jira.get_worklogs(issue_key)
         except Exception:  # noqa: BLE001
             result["worklogs"] = []
+
+    if "worklog_attributes" in include_sections:
+        result["worklog_attributes"] = [
+            attribute.to_simplified_dict()
+            for attribute in jira.get_work_attribute_catalog()
+        ]
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -2479,9 +2492,9 @@ async def add_worklog(
         Field(
             description=(
                 "(Optional) JSON string of worklog attributes for Tempo Core Work Attributes. "
-                'Example: \'{"_WorklogCategory_": {"value": "Bugfixing"}}\'. '
-                "Use jira_get_work_attributes to find available attribute keys and "
-                "jira_get_work_attribute_values to find static-list values."
+                'Example: {"_WorklogCategory_": {"value": "Bugfixing"}}. '
+                "Use jira_get_issue with include=worklog_attributes to find "
+                "available attribute keys and static-list values."
             )
         ),
     ] = None,
@@ -4527,110 +4540,4 @@ async def get_cross_project_dependencies(
         project_key=project_key,
         max_issues=max_issues,
     )
-    return json.dumps(result, indent=2, ensure_ascii=False)
-
-
-@jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_worklog"},
-    annotations={"title": "Get Work Attributes", "readOnlyHint": True},
-)
-async def get_work_attributes(
-    ctx: Context,
-    _: Annotated[
-        str | None,
-        Field(
-            description="(Optional) Dummy parameter to satisfy zero-arg tool requirements.",
-            default=None,
-        ),
-    ] = None,
-) -> str:
-    """Get all Tempo Core Work Attribute definitions configured in Jira.
-
-    Work attributes allow teams to categorize and tag worklog entries
-    with custom attributes like "Work Mode" (Office/Remote), "Cost Category"
-    (Billable/Non-Billable), etc.
-
-    These attributes are managed by the Tempo Timesheets plugin and are
-    only available on Jira Server/Data Center.
-
-    Returns:
-        JSON string representing a list of work attribute objects.
-
-    Raises:
-        ValueError: If the Jira client is not configured or available.
-    """
-    jira = await get_jira_fetcher(ctx)
-    try:
-        attributes = jira.get_work_attributes()
-        result = {
-            "success": True,
-            "attributes": [attr.to_simplified_dict() for attr in attributes],
-            "count": len(attributes),
-        }
-    except Exception as e:
-        logger.error(f"Error fetching work attributes: {str(e)}")
-        result = {
-            "success": False,
-            "error": str(e),
-            "attributes": [],
-            "count": 0,
-        }
-    return json.dumps(result, indent=2, ensure_ascii=False)
-
-
-@jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_worklog"},
-    annotations={"title": "Get Work Attribute Values", "readOnlyHint": True},
-)
-async def get_work_attribute_values(
-    ctx: Context,
-    attribute_id: Annotated[
-        int,
-        Field(description="The Tempo Work Attribute ID (e.g., 45)"),
-    ],
-    _: Annotated[
-        str | None,
-        Field(
-            description="(Optional) Dummy parameter to satisfy zero-arg tool requirements.",
-            default=None,
-        ),
-    ] = None,
-) -> str:
-    """Get all static-list values for a specific Tempo Core Work Attribute.
-
-    Static-list work attributes have values that can be assigned to worklog
-    entries, such as "Office", "Remote", and "On-site".
-
-    Use ``get_work_attributes`` first to find available attribute IDs.
-
-    Args:
-        ctx: The FastMCP context.
-        attribute_id: The Tempo Work Attribute ID.
-
-    Returns:
-        JSON string representing a list of work attribute value objects.
-
-    Raises:
-        ValueError: If the Jira client is not configured or available.
-    """
-    jira = await get_jira_fetcher(ctx)
-    try:
-        values = jira.get_work_attribute_values(attribute_id=attribute_id)
-        result = {
-            "success": True,
-            "attribute_id": attribute_id,
-            "values": [v.to_simplified_dict() for v in values],
-            "count": len(values),
-        }
-    except Exception as e:
-        logger.error(
-            f"Error fetching work attribute values for id={attribute_id}: {str(e)}"
-        )
-        result = {
-            "success": False,
-            "error": str(e),
-            "attribute_id": attribute_id,
-            "values": [],
-            "count": 0,
-        }
     return json.dumps(result, indent=2, ensure_ascii=False)

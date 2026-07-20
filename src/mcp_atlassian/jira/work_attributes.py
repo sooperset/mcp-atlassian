@@ -1,11 +1,7 @@
 """Mixin for Tempo Core Work Attributes operations."""
 
-import logging
-
 from ..models.jira import JiraWorkAttribute, JiraWorkAttributeValue
 from .client import JiraClient
-
-logger = logging.getLogger("mcp-jira")
 
 
 class WorkAttributeMixin(JiraClient):
@@ -31,32 +27,27 @@ class WorkAttributeMixin(JiraClient):
         """Get all Tempo Core work attribute definitions.
 
         Returns:
-            Configured work attributes, or an empty list when the Tempo API
-            returns an unusable response.
+            Configured work attributes. An empty API response returns an empty
+            list.
 
         Raises:
             NotImplementedError: If connected to Jira Cloud.
+            TypeError: If Tempo returns a response with an unexpected shape.
         """
         self._ensure_server_mode()
-        try:
-            url = "rest/tempo-core/1/work-attribute"
-            result = self.jira.get(url)  # type: ignore[attr-defined]
+        result = self.jira.get(  # type: ignore[attr-defined]
+            "rest/tempo-core/1/work-attribute"
+        )
 
-            if not isinstance(result, list):
-                logger.warning(
-                    "Unexpected response type from work attributes API: %s",
-                    type(result),
-                )
-                return []
+        if not isinstance(result, list):
+            raise TypeError(
+                "Unexpected response type from work attributes API: "
+                f"{type(result).__name__}"
+            )
+        if not all(isinstance(attribute, dict) for attribute in result):
+            raise TypeError("Unexpected work attribute entry in Tempo response")
 
-            return [
-                JiraWorkAttribute.from_api_response(attr)
-                for attr in result
-                if isinstance(attr, dict)
-            ]
-        except Exception as e:
-            logger.warning("Error fetching work attributes: %s", str(e))
-            return []
+        return [JiraWorkAttribute.from_api_response(attribute) for attribute in result]
 
     def get_work_attribute_values(
         self,
@@ -74,31 +65,47 @@ class WorkAttributeMixin(JiraClient):
         Raises:
             ValueError: If attribute_id is not greater than zero.
             NotImplementedError: If connected to Jira Cloud.
+            TypeError: If Tempo returns a response with an unexpected shape.
         """
         if attribute_id <= 0:
             raise ValueError("attribute_id must be greater than zero")
 
         self._ensure_server_mode()
-        try:
-            url = f"rest/tempo-core/1/work-attribute/{attribute_id}/static-list-value"
-            result = self.jira.get(url)  # type: ignore[attr-defined]
+        result = self.jira.get(  # type: ignore[attr-defined]
+            f"rest/tempo-core/1/work-attribute/{attribute_id}/static-list-value"
+        )
 
-            if not isinstance(result, list):
-                logger.warning(
-                    "Unexpected response type from work attribute values API: %s",
-                    type(result),
-                )
-                return []
-
-            return [
-                JiraWorkAttributeValue.from_api_response(value)
-                for value in result
-                if isinstance(value, dict)
-            ]
-        except Exception as e:
-            logger.warning(
-                "Error fetching work attribute values for id=%s: %s",
-                attribute_id,
-                str(e),
+        if not isinstance(result, list):
+            raise TypeError(
+                "Unexpected response type from work attribute values API: "
+                f"{type(result).__name__}"
             )
-            return []
+        if not all(isinstance(value, dict) for value in result):
+            raise TypeError("Unexpected work attribute value in Tempo response")
+
+        return [JiraWorkAttributeValue.from_api_response(value) for value in result]
+
+    def get_work_attribute_catalog(self) -> list[JiraWorkAttribute]:
+        """Get work attribute definitions with static-list values populated.
+
+        Returns:
+            Configured work attributes, including values for static-list
+            attributes. An empty API response returns an empty list.
+
+        Raises:
+            NotImplementedError: If connected to Jira Cloud.
+            TypeError: If Tempo returns a response with an unexpected shape.
+        """
+        attributes = self.get_work_attributes()
+        for attribute in attributes:
+            attribute_type = attribute.type
+            type_value = (
+                attribute_type.value.upper()
+                if attribute_type and attribute_type.value
+                else ""
+            )
+            if attribute.id > 0 and type_value == "STATIC_LIST":
+                attribute.static_list_values = self.get_work_attribute_values(
+                    attribute.id
+                )
+        return attributes

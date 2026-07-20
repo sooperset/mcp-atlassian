@@ -197,15 +197,64 @@ class TestWorkAttributeMixin:
         )
         assert result[0].value == "office"
 
-    @pytest.mark.parametrize("method_name", ["get_work_attributes"])
-    def test_cloud_endpoints_are_rejected(self, method_name):
+    @pytest.mark.parametrize(
+        ("method_name", "args"),
+        [("get_work_attributes", ()), ("get_work_attribute_values", (45,))],
+    )
+    def test_cloud_endpoints_are_rejected(self, method_name, args):
         """Tempo Core work attribute endpoints must not run on Cloud."""
         mixin = self._mixin(is_cloud=True)
 
         with pytest.raises(NotImplementedError):
-            getattr(mixin, method_name)()
+            getattr(mixin, method_name)(*args)
 
         mixin.jira.get.assert_not_called()
+
+    def test_get_work_attributes_propagates_request_errors(self):
+        """Tempo request failures must not be reported as an empty catalog."""
+        mixin = self._mixin()
+        mixin.jira.get.side_effect = RuntimeError("Tempo unavailable")
+
+        with pytest.raises(RuntimeError, match="Tempo unavailable"):
+            mixin.get_work_attributes()
+
+    def test_get_work_attribute_values_propagates_request_errors(self):
+        """Static-list request failures must remain visible to callers."""
+        mixin = self._mixin()
+        mixin.jira.get.side_effect = RuntimeError("Tempo unavailable")
+
+        with pytest.raises(RuntimeError, match="Tempo unavailable"):
+            mixin.get_work_attribute_values(attribute_id=45)
+
+    def test_empty_responses_return_empty_lists(self):
+        """Successful empty Tempo responses remain valid empty results."""
+        mixin = self._mixin()
+        mixin.jira.get.return_value = []
+
+        assert mixin.get_work_attributes() == []
+        assert mixin.get_work_attribute_values(attribute_id=45) == []
+
+    def test_get_work_attribute_catalog_includes_static_list_values(self):
+        """The consolidated lookup includes values for static-list attributes."""
+        mixin = self._mixin()
+        mixin.jira.get.side_effect = [
+            [
+                {
+                    "id": 45,
+                    "key": "_WorkMode_",
+                    "name": "Work Mode",
+                    "type": {"value": "STATIC_LIST"},
+                }
+            ],
+            [{"id": 123, "name": "Office", "value": "office"}],
+        ]
+
+        result = mixin.get_work_attribute_catalog()
+
+        assert result[0].static_list_values[0].value == "office"
+        assert mixin.jira.get.call_args_list[1].args == (
+            "rest/tempo-core/1/work-attribute/45/static-list-value",
+        )
 
     def test_invalid_attribute_id_is_rejected(self):
         """Reject invalid path parameters before making a request."""

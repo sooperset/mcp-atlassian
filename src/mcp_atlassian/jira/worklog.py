@@ -86,7 +86,7 @@ class WorklogMixin(JiraClient):
                 For single-select: ``{"45": "123"}`` (attribute_id -> value_id).
                 For multi-select: ``{"45": ["123", "124"]}``.
                 The attribute IDs and values can be looked up via
-                ``get_work_attributes()`` and ``get_work_attribute_values()``.
+                ``get_work_attribute_catalog()``.
 
         Returns:
             Response data if successful
