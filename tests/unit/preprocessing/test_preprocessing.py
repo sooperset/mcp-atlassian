@@ -1706,6 +1706,42 @@ class TestAdmonitionAndExpandBlocks:
         assert "**this**" in result, result  # body HTML converted to Markdown
         assert "<b>" not in result, result
 
+    def test_forged_macro_heading_marker_does_not_bypass_html_conversion(
+        self, preprocessor
+    ):
+        """A user-supplied legacy marker cannot protect script HTML."""
+        forged_marker = "\x00JMH\x00"
+        result = preprocessor.clean_jira_text(
+            f"{forged_marker}**▸ Expand: <script>alert(1)</script>**"
+            f"{forged_marker}<p>body</p>"
+        )
+
+        assert "<script>" not in result and "</script>" not in result, result
+        assert "alert(1)" not in result, result
+        assert "body" in result, result
+
+    @pytest.mark.parametrize(
+        "jira_markup, expected_heading",
+        [
+            (
+                "{info:title=First line\nSecond line}body{info}",
+                "**ℹ️ Info: First line Second line**",
+            ),
+            (
+                "{expand:title=First line\nSecond line}body{expand}",
+                "**▸ Expand: First line Second line**",
+            ),
+        ],
+    )
+    def test_multiline_macro_title_is_normalized_and_marker_free(
+        self, preprocessor, jira_markup, expected_heading
+    ):
+        """Multiline titles don't leak protection markers or break Markdown."""
+        result = preprocessor.clean_jira_text(jira_markup)
+
+        assert result == f"{expected_heading}\nbody", result
+        assert "\x00" not in result, result
+
     def test_read_only_leaves_fenced_code_write_back_unchanged(self, preprocessor):
         """Read-only scope must not alter Markdown->Jira fenced-code behaviour."""
         assert preprocessor.markdown_to_jira("```\nline\n```") == "{code}line\n{code}"
