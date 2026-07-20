@@ -1,5 +1,6 @@
 """Jira-specific text preprocessing module."""
 
+import html
 import logging
 import re
 from typing import Any
@@ -22,6 +23,130 @@ def _convert_panel(params: str | None, content: str) -> str:
     if title:
         return f"\n**{title}**\n{content}\n"
     return f"\n{content}\n"
+
+
+# Jira admonition macros ({info}, {note}, {warning}, {tip}) share the {panel}
+# param form (title=...). The macro type carries meaning (info vs warning), so
+# it is kept as a bold label prefix on the converted heading. Conversion is
+# read-only (Jira -> Markdown), matching how {panel} is handled.
+_ADMONITION_LABELS = {
+    "info": "ℹ️ Info",
+    "note": "📝 Note",
+    "warning": "⚠️ Warning",
+    "tip": "💡 Tip",
+}
+
+# Label for the {expand} collapsible macro; the ▸ marks it as expandable.
+_EXPAND_LABEL = "▸ Expand"
+
+# Private sentinel wrapping a heading generated from a Jira macro. It lets
+# clean_jira_text protect only these headings from the HTML->markdown pass
+# (see _protect_macro_headings) without matching user-authored bold text that
+# merely happens to start with the same label. NUL bytes cannot occur in
+# normal document text; the sentinel is stripped after the HTML pass.
+_MACRO_HEADING_MARK = "\x00JMH\x00"
+
+
+def _macro_heading(heading: str, content: str) -> str:
+    """Render a macro as a bold heading wrapped in the protection sentinel."""
+    content = content.strip()
+    return f"\n{_MACRO_HEADING_MARK}**{heading}**{_MACRO_HEADING_MARK}\n{content}\n"
+
+
+def _convert_admonition(macro: str, params: str | None, content: str) -> str:
+    """Convert a Jira {info}/{note}/{warning}/{tip} block to markdown.
+
+    Emits a bold labelled heading followed by the body, e.g.
+    ``**ℹ️ Info: <title>**\\n<content>`` (or ``**ℹ️ Info**`` when the macro has
+    no title). Mirrors the read-only handling of {panel}. The title is
+    HTML-escaped so angle brackets / HTML-looking text survive the downstream
+    HTML->markdown pass literally instead of being reparsed as tags.
+    """
+    label = _ADMONITION_LABELS[macro]
+    title = ""
+    if params:
+        title_match = re.search(r"title=([^|}]+)", params)
+        if title_match:
+            title = title_match.group(1).strip()
+    title = html.escape(title, quote=False)
+    heading = f"{label}: {title}" if title else label
+    return _macro_heading(heading, content)
+
+
+def _convert_expand(title: str | None, content: str) -> str:
+    """Convert a Jira {expand} collapsible block to markdown.
+
+    Emits ``**▸ Expand: <title>**\\n<content>`` (or ``**▸ Expand**`` when there
+    is no title). ``{expand:Foo}`` and ``{expand:title=Foo}`` both yield
+    ``Foo``; option-only params such as ``{expand:macro-id=123}`` carry no title
+    and render as plain ``▸ Expand`` rather than exposing the internal option.
+    """
+    raw = (title or "").strip()
+    title_match = re.search(r"(?:^|\|)title=([^|}]+)", raw)
+    if title_match:
+        summary = title_match.group(1).strip()
+    elif raw and "=" not in raw.split("|", 1)[0]:
+        # Shorthand {expand:Foo}: first segment is a title only when it is not
+        # a key=value option (an internal parameter).
+        summary = raw.split("|", 1)[0].strip()
+    else:
+        summary = ""
+    summary = html.escape(summary, quote=False)
+    heading = f"{_EXPAND_LABEL}: {summary}" if summary else _EXPAND_LABEL
+    return _macro_heading(heading, content)
+
+
+def _convert_macro_blocks(text: str) -> str:
+    """Convert nested Jira admonition and expand macros to Markdown.
+
+    Jira uses the same bare tag for a macro's opening and closing delimiter.
+    A stack identifies the matching close for each supported macro, and the
+    innermost complete block is replaced first so nested macros retain their
+    boundaries while their parent is converted.
+    """
+    macro_tag_pattern = re.compile(r"\{(info|note|warning|tip|expand)(?::([^{}]*))?\}")
+
+    while True:
+        stack: list[tuple[int, int, str, str | None, bool]] = []
+        replacement: tuple[int, int, str, str | None, str] | None = None
+
+        for match in macro_tag_pattern.finditer(text):
+            macro = match.group(1)
+            params = match.group(2)
+
+            # Closing tags have no parameters and must match the macro at the
+            # top of the stack. A parameterized tag is always an opening tag,
+            # which also disambiguates same-type nested macros.
+            is_closing = bool(params is None and stack and stack[-1][2] == macro)
+            if not is_closing:
+                if stack:
+                    start, opening_end, open_macro, open_params, _ = stack[-1]
+                    stack[-1] = (start, opening_end, open_macro, open_params, True)
+                stack.append((match.start(), match.end(), macro, params, False))
+                continue
+
+            start, opening_end, open_macro, open_params, has_nested = stack.pop()
+            if has_nested:
+                continue
+
+            replacement = (
+                start,
+                match.end(),
+                open_macro,
+                open_params,
+                text[opening_end : match.start()],
+            )
+            break
+
+        if replacement is None:
+            return text
+
+        start, end, macro, params, content = replacement
+        if macro == "expand":
+            converted = _convert_expand(params, content)
+        else:
+            converted = _convert_admonition(macro, params, content)
+        text = text[:start] + converted + text[end:]
 
 
 class JiraPreprocessor(BasePreprocessor):
@@ -142,11 +267,29 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Convert markup only if translation is enabled
         if not self.disable_translation:
-            # First convert any Jira markup to Markdown
-            text = self.jira_to_markdown(text)
+            # First convert any Jira markup to Markdown, keeping the macro
+            # heading sentinels so they can be protected below.
+            text = self.jira_to_markdown(text, _keep_macro_marks=True)
+
+            # Protect headings generated from Jira macros from the HTML
+            # conversion pass. The macro converters wrap each generated heading
+            # in a private sentinel, so only those headings are protected —
+            # user-authored bold text that merely starts with the same label is
+            # left for _convert_html_to_markdown to sanitize like any other
+            # content. The sentinel is stripped as the heading is stored.
+            macro_headings: list[str] = []
+            mark = re.escape(_MACRO_HEADING_MARK)
+            text = _extract_blocks(
+                text,
+                rf"{mark}(\*\*[^\n]*?\*\*){mark}",
+                lambda match: match.group(1),
+                macro_headings,
+                "JIRAMACRO",
+            )
 
             # Then convert any remaining HTML to markdown
             text = self._convert_html_to_markdown(text)
+            text = _restore_blocks(text, macro_headings, "JIRAMACRO")
 
         return text.strip()
 
@@ -208,7 +351,9 @@ class JiraPreprocessor(BasePreprocessor):
 
         return text
 
-    def jira_to_markdown(self, input_text: str) -> str:
+    def jira_to_markdown(
+        self, input_text: str, *, _keep_macro_marks: bool = False
+    ) -> str:
         """
         Convert Jira markup to Markdown format.
 
@@ -336,6 +481,13 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
+        # Admonition and expand blocks -> bold labelled heading. A stack-based
+        # inside-out scan (see _convert_macro_blocks) handles nested same-type
+        # blocks — {expand:Outer}{expand:Inner}..{expand}..{expand} or
+        # {info}..{info}..{info} — so they close at the correct boundary instead
+        # of at the first inner tag, matching Atlassian's nested-macro semantics.
+        output = _convert_macro_blocks(output)
+
         # Images with alt text
         output = re.sub(
             r"!([^|\n\s]+)\|([^\n!]*)alt=([^\n!\,]+?)"
@@ -387,6 +539,11 @@ class JiraPreprocessor(BasePreprocessor):
         # Restore code/noformat blocks and inline code
         output = _restore_blocks(output, code_blocks, "CODEBLOCK")
         output = _restore_blocks(output, inline_codes, "INLINECODE")
+
+        # The macro-heading sentinel only bridges to clean_jira_text's HTML
+        # pass; strip it here so direct callers get clean Markdown headings.
+        if not _keep_macro_marks:
+            output = output.replace(_MACRO_HEADING_MARK, "")
 
         return output
 
