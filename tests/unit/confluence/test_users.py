@@ -352,6 +352,22 @@ class TestUsersMixin:
         ):
             users_mixin.get_current_user_info()
 
+    def test_get_current_user_info_http_error_429(self, users_mixin):
+        """Test get_current_user_info reports 429 as a rate-limit condition, not
+        a generic/invalid-credential failure (#1405)."""
+        # Arrange
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        http_error = HTTPError(response=mock_response)
+        users_mixin.confluence.get.side_effect = http_error
+
+        # Act/Assert
+        with pytest.raises(
+            MCPAtlassianAuthenticationError,
+            match="rate-limited",
+        ):
+            users_mixin.get_current_user_info()
+
     def test_get_current_user_info_http_error_other(self, users_mixin):
         """Test get_current_user_info with other HTTP error codes."""
         # Arrange

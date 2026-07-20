@@ -1,0 +1,2 @@
+tips: |
+  On Server/DC, user search falls back to group member enumeration. Use `group_name` to search within a specific group if the default `confluence-users` doesn't include all users.

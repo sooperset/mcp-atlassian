@@ -337,6 +337,37 @@ class TestIssuesMixin:
         assert issue.key == "TEST-123"
         assert issue.summary == "Test Issue"
 
+    def test_create_issue_textarea_custom_field_uses_cloud_v3(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Cloud custom textarea values use the v3 create endpoint for ADF."""
+        create_response = {"id": "12345", "key": "TEST-123"}
+        issues_mixin._post_api3 = MagicMock(return_value=create_response)
+        issues_mixin.get_field_by_id = MagicMock(
+            return_value={
+                "name": "Resolution Summary",
+                "schema": {
+                    "type": "string",
+                    "custom": (
+                        "com.atlassian.jira.plugin.system.customfieldtypes:textarea"
+                    ),
+                },
+            }
+        )
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+
+        issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            customfield_10078="## Summary",
+        )
+
+        issues_mixin._post_api3.assert_called_once()
+        sent_fields = issues_mixin._post_api3.call_args.args[1]["fields"]
+        assert sent_fields["customfield_10078"]["type"] == "doc"
+        assert sent_fields["customfield_10078"]["version"] == 1
+
     def test_create_issue_no_components(
         self, issues_mixin: IssuesMixin, make_issue_data
     ):
@@ -801,6 +832,34 @@ class TestIssuesMixin:
             {"fields": {"description": explicit_adf}},
         )
         issues_mixin.jira.get_issue.assert_called_once_with("TEST-123", fields=None)
+
+    def test_update_issue_textarea_custom_field_uses_cloud_v3(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Cloud custom textarea values use the v3 update endpoint for ADF."""
+        issues_mixin._put_api3 = MagicMock(return_value={})
+        issues_mixin.get_field_by_id = MagicMock(
+            return_value={
+                "name": "Resolution Summary",
+                "schema": {
+                    "type": "string",
+                    "custom": (
+                        "com.atlassian.jira.plugin.system.customfieldtypes:textarea"
+                    ),
+                },
+            }
+        )
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+
+        issues_mixin.update_issue(
+            issue_key="TEST-123",
+            customfield_10078="## Summary",
+        )
+
+        issues_mixin._put_api3.assert_called_once()
+        sent_fields = issues_mixin._put_api3.call_args.args[1]["fields"]
+        assert sent_fields["customfield_10078"]["type"] == "doc"
+        assert sent_fields["customfield_10078"]["version"] == 1
 
     def test_update_issue_return_fields_forwarded(
         self, issues_mixin: IssuesMixin, make_issue_data
@@ -1596,6 +1655,48 @@ class TestIssuesMixin:
         assert len(call_args) == 2
         assert call_args[0]["fields"]["summary"] == "Test Issue 1"
         assert call_args[1]["fields"]["summary"] == "Test Issue 2"
+
+    def test_batch_create_issues_textarea_custom_field_uses_cloud_v3(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Cloud batch creation uses v3 when a custom textarea produces ADF."""
+        bulk_response = {
+            "issues": [{"id": "1", "key": "TEST-1"}],
+            "errors": [],
+        }
+        issues_mixin._post_api3 = MagicMock(return_value=bulk_response)
+        issues_mixin.get_field_by_id = MagicMock(
+            return_value={
+                "name": "Resolution Summary",
+                "schema": {
+                    "type": "string",
+                    "custom": (
+                        "com.atlassian.jira.plugin.system.customfieldtypes:textarea"
+                    ),
+                },
+            }
+        )
+        issues_mixin.jira.get_issue.return_value = {
+            "id": "1",
+            "key": "TEST-1",
+            "fields": {"summary": "Test Issue"},
+        }
+
+        issues_mixin.batch_create_issues(
+            [
+                {
+                    "project_key": "TEST",
+                    "summary": "Test Issue",
+                    "issue_type": "Task",
+                    "customfield_10078": "## Summary",
+                }
+            ]
+        )
+
+        issues_mixin._post_api3.assert_called_once()
+        payload = issues_mixin._post_api3.call_args.args[1]
+        sent_fields = payload["issueUpdates"][0]["fields"]
+        assert sent_fields["customfield_10078"]["type"] == "doc"
 
     def test_batch_create_issues_validate_only(self, issues_mixin: IssuesMixin):
         """Test batch_create_issues with validate_only=True."""

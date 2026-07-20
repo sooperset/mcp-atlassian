@@ -3,8 +3,6 @@ title: "Confluence Templates"
 description: "List page templates and create pages from them"
 ---
 
-<Note>These tools are only available for Confluence Cloud. Server/Data Center does not expose the template REST API.</Note>
-
 ### List Page Templates
 
 List Confluence page content templates.
@@ -16,11 +14,15 @@ List Confluence page content templates.
 | `space_key` | `string` | No | Optional space key to list templates defined in that space. When omitted, global templates are returned. |
 | `limit` | `integer` | No | Maximum number of templates to return. |
 
+<Warning>
+This tool is only available for Confluence Cloud. Calling it on Server/Data Center raises `ValueError` because those deployments do not expose the template REST API.
+</Warning>
+
 ---
 
 ### Get Page Template
 
-Get a Confluence page template by ID, including its storage-format body.
+Get a Cloud page template by ID, including its storage-format body.
 
 **Parameters:**
 
@@ -28,11 +30,15 @@ Get a Confluence page template by ID, including its storage-format body.
 |-----------|------|----------|-------------|
 | `template_id` | `string` | Yes | The ID of the template to retrieve. |
 
+<Warning>
+This tool is only available for Confluence Cloud. Calling it on Server/Data Center raises `ValueError` because those deployments do not expose the template REST API.
+</Warning>
+
 ---
 
 ### Create Page from Template
 
-Create a new Confluence page pre-populated with a template's body.
+Create a new Cloud page pre-populated with a template's body.
 
 <Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
 
@@ -44,5 +50,9 @@ Create a new Confluence page pre-populated with a template's body.
 | `title` | `string` | Yes | Title for the new page. |
 | `template_id` | `string` | Yes | ID of the template to use as the page body. |
 | `parent_id` | `string` | No | Optional ID of the parent page. |
+
+<Warning>
+This tool is only available for Confluence Cloud. Calling it on Server/Data Center raises `ValueError` because those deployments do not expose the template REST API.
+</Warning>
 
 ---

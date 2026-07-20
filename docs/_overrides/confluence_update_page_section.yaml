@@ -1,0 +1,6 @@
+example: |
+  {"page_id": "12345678", "heading_text": "Weekly Update", "new_content": "- Shipped v2.1\n- Started v2.2 planning", "version_comment": "Weekly sync"}
+tips: |
+  Use this instead of `confluence_update_page` when the page contains macros, layouts, task lists, or other Confluence-specific elements you don't want to lose. The tool fetches the page as raw storage XML, surgically replaces only the target section, and writes the full XML back — so everything outside the section is preserved exactly.
+platform_notes: |
+  `heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised without updating the page.

@@ -104,6 +104,19 @@ class UsersMixin(ConfluenceClient):
                 raise MCPAtlassianAuthenticationError(
                     f"Confluence token validation failed: {http_err.response.status_code} from /rest/api/user/current"
                 ) from http_err
+            if http_err.response is not None and http_err.response.status_code == 429:
+                logger.warning(
+                    "Confluence token validation was rate-limited (429) on "
+                    "/rest/api/user/current -- this is a transient rate-limit "
+                    "condition, not an invalid credential."
+                )
+                raise MCPAtlassianAuthenticationError(
+                    "Confluence token validation was rate-limited (429) by "
+                    "/rest/api/user/current. This is not an invalid-credential "
+                    "error; retry after backing off, or raise "
+                    "MCP_ATLASSIAN_VALIDATION_CACHE_TTL to reduce validation "
+                    "call frequency."
+                ) from http_err
             logger.error(
                 f"HTTPError when calling Confluence /rest/api/user/current: {http_err}",
                 exc_info=True,

@@ -1,6 +1,8 @@
 example: |
-  {"issue_key": "PROJ-123", "fields": "summary,status,assignee", "comment_limit": 5}
+  {"issue_key": "PROJ-123", "fields": "summary,status,assignee", "comment_limit": 5, "include": "remote_links,transitions"}
 tips: |
-  Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content.
+  Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content. Use `include: "all"` to inline common enrichments that otherwise require separate tool calls. The response includes `browse_url`, a direct link to the issue in the Jira web UI.
+
+  Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`. If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
 platform_notes: |
   Custom field IDs differ between Cloud and Server/DC. Use `jira_search_fields` to discover field IDs.

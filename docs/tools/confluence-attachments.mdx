@@ -14,12 +14,12 @@ Upload an attachment to Confluence content (page or blog post).
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `content_id` | `string` | Yes | The ID of the Confluence content (page or blog post) to attach the file to. Page IDs can be found in the page URL or by using the search/get_page tools. Example: '123456789' |
-| `file_path` | `string` | No | Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\Users\name\file.docx') or relative to the current working directory (e.g., './uploads/document.pdf'). Requires the MCP server to be able to read the path. Provide exactly one of `file_path` or `content_base64`. |
-| `content_base64` | `string` | No | Base64-encoded file content to upload directly, without the server reading from disk. Use this for remote or containerized MCP servers. Provide exactly one of `file_path` or `content_base64`. |
-| `filename` | `string` | No | Attachment filename, including extension. Required when using `content_base64`; ignored when using `file_path`. |
+| `file_path` | `string` | No | Full path to the file to upload. Can be absolute (e.g., '/home/user/document.pdf' or 'C:\Users\name\file.docx') or relative to the current working directory (e.g., './uploads/document.pdf'). If a file with the same name already exists, a new version will be created. Requires the server to be able to read the path; for remote or containerized servers use 'content_base64' instead. Provide either 'file_path' or 'content_base64', not both. |
+| `content_base64` | `string` | No | (Optional) Base64-encoded file content to upload directly, without the server reading from disk. Use this when the server cannot access host file paths (e.g. a remote or containerized MCP server). Requires 'filename'. Provide either 'file_path' or 'content_base64', not both. |
+| `filename` | `string` | No | (Optional) Attachment filename, including extension (e.g. 'report.pdf'). Required when using 'content_base64'; it determines the attachment title and file type. Ignored when 'file_path' is used. |
 | `comment` | `string` | No | (Optional) A comment describing this attachment or version. Visible in the attachment history. Example: 'Updated Q4 2024 figures' |
 | `minor_edit` | `boolean` | No | (Optional) Whether this is a minor edit. If true, watchers are not notified. Default is false. |
-**Example:**
+**Examples:**
 
 ```json
 {"content_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
@@ -32,7 +32,6 @@ Upload an attachment to Confluence content (page or blog post).
 <Tip>
 Supports any file type. If an attachment with the same name exists, it's updated (new version created).
 </Tip>
-
 
 ---
 
@@ -76,11 +75,9 @@ List all attachments for a Confluence content item (page or blog post).
 Use `media_type="application/octet-stream"` for binary files (Confluence returns this for most files including images). Use `filename` parameter for specific files.
 </Tip>
 
-
 <Warning>
 Confluence API returns generic MIME types — use the `mediaTypeDescription` field for human-readable type info.
 </Warning>
-
 
 ---
 
@@ -88,13 +85,15 @@ Confluence API returns generic MIME types — use the `mediaTypeDescription` fie
 
 Download an attachment from Confluence as an embedded resource.
 
-<Note>On Confluence Cloud, attachment downloads automatically use the v1 REST endpoint (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.</Note>
-
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `attachment_id` | `string` | Yes | The ID of the attachment to download (e.g., 'att123456789'). Find attachment IDs using get_attachments tool. Example workflow: get_attachments(content_id) → use returned ID here. |
+
+<Note>
+On Confluence Cloud, attachment downloads automatically use the v1 REST endpoint (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Set `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1` explicitly only to override the automatic Cloud/Server/DC choice.
+</Note>
 
 ---
 
@@ -128,12 +127,14 @@ Permanently delete an attachment from Confluence.
 
 Get all images attached to a Confluence page as inline image content.
 
-<Note>On Confluence Cloud, images are fetched via the v1 REST endpoint automatically (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.</Note>
-
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `content_id` | `string` | Yes | The ID of the Confluence page or blog post to retrieve images from. Example: '123456789' |
+
+<Note>
+On Confluence Cloud, images are fetched via the v1 REST endpoint automatically (the legacy `/download/` link was removed and returns 401 for API/scoped tokens). Override with `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1`.
+</Note>
 
 ---

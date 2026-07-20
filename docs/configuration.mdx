@@ -156,6 +156,8 @@ For mTLS, replace the personal token variables with client certificate variables
 | `CONFLUENCE_CLIENT_KEY_PASSWORD` | Not supported for encrypted private keys; decrypt the key before use |
 | `CONFLUENCE_SSL_VERIFY` | SSL verification (`true`/`false`) |
 | `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE` | Use OS native trust store (`true`/`false`, default: `true`) |
+| `MCP_ATLASSIAN_VALIDATION_CACHE_TTL` | Multi-user credential validation cache lifetime in seconds (`0` disables, default: `300`) |
+| `MCP_ATLASSIAN_VALIDATION_CACHE_MAXSIZE` | Maximum cached multi-user credential validations (default: `100`) |
 
 <Warning>
 Encrypted private keys are not supported. Setting `JIRA_CLIENT_KEY_PASSWORD` or
@@ -297,7 +299,7 @@ Toolsets provide group-level tool control. Instead of listing individual tool na
 enable entire groups of related tools at once using the `TOOLSETS` environment variable.
 
 ```bash
-# Restrict to core tools only (~23 tools across 6 core toolsets)
+# Restrict to core tools only (~35 tools across 6 core toolsets)
 TOOLSETS=default
 
 # Core tools plus agile boards/sprints

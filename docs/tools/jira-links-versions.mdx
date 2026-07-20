@@ -1,6 +1,6 @@
 ---
 title: "Jira Links & Versions"
-description: "Issue links, epic links, remote links, project versions, and components"
+description: "Issue links, epic links, remote links, versions, components, and cross-project and epic hierarchy analysis"
 ---
 
 ### Get Link Types
@@ -28,8 +28,8 @@ Create a link between two Jira issues.
 | `link_type` | `string` | Yes | The type of link to create (e.g., 'Duplicate', 'Blocks', 'Relates to') |
 | `inward_issue_key` | `string` | Yes | The key of the inward issue (e.g., 'PROJ-123', 'ACV2-642') |
 | `outward_issue_key` | `string` | Yes | The key of the outward issue (e.g., 'PROJ-456') |
-| `comment` | `string` | No | (Optional) Comment to add to the link |
-| `comment_visibility` | `string` | No | (Optional) Visibility settings for the comment as JSON string (e.g. `'{"type":"group","value":"jira-users"}'`) |
+| `comment` | `string` | No | (Optional) Comment to add to the link. Rejected when either linked issue belongs to a project listed in JIRA_INTERNAL_ONLY_PROJECTS (a link comment may be customer-visible on JSM and cannot be forced internal): create the link without a comment, then post an internal note with jira_add_comment(public=false) on the relevant issue. |
+| `comment_visibility` | `string` | No | (Optional) Visibility settings for the comment as JSON string (e.g. '`{"type":"group","value":"jira-users"}`') |
 
 ---
 
@@ -134,7 +134,7 @@ Batch create multiple versions in a Jira project.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'ACV2') |
-| `versions` | `string` | Yes | JSON array of version objects. Each object should contain: - name (required): Name of the version - startDate (optional): Start date (YYYY-MM-DD) - releaseDate (optional): Release date (YYYY-MM-DD) - description (optional): Description of the version Example: `[{"name": "v1.0", "startDate": "2025-01-01", "releaseDate": "2025-02-01", "description": "First release"}, {"name": "v2.0"}]` |
+| `versions` | `string` | Yes | JSON array of version objects. Each object should contain: - name (required): Name of the version - startDate (optional): Start date (YYYY-MM-DD) - releaseDate (optional): Release date (YYYY-MM-DD) - description (optional): Description of the version Example: [ `{"name": "v1.0", "startDate": "2025-01-01", "releaseDate": "2025-02-01", "description": "First release"}`, `{"name": "v2.0"}` ] |
 
 ---
 
@@ -148,12 +148,38 @@ Update an existing fix version in a Jira project.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `version_id` | `string` | Yes | Numeric ID of the version to update (e.g., '10001') |
+| `version_id` | `string` | Yes | Numeric ID of the version to update (e.g. '10001') |
 | `name` | `string` | No | New name for the version |
 | `description` | `string` | No | New description for the version |
 | `start_date` | `string` | No | New start date (YYYY-MM-DD) |
 | `release_date` | `string` | No | New release date (YYYY-MM-DD) |
 | `archived` | `boolean` | No | Set archived flag (true to archive) |
 | `released` | `boolean` | No | Set released flag (true to mark released) |
+
+---
+
+### Get Project Epic Hierarchy
+
+Group a project's epics under their cross-project parent issues.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ') |
+| `max_epics` | `integer` | No | Maximum number of epics to fetch (1-500) |
+
+---
+
+### Get Cross-Project Dependencies
+
+Find all cross-project issue links for a project.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ') |
+| `max_issues` | `integer` | No | Maximum issues to scan for links (1-500) |
 
 ---

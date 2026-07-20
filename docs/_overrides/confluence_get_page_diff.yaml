@@ -1,0 +1,4 @@
+example: |
+  {"page_id": "12345678", "from_version": 1, "to_version": 3}
+tips: |
+  Use `confluence_get_page_history` to discover available version numbers. The diff is in unified format, showing additions and removals between versions.
