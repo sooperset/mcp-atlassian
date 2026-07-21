@@ -2460,6 +2460,293 @@ async def test_update_issue_components_with_additional_fields(
 
 
 @pytest.mark.anyio
+async def test_update_issue_transition_only_resolves_name(
+    jira_client, mock_jira_fetcher
+):
+    """A transition-only call resolves a name and re-fetches the issue."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {"issue_key": "TEST-123", "transition": "done"},
+    )
+
+    mock_jira_fetcher.update_issue.assert_not_called()
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == ["transitioned_to:done"]
+    assert result["operations_failed"] == []
+    mock_jira_fetcher.get_issue.assert_called_once_with("TEST-123", fields="*all")
+
+
+@pytest.mark.anyio
+async def test_update_issue_comment_only_without_fields(jira_client, mock_jira_fetcher):
+    """A comment-only call works when fields is omitted."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {"issue_key": "TEST-123", "comment": "Comment from update"},
+    )
+
+    mock_jira_fetcher.update_issue.assert_not_called()
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Comment from update", None
+    )
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == ["comment_added"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_worklog_only_without_fields(jira_client, mock_jira_fetcher):
+    """A worklog-only call forwards the time and start timestamp."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "worklog": "1h 30m",
+            "worklog_started": "2026-01-01T12:00:00.000+0000",
+        },
+    )
+
+    mock_jira_fetcher.update_issue.assert_not_called()
+    mock_jira_fetcher.add_worklog.assert_called_once_with(
+        issue_key="TEST-123",
+        time_spent="1h 30m",
+        started="2026-01-01T12:00:00.000+0000",
+    )
+
+
+@pytest.mark.anyio
+async def test_update_issue_transition_comment_is_separate(
+    jira_client, mock_jira_fetcher
+):
+    """A transition and its comment are sent as separate operations."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition": "31",
+            "comment": "Transition comment",
+        },
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Transition comment", None
+    )
+
+
+@pytest.mark.anyio
+async def test_update_issue_transition_comment_is_added_once_when_refetch_fails(
+    jira_client, mock_jira_fetcher
+):
+    """A failed re-fetch does not cause transition comments to be duplicated."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+    mock_jira_fetcher.transition_issue.side_effect = RuntimeError(
+        "transition response fetch failed"
+    )
+    mock_jira_fetcher.get_issue.side_effect = RuntimeError("re-fetch failed")
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition": "Done",
+            "comment": "Transition comment",
+        },
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Transition comment", None
+    )
+    assert [call[0] for call in mock_jira_fetcher.method_calls] == [
+        "get_available_transitions",
+        "transition_issue",
+        "add_comment",
+        "get_issue",
+    ]
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == [
+        "comment_added",
+    ]
+    assert result["operations_failed"] == [
+        "transition: transition response fetch failed",
+        "refetch: re-fetch failed",
+    ]
+
+
+@pytest.mark.anyio
+async def test_update_issue_comment_visibility_uses_separate_comment(
+    jira_client, mock_jira_fetcher
+):
+    """A visible comment cannot use transition comment passthrough."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition": "Done",
+            "comment": "Restricted comment",
+            "comment_visibility": '{"type":"group","value":"jira-users"}',
+        },
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123",
+        "Restricted comment",
+        {"type": "group", "value": "jira-users"},
+    )
+
+
+@pytest.mark.anyio
+async def test_update_issue_combines_fields_transition_comment_and_worklog(
+    jira_client, mock_jira_fetcher
+):
+    """All operations run in order and status is not updated twice."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary":"Updated","status":"Open"}',
+            "transition": "Done",
+            "comment": "Completed work",
+            "worklog": "1h",
+        },
+    )
+
+    update_kwargs = mock_jira_fetcher.update_issue.call_args.kwargs
+    assert update_kwargs == {
+        "issue_key": "TEST-123",
+        "return_fields": "*all",
+        "summary": "Updated",
+    }
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Completed work", None
+    )
+    mock_jira_fetcher.add_worklog.assert_called_once_with(
+        issue_key="TEST-123", time_spent="1h", started=None
+    )
+    assert [call[0] for call in mock_jira_fetcher.method_calls] == [
+        "update_issue",
+        "get_available_transitions",
+        "transition_issue",
+        "add_comment",
+        "add_worklog",
+        "get_issue",
+    ]
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == [
+        "fields_updated",
+        "transitioned_to:Done",
+        "comment_added",
+        "worklog_added",
+    ]
+
+
+@pytest.mark.anyio
+async def test_update_issue_records_operation_failure_and_continues(
+    jira_client, mock_jira_fetcher
+):
+    """A failed transition is reported while later operations still run."""
+    mock_jira_fetcher.get_available_transitions.return_value = []
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition": "Missing",
+            "comment": "Still add this comment",
+            "worklog": "30m",
+        },
+    )
+
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Still add this comment", None
+    )
+    mock_jira_fetcher.add_worklog.assert_called_once_with(
+        issue_key="TEST-123", time_spent="30m", started=None
+    )
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == ["comment_added", "worklog_added"]
+    assert result["operations_failed"][0].startswith("transition:")
+
+
+@pytest.mark.anyio
+async def test_update_issue_reports_failure_when_all_operations_fail(
+    jira_client, mock_jira_fetcher
+):
+    """All failed requested operations must not be reported as successful."""
+    mock_jira_fetcher.update_issue.side_effect = RuntimeError("field update failed")
+    mock_jira_fetcher.get_available_transitions.side_effect = RuntimeError(
+        "transition lookup failed"
+    )
+    mock_jira_fetcher.add_comment.side_effect = RuntimeError("comment failed")
+    mock_jira_fetcher.add_worklog.side_effect = RuntimeError("worklog failed")
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary":"Updated"}',
+            "transition": "Done",
+            "comment": "Comment",
+            "worklog": "1h",
+        },
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Issue update failed"
+    assert result["operations_performed"] == []
+    assert len(result["operations_failed"]) == 4
+
+
+@pytest.mark.anyio
+async def test_update_issue_reports_when_no_operations_are_requested(
+    jira_client, mock_jira_fetcher
+):
+    """A read-back without requested changes must not be reported as an update."""
+    response = await jira_client.call_tool(
+        "jira_update_issue", {"issue_key": "TEST-123"}
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "No issue updates were requested"
+    assert result["operations_performed"] == []
+    assert result["operations_failed"] == []
+    mock_jira_fetcher.update_issue.assert_not_called()
+    mock_jira_fetcher.get_available_transitions.assert_not_called()
+    mock_jira_fetcher.add_comment.assert_not_called()
+    mock_jira_fetcher.add_worklog.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_update_issue_passes_return_fields(jira_client, mock_jira_fetcher):
     """return_fields CSV is parsed to a list and forwarded to update_issue."""
     await jira_client.call_tool(

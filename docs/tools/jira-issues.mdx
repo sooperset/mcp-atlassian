@@ -72,7 +72,7 @@ Cloud uses ADF format internally (auto-converted from Markdown). Server/DC uses 
 
 ### Update Issue
 
-Update an existing Jira issue including changing status, adding Epic links, updating fields, etc.
+Update an issue and optionally transition, comment, and log work.
 
 <Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
 
@@ -81,19 +81,26 @@ Update an existing Jira issue including changing status, adding Epic links, upda
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `fields` | `string` | Yes | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format; on Jira Cloud, use '`{expand:Title}`...`{expand}`' for a collapsible section. Example: '`{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}`' |
+| `fields` | `string` | No | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format; on Jira Cloud, use '`{expand:Title}`...`{expand}`' for a collapsible section. Example: '`{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}`' |
 | `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}`. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names (e.g., 'Frontend,API') |
 | `attachments` | `string` | No | (Optional) JSON string array or comma-separated list of file paths to attach to the issue. Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt'] |
+| `transition` | `string` | No | (Optional) Transition name or ID. Transition names are resolved case-insensitively. |
+| `comment` | `string` | No | (Optional) Comment text in Markdown format. |
+| `comment_visibility` | `string` | No | (Optional) Comment visibility as a JSON string, for example '`{"type":"group","value":"jira-users"}`'. |
+| `worklog` | `string` | No | (Optional) Time spent to log, such as '1h 30m'. |
+| `worklog_started` | `string` | No | (Optional) ISO datetime when the worklog started. |
 | `return_fields` | `string` | No | (Optional) Controls which fields of the updated issue are returned, to reduce response size and token usage. Defaults to '*all' (the complete issue, which can be very large). TOKEN-SAVING TIP: after an update you usually do NOT need the whole issue back. Pass a comma-separated list of just the field(s) you care about (e.g., 'summary,duedate'), or a single light field such as 'status' for a minimal confirmation - this can cut the response by thousands of tokens. The issue 'key' is always returned regardless. If you later need other fields, fetch them on demand with jira_get_issue (which also supports field filtering). Use '*all' only when you genuinely need the full updated issue. |
 **Example:**
 
 ```json
-{"issue_key": "PROJ-123", "summary": "Updated title", "description": "New description", "additional_fields": "{\"priority\": {\"name\": \"High\"}}"}
+{"issue_key": "PROJ-123", "fields": "{\"summary\": \"Updated title\", \"description\": \"New description\"}", "transition": "Done", "comment": "Completed the work", "worklog": "1h"}
 ```
 
 <Tip>
 Save response tokens: after an update you rarely need the whole issue back. Set `return_fields` to only the field(s) you changed (e.g., `return_fields: "duedate"`) — this can cut thousands of tokens. Use `*all` only when you need the full updated issue.
+
+`fields` is optional when you only need to transition, comment, or log work. If `transition` and `comment` are both provided, the issue is transitioned first and the comment is added separately afterward. Use `comment_visibility` to restrict the comment's visibility.
 
 Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.
 </Tip>

@@ -19,6 +19,7 @@ from mcp_atlassian.models.jira.common import JiraUser
 from mcp_atlassian.servers.async_utils import run_jira_fetcher_call
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
+from mcp_atlassian.servers.helpers import resolve_transition
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
@@ -1985,16 +1986,17 @@ async def update_issue(
         ),
     ],
     fields: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "For 'description', provide text in Markdown format; on Jira Cloud, "
                 "use '{expand:Title}...{expand}' for a collapsible section. "
                 'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
-            )
+            ),
+            default=None,
         ),
-    ],
+    ] = None,
     additional_fields: Annotated[
         str | None,
         Field(
@@ -2026,6 +2028,47 @@ async def update_issue(
             default=None,
         ),
     ] = None,
+    transition: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Transition name or ID. Transition names are resolved "
+                "case-insensitively."
+            ),
+            default=None,
+        ),
+    ] = None,
+    comment: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Comment text in Markdown format.",
+            default=None,
+        ),
+    ] = None,
+    comment_visibility: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comment visibility as a JSON string, for example "
+                '\'{"type":"group","value":"jira-users"}\'.'
+            ),
+            default=None,
+        ),
+    ] = None,
+    worklog: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Time spent to log, such as '1h 30m'.",
+            default=None,
+        ),
+    ] = None,
+    worklog_started: Annotated[
+        str | None,
+        Field(
+            description="(Optional) ISO datetime when the worklog started.",
+            default=None,
+        ),
+    ] = None,
     return_fields: Annotated[
         str,
         Field(
@@ -2046,15 +2089,21 @@ async def update_issue(
         ),
     ] = "*all",
 ) -> str:
-    """Update an existing Jira issue including changing status, adding Epic links, updating fields, etc.
+    """Update an issue and optionally transition, comment, and log work.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        fields: JSON string of fields to update. Text fields like 'description' should use Markdown format.
+        fields: Optional JSON string of fields to update. Text fields like
+            'description' should use Markdown format.
         additional_fields: Optional JSON string of additional fields.
         components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
+        transition: Optional transition name or ID.
+        comment: Optional issue comment in Markdown format.
+        comment_visibility: Optional JSON string restricting comment visibility.
+        worklog: Optional time spent to log.
+        worklog_started: Optional ISO datetime when the worklog started.
         return_fields: Fields to include in the returned issue. Comma-separated list to trim the response and save tokens, or '*all' (default) for the full issue.
 
     Returns:
@@ -2106,24 +2155,110 @@ async def update_issue(
     if attachment_paths:
         all_updates["attachments"] = attachment_paths
 
+    # Jira handles status changes through transitions. Avoid sending both a
+    # status field and a requested transition, which would result in two
+    # competing status changes.
+    if transition:
+        all_updates.pop("status", None)
+
+    visibility = _parse_visibility(comment_visibility) if comment else None
+    operations_performed: list[str] = []
+    operations_failed: list[str] = []
+    issue = None
+    attachment_results = None
+
+    if all_updates:
+        try:
+            issue = jira.update_issue(
+                issue_key=issue_key, return_fields=return_fields_list, **all_updates
+            )
+            operations_performed.append("fields_updated")
+            if (
+                hasattr(issue, "custom_fields")
+                and "attachment_results" in issue.custom_fields
+            ):
+                attachment_results = issue.custom_fields["attachment_results"]
+        except Exception as e:  # noqa: BLE001 - preserve later operations
+            logger.error(
+                f"Error updating fields for issue {issue_key}: {str(e)}",
+                exc_info=True,
+            )
+            operations_failed.append(f"fields_updated: {e}")
+
+    if transition:
+        try:
+            available_transitions = jira.get_available_transitions(issue_key)
+            transition_id = resolve_transition(available_transitions, transition)
+            issue = jira.transition_issue(
+                issue_key=issue_key,
+                transition_id=transition_id,
+                comment=None,
+            )
+            operations_performed.append(f"transitioned_to:{transition}")
+        except Exception as e:  # noqa: BLE001 - preserve later operations
+            logger.error(
+                f"Error transitioning issue {issue_key}: {str(e)}",
+                exc_info=True,
+            )
+            operations_failed.append(f"transition: {e}")
+
+    if comment:
+        try:
+            jira.add_comment(issue_key, comment, visibility)
+            operations_performed.append("comment_added")
+        except Exception as e:  # noqa: BLE001 - preserve later operations
+            logger.error(
+                f"Error adding comment to issue {issue_key}: {str(e)}",
+                exc_info=True,
+            )
+            operations_failed.append(f"comment: {e}")
+
+    if worklog:
+        try:
+            jira.add_worklog(
+                issue_key=issue_key,
+                time_spent=worklog,
+                started=worklog_started,
+            )
+            operations_performed.append("worklog_added")
+        except Exception as e:  # noqa: BLE001 - preserve later operations
+            logger.error(
+                f"Error adding worklog to issue {issue_key}: {str(e)}",
+                exc_info=True,
+            )
+            operations_failed.append(f"worklog: {e}")
+
     try:
-        issue = jira.update_issue(
-            issue_key=issue_key, return_fields=return_fields_list, **all_updates
+        issue = jira.get_issue(issue_key, fields=return_fields_list)
+    except Exception as e:  # noqa: BLE001 - preserve the latest issue result
+        logger.error(f"Error re-fetching issue {issue_key}: {str(e)}", exc_info=True)
+        operations_failed.append(f"refetch: {e}")
+
+    result = issue.to_simplified_dict() if issue is not None else {"key": issue_key}
+    if attachment_results is not None:
+        result["attachment_results"] = attachment_results
+
+    if operations_failed:
+        message = (
+            "Issue update completed with errors"
+            if operations_performed
+            else "Issue update failed"
         )
-        result = issue.to_simplified_dict()
-        if (
-            hasattr(issue, "custom_fields")
-            and "attachment_results" in issue.custom_fields
-        ):
-            result["attachment_results"] = issue.custom_fields["attachment_results"]
-        return json.dumps(
-            {"message": "Issue updated successfully", "issue": result},
-            indent=2,
-            ensure_ascii=False,
-        )
-    except Exception as e:
-        logger.error(f"Error updating issue {issue_key}: {str(e)}", exc_info=True)
-        raise ValueError(f"Failed to update issue {issue_key}: {str(e)}")
+    elif operations_performed:
+        message = "Issue updated successfully"
+    else:
+        message = "No issue updates were requested"
+
+    return json.dumps(
+        {
+            "message": message,
+            "issue": result,
+            "operations_performed": operations_performed,
+            "operations_failed": operations_failed,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
 @jira_mcp.tool(
