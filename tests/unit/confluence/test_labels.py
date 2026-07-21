@@ -127,3 +127,54 @@ class TestLabelsMixin:
         # Act/Assert
         with pytest.raises(Exception, match="Failed to add label"):
             labels_mixin.add_page_label("987654321", "test")
+
+
+class TestLabelsSpacesFilterEnforcement:
+    """CONFLUENCE_SPACES_FILTER must be enforced here too (see issue #1495).
+
+    Label tools are addressed by page ID only, so enforcement resolves the
+    page's space with a lookup (``confluence_client``'s default mocked
+    ``get_page_by_id`` response lives in space "PROJ").
+    """
+
+    @pytest.fixture
+    def labels_mixin(self, confluence_client):
+        with patch(
+            "mcp_atlassian.confluence.labels.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = LabelsMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_get_page_labels_blocks_disallowed_space(self, labels_mixin):
+        labels_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            labels_mixin.get_page_labels("987654321")
+
+        labels_mixin.confluence.get_page_labels.assert_not_called()
+
+    def test_get_page_labels_allows_configured_space(self, labels_mixin):
+        labels_mixin.config.spaces_filter = "PROJ"
+
+        result = labels_mixin.get_page_labels("987654321")
+
+        assert isinstance(result, list)
+
+    def test_add_page_label_blocks_disallowed_space(self, labels_mixin):
+        labels_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            labels_mixin.add_page_label("987654321", "test-label")
+
+        labels_mixin.confluence.set_page_label.assert_not_called()
+
+    def test_no_filter_configured_is_unaffected(self, labels_mixin):
+        labels_mixin.config.spaces_filter = None
+
+        result = labels_mixin.get_page_labels("987654321")
+
+        assert isinstance(result, list)

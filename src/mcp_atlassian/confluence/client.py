@@ -2,6 +2,7 @@
 
 import logging
 import os
+from typing import Any
 
 from atlassian import Confluence
 from requests import Session
@@ -298,3 +299,79 @@ class ConfluenceClient:
         return self.preprocessor.process_html_content(
             html_content, space_key, self.confluence
         )
+
+    def _get_allowed_spaces(self) -> set[str] | None:
+        """Return the configured ``CONFLUENCE_SPACES_FILTER`` allowlist.
+
+        Returns:
+            A set of allowed space keys, or None when no filter is configured.
+        """
+        filter_to_use = self.config.spaces_filter
+        if not filter_to_use:
+            return None
+        return {s.strip() for s in filter_to_use.split(",") if s.strip()}
+
+    def enforce_spaces_filter(
+        self, space_key: str | None, *, page_id: str | None = None
+    ) -> None:
+        """Reject access to content outside the configured spaces allowlist.
+
+        ``config.spaces_filter`` is a hard boundary and is always applied: it
+        must be enforced by every Confluence tool that reads or writes
+        space-scoped content, not only ``confluence_search``. Otherwise an
+        operator's allowlist could be defeated simply by addressing content
+        directly — by page ID, space key, or title — instead of through
+        search.
+
+        Args:
+            space_key: The space key the operation would read or write.
+            page_id: Optional page ID, included in the error message when the
+                operation is addressed by page ID rather than by space key.
+
+        Raises:
+            ValueError: If a spaces filter is configured and ``space_key`` is
+                not in it (including when ``space_key`` is empty/unknown).
+        """
+        allowed_spaces = self._get_allowed_spaces()
+        if allowed_spaces is None:
+            return
+        if not space_key or space_key not in allowed_spaces:
+            target = (
+                f"page '{page_id}' in space '{space_key}'"
+                if page_id
+                else f"space '{space_key}'"
+            )
+            msg = (
+                f"Operation on {target} is restricted by the configured "
+                "CONFLUENCE_SPACES_FILTER allowlist"
+            )
+            raise ValueError(msg)
+
+    def _resolve_page_space_key(
+        self, page_id: str, *, v2_adapter: Any | None = None
+    ) -> str:
+        """Resolve a page's space key with a minimal fetch.
+
+        Used to enforce ``CONFLUENCE_SPACES_FILTER`` on page ID-addressed
+        operations that do not already have the space key available from an
+        existing fetch elsewhere in their flow.
+
+        Args:
+            page_id: The ID of the page to resolve.
+            v2_adapter: Optional ``ConfluenceV2Adapter`` to use instead of the
+                v1 client. OAuth Cloud call paths must stay off the v1 client
+                entirely, so callers on those paths must pass their own
+                ``_v2_adapter`` through here rather than let this fall back
+                to ``self.confluence``.
+
+        Returns:
+            The page's space key, or an empty string if it could not be
+            determined from the response.
+        """
+        if v2_adapter is not None:
+            page = v2_adapter.get_page(page_id=page_id, expand="space")
+        else:
+            page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
+        if not isinstance(page, dict):
+            return ""
+        return page.get("space", {}).get("key", "")

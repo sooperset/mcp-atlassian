@@ -82,8 +82,12 @@ class TemplatesMixin(ConfluenceClient):
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails.
             HTTPError: If the API request fails.
-            ValueError: If the API response has an unexpected shape.
+            ValueError: If the API response has an unexpected shape, or a
+                spaces filter is configured and space_key is not in it.
         """
+        if space_key:
+            self.enforce_spaces_filter(space_key)
+
         params: dict[str, Any] = {"limit": limit}
         if space_key:
             params["spaceKey"] = space_key

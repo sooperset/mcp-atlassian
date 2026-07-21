@@ -1036,3 +1036,81 @@ class TestInlineCommentModel:
         assert comment.body == "<p>This is a v2 inline comment</p>"
         assert comment.author is not None
         assert comment.author.display_name == "Test User"
+
+
+class TestCommentsSpacesFilterEnforcement:
+    """CONFLUENCE_SPACES_FILTER must be enforced here too (see issue #1495)."""
+
+    def test_get_page_comments_blocks_disallowed_space(self, comments_mixin):
+        """get_page_comments catches its own ValueError/TypeError and fails
+        closed with an empty list, consistent with its other error paths,
+        rather than propagating — so assert the safe fail-closed result and
+        that no comments were fetched or leaked."""
+        comments_mixin.config.spaces_filter = "OTHERSPACE"
+        comments_mixin.confluence.get_page_by_id.return_value = {
+            "space": {"key": "TEST"}
+        }
+
+        result = comments_mixin.get_page_comments("12345")
+
+        assert result == []
+        comments_mixin.confluence.get_page_comments.assert_not_called()
+
+    def test_get_page_comments_allows_configured_space(self, comments_mixin):
+        comments_mixin.config.spaces_filter = "TEST"
+        comments_mixin.confluence.get_page_by_id.return_value = {
+            "space": {"key": "TEST"}
+        }
+
+        result = comments_mixin.get_page_comments("12345")
+
+        assert isinstance(result, list)
+
+    def test_add_comment_v1_blocks_disallowed_space(self, comments_mixin):
+        """add_comment (basic/PAT auth, v1 path) honors the allowlist.
+
+        add_comment catches its own ValueError/TypeError and fails closed by
+        returning None, consistent with its other error paths.
+        """
+        comments_mixin.config.spaces_filter = "OTHERSPACE"
+        comments_mixin.confluence.get_page_by_id.return_value = {
+            "space": {"key": "TEST"}
+        }
+
+        result = comments_mixin.add_comment("12345", "A comment")
+
+        assert result is None
+        comments_mixin.confluence.add_comment.assert_not_called()
+
+    def test_add_comment_v2_oauth_blocks_disallowed_space(self, comments_mixin):
+        """add_comment (OAuth Cloud, v2 path) also honors the allowlist,
+        without ever using the v1 client to check it."""
+        comments_mixin.config.auth_type = "oauth"
+        comments_mixin.config.url = "https://test.atlassian.net/wiki"
+        comments_mixin.config.spaces_filter = "OTHERSPACE"
+
+        mock_adapter = MagicMock()
+        mock_adapter.get_page.return_value = {"space": {"key": "TEST"}}
+
+        with patch.object(
+            type(comments_mixin),
+            "_v2_adapter",
+            new_callable=lambda: property(lambda self: mock_adapter),
+        ):
+            result = comments_mixin.add_comment("12345", "A comment")
+
+        assert result is None
+        mock_adapter.get_page.assert_called_once_with(page_id="12345", expand="space")
+        mock_adapter.create_footer_comment.assert_not_called()
+        # The check itself must not go through the v1 client.
+        comments_mixin.confluence.get_page_by_id.assert_not_called()
+
+    def test_no_filter_configured_is_unaffected(self, comments_mixin):
+        comments_mixin.config.spaces_filter = None
+        comments_mixin.confluence.get_page_by_id.return_value = {
+            "space": {"key": "TEST"}
+        }
+
+        result = comments_mixin.get_page_comments("12345")
+
+        assert isinstance(result, list)

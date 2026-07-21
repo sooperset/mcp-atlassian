@@ -30,10 +30,15 @@ class RestrictionsMixin(ConfluenceClient):
             ``{"users": [...account_ids...], "groups": [...group_names...]}``
 
         Raises:
+            ValueError: If a spaces filter is configured and the page's
+                space is not in it.
             MCPAtlassianAuthenticationError: If authentication fails.
             Exception: If the API call fails.
         """
         try:
+            self.enforce_spaces_filter(
+                self._resolve_page_space_key(page_id), page_id=page_id
+            )
             data = self.confluence.get(
                 f"{self._v1_rest_base_url()}/rest/api/content/"
                 f"{page_id}/restriction/byOperation",
@@ -114,10 +119,15 @@ class RestrictionsMixin(ConfluenceClient):
             in the same format as :meth:`get_page_restrictions`.
 
         Raises:
+            ValueError: If a spaces filter is configured and the page's
+                space is not in it.
             MCPAtlassianAuthenticationError: If authentication fails.
             Exception: If the API call fails.
         """
         try:
+            self.enforce_spaces_filter(
+                self._resolve_page_space_key(page_id), page_id=page_id
+            )
             read_users = read_users or []
             read_groups = read_groups or []
             edit_users = edit_users or []

@@ -3,6 +3,7 @@
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
 from requests.sessions import Session
 
 from mcp_atlassian.confluence import ConfluenceFetcher
@@ -584,3 +585,95 @@ def test_confluence_client_custom_user_agent_overrides_default():
         ConfluenceClient(config=config)
 
         assert headers["User-Agent"] == "my-app/1.0"
+
+
+class TestEnforceSpacesFilter:
+    """Unit tests for the CONFLUENCE_SPACES_FILTER enforcement helpers.
+
+    ``config.spaces_filter`` was previously only consulted by
+    ``SearchMixin.search`` (see ``confluence/search.py``). Every other
+    Confluence tool addressing content directly by page ID, space key, or
+    title bypassed the allowlist entirely. ``enforce_spaces_filter`` is the
+    shared choke point that closes that gap; ``_resolve_page_space_key`` is
+    the helper used to look up a page's space when it isn't already known
+    from an earlier call in the same flow.
+    """
+
+    def test_no_filter_configured_allows_anything(self, confluence_client):
+        confluence_client.config.spaces_filter = None
+
+        # None of these should raise: with no allowlist configured, behavior
+        # is unchanged from before this fix.
+        confluence_client.enforce_spaces_filter("ANY")
+        confluence_client.enforce_spaces_filter("")
+        confluence_client.enforce_spaces_filter(None)
+
+    def test_space_in_filter_passes(self, confluence_client):
+        confluence_client.config.spaces_filter = "DEV,TEAM"
+
+        confluence_client.enforce_spaces_filter("DEV")
+        confluence_client.enforce_spaces_filter("TEAM")
+
+    def test_space_outside_filter_raises(self, confluence_client):
+        confluence_client.config.spaces_filter = "DEV,TEAM"
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            confluence_client.enforce_spaces_filter("SECRET")
+
+    def test_unresolved_space_key_fails_closed(self, confluence_client):
+        """An empty/unknown space key must be rejected, not silently allowed.
+
+        This matters for page ID-addressed tools where the space could not
+        be determined: failing open here would let content of unknown
+        origin slip past the allowlist.
+        """
+        confluence_client.config.spaces_filter = "DEV"
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            confluence_client.enforce_spaces_filter("")
+
+    def test_filter_whitespace_is_trimmed(self, confluence_client):
+        confluence_client.config.spaces_filter = " DEV , TEAM "
+
+        confluence_client.enforce_spaces_filter("DEV")
+        confluence_client.enforce_spaces_filter("TEAM")
+
+    def test_error_message_includes_page_id_when_given(self, confluence_client):
+        confluence_client.config.spaces_filter = "DEV"
+
+        with pytest.raises(ValueError, match="page 'PAGE-1'"):
+            confluence_client.enforce_spaces_filter("SECRET", page_id="PAGE-1")
+
+    def test_resolve_page_space_key_uses_v1_client_by_default(self, confluence_client):
+        confluence_client.confluence.get_page_by_id.return_value = {
+            "space": {"key": "DEV"}
+        }
+
+        result = confluence_client._resolve_page_space_key("123")
+
+        assert result == "DEV"
+        confluence_client.confluence.get_page_by_id.assert_called_once_with(
+            page_id="123", expand="space"
+        )
+
+    def test_resolve_page_space_key_uses_v2_adapter_when_given(self, confluence_client):
+        """OAuth Cloud call paths must never fall back to the v1 client."""
+        mock_v2_adapter = MagicMock()
+        mock_v2_adapter.get_page.return_value = {"space": {"key": "TEAM"}}
+
+        result = confluence_client._resolve_page_space_key(
+            "123", v2_adapter=mock_v2_adapter
+        )
+
+        assert result == "TEAM"
+        mock_v2_adapter.get_page.assert_called_once_with(page_id="123", expand="space")
+        confluence_client.confluence.get_page_by_id.assert_not_called()
+
+    def test_resolve_page_space_key_missing_space_returns_empty_string(
+        self, confluence_client
+    ):
+        confluence_client.confluence.get_page_by_id.return_value = {"id": "123"}
+
+        result = confluence_client._resolve_page_space_key("123")
+
+        assert result == ""

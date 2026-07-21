@@ -700,7 +700,9 @@ class TestPagesMixin:
     def test_get_page_children_cloud_uses_v2_direct_children(self, pages_mixin):
         """Test Cloud OAuth child lookup uses the v2 direct-children endpoint."""
         parent_id = "123456"
-        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config = MagicMock(
+            url="https://example.atlassian.net/wiki", spaces_filter=None
+        )
         pages_mixin.config.auth_type = "oauth"
         pages_mixin.config.is_cloud = True
 
@@ -750,7 +752,9 @@ class TestPagesMixin:
     def test_get_page_children_cloud_basic_uses_v2_direct_children(self, pages_mixin):
         """Test all Cloud auth modes use the v2 direct-children endpoint."""
         parent_id = "123456"
-        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config = MagicMock(
+            url="https://example.atlassian.net/wiki", spaces_filter=None
+        )
         pages_mixin.config.auth_type = "basic"
         pages_mixin.config.is_cloud = True
         pages_mixin.confluence.url = "https://example.atlassian.net/wiki"
@@ -790,7 +794,9 @@ class TestPagesMixin:
 
     def test_get_page_children_cloud_filters_folders_when_disabled(self, pages_mixin):
         """Test Cloud OAuth child lookup filters folders client-side."""
-        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config = MagicMock(
+            url="https://example.atlassian.net/wiki", spaces_filter=None
+        )
         pages_mixin.config.auth_type = "oauth"
         pages_mixin.config.is_cloud = True
 
@@ -815,7 +821,9 @@ class TestPagesMixin:
 
     def test_get_page_children_cloud_filters_to_pages_and_folders(self, pages_mixin):
         """Test v2 direct children keep the tool scoped to pages and folders."""
-        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config = MagicMock(
+            url="https://example.atlassian.net/wiki", spaces_filter=None
+        )
         pages_mixin.config.auth_type = "oauth"
         pages_mixin.config.is_cloud = True
 
@@ -840,7 +848,9 @@ class TestPagesMixin:
 
     def test_get_page_children_cloud_emulates_start_with_v2_cursor(self, pages_mixin):
         """Test numeric start pagination is translated to v2 cursor traversal."""
-        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config = MagicMock(
+            url="https://example.atlassian.net/wiki", spaces_filter=None
+        )
         pages_mixin.config.auth_type = "oauth"
         pages_mixin.config.is_cloud = True
 
@@ -885,7 +895,9 @@ class TestPagesMixin:
         self, pages_mixin
     ):
         """Test v2 direct children fetch page details when body content is requested."""
-        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config = MagicMock(
+            url="https://example.atlassian.net/wiki", spaces_filter=None
+        )
         pages_mixin.config.auth_type = "oauth"
         pages_mixin.config.is_cloud = True
 
@@ -940,7 +952,9 @@ class TestPagesMixin:
         self, pages_mixin
     ):
         """Test partial space payloads still produce correct Cloud space metadata."""
-        pages_mixin.config = MagicMock(url="https://example.atlassian.net/wiki")
+        pages_mixin.config = MagicMock(
+            url="https://example.atlassian.net/wiki", spaces_filter=None
+        )
         pages_mixin.config.auth_type = "oauth"
         pages_mixin.config.is_cloud = True
 
@@ -3005,7 +3019,13 @@ class TestCopyPage:
                 destination_parent_id="parent-456",
             )
 
-        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+        # Called twice: once to resolve the source page's space for the
+        # CONFLUENCE_SPACES_FILTER check, once for the Server/DC body fetch.
+        assert pages_mixin.confluence.get_page_by_id.call_count == 2
+        pages_mixin.confluence.get_page_by_id.assert_any_call(
+            page_id="source-456", expand="space"
+        )
+        pages_mixin.confluence.get_page_by_id.assert_any_call(
             "source-456", expand="body.storage,version,space"
         )
         pages_mixin.confluence.create_page.assert_called_once_with(
@@ -3592,3 +3612,193 @@ class TestUpdatePageSection:
             )
 
         pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+
+class TestPagesSpacesFilterEnforcement:
+    """CONFLUENCE_SPACES_FILTER must be enforced on every page tool, not only
+    confluence_search (see issue #1495). ``confluence_client``'s default
+    mocked ``get_page_by_id``/``get_page_by_title`` responses live in space
+    "PROJ" (``MOCK_PAGE_RESPONSE``), so setting ``config.spaces_filter`` to a
+    value that excludes/includes "PROJ" is enough to exercise the boundary.
+    """
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_get_page_content_blocks_disallowed_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.get_page_content("987654321")
+
+    def test_get_page_content_allows_configured_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "PROJ"
+
+        result = pages_mixin.get_page_content("987654321")
+
+        assert isinstance(result, ConfluencePage)
+
+    def test_get_page_by_title_blocks_disallowed_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.get_page_by_title("PROJ", "Some Title")
+
+        # The allowlist must be checked before the API is ever called.
+        pages_mixin.confluence.get_page_by_title.assert_not_called()
+
+    def test_get_page_by_title_allows_configured_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "PROJ"
+
+        result = pages_mixin.get_page_by_title("PROJ", "Some Title")
+
+        assert result is not None
+
+    def test_create_page_blocks_disallowed_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.create_page(
+                "PROJ", "New Page", "<p>Body</p>", is_markdown=False
+            )
+
+        # Rejected before any API call — no page should be created.
+        pages_mixin.confluence.create_page.assert_not_called()
+
+    def test_create_page_allows_configured_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "PROJ"
+
+        with patch.object(
+            pages_mixin,
+            "get_page_content",
+            return_value=ConfluencePage(id="1", title="New Page"),
+        ):
+            pages_mixin.create_page(
+                "PROJ", "New Page", "<p>Body</p>", is_markdown=False
+            )
+
+        pages_mixin.confluence.create_page.assert_called_once()
+
+    def test_get_page_children_blocks_disallowed_space(self, pages_mixin):
+        # Non-Atlassian-Cloud URL forces the v1 get_page_child_by_type path
+        # rather than the Cloud v2 direct-children lookup.
+        pages_mixin.config.url = "https://confluence.example.com"
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+        pages_mixin.confluence.get_page_child_by_type.return_value = {
+            "results": [
+                {
+                    "id": "1",
+                    "title": "Child",
+                    "space": {"key": "PROJ"},
+                }
+            ]
+        }
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.get_page_children("987654321", include_folders=False)
+
+    def test_get_page_children_with_no_children_does_not_raise(self, pages_mixin):
+        """An empty result exposes nothing, so it must not be blocked even
+        when the parent page's space can't be determined from an empty list."""
+        pages_mixin.config.url = "https://confluence.example.com"
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+        pages_mixin.confluence.get_page_child_by_type.return_value = {"results": []}
+
+        result = pages_mixin.get_page_children("987654321", include_folders=False)
+
+        assert result == []
+
+    def test_delete_page_blocks_disallowed_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+        pages_mixin.config.auth_type = "basic"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.delete_page("987654321")
+
+        pages_mixin.confluence.remove_page.assert_not_called()
+
+    def test_delete_page_allows_configured_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "PROJ"
+        pages_mixin.config.auth_type = "basic"
+        pages_mixin.confluence.remove_page.return_value = True
+
+        result = pages_mixin.delete_page("987654321")
+
+        assert result is True
+        pages_mixin.confluence.remove_page.assert_called_once_with(page_id="987654321")
+
+    def test_move_page_blocks_disallowed_source_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.move_page("987654321", target_parent_id="222")
+
+        pages_mixin.confluence.move_page.assert_not_called()
+
+    def test_move_page_blocks_disallowed_target_space(self, pages_mixin):
+        """A page in an allowed space still can't be moved into a
+        disallowed one — the allowlist binds both ends of a move."""
+        pages_mixin.config.spaces_filter = "PROJ"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.move_page("987654321", target_space_key="OTHERSPACE")
+
+        pages_mixin.confluence.move_page.assert_not_called()
+
+    def test_copy_page_blocks_disallowed_source_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.copy_page(
+                source_page_id="987654321",
+                destination_space_key="OTHERSPACE",
+                new_title="Copy",
+            )
+
+        pages_mixin.confluence.post.assert_not_called()
+
+    def test_copy_page_blocks_disallowed_destination_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "PROJ"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.copy_page(
+                source_page_id="987654321",
+                destination_space_key="OTHERSPACE",
+                new_title="Copy",
+            )
+
+        pages_mixin.confluence.post.assert_not_called()
+
+    def test_get_space_page_tree_blocks_disallowed_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.get_space_page_tree(space_key="PROJ")
+
+        pages_mixin.confluence.get_all_pages_from_space_raw.assert_not_called()
+
+    def test_get_space_pages_blocks_disallowed_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.get_space_pages(space_key="PROJ")
+
+        pages_mixin.confluence.get_all_pages_from_space.assert_not_called()
+
+    def test_no_filter_configured_is_unaffected(self, pages_mixin):
+        """No CONFLUENCE_SPACES_FILTER configured means no behavior change."""
+        pages_mixin.config.spaces_filter = None
+
+        result = pages_mixin.get_page_content("987654321")
+
+        assert isinstance(result, ConfluencePage)

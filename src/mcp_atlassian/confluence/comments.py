@@ -65,6 +65,7 @@ class CommentsMixin(ConfluenceClient):
             # Get page info to extract space details
             page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
             space_key = page.get("space", {}).get("key", "")
+            self.enforce_spaces_filter(space_key, page_id=page_id)
 
             # Get comments with expanded content
             comments_response = self.confluence.get_page_comments(
@@ -145,6 +146,10 @@ class CommentsMixin(ConfluenceClient):
             # Route through v2 API for OAuth Cloud
             v2_adapter = self._v2_adapter
             if v2_adapter:
+                self.enforce_spaces_filter(
+                    self._resolve_page_space_key(page_id, v2_adapter=v2_adapter),
+                    page_id=page_id,
+                )
                 response = v2_adapter.create_footer_comment(
                     page_id=page_id, body=content
                 )
@@ -153,6 +158,7 @@ class CommentsMixin(ConfluenceClient):
                 # Get page info to extract space details (v1 path)
                 page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
                 space_key = page.get("space", {}).get("key", "")
+                self.enforce_spaces_filter(space_key, page_id=page_id)
                 response = self.confluence.add_comment(page_id, content)
 
             if not response:
@@ -192,6 +198,11 @@ class CommentsMixin(ConfluenceClient):
 
             v2_adapter = self._v2_adapter
             if v2_adapter:
+                # Not enforced here: resolving the parent page for a comment
+                # ID currently has no v2-native path in this codebase
+                # (_resolve_page_id_for_parent_comment itself calls the v1
+                # client), and this OAuth path must not fall back to v1.
+                # See CONFLUENCE_SPACES_FILTER coverage notes.
                 response = v2_adapter.create_footer_comment(
                     parent_comment_id=comment_id, body=content
                 )
@@ -202,6 +213,7 @@ class CommentsMixin(ConfluenceClient):
                 page_id = self._resolve_page_id_for_parent_comment(comment_id)
                 page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
                 space_key = page.get("space", {}).get("key", "")
+                self.enforce_spaces_filter(space_key, page_id=page_id)
                 data: dict[str, Any] = {
                     "type": "comment",
                     "container": {
@@ -290,12 +302,17 @@ class CommentsMixin(ConfluenceClient):
         try:
             v2_adapter = self._inline_v2_adapter
             if v2_adapter:
+                self.enforce_spaces_filter(
+                    self._resolve_page_space_key(page_id, v2_adapter=v2_adapter),
+                    page_id=page_id,
+                )
                 raw_comments = v2_adapter.get_inline_comments(page_id)
                 space_key = ""
             else:
                 # v1: fetch all child comments then filter by location=inline
                 page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
                 space_key = page.get("space", {}).get("key", "")
+                self.enforce_spaces_filter(space_key, page_id=page_id)
                 response = self.confluence.get_page_comments(
                     content_id=page_id,
                     expand="body.view.value,version,extensions.inlineProperties",
@@ -386,6 +403,10 @@ class CommentsMixin(ConfluenceClient):
 
             v2_adapter = self._inline_v2_adapter
             if v2_adapter:
+                self.enforce_spaces_filter(
+                    self._resolve_page_space_key(page_id, v2_adapter=v2_adapter),
+                    page_id=page_id,
+                )
                 response = v2_adapter.create_inline_comment(
                     page_id=page_id,
                     body=content,
@@ -436,6 +457,7 @@ class CommentsMixin(ConfluenceClient):
                 }
                 page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
                 space_key = page.get("space", {}).get("key", "")
+                self.enforce_spaces_filter(space_key, page_id=page_id)
                 response = self.confluence.post("rest/api/content/", data=data)
 
             if not response:
