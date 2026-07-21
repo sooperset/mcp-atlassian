@@ -18,7 +18,7 @@ from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.servers import main_mcp
 
-from .conftest import CloudInstanceInfo
+from .conftest import CloudInstanceInfo, CloudResourceTracker
 
 pytestmark = [pytest.mark.cloud_e2e, pytest.mark.anyio]
 
@@ -241,6 +241,43 @@ class TestMCPConfluenceTools:
         )
         assert not result.is_error
         assert result.content and isinstance(result.content[0], TextContent)
+
+    @pytest.mark.anyio
+    async def test_confluence_get_page_include_enrichments(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+        confluence_fetcher: ConfluenceFetcher,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        """Test page include returns comments, labels, and views on Cloud."""
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Include enrichments test {uid}",
+            body="<p>Testing include parameter.</p>",
+            is_markdown=False,
+        )
+        resource_tracker.add_confluence_page(page.id)
+        comment_body = f"Test comment for include {uid}"
+        label_name = f"e2e-include-{uid}"
+        confluence_fetcher.add_comment(page.id, comment_body)
+        confluence_fetcher.add_page_label(page_id=page.id, name=label_name)
+
+        result = await call_tool(
+            mcp_client,
+            "confluence_get_page",
+            {"page_id": page.id, "include": "all"},
+        )
+
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert data["metadata"]["id"] == page.id
+        assert any(comment_body in comment["body"] for comment in data["comments"])
+        assert any(label["name"] == label_name for label in data["labels"])
+        assert data["views"]["page_id"] == page.id
+        assert isinstance(data["views"]["total_views"], int)
 
     @pytest.mark.anyio
     async def test_confluence_get_page_with_tiny_link(

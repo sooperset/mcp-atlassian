@@ -15,6 +15,7 @@ from starlette.requests import Request
 
 from src.mcp_atlassian.confluence import ConfluenceFetcher
 from src.mcp_atlassian.confluence.config import ConfluenceConfig
+from src.mcp_atlassian.models.confluence.analytics import PageViews
 from src.mcp_atlassian.models.confluence.page import ConfluencePage
 from src.mcp_atlassian.servers import confluence as confluence_server
 from src.mcp_atlassian.servers.context import MainAppContext
@@ -41,6 +42,7 @@ def mock_confluence_fetcher():
             "format": "markdown",
         },
     }
+    mock_page.id = "123456"
     mock_page.content = "This is a test page content in Markdown"
 
     # Set up mock responses for each method
@@ -582,6 +584,80 @@ async def test_get_page_no_metadata(client, mock_confluence_fetcher):
     assert "metadata" not in result_data
     assert "content" in result_data
     assert "This is a test page content" in result_data["content"]["value"]
+
+
+@pytest.mark.anyio
+async def test_get_page_include_dispatches_enrichments(
+    client, mock_confluence_fetcher
+):
+    """Test get_page dispatches all requested enrichments by resolved ID."""
+    mock_confluence_fetcher.get_page_views.return_value = PageViews(
+        page_id="123456", total_views=42
+    )
+
+    response = await client.call_tool(
+        "confluence_get_page",
+        {"page_id": "123456", "include": "comments, labels, views"},
+    )
+
+    mock_confluence_fetcher.get_page_comments.assert_called_once_with("123456")
+    mock_confluence_fetcher.get_page_labels.assert_called_once_with("123456")
+    mock_confluence_fetcher.get_page_views.assert_called_once_with(
+        page_id="123456", include_title=False
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["comments"] == [
+        {
+            "id": "789",
+            "author": "Test User",
+            "created": "2023-08-01T12:00:00.000Z",
+            "body": "This is a test comment",
+        }
+    ]
+    assert result_data["labels"] == [{"id": "lbl1", "name": "test-label"}]
+    assert result_data["views"] == {"page_id": "123456", "total_views": 42}
+
+
+@pytest.mark.anyio
+async def test_get_page_include_uses_resolved_page_id(
+    client, mock_confluence_fetcher
+):
+    """Test title lookups use the resolved page ID for enrichments."""
+    mock_confluence_fetcher.get_page_by_title.return_value = (
+        mock_confluence_fetcher.get_page_content.return_value
+    )
+
+    await client.call_tool(
+        "confluence_get_page",
+        {
+            "title": "Test Page Mock Title",
+            "space_key": "TEST",
+            "include": "comments",
+        },
+    )
+
+    mock_confluence_fetcher.get_page_by_title.assert_called_once_with(
+        "TEST", "Test Page Mock Title", convert_to_markdown=True
+    )
+    mock_confluence_fetcher.get_page_comments.assert_called_once_with("123456")
+
+
+@pytest.mark.anyio
+async def test_get_page_include_views_degrades_on_server_dc(
+    client, mock_confluence_fetcher
+):
+    """Test unavailable page views serialize as JSON null."""
+    mock_confluence_fetcher.get_page_views.side_effect = ValueError(
+        "Page view analytics is only available for Confluence Cloud."
+    )
+
+    response = await client.call_tool(
+        "confluence_get_page", {"page_id": "123456", "include": "views"}
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["views"] is None
 
 
 @pytest.mark.anyio
