@@ -587,9 +587,7 @@ async def test_get_page_no_metadata(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
-async def test_get_page_include_dispatches_enrichments(
-    client, mock_confluence_fetcher
-):
+async def test_get_page_include_dispatches_enrichments(client, mock_confluence_fetcher):
     """Test get_page dispatches all requested enrichments by resolved ID."""
     mock_confluence_fetcher.get_page_views.return_value = PageViews(
         page_id="123456", total_views=42
@@ -620,9 +618,7 @@ async def test_get_page_include_dispatches_enrichments(
 
 
 @pytest.mark.anyio
-async def test_get_page_include_uses_resolved_page_id(
-    client, mock_confluence_fetcher
-):
+async def test_get_page_include_uses_resolved_page_id(client, mock_confluence_fetcher):
     """Test title lookups use the resolved page ID for enrichments."""
     mock_confluence_fetcher.get_page_by_title.return_value = (
         mock_confluence_fetcher.get_page_content.return_value

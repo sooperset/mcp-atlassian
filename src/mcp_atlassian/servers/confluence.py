@@ -422,9 +422,7 @@ async def get_page(
 
         if "comments" in included_sections:
             comments = confluence_fetcher.get_page_comments(resolved_page_id)
-            result["comments"] = [
-                comment.to_simplified_dict() for comment in comments
-            ]
+            result["comments"] = [comment.to_simplified_dict() for comment in comments]
 
         if "labels" in included_sections:
             labels = confluence_fetcher.get_page_labels(resolved_page_id)
