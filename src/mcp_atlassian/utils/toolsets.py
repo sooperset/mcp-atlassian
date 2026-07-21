@@ -1,6 +1,6 @@
 """Toolset definitions and filtering utilities for MCP Atlassian.
 
-Groups 95 tools into 24 named toolsets controlled via the TOOLSETS env var.
+Groups 98 tools into 25 named toolsets controlled via the TOOLSETS env var.
 Supports 'all', 'default', and comma-separated toolset names.
 """
 
@@ -157,6 +157,11 @@ CONFLUENCE_TOOLSETS: dict[str, ToolsetDefinition] = {
 ALL_TOOLSETS: dict[str, ToolsetDefinition] = {
     **JIRA_TOOLSETS,
     **CONFLUENCE_TOOLSETS,
+    "legacy": ToolsetDefinition(
+        name="legacy",
+        description="Deprecated tools retained for migration compatibility",
+        default=False,
+    ),
 }
 
 DEFAULT_TOOLSETS: set[str] = {
@@ -167,7 +172,7 @@ DEFAULT_TOOLSETS: set[str] = {
 def get_enabled_toolsets() -> set[str]:
     """Parse the TOOLSETS env var into a set of enabled toolset names.
 
-    Supports keywords 'all' (all 24 toolsets) and 'default' (6 defaults),
+    Supports keywords 'all' (all 25 toolsets) and 'default' (6 defaults),
     plus comma-separated specific toolset names. Case-insensitive for keywords.
 
     When TOOLSETS is unset or empty, returns all toolsets with a deprecation
@@ -180,9 +185,9 @@ def get_enabled_toolsets() -> set[str]:
         names are given, returns an empty set (fail-closed).
 
     Examples:
-        TOOLSETS unset -> all 24 toolsets (with deprecation warning)
-        TOOLSETS="" -> all 24 toolsets (with deprecation warning)
-        TOOLSETS="all" -> all 24 names
+        TOOLSETS unset -> all 25 toolsets (with deprecation warning)
+        TOOLSETS="" -> all 25 toolsets (with deprecation warning)
+        TOOLSETS="all" -> all 25 names
         TOOLSETS="default" -> 6 default names
         TOOLSETS="default,jira_agile" -> defaults + jira_agile
         TOOLSETS="typo_name" -> set() (fail-closed)
