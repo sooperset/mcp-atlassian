@@ -645,21 +645,29 @@ class UserTokenMiddleware:
                     f"UserTokenMiddleware: Extracted cloudId: {cloud_id_str.strip()}"
                 )
 
-            # Process Authorization header
-            if auth_header_str:
+            # Process service headers FIRST. When the request is proxied through
+            # an authenticating gateway (e.g. AWS AgentCore Gateway) the gateway
+            # injects its own ``Authorization: Bearer <gateway-token>`` for
+            # outbound auth to this server. That gateway token must not be
+            # treated as the user's Atlassian credential. If the per-user service
+            # headers (X-Atlassian-Jira-Personal-Token / X-Atlassian-Jira-Url
+            # and the Confluence pair) are present, prefer them and skip the
+            # generic Authorization header parsing. Falls through to the legacy
+            # Authorization path when no service-header credential is set.
+            if service_headers and (
+                (jira_token_str and jira_url_str)
+                or (confluence_token_str and confluence_url_str)
+            ):
+                scope["state"]["user_atlassian_auth_type"] = "pat"
+                scope["state"]["user_atlassian_email"] = None
+                logger.debug(
+                    "UserTokenMiddleware: Per-user PAT service headers present; "
+                    "ignoring inbound Authorization header."
+                )
+            elif auth_header_str:
                 self._parse_auth_header(auth_header_str, scope)
             else:
                 logger.debug("UserTokenMiddleware: No Authorization header provided")
-                # If service headers are present without Authorization header, set PAT auth type
-                if service_headers and (
-                    (jira_token_str and jira_url_str)
-                    or (confluence_token_str and confluence_url_str)
-                ):
-                    scope["state"]["user_atlassian_auth_type"] = "pat"
-                    scope["state"]["user_atlassian_email"] = None
-                    logger.debug(
-                        "UserTokenMiddleware: Header-based authentication detected. Setting PAT auth type."
-                    )
 
         except Exception as e:
             logger.error(f"Error processing authentication headers: {e}", exc_info=True)
