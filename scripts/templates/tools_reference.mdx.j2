@@ -79,10 +79,21 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 | `{{ toolset.name }}` | {{ "Yes" if toolset.core else "No" }} | {% for tool_name in toolset.tools %}`{{ tool_name }}`{% if not loop.last %}, {% endif %}{% endfor %} |
 {% endfor %}
 
+**Migration Toolsets ({{ toolsets.legacy | length }}):**
+
+| Toolset | Core | Purpose | Tools |
+|---------|:----:|---------|-------|
+{% for toolset in toolsets.legacy -%}
+| `{{ toolset.name }}` | {{ "Yes" if toolset.core else "No" }} | {{ toolset.description }} | {% if toolset.tools %}{% for tool_name in toolset.tools %}`{{ tool_name }}`{% if not loop.last %}, {% endif %}{% endfor %}{% else %}Deprecated tools as they are migrated{% endif %} |
+{% endfor %}
+
 ```bash
 # All toolsets are enabled when TOOLSETS is not set.
 # To restrict to core toolsets plus specific extras:
 TOOLSETS=default,jira_agile,jira_attachments
+
+# Enable deprecated tools only while migrating to their replacements:
+TOOLSETS=legacy
 
 # Enable all toolsets ({{ counts.total_tools }} tools)
 TOOLSETS=all
