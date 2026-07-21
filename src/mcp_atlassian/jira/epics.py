@@ -501,7 +501,11 @@ class EpicsMixin(
                     logger.info(f"Trying to get epic issues with issueFunction: {jql}")
 
                     search_result = self.search_issues(jql, start=start, limit=limit)
-                    if search_result:
+                    # A JiraSearchResult is always truthy (a populated model),
+                    # so gate on its issues: an empty result must fall through
+                    # to the parent / Epic Link strategies below rather than
+                    # short-circuiting the whole discovery chain with [].
+                    if search_result.issues:
                         logger.info(
                             f"Successfully found {len(search_result.issues)} issues for epic {epic_key} using issueFunction"
                         )
