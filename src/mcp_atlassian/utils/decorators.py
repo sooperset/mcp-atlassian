@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
 _warned_deprecated_tools: set[str] = set()
+_DEPRECATED_TOOL_MARKER = "__mcp_atlassian_deprecated_tool__"
+_DEPRECATED_TOOL_REGISTRATION_HOOK = (
+    "__mcp_atlassian_deprecated_tool_registration_hook__"
+)
 
 
 def deprecated_tool(
@@ -44,7 +48,9 @@ def deprecated_tool(
             if isinstance(metadata, ToolMeta) and metadata.description is not None
             else getdoc(func)
         )
-        description = f"DEPRECATED: use {replacement}. {original_description or ''}"
+        description = f"DEPRECATED: use {replacement}."
+        if original_description:
+            description = f"{description} {original_description}"
         existing_tags = (
             metadata.tags or set() if isinstance(metadata, ToolMeta) else set()
         )
@@ -63,12 +69,19 @@ def deprecated_tool(
             return await func(*args, **kwargs)
 
         wrapper.__doc__ = description
+        setattr(wrapper, _DEPRECATED_TOOL_MARKER, True)
         updated_metadata = (
             replace(metadata, description=description, tags=tags)
             if isinstance(metadata, ToolMeta)
             else ToolMeta(description=description, tags=tags)
         )
         wrapper.__fastmcp__ = updated_metadata  # type: ignore[attr-defined]
+
+        registration_hook = getattr(func, _DEPRECATED_TOOL_REGISTRATION_HOOK, None)
+        if registration_hook is not None:
+            registration_hook(wrapper, updated_metadata)
+            delattr(wrapper, _DEPRECATED_TOOL_REGISTRATION_HOOK)
+
         return wrapper  # type: ignore
 
     return decorator

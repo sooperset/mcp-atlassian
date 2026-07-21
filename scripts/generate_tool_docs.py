@@ -294,6 +294,7 @@ class ToolsetDoc:
 
     name: str
     core: bool
+    description: str = ""
     tools: list[str] = field(default_factory=list)
 
 
@@ -501,6 +502,7 @@ def build_toolset_docs(
 ) -> dict[str, list[ToolsetDoc]]:
     """Group introspected tools by the registered toolset definitions."""
     from mcp_atlassian.utils.toolsets import (
+        ALL_TOOLSETS,
         CONFLUENCE_TOOLSETS,
         DEFAULT_TOOLSETS,
         JIRA_TOOLSETS,
@@ -508,8 +510,12 @@ def build_toolset_docs(
     )
 
     toolsets_by_name = {
-        name: ToolsetDoc(name=name, core=name in DEFAULT_TOOLSETS)
-        for name in [*JIRA_TOOLSETS, *CONFLUENCE_TOOLSETS]
+        name: ToolsetDoc(
+            name=name,
+            core=name in DEFAULT_TOOLSETS,
+            description=definition.description,
+        )
+        for name, definition in ALL_TOOLSETS.items()
     }
     for tool_name, info in tools.items():
         toolset_name = get_toolset_tag(info["tags"])
@@ -521,6 +527,7 @@ def build_toolset_docs(
     return {
         "jira": [toolsets_by_name[name] for name in JIRA_TOOLSETS],
         "confluence": [toolsets_by_name[name] for name in CONFLUENCE_TOOLSETS],
+        "legacy": [toolsets_by_name["legacy"]],
     }
 
 

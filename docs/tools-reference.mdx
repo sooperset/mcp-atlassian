@@ -97,10 +97,19 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 | `confluence_templates` | No | `confluence_list_page_templates`, `confluence_get_page_template`, `confluence_create_page_from_template` |
 | `confluence_permissions` | No | `confluence_check_content_permissions`, `confluence_get_space_permissions` |
 
+**Migration Toolsets (1):**
+
+| Toolset | Core | Purpose | Tools |
+|---------|:----:|---------|-------|
+| `legacy` | No | Deprecated tools retained for migration compatibility | Deprecated tools as they are migrated |
+
 ```bash
 # All toolsets are enabled when TOOLSETS is not set.
 # To restrict to core toolsets plus specific extras:
 TOOLSETS=default,jira_agile,jira_attachments
+
+# Enable deprecated tools only while migrating to their replacements:
+TOOLSETS=legacy
 
 # Enable all toolsets (98 tools)
 TOOLSETS=all
