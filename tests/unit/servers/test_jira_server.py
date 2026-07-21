@@ -3277,11 +3277,40 @@ async def test_add_worklog(jira_client, mock_jira_fetcher):
         started=None,
         original_estimate=None,
         remaining_estimate=None,
+        worklog_attributes=None,
     )
 
     result = json.loads(response.content[0].text)
     assert result["worklog"]["time_spent"] == "1h 30m"
     assert result["worklog"]["time_spent_seconds"] == 5400
+
+
+@pytest.mark.anyio
+async def test_add_worklog_with_attributes(jira_client, mock_jira_fetcher):
+    """Test that the server parses Tempo worklog attributes JSON."""
+    attributes = '{"_WorkMode_": {"value": "office"}}'
+
+    response = await jira_client.call_tool(
+        "jira_add_worklog",
+        {
+            "issue_key": "TEST-123",
+            "time_spent": "1h",
+            "worklog_attributes": attributes,
+        },
+    )
+
+    mock_jira_fetcher.add_worklog.assert_called_once_with(
+        issue_key="TEST-123",
+        time_spent="1h",
+        comment=None,
+        started=None,
+        original_estimate=None,
+        remaining_estimate=None,
+        worklog_attributes={"_WorkMode_": {"value": "office"}},
+    )
+    assert json.loads(response.content[0].text)["message"] == (
+        "Worklog added successfully"
+    )
 
 
 @pytest.mark.anyio
@@ -3786,6 +3815,49 @@ async def test_get_issue_include_worklogs(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_get_issue_include_worklog_attributes(jira_client, mock_jira_fetcher):
+    """get_issue with include=worklog_attributes fetches the Tempo catalog."""
+    attribute = MagicMock()
+    attribute.to_simplified_dict.return_value = {
+        "id": 45,
+        "key": "_WorkMode_",
+        "static_list_values": [{"id": 123, "value": "office"}],
+    }
+    mock_jira_fetcher.get_work_attribute_catalog.return_value = [attribute]
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "worklog_attributes"},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["worklog_attributes"] == [
+        {
+            "id": 45,
+            "key": "_WorkMode_",
+            "static_list_values": [{"id": 123, "value": "office"}],
+        }
+    ]
+    mock_jira_fetcher.get_work_attribute_catalog.assert_called_once_with()
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_worklog_attributes_propagates_errors(
+    jira_client, mock_jira_fetcher
+):
+    """Tempo catalog failures remain visible as MCP tool errors."""
+    mock_jira_fetcher.get_work_attribute_catalog.side_effect = RuntimeError(
+        "Tempo unavailable"
+    )
+
+    with pytest.raises(ToolError, match="Tempo unavailable"):
+        await jira_client.call_tool(
+            "jira_get_issue",
+            {"issue_key": "TEST-123", "include": "worklog_attributes"},
+        )
+
+
+@pytest.mark.anyio
 async def test_get_issue_include_multiple(jira_client, mock_jira_fetcher):
     """get_issue with multiple include sections."""
     mock_jira_fetcher.get_remote_issue_links.return_value = []
@@ -3833,6 +3905,7 @@ async def test_get_issue_include_all(jira_client, mock_jira_fetcher):
     assert content["transitions"] == [{"id": "11"}]
     assert content["watchers"] == {"watchCount": 1}
     assert content["worklogs"] == [{"id": "10001"}]
+    mock_jira_fetcher.get_work_attribute_catalog.assert_not_called()
     assert content["comments"] == []
     assert content["changelogs"] == []
 

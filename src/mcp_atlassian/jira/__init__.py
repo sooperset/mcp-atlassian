@@ -32,6 +32,7 @@ from .sprints import SprintsMixin
 from .transitions import TransitionsMixin
 from .users import UsersMixin
 from .watchers import WatchersMixin
+from .work_attributes import WorkAttributeMixin
 from .worklog import WorklogMixin
 
 
@@ -43,6 +44,7 @@ class JiraFetcher(
     FormattingMixin,
     TransitionsMixin,
     WorklogMixin,
+    WorkAttributeMixin,
     EpicsMixin,
     CommentsMixin,
     CustomerRequestsMixin,
@@ -69,6 +71,7 @@ class JiraFetcher(
     - FormattingMixin: Content formatting utilities
     - TransitionsMixin: Issue transition operations
     - WorklogMixin: Worklog operations
+    - WorkAttributeMixin: Tempo Core Work Attributes operations
     - EpicsMixin: Epic operations
     - CommentsMixin: Comment operations
     - SearchMixin: Search operations
