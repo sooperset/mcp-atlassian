@@ -2237,9 +2237,21 @@ async def update_issue(
     result = issue.to_simplified_dict() if issue is not None else {"key": issue_key}
     if attachment_results is not None:
         result["attachment_results"] = attachment_results
+
+    if operations_failed:
+        message = (
+            "Issue update completed with errors"
+            if operations_performed
+            else "Issue update failed"
+        )
+    elif operations_performed:
+        message = "Issue updated successfully"
+    else:
+        message = "No issue updates were requested"
+
     return json.dumps(
         {
-            "message": "Issue updated successfully",
+            "message": message,
             "issue": result,
             "operations_performed": operations_performed,
             "operations_failed": operations_failed,

@@ -2699,6 +2699,54 @@ async def test_update_issue_records_operation_failure_and_continues(
 
 
 @pytest.mark.anyio
+async def test_update_issue_reports_failure_when_all_operations_fail(
+    jira_client, mock_jira_fetcher
+):
+    """All failed requested operations must not be reported as successful."""
+    mock_jira_fetcher.update_issue.side_effect = RuntimeError("field update failed")
+    mock_jira_fetcher.get_available_transitions.side_effect = RuntimeError(
+        "transition lookup failed"
+    )
+    mock_jira_fetcher.add_comment.side_effect = RuntimeError("comment failed")
+    mock_jira_fetcher.add_worklog.side_effect = RuntimeError("worklog failed")
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary":"Updated"}',
+            "transition": "Done",
+            "comment": "Comment",
+            "worklog": "1h",
+        },
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Issue update failed"
+    assert result["operations_performed"] == []
+    assert len(result["operations_failed"]) == 4
+
+
+@pytest.mark.anyio
+async def test_update_issue_reports_when_no_operations_are_requested(
+    jira_client, mock_jira_fetcher
+):
+    """A read-back without requested changes must not be reported as an update."""
+    response = await jira_client.call_tool(
+        "jira_update_issue", {"issue_key": "TEST-123"}
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "No issue updates were requested"
+    assert result["operations_performed"] == []
+    assert result["operations_failed"] == []
+    mock_jira_fetcher.update_issue.assert_not_called()
+    mock_jira_fetcher.get_available_transitions.assert_not_called()
+    mock_jira_fetcher.add_comment.assert_not_called()
+    mock_jira_fetcher.add_worklog.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_update_issue_passes_return_fields(jira_client, mock_jira_fetcher):
     """return_fields CSV is parsed to a list and forwarded to update_issue."""
     await jira_client.call_tool(

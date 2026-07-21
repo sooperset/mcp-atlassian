@@ -100,7 +100,7 @@ Update an issue and optionally transition, comment, and log work.
 <Tip>
 Save response tokens: after an update you rarely need the whole issue back. Set `return_fields` to only the field(s) you changed (e.g., `return_fields: "duedate"`) — this can cut thousands of tokens. Use `*all` only when you need the full updated issue.
 
-`fields` is optional when you only need to transition, comment, or log work. If `transition` and `comment` are both provided without `comment_visibility`, the comment is sent with the transition.
+`fields` is optional when you only need to transition, comment, or log work. If `transition` and `comment` are both provided, the issue is transitioned first and the comment is added separately afterward. Use `comment_visibility` to restrict the comment's visibility.
 
 Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.
 </Tip>
