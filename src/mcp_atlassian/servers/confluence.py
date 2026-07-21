@@ -18,6 +18,7 @@ from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluenceAttachment
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
+from mcp_atlassian.servers.helpers import parse_include
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
@@ -31,6 +32,7 @@ from mcp_atlassian.utils.media import (
 logger = logging.getLogger(__name__)
 
 
+_GET_PAGE_INCLUDE_SECTIONS = {"comments", "labels", "views"}
 _CONFLUENCE_TINY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,11}")
 _PAGE_ID_PATH_PATTERN = re.compile(r"(?:^|/)pages/([0-9]+)(?:/|$)")
 _TINY_LINK_PATH_PATTERN = re.compile(r"(?:^|/)x/([A-Za-z0-9_-]+)(?:/|$)")
@@ -335,6 +337,16 @@ async def get_page(
             default=True,
         ),
     ] = True,
+    include: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Comma-separated sections to inline in the response. Supported: "
+                "comments, labels, views, all."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Get content of a specific Confluence page by its ID, or by its title and space key.
 
@@ -346,6 +358,7 @@ async def get_page(
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+        include: Comma-separated enrichments to inline (comments, labels, views, or all).
 
     Returns:
         JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
@@ -402,6 +415,33 @@ async def get_page(
         result = {"metadata": page_object.to_simplified_dict()}
     else:
         result = {"content": {"value": page_object.content}}
+
+    included_sections = parse_include(include, _GET_PAGE_INCLUDE_SECTIONS)
+    if included_sections:
+        resolved_page_id = str(page_object.id)
+
+        if "comments" in included_sections:
+            comments = confluence_fetcher.get_page_comments(resolved_page_id)
+            result["comments"] = [comment.to_simplified_dict() for comment in comments]
+
+        if "labels" in included_sections:
+            labels = confluence_fetcher.get_page_labels(resolved_page_id)
+            result["labels"] = [label.to_simplified_dict() for label in labels]
+
+        if "views" in included_sections:
+            try:
+                views = confluence_fetcher.get_page_views(
+                    page_id=resolved_page_id, include_title=False
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Page views are unavailable for page %s: %s",
+                    resolved_page_id,
+                    exc,
+                )
+                result["views"] = None
+            else:
+                result["views"] = views.to_simplified_dict()
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
