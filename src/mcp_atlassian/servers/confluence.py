@@ -185,6 +185,61 @@ confluence_mcp = ErrorPreservingFastMCP(
 )
 
 
+def _simplify_spaces_response(raw: dict[str, object]) -> dict[str, object]:
+    """Return the stable, useful subset of a Confluence spaces response.
+
+    Args:
+        raw: Raw response returned by ``ConfluenceFetcher.get_spaces``.
+
+    Returns:
+        Pagination metadata and simplified space entries.
+    """
+    raw_results = raw.get("results")
+    spaces: list[dict[str, str]] = []
+    if isinstance(raw_results, list):
+        for entry in raw_results:
+            if not isinstance(entry, dict):
+                continue
+
+            description = ""
+            description_field = entry.get("description")
+            if isinstance(description_field, str):
+                description = description_field
+            elif isinstance(description_field, dict):
+                plain = description_field.get("plain")
+                if isinstance(plain, str):
+                    description = plain
+                elif isinstance(plain, dict):
+                    value = plain.get("value")
+                    if isinstance(value, str):
+                        description = value
+
+            spaces.append(
+                {
+                    "key": entry.get("key", "")
+                    if isinstance(entry.get("key"), str)
+                    else "",
+                    "name": entry.get("name", "")
+                    if isinstance(entry.get("name"), str)
+                    else "",
+                    "type": entry.get("type", "")
+                    if isinstance(entry.get("type"), str)
+                    else "",
+                    "status": entry.get("status", "")
+                    if isinstance(entry.get("status"), str)
+                    else "",
+                    "description": description,
+                }
+            )
+
+    return {
+        "start": raw.get("start", 0),
+        "limit": raw.get("limit", 0),
+        "size": raw.get("size", len(spaces)),
+        "spaces": spaces,
+    }
+
+
 @confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Search Content", "readOnlyHint": True},
@@ -275,6 +330,75 @@ async def search(
         )
     search_results = [page.to_simplified_dict() for page in pages]
     return json.dumps(search_results, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_spaces"},
+    annotations={"title": "List Spaces", "readOnlyHint": True},
+)
+async def get_spaces(
+    ctx: Context,
+    start: Annotated[
+        int,
+        Field(
+            description="Start index for pagination (0-based)",
+            default=0,
+            ge=0,
+        ),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of spaces to return (1-250)",
+            default=50,
+            ge=1,
+            le=250,
+        ),
+    ] = 50,
+) -> str:
+    """List Confluence spaces accessible to the current user.
+
+    Args:
+        ctx: The FastMCP context.
+        start: Start index for pagination.
+        limit: Maximum number of spaces to return.
+
+    Returns:
+        JSON containing pagination metadata and simplified space entries.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    raw = confluence_fetcher.get_spaces(start=start, limit=limit)
+    return json.dumps(_simplify_spaces_response(raw), indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_spaces"},
+    annotations={"title": "List Contributed Spaces", "readOnlyHint": True},
+)
+async def get_user_contributed_spaces(
+    ctx: Context,
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of contributed spaces to return (1-250)",
+            default=100,
+            ge=1,
+            le=250,
+        ),
+    ] = 100,
+) -> str:
+    """List spaces the current user has contributed to, ordered by recency.
+
+    Args:
+        ctx: The FastMCP context.
+        limit: Maximum number of contributed spaces to return.
+
+    Returns:
+        JSON mapping each space key to its key and name.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    spaces = confluence_fetcher.get_user_contributed_spaces(limit=limit)
+    return json.dumps(spaces, indent=2, ensure_ascii=False)
 
 
 @confluence_mcp.tool(
