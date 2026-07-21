@@ -51,9 +51,7 @@ async def test_deprecated_tool_is_preserved_in_registered_mcp_tool(
     assert listed[tool_name].description == registered.description
     assert listed[tool_name].tags == registered.tags
 
-    with caplog.at_level(
-        logging.WARNING, logger="mcp_atlassian.utils.decorators"
-    ):
+    with caplog.at_level(logging.WARNING, logger="mcp_atlassian.utils.decorators"):
         first_result = await server._call_tool_mcp(tool_name, {})
         second_result = await server._call_tool_mcp(tool_name, {})
 
