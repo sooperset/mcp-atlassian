@@ -2520,10 +2520,10 @@ async def test_update_issue_worklog_only_without_fields(jira_client, mock_jira_f
 
 
 @pytest.mark.anyio
-async def test_update_issue_transition_comment_uses_passthrough(
+async def test_update_issue_transition_comment_is_separate(
     jira_client, mock_jira_fetcher
 ):
-    """A transition consumes an unrestricted comment in the same API call."""
+    """A transition and its comment are sent as separate operations."""
     mock_jira_fetcher.get_available_transitions.return_value = [
         {"id": "31", "name": "Done"}
     ]
@@ -2538,9 +2538,55 @@ async def test_update_issue_transition_comment_uses_passthrough(
     )
 
     mock_jira_fetcher.transition_issue.assert_called_once_with(
-        issue_key="TEST-123", transition_id="31", comment="Transition comment"
+        issue_key="TEST-123", transition_id="31", comment=None
     )
-    mock_jira_fetcher.add_comment.assert_not_called()
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Transition comment", None
+    )
+
+
+@pytest.mark.anyio
+async def test_update_issue_transition_comment_is_added_once_when_refetch_fails(
+    jira_client, mock_jira_fetcher
+):
+    """A failed re-fetch does not cause transition comments to be duplicated."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+    mock_jira_fetcher.transition_issue.side_effect = RuntimeError(
+        "transition response fetch failed"
+    )
+    mock_jira_fetcher.get_issue.side_effect = RuntimeError("re-fetch failed")
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition": "Done",
+            "comment": "Transition comment",
+        },
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Transition comment", None
+    )
+    assert [call[0] for call in mock_jira_fetcher.method_calls] == [
+        "get_available_transitions",
+        "transition_issue",
+        "add_comment",
+        "get_issue",
+    ]
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == [
+        "comment_added",
+    ]
+    assert result["operations_failed"] == [
+        "transition: transition response fetch failed",
+        "refetch: re-fetch failed",
+    ]
 
 
 @pytest.mark.anyio
@@ -2599,9 +2645,11 @@ async def test_update_issue_combines_fields_transition_comment_and_worklog(
         "summary": "Updated",
     }
     mock_jira_fetcher.transition_issue.assert_called_once_with(
-        issue_key="TEST-123", transition_id="31", comment="Completed work"
+        issue_key="TEST-123", transition_id="31", comment=None
     )
-    mock_jira_fetcher.add_comment.assert_not_called()
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Completed work", None
+    )
     mock_jira_fetcher.add_worklog.assert_called_once_with(
         issue_key="TEST-123", time_spent="1h", started=None
     )
@@ -2609,6 +2657,7 @@ async def test_update_issue_combines_fields_transition_comment_and_worklog(
         "update_issue",
         "get_available_transitions",
         "transition_issue",
+        "add_comment",
         "add_worklog",
         "get_issue",
     ]
@@ -2616,6 +2665,7 @@ async def test_update_issue_combines_fields_transition_comment_and_worklog(
     assert result["operations_performed"] == [
         "fields_updated",
         "transitioned_to:Done",
+        "comment_added",
         "worklog_added",
     ]
 

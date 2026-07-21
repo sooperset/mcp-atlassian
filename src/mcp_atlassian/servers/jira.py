@@ -2185,21 +2185,16 @@ async def update_issue(
             )
             operations_failed.append(f"fields_updated: {e}")
 
-    comment_consumed_by_transition = False
     if transition:
         try:
             available_transitions = jira.get_available_transitions(issue_key)
             transition_id = resolve_transition(available_transitions, transition)
-            transition_comment = comment if visibility is None else None
             issue = jira.transition_issue(
                 issue_key=issue_key,
                 transition_id=transition_id,
-                comment=transition_comment,
+                comment=None,
             )
             operations_performed.append(f"transitioned_to:{transition}")
-            comment_consumed_by_transition = (
-                comment is not None and transition_comment is not None
-            )
         except Exception as e:  # noqa: BLE001 - preserve later operations
             logger.error(
                 f"Error transitioning issue {issue_key}: {str(e)}",
@@ -2207,7 +2202,7 @@ async def update_issue(
             )
             operations_failed.append(f"transition: {e}")
 
-    if comment and not comment_consumed_by_transition:
+    if comment:
         try:
             jira.add_comment(issue_key, comment, visibility)
             operations_performed.append("comment_added")
