@@ -52,6 +52,7 @@ _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
         "changelog",
         "comments",
         "worklogs",
+        "epic_summary",
     }
 )
 _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
@@ -61,6 +62,7 @@ _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
     "changelog": "changelogs",
     "comments": "comments",
     "worklogs": "worklogs",
+    "epic_summary": "epic_summary",
 }
 _GET_ISSUE_INCLUDE_ALIASES = {
     "comment": "comments",
@@ -622,11 +624,42 @@ async def get_issue(
                 "(Optional) Comma-separated sections to inline "
                 "in the response, avoiding extra tool calls. "
                 "Supported: all, remote_links, transitions, "
-                "watchers, changelog, comments, worklogs"
+                "watchers, changelog, comments, worklogs, epic_summary. "
+                "'epic_summary' only applies when the issue is an Epic: "
+                "it adds child-issue aggregations (counts by status, "
+                "assignee, and type, plus a completion percentage). By "
+                "default the summary is aggregate-only; set "
+                "'epic_summary_children=true' to also inline a compact "
+                "child list."
             ),
             default=None,
         ),
     ] = None,
+    epic_summary_children: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true and 'epic_summary' is included on an Epic, also "
+                "inline a compact list of child issues (key, status, "
+                "assignee) alongside the aggregates. Ignored unless "
+                "'epic_summary' is requested and the issue is an Epic."
+            ),
+            default=False,
+        ),
+    ] = False,
+    max_epic_children: Annotated[
+        int,
+        Field(
+            description=(
+                "Maximum number of child issues to aggregate for "
+                "'epic_summary' (1-500). If the cap is reached the summary "
+                "sets 'truncated': true."
+            ),
+            default=100,
+            ge=1,
+            le=500,
+        ),
+    ] = 100,
     use_display_names: Annotated[
         bool,
         Field(
@@ -644,8 +677,12 @@ async def get_issue(
 
     Includes Epic links and relationship information. Use the
     ``include`` parameter to inline enrichments (remote_links,
-    transitions, watchers, changelog, comments, worklogs) so that
-    separate tool calls are not needed.
+    transitions, watchers, changelog, comments, worklogs, epic_summary)
+    so that separate tool calls are not needed. The ``epic_summary``
+    section only applies when the issue is an Epic and adds child-issue
+    aggregations (counts by status, assignee, and type, plus a
+    completion percentage); it is aggregate-only unless
+    ``epic_summary_children`` is set.
 
     Args:
         ctx: The FastMCP context.
@@ -656,6 +693,9 @@ async def get_issue(
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
         include: Comma-separated enrichment sections to inline.
+        epic_summary_children: Inline a compact child list with
+            ``epic_summary`` (aggregate-only by default).
+        max_epic_children: Cap on children aggregated for ``epic_summary``.
         use_display_names: Opt into human-readable custom field keys.
 
     Returns:
@@ -732,6 +772,26 @@ async def get_issue(
             result["worklogs"] = jira.get_worklogs(issue_key)
         except Exception:  # noqa: BLE001
             result["worklogs"] = []
+
+    if "epic_summary" in include_sections:
+        # Gate on the already-fetched issue type: a non-Epic makes ZERO
+        # child calls and is reported as not-applicable rather than
+        # silently dropping the requested section.
+        issue_type_name = issue.issue_type.name if issue.issue_type else ""
+        if not jira._is_epic_issue_type(issue_type_name):
+            result["epic_summary"] = {
+                "applicable": False,
+                "reason": "not_epic",
+            }
+        else:
+            summary = await run_jira_fetcher_call(
+                jira.get_epic_summary,
+                epic_key=issue_key,
+                max_children=max_epic_children,
+                include_children=epic_summary_children,
+            )
+            summary["applicable"] = True
+            result["epic_summary"] = summary
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
