@@ -5,4 +5,4 @@ tips: |
 
   `fields` is optional when you only need to transition, comment, or log work. If `transition` and `comment` are both provided, the issue is transitioned first and the comment is added separately afterward. Use `comment_visibility` to restrict the comment's visibility.
 
-  Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.
+  Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Pass `{"parent": null}` to clear an issue's parent. Find field IDs with `jira_search_fields`.
