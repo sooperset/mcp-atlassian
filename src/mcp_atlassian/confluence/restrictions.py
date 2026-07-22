@@ -36,9 +36,7 @@ class RestrictionsMixin(ConfluenceClient):
             Exception: If the API call fails.
         """
         try:
-            self.enforce_spaces_filter(
-                self._resolve_page_space_key(page_id), page_id=page_id
-            )
+            self.enforce_page_spaces_filter(page_id)
             data = self.confluence.get(
                 f"{self._v1_rest_base_url()}/rest/api/content/"
                 f"{page_id}/restriction/byOperation",
@@ -125,9 +123,7 @@ class RestrictionsMixin(ConfluenceClient):
             Exception: If the API call fails.
         """
         try:
-            self.enforce_spaces_filter(
-                self._resolve_page_space_key(page_id), page_id=page_id
-            )
+            self.enforce_page_spaces_filter(page_id)
             read_users = read_users or []
             read_groups = read_groups or []
             edit_users = edit_users or []

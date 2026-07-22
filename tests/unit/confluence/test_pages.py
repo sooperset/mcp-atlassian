@@ -3019,13 +3019,9 @@ class TestCopyPage:
                 destination_parent_id="parent-456",
             )
 
-        # Called twice: once to resolve the source page's space for the
-        # CONFLUENCE_SPACES_FILTER check, once for the Server/DC body fetch.
-        assert pages_mixin.confluence.get_page_by_id.call_count == 2
-        pages_mixin.confluence.get_page_by_id.assert_any_call(
-            page_id="source-456", expand="space"
-        )
-        pages_mixin.confluence.get_page_by_id.assert_any_call(
+        # With no allowlist configured, the filter resolver does not add an
+        # unnecessary metadata request.
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
             "source-456", expand="body.storage,version,space"
         )
         pages_mixin.confluence.create_page.assert_called_once_with(
@@ -3641,6 +3637,18 @@ class TestPagesSpacesFilterEnforcement:
         with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
             pages_mixin.get_page_content("987654321")
 
+    def test_get_page_content_checks_space_before_fetching_body(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+        pages_mixin.confluence.get_page_by_id.reset_mock()
+        pages_mixin.confluence.get_page_by_id.return_value = {"space": {"key": "PROJ"}}
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.get_page_content("987654321")
+
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(
+            page_id="987654321", expand="space"
+        )
+
     def test_get_page_content_allows_configured_space(self, pages_mixin):
         pages_mixin.config.spaces_filter = "PROJ"
 
@@ -3707,16 +3715,16 @@ class TestPagesSpacesFilterEnforcement:
         with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
             pages_mixin.get_page_children("987654321", include_folders=False)
 
-    def test_get_page_children_with_no_children_does_not_raise(self, pages_mixin):
-        """An empty result exposes nothing, so it must not be blocked even
-        when the parent page's space can't be determined from an empty list."""
+    def test_get_page_children_checks_parent_before_empty_result(self, pages_mixin):
+        """An empty child list must not bypass the parent page boundary."""
         pages_mixin.config.url = "https://confluence.example.com"
         pages_mixin.config.spaces_filter = "OTHERSPACE"
         pages_mixin.confluence.get_page_child_by_type.return_value = {"results": []}
 
-        result = pages_mixin.get_page_children("987654321", include_folders=False)
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.get_page_children("987654321", include_folders=False)
 
-        assert result == []
+        pages_mixin.confluence.get_page_child_by_type.assert_not_called()
 
     def test_delete_page_blocks_disallowed_space(self, pages_mixin):
         pages_mixin.config.spaces_filter = "OTHERSPACE"
@@ -3752,6 +3760,18 @@ class TestPagesSpacesFilterEnforcement:
 
         with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
             pages_mixin.move_page("987654321", target_space_key="OTHERSPACE")
+
+        pages_mixin.confluence.move_page.assert_not_called()
+
+    def test_move_page_blocks_disallowed_target_parent(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "PROJ"
+        pages_mixin.confluence.get_page_by_id.side_effect = [
+            {"space": {"key": "PROJ"}},
+            {"space": {"key": "OTHERSPACE"}},
+        ]
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.move_page("987654321", target_parent_id="222")
 
         pages_mixin.confluence.move_page.assert_not_called()
 

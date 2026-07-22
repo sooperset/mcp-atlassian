@@ -59,6 +59,7 @@ class PermissionsMixin(ConfluenceClient):
             HTTPError: If authentication fails (401/403 are propagated).
         """
         self._require_cloud_permissions_api()
+        self.enforce_content_spaces_filter(content_id)
         url = (
             f"{self._permissions_rest_base_url()}"
             f"/rest/api/content/{content_id}/permission/check"
@@ -111,6 +112,7 @@ class PermissionsMixin(ConfluenceClient):
             HTTPError: If authentication fails (401/403 are propagated).
         """
         self._require_cloud_permissions_api()
+        self.enforce_space_id_spaces_filter(space_id)
         url = (
             f"{self._permissions_rest_base_url()}/api/v2/spaces/{space_id}/permissions"
         )

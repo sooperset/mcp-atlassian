@@ -1607,6 +1607,40 @@ class TestDownloadAttachmentServerTool:
         assert data["success"] is False
         assert "Connection error" in data["error"]
 
+    @pytest.mark.asyncio
+    async def test_blocks_disallowed_attachment_before_download(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter = None
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+
+        meta_resp = MagicMock()
+        meta_resp.json.return_value = {
+            "title": "secret.pdf",
+            "_links": {"download": "/download/secret.pdf"},
+            "extensions": {"mediaType": "application/pdf", "fileSize": 100},
+        }
+        meta_resp.raise_for_status.return_value = None
+        mock_fetcher.confluence._session.get.return_value = meta_resp
+        mock_fetcher.enforce_attachment_spaces_filter.side_effect = ValueError(
+            "CONFLUENCE_SPACES_FILTER"
+        )
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment(
+                ctx=MagicMock(), attachment_id="att-secret"
+            )
+
+        assert isinstance(result, TextContent)
+        assert "CONFLUENCE_SPACES_FILTER" in json.loads(result.text)["error"]
+        mock_fetcher.fetch_attachment_content.assert_not_called()
+
 
 class TestDownloadContentAttachmentsServerTool:
     """Tests for the server-level download_content_attachments tool (EmbeddedResource return)."""
@@ -1917,3 +1951,57 @@ class TestResolveAttachmentDownloadUrl:
             "/download/attachments/123/foo.png", attachment_id="att999"
         )
         assert "/child/attachment/" not in url
+
+
+class TestAttachmentSpacesFilterEnforcement:
+    """Attachment content must stay inside the configured space allowlist."""
+
+    @pytest.fixture
+    def attachments_mixin(self, confluence_client):
+        with patch(
+            "mcp_atlassian.confluence.attachments.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = AttachmentsMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_get_content_attachments_blocks_before_api_call(self, attachments_mixin):
+        attachments_mixin.config.spaces_filter = "SAFE"
+        response = MagicMock()
+        response.json.return_value = {"space": {"key": "SECRET"}}
+        attachments_mixin.confluence._session.get.return_value = response
+
+        result = attachments_mixin.get_content_attachments("page-1")
+
+        assert result["success"] is False
+        assert "CONFLUENCE_SPACES_FILTER" in result["error"]
+        attachments_mixin.confluence.get_attachments_from_content.assert_not_called()
+
+    def test_upload_attachment_blocks_before_file_or_api_access(
+        self, attachments_mixin
+    ):
+        attachments_mixin.config.spaces_filter = "SAFE"
+        response = MagicMock()
+        response.json.return_value = {"space": {"key": "SECRET"}}
+        attachments_mixin.confluence._session.get.return_value = response
+
+        result = attachments_mixin.upload_attachment("page-1", "file.txt")
+
+        assert result["success"] is False
+        assert "CONFLUENCE_SPACES_FILTER" in result["error"]
+        attachments_mixin.confluence._session.post.assert_not_called()
+
+    def test_delete_attachment_blocks_disallowed_attachment(self, attachments_mixin):
+        attachments_mixin.config.spaces_filter = "SAFE"
+        response = MagicMock()
+        response.json.return_value = {"space": {"key": "SECRET"}}
+        attachments_mixin.confluence._session.get.return_value = response
+
+        result = attachments_mixin.delete_attachment("att-1")
+
+        assert result["success"] is False
+        assert "CONFLUENCE_SPACES_FILTER" in result["error"]
+        attachments_mixin.confluence._session.delete.assert_not_called()

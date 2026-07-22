@@ -365,6 +365,38 @@ class ConfluenceV2Adapter:
                 logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
 
+    def get_page_space_key(self, page_id: str) -> str:
+        """Get a page's space key without requesting its body.
+
+        Args:
+            page_id: The ID of the page to inspect.
+
+        Returns:
+            The page's space key.
+
+        Raises:
+            ValueError: If the page or its space cannot be resolved.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}"
+            response = self.session.get(url)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict) or not data.get("spaceId"):
+                raise ValueError(f"Page '{page_id}' has no space ID")
+            return self._get_space_key_from_id(str(data["spaceId"]))
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting space for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting space for page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to resolve space for page '{page_id}': {e}"
+            ) from e
+
     def get_page_direct_children(
         self,
         page_id: str,
@@ -1443,6 +1475,8 @@ class ConfluenceV2Adapter:
             "type": "attachment",
             "status": v2_attachment.get("status", "current"),
             "title": v2_attachment.get("title"),
+            "pageId": v2_attachment.get("pageId") or v2_attachment.get("parentId"),
+            "spaceId": v2_attachment.get("spaceId"),
             "metadata": {
                 "mediaType": v2_attachment.get("mediaType"),
                 "comment": v2_attachment.get("comment"),

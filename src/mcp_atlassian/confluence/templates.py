@@ -102,7 +102,26 @@ class TemplatesMixin(ConfluenceClient):
         ):
             msg = "Confluence template list response has invalid results"
             raise ValueError(msg)
+        allowed_spaces = self._get_allowed_spaces()
+        if allowed_spaces is not None:
+            results = [
+                item
+                for item in results
+                if not self._template_space_key(item)
+                or self._template_space_key(item).strip().upper() in allowed_spaces
+            ]
         return cast(list[dict[str, Any]], results)
+
+    @staticmethod
+    def _template_space_key(template: dict[str, Any]) -> str:
+        """Return a template's optional space key."""
+        space_key = template.get("spaceKey")
+        if space_key:
+            return str(space_key)
+        space = template.get("space")
+        if isinstance(space, dict) and space.get("key"):
+            return str(space["key"])
+        return ""
 
     @handle_auth_errors("Confluence API")
     def get_page_template(self, template_id: str) -> dict[str, Any]:
@@ -121,9 +140,13 @@ class TemplatesMixin(ConfluenceClient):
             ValueError: If the API response has an unexpected shape.
         """
         encoded_template_id = quote(template_id, safe="")
-        return self._get_template_api_response(
+        template = self._get_template_api_response(
             f"/rest/api/template/{encoded_template_id}"
         )
+        space_key = self._template_space_key(template)
+        if space_key:
+            self.enforce_spaces_filter(space_key)
+        return template
 
     @handle_auth_errors("Confluence API")
     def create_page_from_template(
@@ -154,6 +177,7 @@ class TemplatesMixin(ConfluenceClient):
             ValueError: If the template has no storage-format body.
             Exception: If page creation fails.
         """
+        self.enforce_spaces_filter(space_key)
         template = self.get_page_template(template_id)
         body = template.get("body")
         storage = body.get("storage") if isinstance(body, dict) else None

@@ -659,14 +659,15 @@ class TestEnforceSpacesFilter:
     def test_resolve_page_space_key_uses_v2_adapter_when_given(self, confluence_client):
         """OAuth Cloud call paths must never fall back to the v1 client."""
         mock_v2_adapter = MagicMock()
-        mock_v2_adapter.get_page.return_value = {"space": {"key": "TEAM"}}
+        mock_v2_adapter.get_page_space_key.return_value = "TEAM"
 
         result = confluence_client._resolve_page_space_key(
             "123", v2_adapter=mock_v2_adapter
         )
 
         assert result == "TEAM"
-        mock_v2_adapter.get_page.assert_called_once_with(page_id="123", expand="space")
+        mock_v2_adapter.get_page_space_key.assert_called_once_with("123")
+        mock_v2_adapter.get_page.assert_not_called()
         confluence_client.confluence.get_page_by_id.assert_not_called()
 
     def test_resolve_page_space_key_missing_space_returns_empty_string(
@@ -677,3 +678,44 @@ class TestEnforceSpacesFilter:
         result = confluence_client._resolve_page_space_key("123")
 
         assert result == ""
+
+    def test_space_filter_comparison_is_case_insensitive(self, confluence_client):
+        confluence_client.config.spaces_filter = "dev"
+
+        confluence_client.enforce_spaces_filter("DEV")
+
+    def test_content_filter_resolves_metadata_before_access(self, confluence_client):
+        confluence_client.config.spaces_filter = "DEV"
+        response = MagicMock()
+        response.json.return_value = {"space": {"key": "DEV"}}
+        confluence_client.confluence._session.get.return_value = response
+
+        confluence_client.enforce_content_spaces_filter("123")
+
+        confluence_client.confluence._session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/content/123",
+            params={"expand": "space,container,ancestors"},
+        )
+
+    def test_content_filter_fails_closed_when_metadata_is_unknown(
+        self, confluence_client
+    ):
+        confluence_client.config.spaces_filter = "DEV"
+        response = MagicMock()
+        response.json.return_value = {}
+        confluence_client.confluence._session.get.return_value = response
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            confluence_client.enforce_content_spaces_filter("123")
+
+    def test_space_id_filter_resolves_space_key(self, confluence_client):
+        confluence_client.config.spaces_filter = "DEV"
+        response = MagicMock()
+        response.json.return_value = {"key": "DEV"}
+        confluence_client.confluence._session.get.return_value = response
+
+        confluence_client.enforce_space_id_spaces_filter("98304")
+
+        confluence_client.confluence._session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/spaces/98304"
+        )

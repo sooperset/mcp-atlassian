@@ -27,20 +27,17 @@ class TestAnalyticsMixin:
         mixin.config = mock_config
         mixin.confluence = MagicMock()
         mixin.v2_adapter = None
+        mixin.enforce_page_spaces_filter = MagicMock()
 
         # Bind the real methods
         mixin.get_page_views = lambda *args, **kwargs: AnalyticsMixin.get_page_views(
             mixin, *args, **kwargs
         )
-        mixin.batch_get_page_views = (
-            lambda *args, **kwargs: AnalyticsMixin.batch_get_page_views(
-                mixin, *args, **kwargs
-            )
+        mixin.batch_get_page_views = lambda *args, **kwargs: (
+            AnalyticsMixin.batch_get_page_views(mixin, *args, **kwargs)
         )
-        mixin._get_page_views_direct = (
-            lambda *args, **kwargs: AnalyticsMixin._get_page_views_direct(
-                mixin, *args, **kwargs
-            )
+        mixin._get_page_views_direct = lambda *args, **kwargs: (
+            AnalyticsMixin._get_page_views_direct(mixin, *args, **kwargs)
         )
 
         return mixin
@@ -102,6 +99,17 @@ class TestAnalyticsMixin:
         assert result.page_title is None
         assert result.total_views == 25
         analytics_mixin.confluence.get_page_by_id.assert_not_called()
+
+    def test_get_page_views_blocks_disallowed_page(self, analytics_mixin):
+        analytics_mixin.enforce_page_spaces_filter.side_effect = ValueError(
+            "CONFLUENCE_SPACES_FILTER"
+        )
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            analytics_mixin.get_page_views("secret-page")
+
+        analytics_mixin.confluence.get_page_by_id.assert_not_called()
+        analytics_mixin.confluence._session.get.assert_not_called()
 
     def test_get_page_views_http_error_non_auth(self, analytics_mixin):
         """Test that non-auth HTTP errors return zero views."""

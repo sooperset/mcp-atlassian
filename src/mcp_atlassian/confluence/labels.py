@@ -27,9 +27,7 @@ class LabelsMixin(ConfluenceClient):
             Exception: If there is an error getting the label
         """
         try:
-            self.enforce_spaces_filter(
-                self._resolve_page_space_key(page_id), page_id=page_id
-            )
+            self.enforce_page_spaces_filter(page_id)
 
             # Get labels with expanded content
             labels_response = self.confluence.get_page_labels(page_id=page_id)
@@ -71,9 +69,7 @@ class LabelsMixin(ConfluenceClient):
         """
         try:
             logger.debug(f"Adding label with name '{name}' to page {page_id}")
-            self.enforce_spaces_filter(
-                self._resolve_page_space_key(page_id), page_id=page_id
-            )
+            self.enforce_page_spaces_filter(page_id)
 
             update_kwargs = {
                 "page_id": page_id,

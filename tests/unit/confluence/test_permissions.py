@@ -34,6 +34,8 @@ class TestPermissionsMixin:
         mixin.get_space_permissions = lambda *args, **kwargs: (
             PermissionsMixin.get_space_permissions(mixin, *args, **kwargs)
         )
+        mixin.enforce_content_spaces_filter = MagicMock()
+        mixin.enforce_space_id_spaces_filter = MagicMock()
         return mixin
 
     # ---- check_content_permissions ----
@@ -85,6 +87,7 @@ class TestPermissionsMixin:
         )
 
         assert result == {"hasPermission": False}
+        permissions_mixin.enforce_content_spaces_filter.assert_called_once_with("999")
 
     def test_check_content_permissions_custom_subject_type(self, permissions_mixin):
         """Test permission check with an explicit subject_type."""
@@ -184,6 +187,33 @@ class TestPermissionsMixin:
 
         _, call_kwargs = permissions_mixin.confluence._session.get.call_args
         assert call_kwargs["params"] == {"limit": 50, "cursor": "next-page"}
+        permissions_mixin.enforce_space_id_spaces_filter.assert_called_once_with("1")
+
+    def test_check_content_permissions_blocks_disallowed_content(
+        self, permissions_mixin
+    ):
+        permissions_mixin.enforce_content_spaces_filter.side_effect = ValueError(
+            "CONFLUENCE_SPACES_FILTER"
+        )
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            permissions_mixin.check_content_permissions(
+                content_id="secret-page",
+                user_identifier="u",
+                operation="read",
+            )
+
+        permissions_mixin.confluence._session.post.assert_not_called()
+
+    def test_get_space_permissions_blocks_disallowed_space(self, permissions_mixin):
+        permissions_mixin.enforce_space_id_spaces_filter.side_effect = ValueError(
+            "CONFLUENCE_SPACES_FILTER"
+        )
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            permissions_mixin.get_space_permissions(space_id="secret-space")
+
+        permissions_mixin.confluence._session.get.assert_not_called()
 
     def test_get_space_permissions_propagates_403(self, permissions_mixin):
         """Test that 403 HTTPError is re-raised."""

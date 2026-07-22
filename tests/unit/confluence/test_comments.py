@@ -435,6 +435,26 @@ class TestReplyToComment:
             body="<p>This is a v2 reply</p>",
         )
 
+    def test_reply_to_comment_v2_blocks_disallowed_parent_page(self, comments_mixin):
+        comments_mixin.config.auth_type = "oauth"
+        comments_mixin.config.url = "https://test.atlassian.net/wiki"
+        comments_mixin.config.spaces_filter = "SAFE"
+
+        mock_adapter = MagicMock()
+        mock_adapter.get_footer_comment.return_value = {"pageId": "page-1"}
+        mock_adapter.get_page_space_key.return_value = "SECRET"
+
+        with patch.object(
+            type(comments_mixin),
+            "_v2_adapter",
+            new_callable=lambda: property(lambda self: mock_adapter),
+        ):
+            result = comments_mixin.reply_to_comment("comment-1", "Reply")
+
+        assert result is None
+        mock_adapter.get_footer_comment.assert_called_once_with("comment-1")
+        mock_adapter.create_footer_comment.assert_not_called()
+
     def test_reply_with_html_content(self, comments_mixin):
         """Reply with HTML content skips markdown conversion."""
         comments_mixin.confluence.get_page_by_id.side_effect = [
@@ -1090,7 +1110,7 @@ class TestCommentsSpacesFilterEnforcement:
         comments_mixin.config.spaces_filter = "OTHERSPACE"
 
         mock_adapter = MagicMock()
-        mock_adapter.get_page.return_value = {"space": {"key": "TEST"}}
+        mock_adapter.get_page_space_key.return_value = "TEST"
 
         with patch.object(
             type(comments_mixin),
@@ -1100,7 +1120,8 @@ class TestCommentsSpacesFilterEnforcement:
             result = comments_mixin.add_comment("12345", "A comment")
 
         assert result is None
-        mock_adapter.get_page.assert_called_once_with(page_id="12345", expand="space")
+        mock_adapter.get_page_space_key.assert_called_once_with("12345")
+        mock_adapter.get_page.assert_not_called()
         mock_adapter.create_footer_comment.assert_not_called()
         # The check itself must not go through the v1 client.
         comments_mixin.confluence.get_page_by_id.assert_not_called()
