@@ -43,10 +43,18 @@ class AtlassianOpaqueTokenVerifier(TokenVerifier):
         cloud_id: str | None = None,
         required_scopes: list[str] | None = None,
     ) -> None:
+        """Initialize a verifier bound to one Atlassian instance.
+
+        Args:
+            instance_url: Atlassian Cloud or Data Center instance URL.
+            is_cloud: Whether the configured instance is Atlassian Cloud.
+            cloud_id: Optional Cloud resource ID to require during validation.
+            required_scopes: Scopes required by the OAuth proxy.
+        """
         super().__init__(required_scopes=required_scopes)
         self.instance_url = instance_url.rstrip("/") if instance_url else None
         self.is_cloud = is_cloud
-        self.cloud_id = cloud_id
+        self.cloud_id = cloud_id.strip() if cloud_id else None
         self._token_cache: TTLCache[str, AccessToken] = TTLCache(
             maxsize=TOKEN_CACHE_MAX_SIZE,
             ttl=TOKEN_CACHE_TTL_SECONDS,
@@ -56,6 +64,24 @@ class AtlassianOpaqueTokenVerifier(TokenVerifier):
     def _cache_key(token: str) -> str:
         """Return a non-secret cache key for an access token."""
         return hashlib.sha256(token.encode()).hexdigest()
+
+    @staticmethod
+    def _url_identity(value: str) -> tuple[str, str, int] | None:
+        """Return the scheme, hostname, and effective port for a URL."""
+        try:
+            parsed = urlparse(value)
+            scheme = parsed.scheme.lower()
+            hostname = (parsed.hostname or "").lower().rstrip(".")
+            port = parsed.port
+        except ValueError:
+            return None
+
+        if scheme not in {"http", "https"} or not hostname:
+            return None
+
+        if port is None:
+            port = 443 if scheme == "https" else 80
+        return scheme, hostname, port
 
     async def _fetch_accessible_resources(self, token: str) -> list[dict[str, Any]]:
         headers = {"Authorization": f"Bearer {token}"}
@@ -82,33 +108,31 @@ class AtlassianOpaqueTokenVerifier(TokenVerifier):
 
     def _matches_cloud_instance(self, resource: dict[str, Any]) -> bool:
         """Return whether a Cloud resource belongs to the configured instance."""
-        if self.cloud_id and resource.get("id") != self.cloud_id:
+        resource_id = resource.get("id")
+        resource_url = resource.get("url")
+        resource_scopes = resource.get("scopes")
+        if (
+            not isinstance(resource_id, str)
+            or not resource_id
+            or not isinstance(resource_url, str)
+            or not resource_url
+            or not isinstance(resource_scopes, list)
+            or any(not isinstance(scope, str) or not scope for scope in resource_scopes)
+        ):
             return False
+
+        if self.cloud_id:
+            return resource_id == self.cloud_id
 
         if not self.instance_url:
-            return True
-
-        instance = urlparse(self.instance_url)
-        if (instance.hostname or "").lower() in {
-            "api.atlassian.com",
-            "auth.atlassian.com",
-        }:
-            return True
-
-        resource_url = resource.get("url")
-        if not isinstance(resource_url, str):
             return False
 
-        candidate = urlparse(resource_url)
-        return (
-            candidate.scheme.lower(),
-            (candidate.hostname or "").lower(),
-            candidate.port,
-        ) == (
-            instance.scheme.lower(),
-            (instance.hostname or "").lower(),
-            instance.port,
-        )
+        instance_identity = self._url_identity(self.instance_url)
+        resource_identity = self._url_identity(resource_url)
+        if instance_identity is None or resource_identity is None:
+            return False
+
+        return resource_identity == instance_identity
 
     @staticmethod
     def _is_authenticated_dc_user(data: object) -> bool:
@@ -118,9 +142,9 @@ class AtlassianOpaqueTokenVerifier(TokenVerifier):
         if str(data.get("type", "")).lower() == "anonymous":
             return False
         return any(
-            isinstance(data.get(field), str) and bool(data[field])
+            isinstance(data.get(field), str) and bool(data[field].strip())
             for field in ("accountId", "key", "name", "userKey", "username")
-        ) or str(data.get("type", "")).lower() in {"known", "user"}
+        )
 
     async def _validate_dc_token(self, token: str) -> bool:
         """Validate a token against an authenticated Data Center user endpoint."""
@@ -140,7 +164,14 @@ class AtlassianOpaqueTokenVerifier(TokenVerifier):
                 )
                 if response.status_code != 200:
                     continue
-                if self._is_authenticated_dc_user(response.json()):
+                try:
+                    response_data = response.json()
+                except ValueError:
+                    logger.warning(
+                        "Token validation returned malformed JSON from %s", path
+                    )
+                    continue
+                if self._is_authenticated_dc_user(response_data):
                     return True
 
         logger.warning("Token validation failed against Data Center user endpoints")
