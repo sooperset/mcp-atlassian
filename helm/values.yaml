@@ -192,11 +192,11 @@ oauthProxy:
 
 # OAuth proxy client storage backend for registered clients.
 # "default": use FastMCP default encrypted storage.
-# "factory": load custom storage via import path.
+# "factory": load an explicitly allowed custom storage via import path.
 oauthClientStorage:
   mode: "default" # default | factory
   factory:
-    importPath: "" # e.g. "my_pkg.storage:create_store"
+    importPath: "" # e.g. "mcp_atlassian.storage.redis:factory"
     # Optional JSON object passed to the factory.
     configJson: ""
     # Optionally source JSON from an existing secret key.

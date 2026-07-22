@@ -36,27 +36,46 @@ REQUIRED_STORAGE_METHODS = (
 )
 
 
+# Allowed import paths for ATLASSIAN_OAUTH_CLIENT_STORAGE_FACTORY.
+# Restricts importlib.import_module to known-safe modules only.
+ALLOWED_STORAGE_FACTORIES: set[str] = {
+    "mcp_atlassian.storage.redis:factory",
+}
+
+
 def _load_storage_factory(import_path: str) -> Callable[..., AsyncKeyValue]:
     module_path, separator, attribute_name = import_path.partition(":")
     if not separator or not module_path or not attribute_name:
-        raise ValueError(
+        msg = (
             f"Invalid {CLIENT_STORAGE_FACTORY_ENV}='{import_path}'. "
             "Expected '<module.path>:<callable>'."
         )
+        raise ValueError(msg)
+
+    if import_path not in ALLOWED_STORAGE_FACTORIES:
+        msg = (
+            f"{CLIENT_STORAGE_FACTORY_ENV}='{import_path}' is not in the "
+            "allowed list. "
+            f"Allowed: {', '.join(sorted(ALLOWED_STORAGE_FACTORIES))}"
+        )
+        raise ValueError(msg)
 
     try:
         module = import_module(module_path)
     except Exception as exc:
-        raise ValueError(
+        msg = (
             f"Unable to import module '{module_path}' from "
             f"{CLIENT_STORAGE_FACTORY_ENV}='{import_path}'."
-        ) from exc
+        )
+        raise ValueError(msg) from exc
 
     factory = getattr(module, attribute_name, None)
     if not callable(factory):
-        raise ValueError(
-            f"{CLIENT_STORAGE_FACTORY_ENV}='{import_path}' does not resolve to a callable."
+        msg = (
+            f"{CLIENT_STORAGE_FACTORY_ENV}='{import_path}' does not resolve "
+            "to a callable."
         )
+        raise ValueError(msg)
     return cast(Callable[..., AsyncKeyValue], factory)
 
 
@@ -68,14 +87,12 @@ def _parse_factory_config(raw_json: str) -> dict[str, Any] | None:
     try:
         parsed = json.loads(stripped)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"{CLIENT_STORAGE_CONFIG_JSON_ENV} must be valid JSON."
-        ) from exc
+        msg = f"{CLIENT_STORAGE_CONFIG_JSON_ENV} must be valid JSON."
+        raise ValueError(msg) from exc
 
     if not isinstance(parsed, dict):
-        raise ValueError(
-            f"{CLIENT_STORAGE_CONFIG_JSON_ENV} must decode to a JSON object."
-        )
+        msg = f"{CLIENT_STORAGE_CONFIG_JSON_ENV} must decode to a JSON object."
+        raise ValueError(msg)
 
     return parsed
 
@@ -88,10 +105,11 @@ def _validate_storage_candidate(storage: object) -> None:
         if not callable(getattr(storage, method, None))
     ]
     if missing:
-        raise ValueError(
+        msg = (
             "OAuth client storage factory returned an incompatible object. "
             f"Missing methods: {', '.join(missing)}"
         )
+        raise ValueError(msg)
 
 
 def _invoke_storage_factory(
@@ -130,10 +148,11 @@ def _invoke_storage_factory(
 
     factory_module = getattr(factory, "__module__", "<unknown-module>")
     factory_name = getattr(factory, "__name__", factory.__class__.__name__)
-    raise ValueError(
+    msg = (
         f"{CLIENT_STORAGE_FACTORY_ENV}='{factory_module}:{factory_name}' "
         "does not accept a configuration argument."
     )
+    raise ValueError(msg)
 
 
 def build_oauth_client_storage_from_env() -> AsyncKeyValue | None:
@@ -149,17 +168,19 @@ def build_oauth_client_storage_from_env() -> AsyncKeyValue | None:
         return None
 
     if mode != "factory":
-        raise ValueError(
+        msg = (
             f"Unsupported {CLIENT_STORAGE_MODE_ENV}='{mode}'. "
             "Supported modes: default, factory."
         )
+        raise ValueError(msg)
 
     import_path = os.getenv(CLIENT_STORAGE_FACTORY_ENV, "").strip()
     if not import_path:
-        raise ValueError(
+        msg = (
             f"{CLIENT_STORAGE_FACTORY_ENV} is required when "
             f"{CLIENT_STORAGE_MODE_ENV}=factory."
         )
+        raise ValueError(msg)
 
     config = _parse_factory_config(os.getenv(CLIENT_STORAGE_CONFIG_JSON_ENV, ""))
     factory = _load_storage_factory(import_path)
@@ -167,10 +188,11 @@ def build_oauth_client_storage_from_env() -> AsyncKeyValue | None:
     try:
         storage = _invoke_storage_factory(factory, config)
     except Exception as exc:
-        raise ValueError(
+        msg = (
             "Failed to create OAuth client storage from "
             f"{CLIENT_STORAGE_FACTORY_ENV}='{import_path}': {exc}"
-        ) from exc
+        )
+        raise ValueError(msg) from exc
 
     _validate_storage_candidate(storage)
     logger.info(
