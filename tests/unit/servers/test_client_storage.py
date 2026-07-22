@@ -12,6 +12,7 @@ from mcp_atlassian.servers.client_storage import (
     CLIENT_STORAGE_CONFIG_JSON_ENV,
     CLIENT_STORAGE_FACTORY_ENV,
     CLIENT_STORAGE_MODE_ENV,
+    REQUIRED_STORAGE_METHODS,
     build_oauth_client_storage_from_env,
 )
 
@@ -160,6 +161,27 @@ def test_storage_builder_factory_loads_storage(monkeypatch: pytest.MonkeyPatch) 
     assert callable(getattr(storage, "delete_many", None))
     assert callable(getattr(storage, "ttl_many", None))
     assert storage.factory_config == {"bucket": "mcp-client"}
+
+
+def test_storage_builder_factory_loads_shipped_redis_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    monkeypatch.setenv(
+        CLIENT_STORAGE_FACTORY_ENV,
+        "mcp_atlassian.storage.redis:factory",
+    )
+    monkeypatch.setenv(
+        CLIENT_STORAGE_CONFIG_JSON_ENV,
+        '{"url":"redis://localhost:6379/0"}',
+    )
+
+    storage = build_oauth_client_storage_from_env()
+
+    assert storage is not None
+    assert storage.__class__.__name__ == "RedisStore"
+    for method in REQUIRED_STORAGE_METHODS:
+        assert callable(getattr(storage, method, None))
 
 
 def test_storage_builder_factory_rejects_incompatible_storage(

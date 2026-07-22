@@ -40,7 +40,6 @@ REQUIRED_STORAGE_METHODS = (
 # Restricts importlib.import_module to known-safe modules only.
 ALLOWED_STORAGE_FACTORIES: set[str] = {
     "mcp_atlassian.storage.redis:factory",
-    "mcp_atlassian.storage.postgres:factory",
 }
 
 

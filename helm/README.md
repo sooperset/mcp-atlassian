@@ -108,7 +108,17 @@ The factory callable should return an async key/value compatible storage object
 used by FastMCP OAuth proxy client registration storage. Factory paths must be
 listed in `ALLOWED_STORAGE_FACTORIES`; unknown paths are rejected before Python
 imports the requested module. Add a downstream factory path to that allowlist
-when building an image with a custom storage backend.
+when building an image with a custom storage backend. The built-in Redis
+factory accepts the backend's keyword arguments through
+`configJson`, for example:
+
+```yaml
+oauthClientStorage:
+  mode: factory
+  factory:
+    importPath: "mcp_atlassian.storage.redis:factory"
+    configJson: '{"url":"redis://redis:6379/0"}'
+```
 
 ### Health Checks and Readiness Probe
 
