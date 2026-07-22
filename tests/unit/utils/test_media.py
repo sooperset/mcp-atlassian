@@ -8,6 +8,7 @@ from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
     is_image_attachment,
+    is_text_attachment,
 )
 
 
@@ -69,6 +70,46 @@ def test_is_image_attachment(
 ) -> None:
     """Parametrized test for two-tier MIME detection."""
     assert is_image_attachment(media_type, filename) == expected
+
+
+@pytest.mark.parametrize(
+    ("media_type", "filename", "expected"),
+    [
+        ("application/octet-stream", "process.bpmn", True),
+        ("application/octet-stream", "config.xml", True),
+        ("application/octet-stream", "arch.drawio", True),
+        ("application/json", "data.json", True),
+        ("application/xml", "feed.xml", True),
+        ("Application/JSON; charset=UTF-8", "data.bin", True),
+        ("application/bpmn+xml", "process.bin", True),
+        ("text/plain", "notes.txt", True),
+        ("application/octet-stream", "photo.png", False),
+        ("application/octet-stream", "report.pdf", False),
+        (None, None, False),
+        ("image/png", "img.png", False),
+    ],
+    ids=[
+        "octet-stream-bpmn",
+        "octet-stream-xml",
+        "octet-stream-drawio",
+        "json",
+        "xml",
+        "mime-normalization",
+        "structured-xml-suffix",
+        "text-plain",
+        "octet-stream-png-ext",
+        "octet-stream-pdf",
+        "both-none",
+        "image-png",
+    ],
+)
+def test_is_text_attachment(
+    media_type: str | None,
+    filename: str | None,
+    expected: bool,  # noqa: FBT001
+) -> None:
+    """Parametrized test for text-based attachment detection."""
+    assert is_text_attachment(media_type, filename) is expected
 
 
 # -- fetch_and_encode_attachment tests --------------------------------
@@ -191,7 +232,11 @@ class TestFetchAndEncodeAttachment:
             filename=filename,
         )
         assert encoded is not None
-        assert mime == expected_mime
+        # Windows mimetypes may register .zip as application/x-zip-compressed.
+        if filename == "archive.zip":
+            assert mime in ("application/zip", "application/x-zip-compressed")
+        else:
+            assert mime == expected_mime
         assert size == 4
 
     def test_fetched_size_at_limit_passes(self) -> None:
