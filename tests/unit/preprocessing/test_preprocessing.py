@@ -1420,6 +1420,333 @@ class TestPanelBlocks:
         assert "https://example.com" in result, f"URL dropped: {result}"
 
 
+# {info}/{note}/{warning}/{tip} admonitions and {expand} collapsible toggles
+
+
+class TestAdmonitionAndExpandBlocks:
+    """Tests for read-only {info}/{note}/{warning}/{tip} and {expand} conversion."""
+
+    @pytest.fixture
+    def preprocessor(self):
+        return JiraPreprocessor(base_url="https://example.atlassian.net")
+
+    @pytest.mark.parametrize(
+        "test_id, input_text, expected_present, expected_absent",
+        [
+            pytest.param(
+                "info-with-title",
+                "{info:title=AUTO-GENERATED METADATA}do not edit{info}",
+                ["**ℹ️ Info: AUTO-GENERATED METADATA**", "do not edit"],
+                ["{info"],
+                id="info-with-title",
+            ),
+            pytest.param(
+                "info-no-title",
+                "{info}some content{info}",
+                ["**ℹ️ Info**", "some content"],
+                ["{info"],
+                id="info-no-title",
+            ),
+            pytest.param(
+                "note-block",
+                "{note}heads up{note}",
+                ["**📝 Note**", "heads up"],
+                ["{note"],
+                id="note-block",
+            ),
+            pytest.param(
+                "warning-block",
+                "{warning}be careful{warning}",
+                ["**⚠️ Warning**", "be careful"],
+                ["{warning"],
+                id="warning-block",
+            ),
+            pytest.param(
+                "tip-block",
+                "{tip}pro tip{tip}",
+                ["**💡 Tip**", "pro tip"],
+                ["{tip"],
+                id="tip-block",
+            ),
+            pytest.param(
+                "info-multiline",
+                "{info:title=Notes}line one\nline two{info}",
+                ["**ℹ️ Info: Notes**", "line one", "line two"],
+                ["{info"],
+                id="info-multiline",
+            ),
+            pytest.param(
+                "adjacent-admonitions-distinct",
+                "{info}a{info}\n{warning}b{warning}",
+                ["**ℹ️ Info**", "**⚠️ Warning**", "a", "b"],
+                ["{info", "{warning"],
+                id="adjacent-admonitions-distinct",
+            ),
+            pytest.param(
+                "expand-with-title",
+                "{expand:Security MetaData}secret stuff{expand}",
+                ["**▸ Expand: Security MetaData**", "secret stuff"],
+                ["{expand", "<details"],
+                id="expand-with-title",
+            ),
+            pytest.param(
+                "expand-title-param-form",
+                "{expand:title=Details Here}body{expand}",
+                ["**▸ Expand: Details Here**", "body"],
+                ["{expand", "title=", "<details"],
+                id="expand-title-param-form",
+            ),
+            pytest.param(
+                "expand-title-param-with-extra-options",
+                "{expand:macro-id=123|title=Details Here}body{expand}",
+                ["**▸ Expand: Details Here**", "body"],
+                ["{expand", "macro-id=123", "<details"],
+                id="expand-title-param-with-extra-options",
+            ),
+            pytest.param(
+                "expand-option-only",
+                "{expand:macro-id=123}body{expand}",
+                ["**▸ Expand**", "body"],
+                ["{expand", "macro-id", "<details"],
+                id="expand-option-only",
+            ),
+            pytest.param(
+                "expand-no-title",
+                "{expand}collapsed body{expand}",
+                ["**▸ Expand**", "collapsed body"],
+                ["{expand", "<details"],
+                id="expand-no-title",
+            ),
+        ],
+    )
+    def test_macro_conversion(
+        self,
+        preprocessor,
+        test_id: str,
+        input_text: str,
+        expected_present: list[str],
+        expected_absent: list[str],
+    ):
+        """{info}/{note}/{warning}/{tip} and {expand} convert to bold headings."""
+        result = preprocessor.jira_to_markdown(input_text)
+        for expected in expected_present:
+            assert expected in result, f"[{test_id}] Expected '{expected}' in: {result}"
+        for absent in expected_absent:
+            assert absent not in result, (
+                f"[{test_id}] Unexpected '{absent}' in: {result}"
+            )
+
+    def test_expand_preserves_inner_code_block(self, preprocessor):
+        """Code inside {expand} survives as a fenced block (the screenshot case)."""
+        input_text = (
+            '{expand:Security MetaData}{code:json}{"kind": "not-fixable"}{code}{expand}'
+        )
+        result = preprocessor.jira_to_markdown(input_text)
+        assert "**▸ Expand: Security MetaData**" in result, result
+        assert "```json" in result, f"code fence lost inside expand: {result}"
+        assert "not-fixable" in result, result
+        assert "{expand" not in result and "{code" not in result, result
+
+    def test_macro_survives_clean_jira_text(self, preprocessor):
+        """The bold heading survives the full fetch path (jira->md->html->md).
+
+        clean_jira_text runs jira_to_markdown then _convert_html_to_markdown;
+        plain bold markdown passes through the markdownify step unchanged.
+        """
+        result = preprocessor.clean_jira_text(
+            "{info:title=AUTO-GENERATED METADATA}do not edit{info}"
+        )
+        assert "ℹ️ Info: AUTO-GENERATED METADATA" in result, result
+        assert "do not edit" in result, result
+        assert "{info" not in result, result
+
+    @pytest.mark.parametrize(
+        "input_text, expected_summaries",
+        [
+            pytest.param(
+                "{expand:Outer}{expand:Inner}inside{expand}after{expand}",
+                ["▸ Expand: Outer", "▸ Expand: Inner"],
+                id="same-type-expand",
+            ),
+            pytest.param(
+                "{info:title=A}{info:title=B}deep{info}tail{info}",
+                ["ℹ️ Info: A", "ℹ️ Info: B"],
+                id="same-type-info",
+            ),
+            pytest.param(
+                "{expand:L1}{expand:L2}{info}x{info}mid{expand}end{expand}",
+                ["▸ Expand: L1", "▸ Expand: L2", "ℹ️ Info"],
+                id="three-level-mixed",
+            ),
+            pytest.param(
+                "{expand:More}{info:title=Context}inside{info}{expand}",
+                ["▸ Expand: More", "ℹ️ Info: Context"],
+                id="cross-type-nesting",
+            ),
+        ],
+    )
+    def test_nested_macros_convert_without_leaking_tags(
+        self, preprocessor, input_text: str, expected_summaries: list[str]
+    ):
+        """Nested (including same-type) macros fully convert with no raw tags."""
+        result = preprocessor.jira_to_markdown(input_text)
+        for summary in expected_summaries:
+            assert f"**{summary}**" in result, f"missing '{summary}' in: {result}"
+        for tag in ("{info", "{note", "{warning", "{tip", "{expand"):
+            assert tag not in result, f"raw '{tag}' leaked: {result}"
+
+    @pytest.mark.parametrize(
+        "input_text, expected",
+        [
+            pytest.param(
+                "{expand:Outer}before{info:title=Inner}inside{info}after{expand}",
+                "**▸ Expand: Outer**\nbefore\n**ℹ️ Info: Inner**\ninside\nafter",
+                id="surrounding-prose",
+            ),
+            pytest.param(
+                "{expand:Outer}{info:title=First}one{info}"
+                "{warning}two{warning}{expand}",
+                "**▸ Expand: Outer**\n**ℹ️ Info: First**\none\n\n**⚠️ Warning**\ntwo",
+                id="adjacent-nested-blocks",
+            ),
+        ],
+    )
+    def test_nested_macro_block_boundaries_survive_clean_path(
+        self, preprocessor, input_text: str, expected: str
+    ):
+        """The full Jira fetch path preserves nested Markdown block separators."""
+        assert preprocessor.clean_jira_text(input_text) == expected
+
+    def test_multiline_admonition_body_preserved(self, preprocessor):
+        """A multi-paragraph body is kept intact under the heading."""
+        result = preprocessor.jira_to_markdown(
+            "{info:title=Context}first paragraph\n\nsecond paragraph{info}"
+        )
+        assert "**ℹ️ Info: Context**" in result, result
+        assert "first paragraph" in result and "second paragraph" in result, result
+        assert "{info" not in result, result
+
+    @pytest.mark.parametrize(
+        ("jira_markup", "expected"),
+        [
+            (
+                "{info:title=Use <summary> tag}<p>body</p>{info}",
+                "**ℹ️ Info: Use &lt;summary&gt; tag**\n\nbody",
+            ),
+            (
+                "{info:title=<b>bold</b>}<p>body</p>{info}",
+                "**ℹ️ Info: &lt;b&gt;bold&lt;/b&gt;**\n\nbody",
+            ),
+            (
+                "{warning:title=2 < 3 and 4 > 1}<p>x</p>{warning}",
+                "**⚠️ Warning: 2 &lt; 3 and 4 &gt; 1**\n\nx",
+            ),
+            (
+                "{expand:a < b > c}<p>body</p>{expand}",
+                "**▸ Expand: a &lt; b &gt; c**\n\nbody",
+            ),
+        ],
+    )
+    def test_html_looking_title_survives_clean_path(
+        self, preprocessor, jira_markup, expected
+    ):
+        """Angle brackets / HTML in a title survive the production read path.
+
+        clean_jira_text runs jira_to_markdown then _convert_html_to_markdown;
+        the generated heading is protected while markdownify handles unrelated
+        HTML, so both the title text and its Markdown formatting are preserved.
+        """
+        assert preprocessor.clean_jira_text(jira_markup) == expected
+
+    @pytest.mark.parametrize(
+        ("label", "html_markup", "expected"),
+        [
+            ("▸ Expand", "<b>bold</b>", "**bold**"),
+            (
+                "▸ Expand",
+                '<a href="https://example.com">link</a>',
+                "[link](https://example.com)",
+            ),
+            ("▸ Expand", "<script>alert(1)</script>", None),
+            ("ℹ️ Info", "<b>bold</b>", "**bold**"),
+            (
+                "ℹ️ Info",
+                '<a href="https://example.com">link</a>',
+                "[link](https://example.com)",
+            ),
+            ("ℹ️ Info", "<script>alert(1)</script>", None),
+        ],
+    )
+    def test_user_authored_matching_bold_line_uses_html_conversion(
+        self, preprocessor, label, html_markup, expected
+    ):
+        """Matching user text isn't protected as a generated macro heading.
+
+        Only headings emitted by ``_convert_macro_blocks`` are protected from
+        the HTML pass. Ordinary bold Jira text with the same visible prefix
+        must still convert or remove nested HTML through that existing path.
+        """
+        result = preprocessor.clean_jira_text(f"*{label}: {html_markup}*<p>body</p>")
+
+        assert "<b>" not in result and "</b>" not in result, result
+        assert "<a " not in result and "</a>" not in result, result
+        assert "<script>" not in result and "</script>" not in result, result
+        if expected is None:
+            assert "alert(1)" not in result, result
+        else:
+            assert expected in result, result
+        assert "body" in result, result
+
+    def test_generated_heading_survives_body_html(self, preprocessor):
+        """A genuine macro heading keeps its bold markers when the body has HTML."""
+        result = preprocessor.clean_jira_text(
+            "{info:title=Ctx}see <b>this</b> and more{info}"
+        )
+        assert "**ℹ️ Info: Ctx**" in result, result
+        assert "**this**" in result, result  # body HTML converted to Markdown
+        assert "<b>" not in result, result
+
+    def test_forged_macro_heading_marker_does_not_bypass_html_conversion(
+        self, preprocessor
+    ):
+        """A user-supplied legacy marker cannot protect script HTML."""
+        forged_marker = "\x00JMH\x00"
+        result = preprocessor.clean_jira_text(
+            f"{forged_marker}**▸ Expand: <script>alert(1)</script>**"
+            f"{forged_marker}<p>body</p>"
+        )
+
+        assert "<script>" not in result and "</script>" not in result, result
+        assert "alert(1)" not in result, result
+        assert "body" in result, result
+
+    @pytest.mark.parametrize(
+        "jira_markup, expected_heading",
+        [
+            (
+                "{info:title=First line\nSecond line}body{info}",
+                "**ℹ️ Info: First line Second line**",
+            ),
+            (
+                "{expand:title=First line\nSecond line}body{expand}",
+                "**▸ Expand: First line Second line**",
+            ),
+        ],
+    )
+    def test_multiline_macro_title_is_normalized_and_marker_free(
+        self, preprocessor, jira_markup, expected_heading
+    ):
+        """Multiline titles don't leak protection markers or break Markdown."""
+        result = preprocessor.clean_jira_text(jira_markup)
+
+        assert result == f"{expected_heading}\nbody", result
+        assert "\x00" not in result, result
+
+    def test_read_only_leaves_fenced_code_write_back_unchanged(self, preprocessor):
+        """Read-only scope must not alter Markdown->Jira fenced-code behaviour."""
+        assert preprocessor.markdown_to_jira("```\nline\n```") == "{code}line\n{code}"
+
+
 # Code block placeholder protection tests
 
 
