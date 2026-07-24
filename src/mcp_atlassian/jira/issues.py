@@ -1238,7 +1238,13 @@ class IssuesMixin(
                                 f"Could not update assignee: {str(e)}"
                             ) from e
                 elif key == "parent":
-                    if isinstance(value, dict) and value.get("key"):
+                    # Handle parent updates, allow clearing with None or empty
+                    # string, mirroring the assignee branch above: an explicit
+                    # clear must reach the API rather than being swallowed
+                    # while the call still reports the issue as updated.
+                    if value is None or value == "":
+                        update_fields["parent"] = None
+                    elif isinstance(value, dict) and value.get("key"):
                         update_fields["parent"] = {"key": str(value["key"])}
                     elif isinstance(value, str) and value:
                         update_fields["parent"] = {"key": value}

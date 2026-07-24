@@ -1298,6 +1298,125 @@ class TestIssuesMixin:
         assert "priority" in fields
         assert fields["priority"] is None
 
+    def test_update_issue_set_parent_with_string_key(self, issues_mixin: IssuesMixin):
+        """Test setting a parent via a plain issue key string."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(issue_key="TEST-123", parent="EPIC-1")
+
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"parent": {"key": "EPIC-1"}}}
+        )
+
+    def test_update_issue_set_parent_with_dict(self, issues_mixin: IssuesMixin):
+        """Test setting a parent via an already-shaped {"key": ...} dict."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(issue_key="TEST-123", parent={"key": "EPIC-2"})
+
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"parent": {"key": "EPIC-2"}}}
+        )
+
+    def test_update_issue_clear_parent_with_none(self, issues_mixin: IssuesMixin):
+        """Regression test (#1500): parent=None must clear the parent link
+        rather than being silently dropped by falsy-value filtering.
+
+        Previously the None case fell into the branch's ``else`` — it logged
+        a warning and never added "parent" to update_fields, so no PUT was
+        sent, yet update_issue still returned the (unchanged) issue as if the
+        clear had succeeded.
+        """
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        document = issues_mixin.update_issue(issue_key="TEST-123", parent=None)
+
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"parent": None}}
+        )
+        assert document.key == "TEST-123"
+
+    def test_update_issue_clear_parent_with_empty_string(
+        self, issues_mixin: IssuesMixin
+    ):
+        """Test clearing a parent via an empty string, mirroring assignee."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(issue_key="TEST-123", parent="")
+
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"parent": None}}
+        )
+
+    def test_update_issue_invalid_parent_value_is_skipped(
+        self, issues_mixin: IssuesMixin, caplog
+    ):
+        """A genuinely invalid parent value (not a dict-with-key, string, or
+        None/"") is still warned about and skipped rather than sent to Jira.
+        """
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(issue_key="TEST-123", parent=123)
+
+        # No fields to update, so the PUT is skipped entirely.
+        issues_mixin.jira.update_issue.assert_not_called()
+        assert "Invalid parent value for issue TEST-123" in caplog.text
+
     def test_delete_issue(self, issues_mixin: IssuesMixin):
         """Test deleting an issue."""
         # Call the method

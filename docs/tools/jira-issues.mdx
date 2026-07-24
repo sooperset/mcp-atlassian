@@ -81,8 +81,8 @@ Update an issue and optionally transition, comment, and log work.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `fields` | `string` | No | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format; on Jira Cloud, use '`{expand:Title}`...`{expand}`' for a collapsible section. Example: '`{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}`' |
-| `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}`. |
+| `fields` | `string` | No | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format; on Jira Cloud, use '`{expand:Title}`...`{expand}`' for a collapsible section. For 'parent', provide an issue key or `{'key': 'PROJ-123'}` to set the parent, or null to clear it. Example: '`{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}`' |
+| `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}`. Set a parent with `{"parent": "PROJ-123"}` and clear it with `{"parent": null}`. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names (e.g., 'Frontend,API') |
 | `attachments` | `string` | No | (Optional) JSON string array or comma-separated list of file paths to attach to the issue. Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt'] |
 | `transition` | `string` | No | (Optional) Transition name or ID. Transition names are resolved case-insensitively. |
@@ -102,7 +102,7 @@ Save response tokens: after an update you rarely need the whole issue back. Set 
 
 `fields` is optional when you only need to transition, comment, or log work. If `transition` and `comment` are both provided, the issue is transitioned first and the comment is added separately afterward. Use `comment_visibility` to restrict the comment's visibility.
 
-Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.
+Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Pass `{"parent": null}` to clear an issue's parent. Find field IDs with `jira_search_fields`.
 </Tip>
 
 ---

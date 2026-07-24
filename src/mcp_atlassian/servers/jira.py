@@ -1992,6 +1992,8 @@ async def update_issue(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "For 'description', provide text in Markdown format; on Jira Cloud, "
                 "use '{expand:Title}...{expand}' for a collapsible section. "
+                "For 'parent', provide an issue key or {'key': 'PROJ-123'} to set the parent, "
+                "or null to clear it. "
                 'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             ),
             default=None,
@@ -2003,7 +2005,8 @@ async def update_issue(
             description=(
                 "(Optional) JSON string of additional fields to update. "
                 "Use this for custom fields or more complex updates. "
-                'Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}.'
+                'Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}. '
+                'Set a parent with {"parent": "PROJ-123"} and clear it with {"parent": null}.'
             ),
             default=None,
         ),
@@ -2095,8 +2098,10 @@ async def update_issue(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         fields: Optional JSON string of fields to update. Text fields like
-            'description' should use Markdown format.
-        additional_fields: Optional JSON string of additional fields.
+            'description' should use Markdown format. Use ``{"parent": null}``
+            to clear an issue's parent.
+        additional_fields: Optional JSON string of additional fields. Use
+            ``{"parent": null}`` to clear an issue's parent.
         components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
         transition: Optional transition name or ID.
