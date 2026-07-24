@@ -1104,3 +1104,234 @@ class TestTaskLists:
 
         assert "<ac:task-list>" in result
         assert 'data-table-width="1800"' in result
+
+
+class TestListParagraphSeparation:
+    """Tests for list-after-paragraph preprocessing in markdown conversion."""
+
+    def _convert(self, md: str) -> str:
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        return preprocessor.markdown_to_confluence_storage(md)
+
+    def test_list_after_bold_header_renders_as_ul(self):
+        """Issue #1493: list immediately after bold paragraph line."""
+        result = self._convert(
+            "**Header:**\n- item one\n- item two\n\nSome other paragraph.\n"
+        )
+        assert "<ul>" in result
+        assert "item one" in result
+        assert "item two" in result
+        assert "Header:</strong> - item one" not in result
+
+    def test_ordered_list_after_paragraph_renders_as_ol(self):
+        """Ordered lists after a paragraph line are also separated."""
+        result = self._convert("**Header:**\n1. item one\n2. item two\n")
+        assert "<ol" in result
+        assert "item one" in result
+        assert "item two" in result
+        assert "1. item one" not in result
+
+    def test_existing_blank_line_is_not_doubled(self):
+        """Content that already has a blank line before the list is unchanged."""
+        with_blank = self._convert("**Header:**\n\n- item one\n- item two\n")
+        without_blank = self._convert("**Header:**\n- item one\n- item two\n")
+        assert with_blank == without_blank
+
+    def test_heading_followed_by_list_is_unchanged(self):
+        """ATX headings already allow lists without an extra blank line."""
+        result = self._convert("# Header\n- item one\n- item two\n")
+        assert "<h1>" in result
+        assert "<ul>" in result
+
+    def test_nested_list_items_are_not_split(self):
+        """Only the first list item after a paragraph gets a separator."""
+        result = self._convert("**Header:**\n- item one\n  - nested\n- item two\n")
+        assert "<ul>" in result
+        assert "nested" in result
+        assert "item two" in result
+
+    def test_code_fence_content_is_not_modified(self):
+        """Fenced code blocks must not get injected blank lines."""
+        markdown = "Intro\n\n```\nline\n- not a list\n```\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_html_like_fenced_code_content_is_not_modified(self):
+        """HTML-looking fenced code must remain inside the code fence."""
+        markdown = "```\n<pre>\nline\n- not a list\n</pre>\n```\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_indented_code_content_is_not_modified(self):
+        """Indented code blocks must not be treated as lists."""
+        markdown = "Intro\n    - not a list\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_shorter_fence_does_not_end_longer_fence(self):
+        """A closing fence must be at least as long as its opening fence."""
+        markdown = "Intro\n````\n- not a list\n```\n- still code\n````\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_thematic_break_is_not_treated_as_a_list(self):
+        """Thematic breaks must not trigger list separation."""
+        markdown = "Intro\n* * *\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_numbered_prose_after_paragraph_is_not_split(self):
+        """Only ordered lists starting at 1 may interrupt a paragraph."""
+        markdown = "Intro\n2. prose\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_empty_bullet_after_paragraph_is_not_split(self):
+        """Blank list markers must not interrupt a paragraph."""
+        markdown = "Intro\n- \n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    @pytest.mark.parametrize("tag", ["pre", "script", "style", "textarea"])
+    def test_literal_html_block_content_is_preserved(self, tag):
+        """Literal raw HTML blocks must not get injected blank lines."""
+        markdown = f'<{tag} class="literal">\nline\n- literal\n</{tag}>\n'
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_nested_raw_html_block_content_is_preserved(self):
+        """Nested raw HTML blocks must remain byte-for-byte unchanged."""
+        markdown = "<div>\n<pre>\nline\n- literal\n</pre>\n- still literal\n</div>\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_processing_resumes_after_raw_html_block(self):
+        """A later real list still receives its paragraph separator."""
+        markdown = "<pre>\nline\n- literal\n</pre>\nIntro\n- item\n"
+        expected = "<pre>\nline\n- literal\n</pre>\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    def test_void_html_tag_does_not_start_a_block(self):
+        """Standalone void HTML tags must not suppress later list handling."""
+        markdown = "<br>\nIntro\n- item\n"
+        expected = "<br>\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    def test_void_block_html_tag_does_not_start_a_block(self):
+        """Python-Markdown's void block tag must not suppress later lists."""
+        markdown = "<hr>\nIntro\n- item\n"
+        expected = "<hr>\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            "canvas",
+            "group",
+            "hgroup",
+            "map",
+            "math",
+            "noscript",
+            "object",
+            "option",
+            "output",
+            "progress",
+            "video",
+        ],
+    )
+    def test_remaining_python_markdown_block_content_is_preserved(self, tag):
+        """All Python-Markdown raw block tags preserve literal list markers."""
+        markdown = f"<{tag}>\nline\n- literal\n</{tag}>\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            "canvas",
+            "group",
+            "hgroup",
+            "map",
+            "math",
+            "noscript",
+            "object",
+            "option",
+            "output",
+            "progress",
+            "video",
+        ],
+    )
+    def test_processing_resumes_after_remaining_block(self, tag):
+        """List separation resumes after each remaining raw block tag."""
+        markdown = f"<{tag}>\nline\n- literal\n</{tag}>\nIntro\n- item\n"
+        expected = f"<{tag}>\nline\n- literal\n</{tag}>\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    def test_inserted_separator_preserves_crlf_line_endings(self):
+        """Injected blank lines must use the document's existing newline style."""
+        markdown = "Intro\r\n- item\r\n"
+        expected = "Intro\r\n\r\n- item\r\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    def test_numbered_prose_stays_paragraph_in_storage(self):
+        """Regression: mid-paragraph numbering must not become an ordered list."""
+        result = self._convert("Intro\n2. prose\n")
+        assert "<ol" not in result
+        assert "2. prose" in result
+
+    def test_empty_bullet_stays_paragraph_in_storage(self):
+        """Regression: blank bullets must not become empty list items."""
+        result = self._convert("Intro\n- \n")
+        assert "<ul>" not in result
+
+    def test_unmatched_fence_inside_pre_does_not_suppress_later_list(self):
+        """Fence-like literals inside <pre> must not leave in_fence set."""
+        markdown = "<pre>\nline\n```\n- literal\n</pre>\nIntro\n- item\n"
+        expected = "<pre>\nline\n```\n- literal\n</pre>\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    def test_unmatched_fence_inside_comment_does_not_suppress_later_list(self):
+        """Fence-like literals inside comments must not leave in_fence set."""
+        markdown = "<!--\nline\n```\n- literal\n-->\nIntro\n- item\n"
+        expected = "<!--\nline\n```\n- literal\n-->\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            '<?target version="1.0"?>',
+            "<?target\nline\n- literal\n?>",
+            "<![CDATA[\nline\n- literal\n]]>",
+            "<!DOCTYPE root [\nline\n- literal\n]>",
+            "<noframes>\nline\n- literal\n</noframes>",
+        ],
+    )
+    def test_special_raw_html_blocks_are_preserved(self, block):
+        """Processing instructions, CDATA, and noframes must stay byte-for-byte."""
+        markdown = f"{block}\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            '<?target version="1.0"?>',
+            "<?target\nline\n- literal\n?>",
+            "<![CDATA[\nline\n- literal\n]]>",
+            "<!DOCTYPE root [\nline\n- literal\n]>",
+            "<noframes>\nline\n- literal\n</noframes>",
+        ],
+    )
+    def test_processing_resumes_after_special_raw_html_blocks(self, block):
+        """A later real list still receives its paragraph separator."""
+        markdown = f"{block}\nIntro\n- item\n"
+        expected = f"{block}\nIntro\n\n- item\n"
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
