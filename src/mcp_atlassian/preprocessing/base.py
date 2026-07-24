@@ -63,6 +63,18 @@ def _restore_blocks(text: str, storage: list[str], prefix: str) -> str:
     return text
 
 
+def _code_language_from_element(el: Tag) -> str:
+    """Extract a language-* class from a pre element or its code child."""
+    for candidate in (el, el.find("code")):
+        if candidate is None or isinstance(candidate, str):
+            continue
+        classes = candidate.get("class") or []
+        for cls in classes:
+            if cls.startswith("language-"):
+                return cls.removeprefix("language-")
+    return ""
+
+
 class ConfluenceClient(Protocol):
     """Protocol for Confluence client."""
 
@@ -129,15 +141,56 @@ class BasePreprocessor:
             # Process Confluence image tags
             self._process_images_in_soup(soup, content_id, attachments)
 
-            # Convert to string and markdown
+            # Convert to string before the code-macro rewrite so the HTML
+            # output keeps the original storage-format macros intact
             processed_html = str(soup)
-            processed_markdown = md(processed_html)
+
+            # Convert code-block macros before markdownify strips them
+            # (markdown path only)
+            self._process_code_macros_in_soup(soup)
+            processed_markdown = md(
+                str(soup),
+                code_language_callback=_code_language_from_element,
+            )
 
             return processed_html, processed_markdown
 
         except Exception as e:
             logger.error(f"Error in process_html_content: {str(e)}")
             raise
+
+    @staticmethod
+    def _process_code_macros_in_soup(soup: BeautifulSoup) -> None:
+        """Convert Confluence code/noformat macros to standard pre/code blocks.
+
+        markdownify does not know the ``ac:structured-macro`` element: it strips
+        the tags, leaks the parameter values (language, line numbers) into the
+        output as literal text, and collapses the whitespace of the code body.
+        Replacing the macro with ``<pre><code>`` before conversion lets
+        markdownify emit a fenced code block with the body preserved verbatim.
+        """
+        for macro in soup.find_all(
+            "ac:structured-macro", attrs={"ac:name": ["code", "noformat"]}
+        ):
+            body = macro.find("ac:plain-text-body")
+            code_text = body.get_text() if body else macro.get_text()
+            if not code_text.strip():
+                # CDATA exposure differs across parsers; if the body text is
+                # not reachable via get_text(), leave the macro untouched
+                # rather than emit an empty fence that silently drops content.
+                continue
+
+            language_param = macro.find("ac:parameter", attrs={"ac:name": "language"})
+            language = language_param.get_text(strip=True) if language_param else ""
+
+            pre_tag = soup.new_tag("pre")
+            code_tag = soup.new_tag("code")
+            if language:
+                code_tag["class"] = f"language-{language}"
+                pre_tag["class"] = f"language-{language}"
+            code_tag.string = code_text
+            pre_tag.append(code_tag)
+            macro.replace_with(pre_tag)
 
     @staticmethod
     def _process_date_elements_in_soup(soup: BeautifulSoup) -> None:
