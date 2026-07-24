@@ -1457,50 +1457,49 @@ class TestGetEpicSummary:
         """BLOCKER 3 (Cloud): when ATLASSIAN_MAX_PAGINATION_LIMIT is the
         binding limit and more children exist, report ``pagination_ceiling``.
 
-        The caller asked for max_children=10 but the operator ceiling of 5
-        clamps the fetch to 5. The winning search returns a next_page_token
-        (more exist), and because the *ceiling* — not max_children — is the
-        binding cap, the caller cannot page past it: reason is
-        ``pagination_ceiling``, not ``truncated``.
+        The caller asks for max_children=100 but the operator ceiling of 25
+        clamps the fetch to 25. The winning search returns a next_page_token
+        (the 26th child exists), so the result is partial and truncated even
+        though the reason identifies the operator ceiling.
         """
-        monkeypatch.setenv("ATLASSIAN_MAX_PAGINATION_LIMIT", "5")
-        children = [self._child(f"C-{i}") for i in range(5)]
+        monkeypatch.setenv("ATLASSIAN_MAX_PAGINATION_LIMIT", "25")
+        children = [self._child(f"C-{i}") for i in range(25)]
         epics_mixin._get_epic_issues_result = MagicMock(
             return_value=self._result(children, total=-1, next_page_token="more")
         )
 
-        result = epics_mixin.get_epic_summary("EPIC-1", max_children=10)
+        result = epics_mixin.get_epic_summary("EPIC-1", max_children=100)
 
         assert result["partial"] is True
         assert result["reason"] == "pagination_ceiling"
-        assert result["truncated"] is False
+        assert result["truncated"] is True
         assert result["completion_percentage"] is None
-        assert result["total_children"] == 5
-        # The ceiling actually clamps the fetch request to 5 (Cloud passes
+        assert result["total_children"] == 25
+        # The ceiling actually clamps the fetch request to 25 (Cloud passes
         # max_children straight through as the first-page limit).
-        assert epics_mixin._get_epic_issues_result.call_args.kwargs["limit"] == 5
+        assert epics_mixin._get_epic_issues_result.call_args.kwargs["limit"] == 25
 
     def test_pagination_ceiling_limits_server_dc(
         self, epics_mixin: EpicsMixin, monkeypatch
     ):
         """BLOCKER 3 (Server/DC): same ceiling reason on the offset-paging path.
 
-        Server/DC reports an authoritative ``total`` (12) that exceeds the
-        ceiling-limited fetch of 5, so has_more is True and the binding limit
+        Server/DC reports an authoritative ``total`` (26) that exceeds the
+        ceiling-limited fetch of 25, so has_more is True and the binding limit
         is the operator ceiling.
         """
-        monkeypatch.setenv("ATLASSIAN_MAX_PAGINATION_LIMIT", "5")
+        monkeypatch.setenv("ATLASSIAN_MAX_PAGINATION_LIMIT", "25")
         epics_mixin.config.is_cloud = False
-        children = [self._child(f"C-{i}") for i in range(5)]
+        children = [self._child(f"C-{i}") for i in range(25)]
         epics_mixin._get_epic_issues_result = MagicMock(
-            return_value=self._result(children, total=12)
+            return_value=self._result(children, total=26)
         )
 
-        result = epics_mixin.get_epic_summary("EPIC-1", max_children=10)
+        result = epics_mixin.get_epic_summary("EPIC-1", max_children=100)
 
         assert result["partial"] is True
         assert result["reason"] == "pagination_ceiling"
-        assert result["truncated"] is False
+        assert result["truncated"] is True
         assert result["completion_percentage"] is None
 
     def test_exactly_ceiling_children_is_authoritative(

@@ -887,16 +887,16 @@ class EpicsMixin(
           ``has_more`` (Cloud ``next_page_token`` / Server-DC ``total``),
           so an epic with *exactly* ``max_children`` children is not a
           false positive.
-        * ``partial`` is ``True`` (with ``completion_percentage`` left
-          ``None``) whenever the aggregation is over incomplete data. The
-          ``reason`` says which lever the caller has: ``"fetch_failed"``
-          (the children could not be fetched), ``"truncated"`` (more
-          children than ``max_children`` — raise ``max_children`` to see
-          more), or ``"pagination_ceiling"`` (the configured
-          ``ATLASSIAN_MAX_PAGINATION_LIMIT`` capped the fetch below
-          ``max_children``; a server-operator setting the caller cannot
-          override). A completion percentage is only reported when every
-          child was counted.
+        * ``partial`` and ``truncated`` are ``True`` (with
+          ``completion_percentage`` left ``None``) whenever the server
+          reports children beyond the fetched boundary. The ``reason`` says
+          which lever the caller has: ``"fetch_failed"`` (the children could
+          not be fetched), ``"truncated"`` (more children than
+          ``max_children`` — raise ``max_children`` to see more), or
+          ``"pagination_ceiling"`` (the configured
+          ``ATLASSIAN_MAX_PAGINATION_LIMIT`` capped the fetch; a
+          server-operator setting the caller cannot override). A completion
+          percentage is only reported when every child was counted.
         * ``completion_percentage`` is derived from the stable ``done``
           status *category*, not localized status names.
         * assignees are aggregated by account id where available, with
@@ -958,7 +958,10 @@ class EpicsMixin(
             clamp_limit(max_children + 1, context="jira.get_epic_summary")
             <= max_children
         )
-        truncated = has_more and not pagination_ceiling_limited
+        # A configured pagination ceiling is still a truncation boundary. The
+        # reason distinguishes it from the caller's own max_children cap, but
+        # the response must not imply that all children were aggregated.
+        truncated = has_more
 
         by_status: Counter[str] = Counter()
         by_assignee: Counter[str] = Counter()
@@ -1010,11 +1013,9 @@ class EpicsMixin(
                 )
 
         total = len(children)
-        # Data is partial when it's truncated by the cap OR limited by the
-        # configured pagination ceiling — either way we may not have seen
-        # every child, so a completion percentage would read as authoritative
-        # while covering only part of the epic. Withhold it when partial.
-        partial = truncated or pagination_ceiling_limited
+        # Both caller and operator pagination caps are incomplete data, so
+        # withhold the completion percentage whenever the result is truncated.
+        partial = truncated
         completion: float | None
         if partial:
             completion = None
@@ -1034,10 +1035,10 @@ class EpicsMixin(
         # A caller can page past `truncated` by raising max_children, but
         # cannot page past `pagination_ceiling` (a server-operator setting);
         # keep the reasons distinct so the caller knows which lever exists.
-        if truncated:
-            result["reason"] = "truncated"
-        elif pagination_ceiling_limited:
+        if pagination_ceiling_limited:
             result["reason"] = "pagination_ceiling"
+        elif truncated:
+            result["reason"] = "truncated"
         if include_children:
             result["children"] = children_output
         return result
