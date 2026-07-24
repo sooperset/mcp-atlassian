@@ -1,0 +1,69 @@
+"""Tests for Confluence code-macro to fenced-Markdown conversion."""
+
+from mcp_atlassian.preprocessing.base import BasePreprocessor
+
+# Mirrors the storage format Confluence Server returns for a code macro,
+# including the CDATA body with box-drawing characters and indentation.
+CODE_MACRO = (
+    "<p>Before</p>"
+    '<ac:structured-macro ac:name="code" ac:schema-version="1" ac:macro-id="x">'
+    '<ac:parameter ac:name="language">text</ac:parameter>'
+    '<ac:parameter ac:name="linenumbers">true</ac:parameter>'
+    "<ac:plain-text-body><![CDATA[root (1m 11s)\n"
+    "  ├── child A (167ms)\n"
+    "  │     └── grandchild (22ms)\n"
+    "  └── child B (501ms)]]></ac:plain-text-body>"
+    "</ac:structured-macro>"
+    "<p>After</p>"
+)
+
+
+def test_code_macro_becomes_fenced_block():
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    html, markdown = preprocessor.process_html_content(CODE_MACRO)
+
+    # The HTML output keeps the original storage-format macro (raw mode
+    # consumers rely on it); only the markdown path converts it
+    assert 'ac:name="code"' in html
+    assert "ac:plain-text-body" in html
+
+    # Parameter values must not leak into the output as literal text
+    assert "texttrue" not in markdown
+    # The body arrives fenced, with the language tag carried over
+    assert "```text" in markdown
+    # Indentation inside the body survives
+    assert "  │     └── grandchild (22ms)" in markdown
+    # Surrounding prose is intact
+    assert "Before" in markdown
+    assert "After" in markdown
+
+
+def test_code_macro_without_language_still_fenced():
+    macro = (
+        '<ac:structured-macro ac:name="noformat">'
+        "<ac:plain-text-body><![CDATA[plain  spaced   body]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(macro)
+
+    assert "```" in markdown
+    assert "plain  spaced   body" in markdown
+
+
+def test_non_code_macros_unaffected():
+    html = "<p>No macros here, just <code>inline</code>.</p>"
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(html)
+
+    assert "inline" in markdown
+    assert "```" not in markdown
+
+
+def test_multiple_code_macros_in_one_page():
+    page = CODE_MACRO + CODE_MACRO
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(page)
+
+    assert markdown.count("```text") == 2
+    assert "texttrue" not in markdown
