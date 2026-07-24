@@ -1,5 +1,7 @@
 # MCP Atlassian
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fsooperset%2Fmcp-atlassian.svg)](https://mcptoplist.com/server/glama%2Fsooperset%2Fmcp-atlassian)
+
 ![PyPI Version](https://img.shields.io/pypi/v/mcp-atlassian)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-atlassian)
 ![PePy - Total Downloads](https://static.pepy.tech/personalized-badge/mcp-atlassian?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Total%20Downloads)
