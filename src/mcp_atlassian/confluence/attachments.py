@@ -149,6 +149,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             return {"success": False, "error": "No file path provided"}
 
         try:
+            self.enforce_content_spaces_filter(content_id)
             # Confine the upload source to the workspace before it is read: reject
             # traversal/absolute paths that escape CWD (arbitrary file read /
             # exfiltration via a caller-supplied file_path).
@@ -296,6 +297,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             return {"success": False, "error": "No file content provided"}
 
         try:
+            self.enforce_content_spaces_filter(content_id)
             logger.info(
                 f"Uploading attachment {filename} ({len(content)} bytes) to "
                 f"content {content_id} (minor_edit={minor_edit})"
@@ -551,6 +553,10 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             # Use v2 API for OAuth authentication, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
             if v2_adapter:
+                self.enforce_page_spaces_filter(content_id, v2_adapter=v2_adapter)
+            else:
+                self.enforce_content_spaces_filter(content_id)
+            if v2_adapter:
                 logger.debug(
                     f"Using v2 API for OAuth authentication to get attachments for '{content_id}'"
                 )
@@ -789,6 +795,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
 
         try:
             logger.info(f"Deleting attachment {attachment_id}")
+            self.enforce_attachment_spaces_filter(attachment_id)
 
             # Use v2 API for OAuth authentication, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
@@ -819,3 +826,28 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             error_msg = str(e)
             logger.error(f"Error deleting attachment: {error_msg}")
             return {"success": False, "error": error_msg}
+
+    def enforce_attachment_spaces_filter(self, attachment_id: str) -> None:
+        """Enforce the configured space filter for an attachment ID.
+
+        Args:
+            attachment_id: The attachment ID to resolve.
+
+        Raises:
+            ValueError: If the attachment cannot be associated with an allowed
+                space.
+        """
+        if self._get_allowed_spaces() is None:
+            return
+
+        v2_adapter = self._v2_adapter
+        if v2_adapter:
+            attachment = v2_adapter.get_attachment_by_id(attachment_id)
+            page_id = attachment.get("pageId") or attachment.get("parentId")
+            if page_id:
+                self.enforce_page_spaces_filter(str(page_id), v2_adapter=v2_adapter)
+                return
+            self.enforce_spaces_filter("", page_id=attachment_id)
+            return
+
+        self.enforce_content_spaces_filter(attachment_id)

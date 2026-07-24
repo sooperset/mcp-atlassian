@@ -2,6 +2,7 @@
 
 import logging
 import os
+from typing import Any
 
 from atlassian import Confluence
 from requests import Session
@@ -298,3 +299,196 @@ class ConfluenceClient:
         return self.preprocessor.process_html_content(
             html_content, space_key, self.confluence
         )
+
+    def _get_allowed_spaces(self) -> set[str] | None:
+        """Return the configured ``CONFLUENCE_SPACES_FILTER`` allowlist.
+
+        Returns:
+            A set of allowed space keys, or None when no filter is configured.
+        """
+        filter_to_use = getattr(self.config, "spaces_filter", None)
+        if not isinstance(filter_to_use, str):
+            return None
+        if not filter_to_use:
+            return None
+        return {s.strip().upper() for s in filter_to_use.split(",") if s.strip()}
+
+    def enforce_spaces_filter(
+        self, space_key: str | None, *, page_id: str | None = None
+    ) -> None:
+        """Reject access to content outside the configured spaces allowlist.
+
+        ``config.spaces_filter`` is a hard boundary and is always applied: it
+        must be enforced by every Confluence tool that reads or writes
+        space-scoped content, not only ``confluence_search``. Otherwise an
+        operator's allowlist could be defeated simply by addressing content
+        directly — by page ID, space key, or title — instead of through
+        search.
+
+        Args:
+            space_key: The space key the operation would read or write.
+            page_id: Optional page ID, included in the error message when the
+                operation is addressed by page ID rather than by space key.
+
+        Raises:
+            ValueError: If a spaces filter is configured and ``space_key`` is
+                not in it (including when ``space_key`` is empty/unknown).
+        """
+        allowed_spaces = self._get_allowed_spaces()
+        if allowed_spaces is None:
+            return
+        normalized_space_key = space_key.strip().upper() if space_key else ""
+        if not normalized_space_key or normalized_space_key not in allowed_spaces:
+            target = (
+                f"page '{page_id}' in space '{space_key}'"
+                if page_id
+                else f"space '{space_key}'"
+            )
+            msg = (
+                f"Operation on {target} is restricted by the configured "
+                "CONFLUENCE_SPACES_FILTER allowlist"
+            )
+            raise ValueError(msg)
+
+    def enforce_page_spaces_filter(
+        self, page_id: str, *, v2_adapter: Any | None = None
+    ) -> None:
+        """Enforce the configured space filter for a page-ID operation.
+
+        The page lookup is skipped when no allowlist is configured, preserving
+        the existing request count for unrestricted clients.
+
+        Args:
+            page_id: The page ID used by the operation.
+            v2_adapter: Optional Cloud OAuth adapter for the metadata lookup.
+
+        Raises:
+            ValueError: If the page cannot be resolved to an allowed space.
+        """
+        if self._get_allowed_spaces() is None:
+            return
+        self.enforce_spaces_filter(
+            self._resolve_page_space_key(page_id, v2_adapter=v2_adapter),
+            page_id=page_id,
+        )
+
+    def _resolve_content_space_key(self, content_id: str) -> str:
+        """Resolve a v1 content ID to its Confluence space key.
+
+        This resolver handles page, blog-post, comment, and attachment IDs.
+        It intentionally requests metadata only, so it can guard content
+        operations before any body or binary data is fetched.
+
+        Args:
+            content_id: A Confluence content ID.
+
+        Returns:
+            The content's space key, or an empty string when it is unknown.
+        """
+        try:
+            response = self.confluence._session.get(
+                f"{self._v1_rest_base_url()}/rest/api/content/{content_id}",
+                params={"expand": "space,container,ancestors"},
+            )
+            response.raise_for_status()
+            content = response.json()
+        except Exception as exc:
+            logger.debug("Could not resolve space for content %s: %s", content_id, exc)
+            return ""
+
+        if not isinstance(content, dict):
+            return ""
+        space = content.get("space")
+        if isinstance(space, dict) and space.get("key"):
+            return str(space["key"])
+
+        references = [content.get("container")]
+        ancestors = content.get("ancestors")
+        if isinstance(ancestors, list):
+            references.extend(reversed(ancestors))
+        for reference in references:
+            if not isinstance(reference, dict):
+                continue
+            reference_space = reference.get("space")
+            if isinstance(reference_space, dict) and reference_space.get("key"):
+                return str(reference_space["key"])
+            if reference.get("id"):
+                space_key = self._resolve_page_space_key(str(reference["id"]))
+                if space_key:
+                    return space_key
+        return ""
+
+    def enforce_content_spaces_filter(self, content_id: str) -> None:
+        """Enforce the configured space filter for any Confluence content ID.
+
+        Args:
+            content_id: A page, blog-post, comment, or attachment ID.
+
+        Raises:
+            ValueError: If the content cannot be resolved to an allowed space.
+        """
+        if self._get_allowed_spaces() is None:
+            return
+        self.enforce_spaces_filter(
+            self._resolve_content_space_key(content_id), page_id=content_id
+        )
+
+    def enforce_space_id_spaces_filter(self, space_id: str) -> None:
+        """Enforce the configured space filter for a numeric Cloud space ID.
+
+        Args:
+            space_id: The numeric Confluence space ID.
+
+        Raises:
+            ValueError: If the space cannot be resolved to an allowed key.
+        """
+        if self._get_allowed_spaces() is None:
+            return
+        space_key = ""
+        try:
+            response = self.confluence._session.get(
+                f"{self._v1_rest_base_url()}/api/v2/spaces/{space_id}"
+            )
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, dict) and data.get("key"):
+                space_key = str(data["key"])
+        except Exception as exc:
+            logger.debug("Could not resolve space ID %s: %s", space_id, exc)
+        self.enforce_spaces_filter(space_key)
+
+    def _resolve_page_space_key(
+        self, page_id: str, *, v2_adapter: Any | None = None
+    ) -> str:
+        """Resolve a page's space key with a minimal fetch.
+
+        Used to enforce ``CONFLUENCE_SPACES_FILTER`` on page ID-addressed
+        operations that do not already have the space key available from an
+        existing fetch elsewhere in their flow.
+
+        Args:
+            page_id: The ID of the page to resolve.
+            v2_adapter: Optional ``ConfluenceV2Adapter`` to use instead of the
+                v1 client. OAuth Cloud call paths must stay off the v1 client
+                entirely, so callers on those paths must pass their own
+                ``_v2_adapter`` through here rather than let this fall back
+                to ``self.confluence``.
+
+        Returns:
+            The page's space key, or an empty string if it could not be
+            determined from the response.
+        """
+        if v2_adapter is not None:
+            get_space_key = getattr(v2_adapter, "get_page_space_key", None)
+            if callable(get_space_key):
+                return str(get_space_key(page_id))
+            page = v2_adapter.get_page(page_id=page_id, expand="space")
+        else:
+            page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
+        if not isinstance(page, dict):
+            return ""
+        space = page.get("space")
+        if not isinstance(space, dict):
+            return ""
+        space_key = space.get("key")
+        return str(space_key) if space_key else ""

@@ -58,6 +58,13 @@ class AnalyticsMixin:
                 "Server/Data Center instances do not support the Analytics API."
             )
 
+        enforce_page_filter = getattr(self, "enforce_page_spaces_filter", None)
+        if callable(enforce_page_filter):
+            enforce_page_filter(
+                page_id,
+                v2_adapter=getattr(self, "_v2_adapter", None),
+            )
+
         # Get page title if requested
         page_title = None
         if include_title:

@@ -2207,6 +2207,8 @@ async def download_attachment(
             resp_meta.raise_for_status()
             attachment_data = resp_meta.json()
 
+        confluence_fetcher.enforce_attachment_spaces_filter(attachment_id)
+
         download_url = attachment_data.get("_links", {}).get("download")
         if not download_url:
             return TextContent(
