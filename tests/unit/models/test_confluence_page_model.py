@@ -267,3 +267,19 @@ class TestConfluencePage:
 
         # Falls back to attachment ID when no container
         assert "pageId=att105348" in page.url
+
+    def test_from_api_response_with_parent_id(self):
+        """Test parsing parentId and ancestors in API response and simplifying dict."""
+        page_data_direct = {"id": "1001", "title": "Child Page", "parentId": "999"}
+        page1 = ConfluencePage.from_api_response(page_data_direct)
+        assert page1.parent_id == "999"
+        assert page1.to_simplified_dict()["parentId"] == "999"
+
+        page_data_ancestors = {
+            "id": "1002",
+            "title": "Nested Page",
+            "ancestors": [{"id": "100"}, {"id": "200"}],
+        }
+        page2 = ConfluencePage.from_api_response(page_data_ancestors)
+        assert page2.parent_id == "200"
+        assert page2.to_simplified_dict()["parentId"] == "200"
