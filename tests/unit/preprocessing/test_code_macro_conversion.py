@@ -1,5 +1,7 @@
 """Tests for Confluence code-macro to fenced-Markdown conversion."""
 
+from bs4 import BeautifulSoup
+
 from mcp_atlassian.preprocessing.base import BasePreprocessor
 
 # Mirrors the storage format Confluence Server returns for a code macro,
@@ -49,6 +51,21 @@ def test_code_macro_without_language_still_fenced():
 
     assert "```" in markdown
     assert "plain  spaced   body" in markdown
+
+
+def test_code_macro_without_body_is_left_untouched():
+    soup = BeautifulSoup(
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">text</ac:parameter>'
+        '<ac:parameter ac:name="linenumbers">true</ac:parameter>'
+        "</ac:structured-macro>",
+        "html.parser",
+    )
+
+    BasePreprocessor._process_code_macros_in_soup(soup)
+
+    assert soup.find("ac:structured-macro") is not None
+    assert soup.find("pre") is None
 
 
 def test_non_code_macros_unaffected():
