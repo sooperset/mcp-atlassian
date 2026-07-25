@@ -173,7 +173,14 @@ class BasePreprocessor:
             "ac:structured-macro", attrs={"ac:name": ["code", "noformat"]}
         ):
             body = macro.find("ac:plain-text-body")
-            code_text = body.get_text() if body else macro.get_text()
+            if body is None:
+                # Without a plain-text body, the macro's child text consists
+                # of parameters rather than code. Leave it untouched so
+                # potentially meaningful content is not replaced by a bogus
+                # code block.
+                continue
+
+            code_text = body.get_text()
             if not code_text.strip():
                 # CDATA exposure differs across parsers; if the body text is
                 # not reachable via get_text(), leave the macro untouched
