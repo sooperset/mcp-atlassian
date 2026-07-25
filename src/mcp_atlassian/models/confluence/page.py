@@ -100,6 +100,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
     page_width: str | None = (
         None  # Page layout width ('full-width', 'max', or 'default')
     )
+    parent_id: str | None = None
 
     @property
     def page_content(self) -> str:
@@ -239,6 +240,17 @@ class ConfluencePage(ApiModel, TimestampMixin):
         emoji = kwargs.get("emoji")
         page_width = kwargs.get("page_width")
 
+        # Extract parent_id from data or ancestors
+        parent_id = kwargs.get("parent_id")
+        if not parent_id:
+            if raw_parent := data.get("parentId") or data.get("parent_id"):
+                parent_id = str(raw_parent)
+            elif ancestors := data.get("ancestors"):
+                if isinstance(ancestors, list) and ancestors:
+                    last_ancestor = ancestors[-1]
+                    if isinstance(last_ancestor, dict) and "id" in last_ancestor:
+                        parent_id = str(last_ancestor["id"])
+
         return cls(
             id=str(data.get("id", CONFLUENCE_DEFAULT_ID)),
             title=data.get("title", EMPTY_STRING),
@@ -258,6 +270,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
             url=url,
             emoji=emoji,
             page_width=page_width,
+            parent_id=parent_id,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
@@ -316,5 +329,9 @@ class ConfluencePage(ApiModel, TimestampMixin):
         # Add page_width if available
         if self.page_width:
             result["page_width"] = self.page_width
+
+        # Add parentId if available
+        if self.parent_id:
+            result["parentId"] = self.parent_id
 
         return result
