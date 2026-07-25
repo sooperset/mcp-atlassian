@@ -11,13 +11,15 @@ logger = logging.getLogger("mcp-atlassian")
 _ISSUE_KEY_PATTERN = r"[A-Z][A-Z0-9_]+-\d+(?:-\d+)*"
 
 
-def _convert_panel(params: str | None, content: str) -> str:
-    """Convert a Jira {panel} block to markdown."""
-    title = ""
+def _convert_panel(params: str | None, content: str, default_title: str = "") -> str:
+    """Convert a Jira {panel} or admonition ({info}/{note}/{warning}/{tip}/{expand}) block to markdown."""
+    title = default_title
     if params:
         title_match = re.search(r"title=([^|}]+)", params)
         if title_match:
             title = title_match.group(1).strip()
+        elif not title and not params.startswith("title="):
+            title = params.strip()
     content = content.strip()
     if title:
         return f"\n**{title}**\n{content}\n"
@@ -332,6 +334,28 @@ class JiraPreprocessor(BasePreprocessor):
         output = re.sub(
             r"\{panel(?::([^}]*))?\}([\s\S]*?)\{panel\}",
             lambda match: _convert_panel(match.group(1), match.group(2)),
+            output,
+            flags=re.MULTILINE,
+        )
+
+        # Admonition blocks ({info}, {note}, {warning}, {tip})
+        output = re.sub(
+            r"\{(info|note|warning|tip)(?::([^}]*))?\}([\s\S]*?)\{\1\}",
+            lambda match: _convert_panel(
+                match.group(2), match.group(3), default_title=match.group(1).upper()
+            ),
+            output,
+            flags=re.MULTILINE,
+        )
+
+        # Expand blocks ({expand})
+        output = re.sub(
+            r"\{expand(?::([^}]*))?\}([\s\S]*?)\{expand\}",
+            lambda match: _convert_panel(
+                None if match.group(1) and "=" in match.group(1) else match.group(1),
+                match.group(2),
+                default_title=match.group(1) if match.group(1) else "",
+            ),
             output,
             flags=re.MULTILINE,
         )

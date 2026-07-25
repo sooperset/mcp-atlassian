@@ -1419,6 +1419,24 @@ class TestPanelBlocks:
         result = preprocessor.jira_to_markdown("[https://example.com] more text")
         assert "https://example.com" in result, f"URL dropped: {result}"
 
+    def test_admonition_and_expand_macro_conversion(self, preprocessor):
+        """Test conversion of {info}, {note}, {warning}, {tip}, and {expand} macros."""
+        input_text = (
+            "{info:title=NOTE}info body{info}\n"
+            "{warning}warning body{warning}\n"
+            "{expand:Security MetaData}expanded content{expand}"
+        )
+        result = preprocessor.jira_to_markdown(input_text)
+        assert "**NOTE**" in result
+        assert "info body" in result
+        assert "{info" not in result
+        assert "**WARNING**" in result
+        assert "warning body" in result
+        assert "{warning" not in result
+        assert "**Security MetaData**" in result
+        assert "expanded content" in result
+        assert "{expand" not in result
+
 
 # Code block placeholder protection tests
 
