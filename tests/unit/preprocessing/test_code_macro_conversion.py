@@ -68,6 +68,43 @@ def test_code_macro_without_body_is_left_untouched():
     assert soup.find("pre") is None
 
 
+def test_empty_body_code_macro_does_not_leak_parameters():
+    macro = (
+        "<p>Before</p>"
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        '<ac:parameter ac:name="linenumbers">true</ac:parameter>'
+        "<ac:plain-text-body><![CDATA[]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+        "<p>After</p>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(macro)
+
+    # The macro converts to an empty fenced block; the parameter values must
+    # not appear as literal text outside the fence tag
+    assert "```python" in markdown
+    assert "true" not in markdown
+    assert "pythontrue" not in markdown
+    assert "Before" in markdown
+    assert "After" in markdown
+
+
+def test_whitespace_only_body_converts_without_parameter_leak():
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        '<ac:parameter ac:name="linenumbers">true</ac:parameter>'
+        "<ac:plain-text-body><![CDATA[   ]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(macro)
+
+    assert "```python" in markdown
+    assert "true" not in markdown
+
+
 def test_non_code_macros_unaffected():
     html = "<p>No macros here, just <code>inline</code>.</p>"
     preprocessor = BasePreprocessor(base_url="https://confluence.example.com")

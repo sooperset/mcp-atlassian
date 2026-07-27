@@ -180,12 +180,10 @@ class BasePreprocessor:
                 # code block.
                 continue
 
+            # Empty and whitespace-only bodies still convert: leaving the
+            # macro in place would leak its parameter values as literal text
+            # once markdownify strips the unknown tags.
             code_text = body.get_text()
-            if not code_text.strip():
-                # CDATA exposure differs across parsers; if the body text is
-                # not reachable via get_text(), leave the macro untouched
-                # rather than emit an empty fence that silently drops content.
-                continue
 
             language_param = macro.find("ac:parameter", attrs={"ac:name": "language"})
             language = language_param.get_text(strip=True) if language_param else ""
