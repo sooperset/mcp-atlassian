@@ -34,9 +34,7 @@ def _build_proxy_app(upstream_base_url: str, proxy_base_url: str) -> Starlette:
         upstream_token_endpoint=f"{upstream_base_url}/token",
         upstream_client_id="upstream-client-id",
         upstream_client_secret="upstream-client-secret",
-        token_verifier=AtlassianOpaqueTokenVerifier(
-            required_scopes=["read:jira-work"]
-        ),
+        token_verifier=AtlassianOpaqueTokenVerifier(required_scopes=["read:jira-work"]),
         base_url=proxy_base_url,
         redirect_path="/callback",
         allowed_grant_types=["authorization_code", "refresh_token"],
@@ -187,9 +185,7 @@ async def test_oauth_proxy_dcr_happy_path_over_loopback_tls(
         ) as client:
             harness = OAuthDCRClientHarness(client, upstream_server.ca_certificate_path)
             await harness.discover()
-            registered_client = await harness.register(
-                "http://127.0.0.1:4242/callback"
-            )
+            registered_client = await harness.register("http://127.0.0.1:4242/callback")
             authorization_code, verifier = await harness.authorize_with_pkce(
                 registered_client
             )

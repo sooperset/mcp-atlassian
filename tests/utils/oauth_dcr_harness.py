@@ -10,7 +10,7 @@ import socket
 import ssl
 import threading
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -53,7 +53,7 @@ def _write_loopback_certificate(directory: Path) -> tuple[Path, Path, Path]:
     directory.mkdir(parents=True, exist_ok=True)
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     ca_subject = x509.Name(
         [x509.NameAttribute(NameOID.COMMON_NAME, "mcp-atlassian test CA")]
     )
