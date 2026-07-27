@@ -40,6 +40,37 @@ def test_code_macro_becomes_fenced_block():
     assert "After" in markdown
 
 
+def test_code_macro_uses_longer_fence_for_embedded_backticks():
+    code_body = "first line\n```\nlast line"
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">text</ac:parameter>'
+        f"<ac:plain-text-body><![CDATA[{code_body}]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(macro)
+
+    expected_block = f"````text\n{code_body}\n````"
+    assert markdown == expected_block
+    assert markdown.count("````text") == 1
+
+
+def test_code_macro_preserves_boundary_newlines():
+    code_body = "\n\nfirst line\nlast line\n\n"
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">text</ac:parameter>'
+        f"<ac:plain-text-body><![CDATA[{code_body}]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(macro)
+
+    expected_block = f"```text\n{code_body}```"
+    assert markdown == expected_block
+
+
 def test_code_macro_without_language_still_fenced():
     macro = (
         '<ac:structured-macro ac:name="noformat">'
