@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from urllib.parse import urlsplit, urlunsplit
 
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
-from mcp.server.auth.provider import OAuthClientInformationFull
+from mcp.server.auth.provider import (
+    OAuthClientInformationFull,
+    RegistrationError,
+)
 
 logger = logging.getLogger("mcp-atlassian.server.oauth_proxy")
 
@@ -26,21 +30,58 @@ def parse_env_list(raw: str | None) -> list[str] | None:
     return [item.strip() for item in normalized.split() if item.strip()]
 
 
+def _redirect_target(uri: str) -> tuple[str, str, int | None, str] | None:
+    """Return the origin and route used by a redirect URI."""
+    parsed = urlsplit(uri)
+    if not parsed.scheme or not parsed.hostname:
+        return None
+
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+
+    scheme = parsed.scheme.lower()
+    if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+        port = None
+
+    return scheme, parsed.hostname.lower(), port, parsed.path.rstrip("/") or "/"
+
+
+def _callback_uri(base_url: str, redirect_path: str) -> str:
+    """Build the proxy's callback URI from its public base URL and route."""
+    parsed = urlsplit(base_url)
+    callback_path = f"{parsed.path.rstrip('/')}/{redirect_path.lstrip('/')}"
+    return urlunsplit((parsed.scheme, parsed.netloc, callback_path, "", ""))
+
+
 class HardenedOAuthProxy(OAuthProxy):
     """OAuthProxy with stricter DCR controls for grants and scopes."""
 
     def __init__(
         self,
         *,
+        base_url: str,
+        redirect_path: str = "/callback",
         allowed_grant_types: list[str] | None = None,
         forced_scopes: list[str] | None = None,
         **kwargs: object,
     ) -> None:
-        super().__init__(**kwargs)
+        super().__init__(base_url=base_url, redirect_path=redirect_path, **kwargs)
         self._allowed_grant_types = _normalize_list(allowed_grant_types)
         self._forced_scopes = _normalize_list(forced_scopes)
+        self._proxy_callback_target = _redirect_target(
+            _callback_uri(base_url, redirect_path)
+        )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        for redirect_uri in client_info.redirect_uris or []:
+            if _redirect_target(str(redirect_uri)) == self._proxy_callback_target:
+                raise RegistrationError(
+                    "invalid_redirect_uri",
+                    "DCR redirect_uri must not target the OAuth proxy callback",
+                )
+
         updates: dict[str, object] = {"response_types": ["code"]}
 
         if self._allowed_grant_types is not None:
