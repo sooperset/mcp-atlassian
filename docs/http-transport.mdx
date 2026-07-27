@@ -85,6 +85,61 @@ The `--stateless` flag is only supported with `streamable-http` transport. Using
   </Tab>
 </Tabs>
 
+## TLS (HTTPS Listener)
+
+By default the HTTP transports listen in plaintext, and TLS is typically terminated
+by a reverse proxy or ingress in front of the server. For end-to-end TLS — for
+example when policy requires encryption all the way to the pod — the server can
+terminate TLS itself. Provide a certificate and private key (PEM) and the listener
+switches to HTTPS:
+
+```bash
+# Using flags
+MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE=false \
+  uvx mcp-atlassian --transport streamable-http --port 9000 \
+  --ssl-certfile /path/to/server-cert.pem \
+  --ssl-keyfile /path/to/server-key.pem
+
+# Or via environment variables (e.g. mounted from a Kubernetes Secret)
+MCP_SSL_CERTFILE=/certs/tls.crt MCP_SSL_KEYFILE=/certs/tls.key \
+  MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE=false \
+  uvx mcp-atlassian --transport streamable-http --port 9000
+```
+
+CLI flags override the environment variables, mirroring host/port precedence.
+
+<Warning>
+The HTTPS listener requires `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE=false`. The OS
+trust store injection (on by default) replaces Python's `ssl.SSLContext` with a
+client-side-only implementation that rejects every inbound TLS handshake, so
+startup aborts if both are enabled. Set it as a real environment variable or in
+the default `.env` file — `--env-file` is loaded too late to affect trust store
+injection.
+
+With the injection disabled, outbound SSL verification uses the bundled certifi
+CAs. If your Atlassian instance uses a private CA, point **both**
+`REQUESTS_CA_BUNDLE` (covers the Jira/Confluence REST clients and OAuth token
+exchange, via `requests`) **and** `SSL_CERT_FILE` (covers the OAuth proxy
+paths, via `httpx`) at your CA bundle; the bundle must also include public
+roots if you talk to Atlassian Cloud. Do **not** work around certificate errors
+with `JIRA_SSL_VERIFY=false` / `CONFLUENCE_SSL_VERIFY=false` — that disables
+verification on the channel carrying every user's credentials.
+</Warning>
+
+<Note>
+Remember to update client configuration to `https://` URLs once the listener
+serves TLS — the examples elsewhere on this page use `http://`.
+</Note>
+
+<Note>
+Certificate and key must be provided together — setting only one aborts startup.
+These options configure the server's *own* listener certificate; they are
+unrelated to the client-side `*_CLIENT_CERT` mTLS options used when connecting
+to Atlassian. The key must be unencrypted, and the certificate is loaded once at
+startup — rotation requires a restart. Under `stdio` there is no network
+listener, so the options are ignored with a warning.
+</Note>
+
 ## Multi-User Authentication
 
 Both transport types support per-request authentication where each user provides their own credentials.

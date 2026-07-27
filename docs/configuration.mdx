@@ -185,6 +185,8 @@ openssl rsa -in encrypted.key -out decrypted.key
 | `STATELESS` | Enable stateless mode for streamable-http (`true`/`false`) |
 | `PORT` | Port for HTTP transports (default: `8000`) |
 | `HOST` | Host for HTTP transports (default: `0.0.0.0`) |
+| `MCP_SSL_CERTFILE` | TLS certificate (PEM) for the server's own HTTPS listener (see [HTTP Transport](/docs/http-transport#tls-https-listener)) |
+| `MCP_SSL_KEYFILE` | TLS private key (PEM) for the HTTPS listener; must be set together with the certificate |
 | `READ_ONLY_MODE` | Disable write operations (`true`/`false`) |
 | `MCP_VERBOSE` | Enable verbose logging (`true`/`false`) |
 | `MCP_VERY_VERBOSE` | Enable debug logging (`true`/`false`) |
