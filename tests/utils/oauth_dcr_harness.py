@@ -57,6 +57,9 @@ def _write_loopback_certificate(directory: Path) -> tuple[Path, Path, Path]:
     ca_subject = x509.Name(
         [x509.NameAttribute(NameOID.COMMON_NAME, "mcp-atlassian test CA")]
     )
+    ca_subject_key_identifier = x509.SubjectKeyIdentifier.from_public_key(
+        ca_key.public_key()
+    )
     ca_certificate = (
         x509.CertificateBuilder()
         .subject_name(ca_subject)
@@ -66,6 +69,7 @@ def _write_loopback_certificate(directory: Path) -> tuple[Path, Path, Path]:
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(ca_subject_key_identifier, critical=False)
         .add_extension(
             x509.KeyUsage(
                 digital_signature=False,
@@ -94,6 +98,16 @@ def _write_loopback_certificate(directory: Path) -> tuple[Path, Path, Path]:
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(leaf_key.public_key()),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(
+                ca_subject_key_identifier
+            ),
+            critical=False,
+        )
         .add_extension(
             x509.KeyUsage(
                 digital_signature=True,
