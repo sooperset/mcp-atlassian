@@ -86,6 +86,82 @@ def _fenced_code_block(code_text: str, language: str) -> str:
     return f"{fence}{language}\n{code_text}{closing_newline}{fence}"
 
 
+def _markdown_container_prefix(line: str) -> tuple[str, str]:
+    """Return a Markdown container prefix and its continuation indentation."""
+    prefix = ""
+    continuation = ""
+    position = 0
+
+    while position < len(line):
+        quote_match = re.match(r">[ ]?", line[position:])
+        if quote_match:
+            token = quote_match.group()
+            prefix += token
+            continuation += token
+            position += len(token)
+            continue
+
+        list_match = re.match(r"[ ]*(?:[*+-]|\d+[.)])[ ]+", line[position:])
+        if not list_match:
+            break
+
+        token = list_match.group()
+        prefix += token
+        continuation += " " * len(token)
+        position += len(token)
+
+    return prefix, continuation
+
+
+def _prefix_code_block(code_block: str, prefix: str) -> str:
+    """Add a Markdown container prefix to every line in a code block."""
+    return code_block.replace("\n", f"\n{prefix}")
+
+
+def _restore_code_macro_block(
+    text: str, start: int, placeholder: str, code_block: str
+) -> str:
+    """Restore one code block while retaining its Markdown containers."""
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", start)
+    if line_end == -1:
+        line_end = len(text)
+
+    line_before = text[line_start:start]
+    line_after = text[start + len(placeholder) : line_end]
+    container_prefix, continuation_prefix = _markdown_container_prefix(line_before)
+    before_content = line_before[len(container_prefix) :]
+    after_content = line_after.lstrip()
+    has_container = bool(container_prefix)
+
+    if before_content.strip():
+        block_prefix = continuation_prefix
+        if has_container:
+            blank_line_prefix = continuation_prefix.rstrip()
+            replacement_prefix = f"\n{blank_line_prefix}\n{block_prefix}"
+        else:
+            replacement_prefix = f"\n\n{block_prefix}"
+    else:
+        block_prefix = continuation_prefix if has_container else ""
+        replacement_prefix = ""
+
+    restored = replacement_prefix + _prefix_code_block(code_block, block_prefix)
+
+    if after_content:
+        if has_container:
+            blank_line_prefix = continuation_prefix.rstrip()
+            restored += f"\n{blank_line_prefix}\n{continuation_prefix}{after_content}"
+        else:
+            restored += f"\n\n{after_content}"
+
+    text_before = text[:start]
+    if before_content.strip():
+        text_before = text_before.rstrip(" ")
+
+    suffix_start = line_end if after_content else start + len(placeholder)
+    return text_before + restored + text[suffix_start:]
+
+
 class ConfluenceClient(Protocol):
     """Protocol for Confluence client."""
 
@@ -165,14 +241,20 @@ class BasePreprocessor:
                 code_language_callback=_code_language_from_element,
             )
             if code_macro_blocks:
-                placeholders = re.compile(
-                    "|".join(
-                        re.escape(placeholder) for placeholder in code_macro_blocks
+                for placeholder, code_block in sorted(
+                    code_macro_blocks.items(),
+                    key=lambda item: processed_markdown.rfind(item[0]),
+                    reverse=True,
+                ):
+                    placeholder_start = processed_markdown.rfind(placeholder)
+                    if placeholder_start == -1:
+                        continue
+                    processed_markdown = _restore_code_macro_block(
+                        processed_markdown,
+                        placeholder_start,
+                        placeholder,
+                        code_block,
                     )
-                )
-                processed_markdown = placeholders.sub(
-                    lambda match: code_macro_blocks[match.group()], processed_markdown
-                )
 
             return processed_html, processed_markdown
 

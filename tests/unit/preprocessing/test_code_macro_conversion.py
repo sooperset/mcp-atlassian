@@ -71,6 +71,40 @@ def test_code_macro_preserves_boundary_newlines():
     assert markdown == expected_block
 
 
+def test_code_macro_inside_list_preserves_fenced_block_structure():
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        "<ac:plain-text-body><![CDATA[run me\nsecond line]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    html = f"<ul><li>step one: {macro}</li><li>step two</li></ul>"
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+
+    _, markdown = preprocessor.process_html_content(html)
+
+    assert markdown == (
+        "* step one:\n\n  ```python\n  run me\n  second line\n  ```\n* step two"
+    )
+
+
+def test_code_macro_inside_blockquote_preserves_fenced_block_structure():
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        "<ac:plain-text-body><![CDATA[run me\nsecond line]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    html = f"<blockquote>before {macro} after</blockquote>"
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+
+    _, markdown = preprocessor.process_html_content(html)
+
+    assert markdown == (
+        "> before\n>\n> ```python\n> run me\n> second line\n> ```\n>\n> after"
+    )
+
+
 def test_code_macro_without_language_still_fenced():
     macro = (
         '<ac:structured-macro ac:name="noformat">'
