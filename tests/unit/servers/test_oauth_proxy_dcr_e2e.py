@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import httpx
 import pytest
+from pydantic import AnyHttpUrl
 from starlette.applications import Starlette
 
 from mcp_atlassian.servers.oauth_proxy import HardenedOAuthProxy
@@ -28,18 +29,29 @@ class OAuthProxyTestbed:
     issuer: FakeUpstreamIssuer
 
 
-def _build_proxy_app(upstream_base_url: str, proxy_base_url: str) -> Starlette:
+def _build_proxy_app(
+    upstream_base_url: str,
+    proxy_base_url: AnyHttpUrl | str,
+    redirect_path: str | None = "/callback",
+) -> Starlette:
+    provider_kwargs: dict[str, object] = {
+        "upstream_authorization_endpoint": f"{upstream_base_url}/authorize",
+        "upstream_token_endpoint": f"{upstream_base_url}/token",
+        "upstream_client_id": "upstream-client-id",
+        "upstream_client_secret": "upstream-client-secret",
+        "token_verifier": AtlassianOpaqueTokenVerifier(
+            required_scopes=["read:jira-work"]
+        ),
+        "allowed_grant_types": ["authorization_code", "refresh_token"],
+        "forced_scopes": ["read:jira-work"],
+        "require_authorization_consent": False,
+    }
+    if redirect_path is not None:
+        provider_kwargs["redirect_path"] = redirect_path
+
     provider = HardenedOAuthProxy(
-        upstream_authorization_endpoint=f"{upstream_base_url}/authorize",
-        upstream_token_endpoint=f"{upstream_base_url}/token",
-        upstream_client_id="upstream-client-id",
-        upstream_client_secret="upstream-client-secret",
-        token_verifier=AtlassianOpaqueTokenVerifier(required_scopes=["read:jira-work"]),
         base_url=proxy_base_url,
-        redirect_path="/callback",
-        allowed_grant_types=["authorization_code", "refresh_token"],
-        forced_scopes=["read:jira-work"],
-        require_authorization_consent=False,
+        **provider_kwargs,
     )
     return Starlette(routes=provider.get_routes("/mcp"))
 
@@ -156,6 +168,50 @@ async def test_oauth_proxy_rejects_own_callback_as_dcr_redirect_uri(
 
     assert 400 <= response.status_code < 500
     assert "callback" in response.text.lower()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("proxy_base_url", "redirect_path", "collision_uri"),
+    [
+        (AnyHttpUrl("https://mcp.test"), "/callback", "https://mcp.test/callback"),
+        ("https://mcp.test", None, "https://mcp.test/auth/callback"),
+    ],
+)
+async def test_oauth_proxy_preserves_fastmcp_callback_constructor_contract(
+    proxy_base_url: AnyHttpUrl | str,
+    redirect_path: str | None,
+    collision_uri: str,
+) -> None:
+    """DCR collision protection supports FastMCP's URL and callback defaults."""
+    proxy_app = _build_proxy_app("https://issuer.test", proxy_base_url, redirect_path)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=proxy_app), base_url="https://mcp.test"
+    ) as client:
+        collision_response = await client.post(
+            "/register",
+            json={
+                "client_name": "callback-collision-client",
+                "redirect_uris": [collision_uri],
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+                "token_endpoint_auth_method": "none",
+            },
+        )
+        valid_response = await client.post(
+            "/register",
+            json={
+                "client_name": "valid-callback-client",
+                "redirect_uris": ["http://127.0.0.1:4242/callback"],
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+                "token_endpoint_auth_method": "none",
+            },
+        )
+
+    assert 400 <= collision_response.status_code < 500
+    assert "callback" in collision_response.text.lower()
+    assert 200 <= valid_response.status_code < 300
 
 
 @pytest.mark.anyio

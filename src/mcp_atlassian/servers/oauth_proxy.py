@@ -13,6 +13,7 @@ from mcp.server.auth.provider import (
     OAuthClientInformationFull,
     RegistrationError,
 )
+from pydantic import AnyHttpUrl
 
 logger = logging.getLogger("mcp-atlassian.server.oauth_proxy")
 
@@ -77,8 +78,8 @@ class HardenedOAuthProxy(OAuthProxy):
     def __init__(
         self,
         *,
-        base_url: str,
-        redirect_path: str = "/callback",
+        base_url: AnyHttpUrl | str,
+        redirect_path: str | None = None,
         allowed_grant_types: list[str] | None = None,
         forced_scopes: list[str] | None = None,
         **kwargs: object,
@@ -87,7 +88,7 @@ class HardenedOAuthProxy(OAuthProxy):
         self._allowed_grant_types = _normalize_list(allowed_grant_types)
         self._forced_scopes = _normalize_list(forced_scopes)
         self._proxy_callback_target = _redirect_target(
-            _callback_uri(base_url, redirect_path)
+            _callback_uri(str(self.base_url), self._redirect_path)
         )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
