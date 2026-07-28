@@ -132,7 +132,7 @@ Assign a Jira issue to a user using the dedicated assignment endpoint.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `assignee` | `string` | No | User identifier to assign (email, display name, or account ID), or a JSON object string from jira_search_assignable_users. Pass null or empty string to unassign the issue. |
+| `assignee` | `string` | No | User identifier (email, display name, account ID, login name, or JIRAUSER key), or a JSON object string from jira_search_assignable_users. Pass null or empty string to unassign. |
 
 ---
 
