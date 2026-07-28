@@ -172,9 +172,10 @@ to work without enabling the proxy.
 
 <Warning>
 The callback configured in `ATLASSIAN_OAUTH_REDIRECT_URI` is for the upstream
-Atlassian identity provider, not a dynamically registered MCP client. DCR rejects a
-client `redirect_uri` that targets this OAuth proxy callback with
-`invalid_redirect_uri`, preventing a callback loop.
+Atlassian identity provider, not a dynamically registered MCP client. A DCR
+client's `redirect_uri` must be different from this OAuth proxy IdP callback.
+Registration is rejected with `invalid_redirect_uri` if the two callbacks collide,
+preventing a callback loop.
 </Warning>
 
 ### Bring Your Own Token (BYOT)
