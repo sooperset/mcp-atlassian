@@ -1164,8 +1164,7 @@ async def get_transitions(
         JSON string representing a list of available transitions.
     """
     jira = await get_jira_fetcher(ctx)
-    expand = "transitions.fields" if expand_fields else None
-    transitions = jira.get_available_transitions(issue_key, expand=expand)
+    transitions = jira.get_available_transitions(issue_key, expand_fields=expand_fields)
     return json.dumps(transitions, indent=2, ensure_ascii=False)
 
 
