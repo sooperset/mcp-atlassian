@@ -139,6 +139,40 @@ def test_code_macro_inline_in_blockquote_stays_inside_single_fenced_block():
     )
 
 
+def test_code_macro_after_list_paragraph_stays_inside_single_fenced_block():
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        "<ac:plain-text-body><![CDATA[run me\nsecond line]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(
+        f"<ul><li><p>before</p>{macro}</li></ul>"
+    )
+
+    assert markdown == "* before\n\n  ```python\n  run me\n  second line\n  ```"
+    assert markdown.count("```python") == 1
+    assert markdown.count("```") == 2
+
+
+def test_code_macro_after_blockquote_paragraph_stays_inside_single_fenced_block():
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        "<ac:plain-text-body><![CDATA[run me\nsecond line]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(
+        f"<blockquote><p>before</p>{macro}</blockquote>"
+    )
+
+    assert markdown == "> before\n>\n> ```python\n> run me\n> second line\n> ```"
+    assert markdown.count("```python") == 1
+    assert markdown.count("```") == 2
+
+
 def test_code_macro_without_language_still_fenced():
     macro = (
         '<ac:structured-macro ac:name="noformat">'
