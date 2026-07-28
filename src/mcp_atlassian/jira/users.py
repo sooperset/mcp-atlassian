@@ -123,10 +123,10 @@ class UsersMixin(JiraClient):
         Get the account ID for a username or account ID.
 
         Args:
-            assignee (str): Username or account ID.
+            assignee: Username, display name, email, or account/key identifier.
 
         Returns:
-            str: Account ID.
+            str: Account ID (Cloud) or login name / key (Server/DC).
 
         Raises:
             ValueError: If the account ID could not be found.
@@ -143,6 +143,64 @@ class UsersMixin(JiraClient):
             return assignee
         if re.fullmatch(r"\d+:[0-9a-fA-F][0-9a-fA-F-]{7,}", assignee):
             return assignee
+
+        # Server/DC-specific fast paths that mirror the resolution used by
+        # get_user_profile_by_identifier, so that profile lookup and assign
+        # succeed or fail together for the same identifier.
+        if not self.config.is_cloud:
+            # Short-circuit Server/DC user keys (e.g. JIRAUSER56506).
+            # Resolve to the login name via a direct user fetch so the
+            # assignee PUT body carries {"name": "<login>"} as Jira expects.
+            if re.match(r"^JIRAUSER\d+$", assignee, re.IGNORECASE):
+                try:
+                    user_data = self.jira.user(key=assignee)
+                    if isinstance(user_data, dict):
+                        name = user_data.get("name")
+                        if name:
+                            logger.info(
+                                "Resolved Server/DC key '%s' to login name '%s'",
+                                assignee,
+                                name,
+                            )
+                            return name
+                        # Key present but no login name — use key itself as fallback
+                        return assignee
+                except Exception as exc:
+                    logger.info(
+                        "Could not resolve Server/DC key '%s' via user fetch: %s",
+                        assignee,
+                        exc,
+                    )
+                # Fall through to search-based resolution
+
+            # For emails on Server/DC, reuse the same resolution path as
+            # get_user_profile_by_identifier so both always agree on the user.
+            if "@" in assignee:
+                resolved = self._resolve_server_dc_user_params(assignee)
+                if resolved:
+                    value = resolved.get("username") or resolved.get("key")
+                    if value:
+                        return value
+                else:
+                    # Fallback: login name may be the email address itself.
+                    try:
+                        user_data = self.jira.user(username=assignee)
+                        if isinstance(user_data, dict):
+                            name = user_data.get("name")
+                            if name:
+                                logger.info(
+                                    "Resolved Server/DC email '%s' as direct "
+                                    "username → login name '%s'",
+                                    assignee,
+                                    name,
+                                )
+                                return name
+                    except Exception as exc:
+                        logger.info(
+                            "Email-as-username fallback failed for '%s': %s",
+                            assignee,
+                            exc,
+                        )
 
         account_id = self._lookup_user_directly(assignee)
         if account_id:
@@ -184,6 +242,7 @@ class UsersMixin(JiraClient):
                     normalize_text(user.get("displayName", "")) == search_norm
                     or normalize_text(user.get("name", "")) == search_norm
                     or normalize_text(user.get("emailAddress", "")) == search_norm
+                    or normalize_text(user.get("key", "")) == search_norm
                 ):
                     if self.config.is_cloud:
                         if "accountId" in user:

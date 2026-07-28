@@ -2279,9 +2279,9 @@ async def assign_issue(
         str | None,
         Field(
             description=(
-                "User identifier to assign (email, display name, or account ID), "
-                "or a JSON object string from jira_search_assignable_users. "
-                "Pass null or empty string to unassign the issue."
+                "User identifier (email, display name, account ID, login name, or "
+                "JIRAUSER key), or a JSON object string from "
+                "jira_search_assignable_users. Pass null or empty string to unassign."
             ),
             default=None,
         ),
@@ -2292,12 +2292,17 @@ async def assign_issue(
     This is more reliable than setting assignee via update_issue, which is
     silently ignored by some Jira configurations. Uses PUT /issue/{key}/assignee.
 
+    On Jira Server/DC the following identifier forms are all accepted:
+    login name, email address, display name, or JIRAUSER key. The resolution
+    order is: key lookup → email search (with email-as-username fallback) →
+    text search → assignable-user search scoped to the issue.
+
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        assignee: User identifier (email, display name, or account ID), or a
-            JSON object string from jira_search_assignable_users. Pass None or
-            empty string to unassign.
+        assignee: User identifier (email, display name, account ID, or login
+            name / JIRAUSER key for Server/DC), or a JSON object string from
+            jira_search_assignable_users. Pass None or empty string to unassign.
 
     Returns:
         JSON string representing the updated issue object.
