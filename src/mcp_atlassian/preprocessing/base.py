@@ -86,33 +86,6 @@ def _fenced_code_block(code_text: str, language: str) -> str:
     return f"{fence}{language}\n{code_text}{closing_newline}{fence}"
 
 
-def _markdown_container_prefix(line: str) -> tuple[str, str]:
-    """Return a Markdown container prefix and its continuation indentation."""
-    prefix = ""
-    continuation = ""
-    position = 0
-
-    while position < len(line):
-        quote_match = re.match(r">[ ]?", line[position:])
-        if quote_match:
-            token = quote_match.group()
-            prefix += token
-            continuation += token
-            position += len(token)
-            continue
-
-        list_match = re.match(r"[ ]*(?:[*+-]|\d+[.)])[ ]+", line[position:])
-        if not list_match:
-            break
-
-        token = list_match.group()
-        prefix += token
-        continuation += " " * len(token)
-        position += len(token)
-
-    return prefix, continuation
-
-
 def _prefix_code_block(code_block: str, prefix: str) -> str:
     """Add a Markdown container prefix to every line in a code block."""
     return code_block.replace("\n", f"\n{prefix}")
@@ -121,7 +94,7 @@ def _prefix_code_block(code_block: str, prefix: str) -> str:
 def _restore_code_macro_block(
     text: str, start: int, placeholder: str, code_block: str
 ) -> str:
-    """Restore one code block while retaining its Markdown containers."""
+    """Restore one code block using the fence context from markdownify."""
     line_start = text.rfind("\n", 0, start) + 1
     line_end = text.find("\n", start)
     if line_end == -1:
@@ -129,37 +102,45 @@ def _restore_code_macro_block(
 
     line_before = text[line_start:start]
     line_after = text[start + len(placeholder) : line_end]
-    container_prefix, continuation_prefix = _markdown_container_prefix(line_before)
-    before_content = line_before[len(container_prefix) :]
-    after_content = line_after.lstrip()
-    has_container = bool(container_prefix)
+    if line_after.strip():
+        return text.replace(placeholder, code_block, 1)
 
-    if before_content.strip():
-        block_prefix = continuation_prefix
-        if has_container:
-            blank_line_prefix = continuation_prefix.rstrip()
-            replacement_prefix = f"\n{blank_line_prefix}\n{block_prefix}"
-        else:
-            replacement_prefix = f"\n\n{block_prefix}"
-    else:
-        block_prefix = continuation_prefix if has_container else ""
-        replacement_prefix = ""
+    opening_line_end = line_start - 1
+    if opening_line_end < 0:
+        return text.replace(placeholder, code_block, 1)
+    opening_line_start = text.rfind("\n", 0, opening_line_end) + 1
+    opening_line = text[opening_line_start:opening_line_end]
 
-    restored = replacement_prefix + _prefix_code_block(code_block, block_prefix)
+    closing_line_start = line_end + 1
+    if closing_line_start > len(text):
+        return text.replace(placeholder, code_block, 1)
+    closing_line_end = text.find("\n", closing_line_start)
+    if closing_line_end == -1:
+        closing_line_end = len(text)
+    closing_line = text[closing_line_start:closing_line_end]
 
-    if after_content:
-        if has_container:
-            blank_line_prefix = continuation_prefix.rstrip()
-            restored += f"\n{blank_line_prefix}\n{continuation_prefix}{after_content}"
-        else:
-            restored += f"\n\n{after_content}"
+    opening_match = re.search(r"(?P<fence>`{3,})(?P<info>[^\r\n]*)$", opening_line)
+    closing_match = re.search(r"(?P<fence>`{3,})[ \t]*$", closing_line)
+    stored_opening = re.match(r"(?P<fence>`+)[^\r\n]*\n", code_block)
+    if not opening_match or not closing_match or not stored_opening:
+        return text.replace(placeholder, code_block, 1)
 
-    text_before = text[:start]
-    if before_content.strip():
-        text_before = text_before.rstrip(" ")
+    stored_fence = stored_opening.group("fence")
+    stored_opening_end = stored_opening.end()
+    if not code_block.endswith(stored_fence):
+        return text.replace(placeholder, code_block, 1)
 
-    suffix_start = line_end if after_content else start + len(placeholder)
-    return text_before + restored + text[suffix_start:]
+    body = code_block[stored_opening_end : -len(stored_fence)]
+    container_prefix = opening_line[: opening_match.start()]
+    stored_opening_line = code_block[:stored_opening_end].rstrip("\n")
+    restored = (
+        f"{container_prefix}{stored_opening_line}\n"
+        f"{line_before}{_prefix_code_block(body, line_before)}"
+        f"{stored_fence}"
+    )
+
+    suffix_start = closing_line_end
+    return text[:opening_line_start] + restored + text[suffix_start:]
 
 
 def _restore_code_macro_blocks(markdown_text: str, code_blocks: dict[str, str]) -> str:
@@ -254,7 +235,8 @@ class BasePreprocessor:
 
             # Convert code-block macros before markdownify strips them
             # (markdown path only). Keep their contents out of markdownify so
-            # it cannot shorten their fences or strip boundary newlines.
+            # it cannot shorten their fences or strip boundary newlines, while
+            # the pre/code wrapper keeps nested Markdown containers intact.
             code_macro_blocks = self._process_code_macros_in_soup(soup)
             processed_markdown = md(
                 str(soup),
@@ -278,9 +260,9 @@ class BasePreprocessor:
         markdownify does not know the ``ac:structured-macro`` element: it strips
         the tags, leaks the parameter values (language, line numbers) into the
         output as literal text, and collapses the whitespace of the code body.
-        Replacing the macro with a placeholder before conversion lets the
-        surrounding HTML be converted while the code body is preserved
-        verbatim for restoration afterward.
+        Replacing the macro with a ``pre/code`` wrapper containing a placeholder
+        lets markdownify establish the surrounding list or blockquote structure
+        while the code body is preserved verbatim for restoration afterward.
 
         Returns:
             Mapping of markdownify-safe placeholders to fenced code blocks.
@@ -312,7 +294,14 @@ class BasePreprocessor:
                 placeholder = f"\x00MCPCODEMACRO{len(code_blocks)}{collision}\x00"
 
             code_blocks[placeholder] = _fenced_code_block(code_text, language)
-            macro.replace_with(placeholder)
+
+            pre_tag = soup.new_tag("pre")
+            code_tag = soup.new_tag("code")
+            if language:
+                code_tag["class"] = f"language-{language}"
+            code_tag.string = placeholder
+            pre_tag.append(code_tag)
+            macro.replace_with(pre_tag)
 
         return code_blocks
 
