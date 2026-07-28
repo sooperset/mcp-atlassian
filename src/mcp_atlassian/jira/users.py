@@ -118,12 +118,13 @@ class UsersMixin(JiraClient):
             error_msg = f"Unable to get current user account ID: {e}"
             raise Exception(error_msg) from e
 
-    def _get_account_id(self, assignee: str) -> str:
+    def _get_account_id(self, assignee: str, issue_key: str | None = None) -> str:
         """
         Get the account ID for a username or account ID.
 
         Args:
             assignee: Username, display name, email, or account/key identifier.
+            issue_key: Optional issue key used to scope an assignable-user fallback.
 
         Returns:
             str: Account ID (Cloud) or login name / key (Server/DC).
@@ -210,6 +211,41 @@ class UsersMixin(JiraClient):
         if account_id:
             return account_id
 
+        if issue_key:
+            try:
+                assignable_users = self.search_assignable_users(
+                    query=assignee,
+                    issue_key=issue_key,
+                    limit=20,
+                )
+                search_norm = normalize_text(assignee)
+                for user in assignable_users:
+                    if not any(
+                        normalize_text(value) == search_norm
+                        for value in (
+                            user.username,
+                            user.user_key,
+                            user.display_name,
+                            user.email,
+                        )
+                    ):
+                        continue
+
+                    if self.config.is_cloud:
+                        if user.account_id:
+                            return user.account_id
+                    elif user.username:
+                        return user.username
+                    elif user.user_key:
+                        return user.user_key
+            except Exception as exc:
+                logger.info(
+                    "Error looking up assignable user '%s' for issue '%s': %s",
+                    assignee,
+                    issue_key,
+                    exc,
+                )
+
         error_msg = f"Could not find account ID for user: {assignee}"
         raise ValueError(error_msg)
 
@@ -230,7 +266,7 @@ class UsersMixin(JiraClient):
             else:
                 params["username"] = username
 
-            response = self.jira.user_find_by_user_string(**params, start=0, limit=1)
+            response = self.jira.user_find_by_user_string(**params, start=0, limit=20)
             if not isinstance(response, list):
                 msg = f"Unexpected return value type from `jira.user_find_by_user_string`: {type(response)}"
                 logger.error(msg)
@@ -278,7 +314,7 @@ class UsersMixin(JiraClient):
         """
         try:
             response = self.jira.user_find_by_user_string(
-                username=email, start=0, limit=1
+                username=email, start=0, limit=20
             )
             if not isinstance(response, list):
                 return None
