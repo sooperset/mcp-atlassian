@@ -91,6 +91,47 @@ def _prefix_code_block(code_block: str, prefix: str) -> str:
     return code_block.replace("\n", f"\n{prefix}")
 
 
+def _restore_inline_code_macro(
+    text: str, start: int, placeholder: str, code_block: str
+) -> str | None:
+    """Restore a code macro that markdownify collapsed into an inline span.
+
+    Inside a table cell markdownify flattens the pre/code wrapper onto the
+    row's line as a backtick span, where a multi-line fence would split the
+    row. Mirror markdownify's own handling of pre/code in that position:
+    collapse the body onto one line inside a span wide enough for any
+    backtick run it contains.
+    """
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", start)
+    if line_end == -1:
+        line_end = len(text)
+
+    line_before = text[line_start:start]
+    line_after = text[start + len(placeholder) : line_end]
+    opening = re.search(r"`+[^`\r\n]*$", line_before)
+    closing = re.match(r"[ \t]*`+", line_after)
+    stored_opening = re.match(r"(?P<fence>`+)[^\r\n]*\n", code_block)
+    if not opening or not closing or not stored_opening:
+        return None
+
+    stored_fence = stored_opening.group("fence")
+    if not code_block.endswith(stored_fence):
+        return None
+
+    body = code_block[stored_opening.end() : -len(stored_fence)]
+    collapsed = body.strip("\n").replace("\n", " ")
+    longest_backtick_run = max(
+        (len(run) for run in re.findall(r"`+", collapsed)),
+        default=0,
+    )
+    delimiter = "`" * max(3, longest_backtick_run + 1)
+
+    span_start = line_start + opening.start()
+    span_end = start + len(placeholder) + closing.end()
+    return f"{text[:span_start]}{delimiter} {collapsed} {delimiter}{text[span_end:]}"
+
+
 def _restore_code_macro_block(
     text: str, start: int, placeholder: str, code_block: str
 ) -> str:
@@ -103,6 +144,9 @@ def _restore_code_macro_block(
     line_before = text[line_start:start]
     line_after = text[start + len(placeholder) : line_end]
     if line_after.strip():
+        inline = _restore_inline_code_macro(text, start, placeholder, code_block)
+        if inline is not None:
+            return inline
         return text.replace(placeholder, code_block, 1)
 
     opening_line_end = line_start - 1

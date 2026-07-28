@@ -173,6 +173,59 @@ def test_code_macro_after_blockquote_paragraph_stays_inside_single_fenced_block(
     assert markdown.count("```") == 2
 
 
+def test_code_macro_in_table_cell_collapses_to_inline_span():
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        "<ac:plain-text-body><![CDATA[run me]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(
+        "<table><tr><th>What</th><th>Command</th></tr>"
+        f"<tr><td>run it</td><td>{macro}</td></tr></table>"
+    )
+
+    # A fence cannot exist inside a table row; the body collapses onto the
+    # row's line as an inline span, mirroring markdownify's own handling
+    assert markdown == (
+        "| What | Command |\n| --- | --- |\n| run it | ``` run me ``` |"
+    )
+
+
+def test_multiline_code_macro_in_table_cell_keeps_row_intact():
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        "<ac:plain-text-body><![CDATA[run me\nsecond line]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(
+        "<table><tr><th>What</th><th>Command</th></tr>"
+        f"<tr><td>run it</td><td>{macro}</td></tr></table>"
+    )
+
+    assert markdown == (
+        "| What | Command |\n| --- | --- |\n| run it | ``` run me second line ``` |"
+    )
+
+
+def test_code_macro_in_table_cell_with_backticks_widens_span():
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">text</ac:parameter>'
+        "<ac:plain-text-body><![CDATA[print('```')]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(
+        f"<table><tr><th>H</th></tr><tr><td>{macro}</td></tr></table>"
+    )
+
+    assert markdown == ("| H |\n| --- |\n| ```` print('```') ```` |")
+
+
 def test_code_macro_without_language_still_fenced():
     macro = (
         '<ac:structured-macro ac:name="noformat">'
