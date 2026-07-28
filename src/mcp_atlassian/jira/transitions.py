@@ -20,6 +20,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
     def get_available_transitions(
         self,
         issue_key: str,
+        *,
         expand_fields: bool = False,
     ) -> list[dict[str, Any]]:
         """
@@ -106,11 +107,12 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                     transition.get("isConditional")
                 )
 
-                fields = transition.get("fields", {})
-                if isinstance(fields, dict):
-                    required_fields = self._extract_required_fields(fields)
-                    if required_fields:
-                        transition_info["required_fields"] = required_fields
+                if expand_fields:
+                    fields = transition.get("fields", {})
+                    if isinstance(fields, dict):
+                        required_fields = self._extract_required_fields(fields)
+                        if required_fields:
+                            transition_info["required_fields"] = required_fields
 
                 result.append(transition_info)
 
@@ -196,7 +198,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         return result
 
     def get_transitions(
-        self, issue_key: str, expand_fields: bool = False
+        self, issue_key: str, *, expand_fields: bool = False
     ) -> list[dict[str, Any]]:
         """
         Get the raw transitions data for an issue.

@@ -842,14 +842,32 @@ class TestTransitionsMixin:
         self, transitions_mixin: TransitionsMixin
     ):
         """Test get_available_transitions uses lightweight call by default."""
-        mock_response = {"transitions": []}
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "11",
+                    "name": "Done",
+                    "hasScreen": True,
+                    "fields": {
+                        "resolution": {
+                            "required": True,
+                            "name": "Resolution",
+                            "allowedValues": [{"id": "1", "name": "Fixed"}],
+                        }
+                    },
+                }
+            ]
+        }
         transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
 
-        transitions_mixin.get_available_transitions("TEST-123")
+        result = transitions_mixin.get_available_transitions("TEST-123")
 
         transitions_mixin.jira.get_issue_transitions_full.assert_called_once_with(
             "TEST-123"
         )
+        assert result == [
+            {"id": "11", "name": "Done", "has_screen": True, "is_conditional": False}
+        ]
 
     def test_get_available_transitions_with_expand(
         self, transitions_mixin: TransitionsMixin
@@ -898,7 +916,9 @@ class TestTransitionsMixin:
         }
         transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
 
-        result = transitions_mixin.get_available_transitions("TEST-123")
+        result = transitions_mixin.get_available_transitions(
+            "TEST-123", expand_fields=True
+        )
 
         assert len(result) == 1
         assert result[0]["has_screen"] is True
