@@ -3845,13 +3845,13 @@ async def test_get_transitions_tool_lightweight_default(jira_client, mock_jira_f
     content = json.loads(response.content[0].text)
     assert content == [{"id": "11", "name": "Done", "to_status": "Done"}]
     mock_jira_fetcher.get_available_transitions.assert_called_once_with(
-        "TEST-123", expand=None
+        "TEST-123", expand_fields=False
     )
 
 
 @pytest.mark.anyio
 async def test_get_transitions_tool_with_expand_fields(jira_client, mock_jira_fetcher):
-    """jira_get_transitions with expand_fields=true passes expand."""
+    """jira_get_transitions with expand_fields=true requests metadata."""
     mock_jira_fetcher.get_available_transitions.return_value = [
         {"id": "11", "name": "Done", "to_status": "Done", "has_screen": True}
     ]
@@ -3865,7 +3865,7 @@ async def test_get_transitions_tool_with_expand_fields(jira_client, mock_jira_fe
         {"id": "11", "name": "Done", "to_status": "Done", "has_screen": True}
     ]
     mock_jira_fetcher.get_available_transitions.assert_called_once_with(
-        "TEST-123", expand="transitions.fields"
+        "TEST-123", expand_fields=True
     )
 
 
