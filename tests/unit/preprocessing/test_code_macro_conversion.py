@@ -71,6 +71,40 @@ def test_code_macro_preserves_boundary_newlines():
     assert markdown == expected_block
 
 
+def test_code_macro_nested_in_list_keeps_list_structure():
+    code_body = "first line\n  indented line\nlast line"
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        f"<ac:plain-text-body><![CDATA[{code_body}]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(f"<ul><li>{macro}</li></ul>")
+
+    # Every line after the marker is indented to the list item's content
+    # column, so the whole fence stays inside the item
+    assert markdown == (
+        "* ```python\n  first line\n    indented line\n  last line\n  ```"
+    )
+
+
+def test_code_macro_nested_in_blockquote_keeps_quote_prefix():
+    code_body = "first line\n```\nlast line"
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">text</ac:parameter>'
+        f"<ac:plain-text-body><![CDATA[{code_body}]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(f"<blockquote>{macro}</blockquote>")
+
+    # The quote marker repeats on every line (a bare line would end the
+    # blockquote), and the embedded backticks still lengthen the fence
+    assert markdown == ("> ````text\n> first line\n> ```\n> last line\n> ````")
+
+
 def test_code_macro_without_language_still_fenced():
     macro = (
         '<ac:structured-macro ac:name="noformat">'

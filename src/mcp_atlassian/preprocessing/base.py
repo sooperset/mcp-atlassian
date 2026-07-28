@@ -86,6 +86,35 @@ def _fenced_code_block(code_text: str, language: str) -> str:
     return f"{fence}{language}\n{code_text}{closing_newline}{fence}"
 
 
+_CONTAINER_MARKERS_RE = re.compile(
+    r"(?:[ \t]*(?:>|[*+-][ \t]|\d{1,9}[.)][ \t]))*[ \t]*"
+)
+
+
+def _restore_code_macro_blocks(markdown_text: str, code_blocks: dict[str, str]) -> str:
+    """Replace code-macro placeholders with their fenced blocks.
+
+    Inside a list item or blockquote, markdownify puts the container prefix
+    only on the placeholder's own line. Every restored line repeats that
+    context: blockquote markers verbatim (a bare line would end the quote),
+    list markers as equivalent indentation (repeating them would start new
+    items), so the fence and body stay inside the container.
+    """
+    placeholders = re.compile(
+        "|".join(re.escape(placeholder) for placeholder in code_blocks)
+    )
+
+    def restore(match: re.Match[str]) -> str:
+        line_start = markdown_text.rfind("\n", 0, match.start()) + 1
+        prefix = markdown_text[line_start : match.start()]
+        markers_match = _CONTAINER_MARKERS_RE.match(prefix)
+        markers = markers_match.group() if markers_match else ""
+        continuation = "".join(char if char in ">\t" else " " for char in markers)
+        return code_blocks[match.group()].replace("\n", "\n" + continuation)
+
+    return placeholders.sub(restore, markdown_text)
+
+
 class ConfluenceClient(Protocol):
     """Protocol for Confluence client."""
 
@@ -165,13 +194,8 @@ class BasePreprocessor:
                 code_language_callback=_code_language_from_element,
             )
             if code_macro_blocks:
-                placeholders = re.compile(
-                    "|".join(
-                        re.escape(placeholder) for placeholder in code_macro_blocks
-                    )
-                )
-                processed_markdown = placeholders.sub(
-                    lambda match: code_macro_blocks[match.group()], processed_markdown
+                processed_markdown = _restore_code_macro_blocks(
+                    processed_markdown, code_macro_blocks
                 )
 
             return processed_html, processed_markdown
