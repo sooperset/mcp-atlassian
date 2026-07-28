@@ -2,7 +2,10 @@
 
 import logging
 import os
-import re
+from typing import Annotated
+
+from pydantic import Field, TypeAdapter
+from pydantic_core import SchemaError
 
 logger = logging.getLogger("mcp-atlassian.env")
 
@@ -124,8 +127,8 @@ def get_regex_env(env_var_name: str, default: str) -> str:
     if not raw:
         return default
     try:
-        re.compile(raw)
-    except re.error as exc:
+        TypeAdapter(Annotated[str, Field(pattern=raw)])
+    except SchemaError as exc:
         logger.warning(
             "Invalid regex for %s=%r (%s); using default %r",
             env_var_name,

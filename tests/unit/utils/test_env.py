@@ -236,9 +236,16 @@ class TestGetRegexEnv:
         monkeypatch.setenv("TEST_PATTERN", r"^[A-Z0-9][A-Z0-9_]*$")
         assert get_regex_env("TEST_PATTERN", "^A$") == r"^[A-Z0-9][A-Z0-9_]*$"
 
-    def test_uncompilable_pattern_falls_back_with_warning(self, monkeypatch, caplog):
+    def test_invalid_pattern_falls_back_with_warning(self, monkeypatch, caplog):
         """An invalid regex is ignored so import-time consumers keep working."""
         monkeypatch.setenv("TEST_PATTERN", "^[A-Z")
+        with caplog.at_level(logging.WARNING):
+            assert get_regex_env("TEST_PATTERN", "^A$") == "^A$"
+        assert "TEST_PATTERN" in caplog.text
+
+    def test_pydantic_unsupported_pattern_falls_back(self, monkeypatch, caplog):
+        """Patterns unsupported by Pydantic's regex engine must also fall back."""
+        monkeypatch.setenv("TEST_PATTERN", r"(?=A)")
         with caplog.at_level(logging.WARNING):
             assert get_regex_env("TEST_PATTERN", "^A$") == "^A$"
         assert "TEST_PATTERN" in caplog.text
