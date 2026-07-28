@@ -212,6 +212,11 @@ Get available status transitions for a Jira issue.
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `expand_fields` | `boolean` | No | Whether to expand transition field metadata. When true, requests required field details (allowed values, schema) for each transition. Defaults to false (lightweight). |
+
+<Note>
+`required_fields` covers only transition **screen** fields. Jira workflow **validators** (e.g. "Time Spent required") are not exposed through the REST API — a transition may still be rejected even when all `required_fields` are satisfied.
+</Note>
+
 ---
 
 ### Get All Projects
