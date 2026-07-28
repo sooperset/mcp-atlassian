@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import posixpath
 from collections.abc import Iterable
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from mcp.server.auth.provider import (
@@ -32,20 +34,34 @@ def parse_env_list(raw: str | None) -> list[str] | None:
 
 def _redirect_target(uri: str) -> tuple[str, str, int | None, str] | None:
     """Return the origin and route used by a redirect URI."""
-    parsed = urlsplit(uri)
-    if not parsed.scheme or not parsed.hostname:
-        return None
-
     try:
+        parsed = urlsplit(uri)
+        hostname = parsed.hostname
         port = parsed.port
     except ValueError:
+        return None
+    if not parsed.scheme or not hostname:
         return None
 
     scheme = parsed.scheme.lower()
     if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
         port = None
 
-    return scheme, parsed.hostname.lower(), port, parsed.path.rstrip("/") or "/"
+    hostname = hostname.rstrip(".").lower()
+    try:
+        hostname = hostname.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    try:
+        hostname = str(ipaddress.ip_address(hostname))
+    except ValueError:
+        pass
+
+    path = posixpath.normpath(unquote(parsed.path or "/"))
+    if not path.startswith("/"):
+        path = f"/{path}"
+
+    return scheme, hostname, port, path.rstrip("/") or "/"
 
 
 def _callback_uri(base_url: str, redirect_path: str) -> str:

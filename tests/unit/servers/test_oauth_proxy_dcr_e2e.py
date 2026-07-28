@@ -128,15 +128,26 @@ async def test_oauth_proxy_rejects_unregistered_redirect_uri(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "redirect_uri",
+    [
+        "https://mcp.test/callback",
+        "https://mcp.test/callback/",
+        "https://mcp.test/%63allback",
+        "https://mcp.test/other/../callback",
+        "https://mcp.test.:443/callback",
+    ],
+)
 async def test_oauth_proxy_rejects_own_callback_as_dcr_redirect_uri(
     oauth_proxy_testbed: OAuthProxyTestbed,
+    redirect_uri: str,
 ) -> None:
     """A DCR client cannot use the proxy's IdP callback as its callback."""
     response = await oauth_proxy_testbed.harness._client.post(
         "/register",
         json={
             "client_name": "callback-collision-client",
-            "redirect_uris": ["https://mcp.test/callback"],
+            "redirect_uris": [redirect_uri],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
             "token_endpoint_auth_method": "none",
