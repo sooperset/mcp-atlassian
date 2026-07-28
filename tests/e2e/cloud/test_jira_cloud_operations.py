@@ -327,7 +327,7 @@ class TestJiraCloudTransitions:
         resource_tracker.add_jira_issue(issue.key)
 
         transitions = jira_fetcher.get_available_transitions(
-            issue.key, expand="transitions.fields"
+            issue.key, expand_fields=True
         )
         assert len(transitions) > 0
         assert all(isinstance(t["has_screen"], bool) for t in transitions)
@@ -350,8 +350,9 @@ class TestJiraCloudTransitions:
         jira_fetcher.transition_issue(
             issue.key,
             target_id,
-            comment=f"Cloud transition comment {uid}",
-            update_data={"worklog": [{"add": {"timeSpent": "1m"}}]},
+            update_data={
+                "comment": [{"add": {"body": f"Cloud supplemental update {uid}"}}]
+            },
         )
 
         updated = jira_fetcher.get_issue(issue.key)
