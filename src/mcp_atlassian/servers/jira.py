@@ -21,6 +21,7 @@ from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.servers.helpers import resolve_transition
 from mcp_atlassian.utils.decorators import check_write_access
+from mcp_atlassian.utils.env import get_regex_env
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
@@ -36,8 +37,15 @@ logger = logging.getLogger(__name__)
 # Underscores are also allowed to support non-standard project key formats.
 # Server/Data Center may use hyphens between numeric suffix segments
 # (e.g., B7-214-68901), but every segment must contain digits.
-ISSUE_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*$"
-PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+$"
+# A Server/Data Center instance with a custom `jira.projectkey.pattern` can use
+# keys the defaults reject (leading digit, single character, lowercase). Such a
+# deployment overrides these with JIRA_ISSUE_KEY_PATTERN /
+# JIRA_PROJECT_KEY_PATTERN; both are read once at import time, so they must be
+# set in the environment (or .env) before the server starts.
+ISSUE_KEY_PATTERN = get_regex_env(
+    "JIRA_ISSUE_KEY_PATTERN", r"^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*$"
+)
+PROJECT_KEY_PATTERN = get_regex_env("JIRA_PROJECT_KEY_PATTERN", r"^[A-Z][A-Z0-9_]+$")
 
 jira_mcp = ErrorPreservingFastMCP(
     name="Jira MCP Service",
