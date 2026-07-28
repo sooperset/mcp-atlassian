@@ -20,7 +20,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
     def get_available_transitions(
         self,
         issue_key: str,
-        expand: str | None = None,
+        expand_fields: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Get the available status transitions for an issue.
@@ -41,10 +41,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
-            expand: Optional expand parameter. Pass
-                ``"transitions.fields"`` to include required
-                field metadata (allowed values, schema) with
-                each transition. Defaults to None (lightweight).
+            expand_fields: Whether to request required field metadata
+                (allowed values, schema) for each transition. Defaults
+                to False, which keeps the response lightweight.
 
         Returns:
             List of available transitions with id, name,
@@ -56,7 +55,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             Exception: If there is an error getting transitions
         """
         try:
-            transitions_data = self.get_transitions(issue_key, expand=expand)
+            transitions_data = self.get_transitions(
+                issue_key, expand_fields=expand_fields
+            )
             result: list[dict[str, Any]] = []
 
             for transition in transitions_data:
@@ -169,9 +170,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         return required_fields
 
     @staticmethod
-    def _normalize_allowed_value(value: Any) -> dict[str, Any]:
+    def _normalize_allowed_value(value: Any) -> Any:
         """
-        Normalize a single allowed value to a dict with id, name, value.
+        Preserve an allowed value and fill in its display name when needed.
 
         Jira returns allowed values in multiple shapes:
         - Scalar (str, int): ``"Fixed"``
@@ -182,23 +183,20 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             value: A raw allowed value from the Jira API.
 
         Returns:
-            A dict with ``id``, ``name``, ``value``, and optionally
-            ``description`` keys.
+            The original scalar value, or a shallow copy of the original
+            mapping. Mappings with a ``value`` label get that label copied
+            to ``name`` when Jira omitted ``name``.
         """
         if not isinstance(value, dict):
-            scalar = str(value)
-            return {"id": scalar, "name": scalar, "value": scalar}
+            return value
 
-        vid = str(value.get("id", value.get("optionId", "")))
-        vname = str(value.get("name", value.get("value", "")))
-        vvalue = str(value.get("value", value.get("name", vname)))
-        result: dict[str, Any] = {"id": vid, "name": vname, "value": vvalue}
-        if "description" in value and value["description"]:
-            result["description"] = str(value["description"])
+        result = dict(value)
+        if not result.get("name") and result.get("value") is not None:
+            result["name"] = result["value"]
         return result
 
     def get_transitions(
-        self, issue_key: str, expand: str | None = None
+        self, issue_key: str, expand_fields: bool = False
     ) -> list[dict[str, Any]]:
         """
         Get the raw transitions data for an issue.
@@ -209,13 +207,18 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
-            expand: Optional expand parameter (e.g. 'transitions.fields'
-                to include field metadata with required flags and allowed values)
+            expand_fields: Whether to include transition field metadata.
+                Defaults to False, which keeps the response lightweight.
 
         Returns:
             Raw transitions data from the API with full 'to' status objects
         """
-        response = self.jira.get_issue_transitions_full(issue_key, expand=expand)
+        if expand_fields:
+            response = self.jira.get_issue_transitions_full(
+                issue_key, expand="transitions.fields"
+            )
+        else:
+            response = self.jira.get_issue_transitions_full(issue_key)
         if isinstance(response, dict):
             transitions = response.get("transitions", [])
             if isinstance(transitions, list):
