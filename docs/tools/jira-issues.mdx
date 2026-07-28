@@ -17,7 +17,7 @@ Get details of a specific Jira issue.
 | `comment_limit` | `integer` | No | Maximum number of comments to include (0 or null for no comments) |
 | `properties` | `string` | No | (Optional) A comma-separated list of issue properties to return |
 | `update_history` | `boolean` | No | Whether to update the issue view history for the requesting user |
-| `include` | `string` | No | (Optional) Comma-separated sections to inline in the response, avoiding extra tool calls. Supported: all, remote_links, transitions, watchers, changelog, comments, worklogs |
+| `include` | `string` | No | (Optional) Comma-separated sections to inline in the response, avoiding extra tool calls. Supported: all, remote_links, transitions, watchers, changelog, comments, worklogs. Note: transitions inlined via include are lightweight (no required_fields). Use jira_get_transitions with expand_fields=true for full field metadata. |
 | `use_display_names` | `boolean` | No | When true, custom field keys in the output use human-readable display names (e.g. 'Story Points') instead of opaque IDs (e.g. 'customfield_10243'). The 'names' expansion is added automatically. Standard fields are unaffected. |
 **Example:**
 
@@ -189,7 +189,7 @@ Transition a Jira issue to a new status.
 | `transition_id` | `string` | Yes | ID of the transition to perform. Use the jira_get_transitions tool first to get the available transition IDs for the issue. Example values: '11', '21', '31' |
 | `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: '`{"resolution": {"name": "Fixed"}}`' |
 | `comment` | `string` | No | (Optional) Comment to add during the transition in Markdown format. This will be visible in the issue history. Rejected for projects listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be customer-visible on JSM and cannot be forced internal): transition without a comment, then post an internal note with jira_add_comment(public=false). |
-| `update_data` | `string` | No | (Optional) JSON string of Jira update operations to include in the transition. Use this for worklogs and other transition-time operations. Example: `{"worklog": [{"add": {"timeSpent": "1h"}}]}` |
+| `update_data` | `string` | No | (Optional) JSON string of Jira update operations to include in the transition. Use this for worklogs and other transition-time operations. Example: '`{"worklog": [{"add": {"timeSpent": "1h"}}]}`' |
 **Example:**
 
 ```json
@@ -206,14 +206,16 @@ Use `jira_get_transitions` first to see available transitions for the current is
 
 Get available status transitions for a Jira issue.
 
-<Warning>`required_fields` covers only transition screen fields. Jira workflow validators (e.g. "Time Spent required") are not exposed via REST API and may cause a rejection even when all `required_fields` are satisfied.</Warning>
-
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `expand_fields` | `boolean` | No | Whether to include required field metadata (allowed values, schema) for each transition. Defaults to false (lightweight). |
+| `expand_fields` | `boolean` | No | Whether to expand transition field metadata. When true, requests required field details (allowed values, schema) for each transition. Defaults to false (lightweight). |
+
+<Note>
+`required_fields` covers only transition **screen** fields. Jira workflow **validators** (e.g. "Time Spent required") are not exposed through the REST API — a transition may still be rejected even when all `required_fields` are satisfied.
+</Note>
 
 ---
 
