@@ -86,33 +86,100 @@ def _fenced_code_block(code_text: str, language: str) -> str:
     return f"{fence}{language}\n{code_text}{closing_newline}{fence}"
 
 
-_CONTAINER_MARKERS_RE = re.compile(
-    r"(?:[ \t]*(?:>|[*+-][ \t]|\d{1,9}[.)][ \t]))*[ \t]*"
-)
+def _markdown_container_prefix(line: str) -> tuple[str, str]:
+    """Return a Markdown container prefix and its continuation indentation."""
+    prefix = ""
+    continuation = ""
+    position = 0
+
+    while position < len(line):
+        quote_match = re.match(r">[ ]?", line[position:])
+        if quote_match:
+            token = quote_match.group()
+            prefix += token
+            continuation += token
+            position += len(token)
+            continue
+
+        list_match = re.match(r"[ ]*(?:[*+-]|\d+[.)])[ ]+", line[position:])
+        if not list_match:
+            break
+
+        token = list_match.group()
+        prefix += token
+        continuation += " " * len(token)
+        position += len(token)
+
+    return prefix, continuation
+
+
+def _prefix_code_block(code_block: str, prefix: str) -> str:
+    """Add a Markdown container prefix to every line in a code block."""
+    return code_block.replace("\n", f"\n{prefix}")
+
+
+def _restore_code_macro_block(
+    text: str, start: int, placeholder: str, code_block: str
+) -> str:
+    """Restore one code block while retaining its Markdown containers."""
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", start)
+    if line_end == -1:
+        line_end = len(text)
+
+    line_before = text[line_start:start]
+    line_after = text[start + len(placeholder) : line_end]
+    container_prefix, continuation_prefix = _markdown_container_prefix(line_before)
+    before_content = line_before[len(container_prefix) :]
+    after_content = line_after.lstrip()
+    has_container = bool(container_prefix)
+
+    if before_content.strip():
+        block_prefix = continuation_prefix
+        if has_container:
+            blank_line_prefix = continuation_prefix.rstrip()
+            replacement_prefix = f"\n{blank_line_prefix}\n{block_prefix}"
+        else:
+            replacement_prefix = f"\n\n{block_prefix}"
+    else:
+        block_prefix = continuation_prefix if has_container else ""
+        replacement_prefix = ""
+
+    restored = replacement_prefix + _prefix_code_block(code_block, block_prefix)
+
+    if after_content:
+        if has_container:
+            blank_line_prefix = continuation_prefix.rstrip()
+            restored += f"\n{blank_line_prefix}\n{continuation_prefix}{after_content}"
+        else:
+            restored += f"\n\n{after_content}"
+
+    text_before = text[:start]
+    if before_content.strip():
+        text_before = text_before.rstrip(" ")
+
+    suffix_start = line_end if after_content else start + len(placeholder)
+    return text_before + restored + text[suffix_start:]
 
 
 def _restore_code_macro_blocks(markdown_text: str, code_blocks: dict[str, str]) -> str:
-    """Replace code-macro placeholders with their fenced blocks.
+    """Replace code-macro placeholders with fenced blocks in Markdown context."""
+    for placeholder, code_block in sorted(
+        code_blocks.items(),
+        key=lambda item: markdown_text.rfind(item[0]),
+        reverse=True,
+    ):
+        placeholder_start = markdown_text.rfind(placeholder)
+        if placeholder_start == -1:
+            continue
+        markdown_text = _restore_code_macro_block(
+            markdown_text,
+            placeholder_start,
+            placeholder,
+            code_block,
+        )
 
-    Inside a list item or blockquote, markdownify puts the container prefix
-    only on the placeholder's own line. Every restored line repeats that
-    context: blockquote markers verbatim (a bare line would end the quote),
-    list markers as equivalent indentation (repeating them would start new
-    items), so the fence and body stay inside the container.
-    """
-    placeholders = re.compile(
-        "|".join(re.escape(placeholder) for placeholder in code_blocks)
-    )
-
-    def restore(match: re.Match[str]) -> str:
-        line_start = markdown_text.rfind("\n", 0, match.start()) + 1
-        prefix = markdown_text[line_start : match.start()]
-        markers_match = _CONTAINER_MARKERS_RE.match(prefix)
-        markers = markers_match.group() if markers_match else ""
-        continuation = "".join(char if char in ">\t" else " " for char in markers)
-        return code_blocks[match.group()].replace("\n", "\n" + continuation)
-
-    return placeholders.sub(restore, markdown_text)
+    return markdown_text
 
 
 class ConfluenceClient(Protocol):
