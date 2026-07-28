@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import get_type_hints
 
 import httpx
 import pytest
@@ -29,11 +31,11 @@ class OAuthProxyTestbed:
     issuer: FakeUpstreamIssuer
 
 
-def _build_proxy_app(
+def _build_proxy(
     upstream_base_url: str,
     proxy_base_url: AnyHttpUrl | str,
     redirect_path: str | None = "/callback",
-) -> Starlette:
+) -> HardenedOAuthProxy:
     provider_kwargs: dict[str, object] = {
         "upstream_authorization_endpoint": f"{upstream_base_url}/authorize",
         "upstream_token_endpoint": f"{upstream_base_url}/token",
@@ -49,10 +51,18 @@ def _build_proxy_app(
     if redirect_path is not None:
         provider_kwargs["redirect_path"] = redirect_path
 
-    provider = HardenedOAuthProxy(
+    return HardenedOAuthProxy(
         base_url=proxy_base_url,
         **provider_kwargs,
     )
+
+
+def _build_proxy_app(
+    upstream_base_url: str,
+    proxy_base_url: AnyHttpUrl | str,
+    redirect_path: str | None = "/callback",
+) -> Starlette:
+    provider = _build_proxy(upstream_base_url, proxy_base_url, redirect_path)
     return Starlette(routes=provider.get_routes("/mcp"))
 
 
@@ -212,6 +222,49 @@ async def test_oauth_proxy_preserves_fastmcp_callback_constructor_contract(
     assert 400 <= collision_response.status_code < 500
     assert "callback" in collision_response.text.lower()
     assert 200 <= valid_response.status_code < 300
+
+
+def test_oauth_proxy_preserves_fastmcp_constructor_signature() -> None:
+    """The subclass must retain FastMCP's URL and callback-default contract."""
+    type_hints = get_type_hints(HardenedOAuthProxy.__init__)
+    signature = inspect.signature(HardenedOAuthProxy.__init__)
+
+    assert type_hints["base_url"] == AnyHttpUrl | str
+    assert signature.parameters["redirect_path"].default is None
+
+
+def test_oauth_proxy_normalizes_omitted_callback_path_after_super() -> None:
+    """Collision checks use FastMCP-normalized values after initialization."""
+    provider = _build_proxy(
+        "https://issuer.test", AnyHttpUrl("https://mcp.test"), redirect_path=None
+    )
+
+    assert str(provider.base_url) == "https://mcp.test/"
+    assert provider._redirect_path == "/auth/callback"
+
+
+@pytest.mark.anyio
+async def test_oauth_proxy_rejects_default_callback_with_subpath_base_url() -> None:
+    """The inherited callback default includes a path-bearing public base URL."""
+    proxy_app = _build_proxy_app(
+        "https://issuer.test", AnyHttpUrl("https://mcp.test/prefix"), None
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=proxy_app), base_url="https://mcp.test"
+    ) as client:
+        response = await client.post(
+            "/register",
+            json={
+                "client_name": "subpath-collision-client",
+                "redirect_uris": ["https://mcp.test/prefix/auth/callback"],
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+                "token_endpoint_auth_method": "none",
+            },
+        )
+
+    assert 400 <= response.status_code < 500
+    assert "callback" in response.text.lower()
 
 
 @pytest.mark.anyio
