@@ -93,6 +93,7 @@ class TestTransitionsMixin:
         assert result[0]["id"] == "10"
         assert result[0]["name"] == "In Progress"
         assert result[0]["to_status"] == "In Progress"
+        assert result[0]["to"]["name"] == "In Progress"
         assert result[0]["has_screen"] is False
         assert "required_fields" not in result[0]
 
@@ -1008,3 +1009,64 @@ class TestTransitionsMixin:
                 "update": {"worklog": [{"add": {"timeSpent": "1h"}}]},
             },
         )
+
+    def test_get_available_transitions_to_object_with_status_category(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """get_available_transitions returns structured 'to' with statusCategory."""
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "41",
+                    "name": "Send to team",
+                    "to": {
+                        "id": "3",
+                        "name": "In Progress",
+                        "statusCategory": {
+                            "id": 4,
+                            "key": "indeterminate",
+                            "name": "In Progress",
+                        },
+                    },
+                    "hasScreen": False,
+                },
+            ],
+        }
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
+
+        result = transitions_mixin.get_available_transitions("TEST-123")
+
+        assert len(result) == 1
+        # Backward-compatible string
+        assert result[0]["to_status"] == "In Progress"
+        # Structured object
+        to_obj = result[0]["to"]
+        assert to_obj["id"] == "3"
+        assert to_obj["name"] == "In Progress"
+        assert to_obj["statusCategory"]["id"] == "4"
+        assert to_obj["statusCategory"]["key"] == "indeterminate"
+        assert to_obj["statusCategory"]["name"] == "In Progress"
+
+    def test_get_available_transitions_to_object_no_status_category(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """'to' object without statusCategory omits the key."""
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "51",
+                    "name": "Resolve",
+                    "to": {"id": "5", "name": "Resolved"},
+                    "hasScreen": True,
+                },
+            ],
+        }
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
+
+        result = transitions_mixin.get_available_transitions("TEST-123")
+
+        assert len(result) == 1
+        assert result[0]["to_status"] == "Resolved"
+        assert result[0]["to"]["id"] == "5"
+        assert result[0]["to"]["name"] == "Resolved"
+        assert "statusCategory" not in result[0]["to"]

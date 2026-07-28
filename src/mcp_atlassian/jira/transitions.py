@@ -70,15 +70,28 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                     "name": transition.get("name", ""),
                 }
 
-                # Handle "to" field in different formats
+                # Handle "to" field in different formats.
+                # Build a structured "to" object (id, name, statusCategory)
+                # when the raw API returns a full dict; fall back to a
+                # plain string when only a name is available.
                 to_status = None
-                # Option 1: 'to' field with sub-fields
                 if "to" in transition and isinstance(transition["to"], dict):
-                    to_status = transition["to"].get("name")
-                # Option 2: 'to_status' field directly
+                    to_obj = transition["to"]
+                    to_status = to_obj.get("name")
+                    to_info: dict[str, Any] = {
+                        "id": str(to_obj.get("id", "")),
+                        "name": to_obj.get("name", ""),
+                    }
+                    sc = to_obj.get("statusCategory")
+                    if isinstance(sc, dict):
+                        to_info["statusCategory"] = {
+                            "id": str(sc.get("id", "")),
+                            "key": sc.get("key", ""),
+                            "name": sc.get("name", ""),
+                        }
+                    transition_info["to"] = to_info
                 elif "to_status" in transition:
                     to_status = transition.get("to_status")
-                # Option 3: 'status' field directly
                 elif "status" in transition:
                     to_status = transition.get("status")
 
