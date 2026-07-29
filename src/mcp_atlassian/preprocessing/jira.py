@@ -357,7 +357,7 @@ class JiraPreprocessor(BasePreprocessor):
         # Colored text
         output = re.sub(
             r"\{color:([^}]+)\}([\s\S]*?)\{color\}",
-            r"<span style=\"color:\1\">\2</span>",
+            r'<span style="color:\1">\2</span>',
             output,
             flags=re.MULTILINE,
         )

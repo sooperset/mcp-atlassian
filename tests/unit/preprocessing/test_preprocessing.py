@@ -76,6 +76,15 @@ def test_clean_jira_issue_content(preprocessor_with_jira):
     assert "test comment" in cleaned_comment.lower()
 
 
+def test_clean_jira_text_preserves_colored_heading(preprocessor_with_jira):
+    """Preserve Jira Server/DC text colors in Markdown headings."""
+    result = preprocessor_with_jira.clean_jira_text(
+        "h1. {color:red}Test red header{color}"
+    )
+
+    assert result == '# <span style="color:red">Test red header</span>'
+
+
 def test_process_html_content_basic(preprocessor_with_confluence):
     """Test basic HTML content processing."""
     html = "<p>Simple text</p>"
@@ -1656,3 +1665,112 @@ class TestHtmlConversionCodeProtection:
         """Direct test of _convert_html_to_markdown with markdown code spans."""
         result = preprocessor._convert_html_to_markdown(md_input)
         assert expected_substr in result, f"Expected '{expected_substr}' in: {result!r}"
+
+
+class TestHtmlConversionColorProtection:
+    """Tests that HTML-to-Markdown conversion preserves colored spans."""
+
+    @pytest.fixture
+    def preprocessor(self):
+        return JiraPreprocessor(base_url="https://example.atlassian.net")
+
+    @pytest.mark.parametrize(
+        "html_input",
+        [
+            pytest.param(
+                '<span style="color:red">Red</span>',
+                id="named-color",
+            ),
+            pytest.param(
+                '<span style="color:#00ff7f">Green</span>',
+                id="hex-color",
+            ),
+            pytest.param(
+                '<span style="color:rgb(1, 2, 3)">Dark</span>',
+                id="functional-color",
+            ),
+            pytest.param(
+                "<span style='color:blue'>Blue</span>",
+                id="single-quotes",
+            ),
+            pytest.param(
+                '<SPAN CLASS="label" '
+                'STYLE="font-weight:bold; COLOR: purple">Purple</SPAN>',
+                id="case-and-additional-styles",
+            ),
+            pytest.param(
+                '<span data-kind="status" style="background:white; color:orange" '
+                'class="label">Orange</span>',
+                id="reordered-attributes",
+            ),
+        ],
+    )
+    def test_convert_html_to_markdown_preserves_colored_span(
+        self,
+        preprocessor,
+        html_input: str,
+    ):
+        """Leave text containing colored spans unchanged."""
+        result = preprocessor._convert_html_to_markdown(html_input)
+
+        assert result == html_input
+
+    def test_convert_html_to_markdown_preserves_multiple_colored_spans(
+        self,
+        preprocessor,
+    ):
+        """Preserve multiple colored spans without placeholder collisions."""
+        html_input = (
+            '<span style="color:red">Red</span> and '
+            '<span style="color:blue">Blue</span>'
+        )
+
+        result = preprocessor._convert_html_to_markdown(html_input)
+
+        assert result == html_input
+
+    def test_convert_html_to_markdown_preserves_nested_colored_spans(
+        self,
+        preprocessor,
+    ):
+        """Preserve nested colored spans as one complete HTML fragment."""
+        html_input = (
+            '<span style="color:red">Outer <span style="color:blue">Inner</span></span>'
+        )
+
+        result = preprocessor._convert_html_to_markdown(html_input)
+
+        assert result == html_input
+
+    def test_convert_html_to_markdown_preserves_surrounding_html(
+        self,
+        preprocessor,
+    ):
+        """Leave all HTML unchanged when the text contains a colored span."""
+        html_input = '<b>Important</b> <span style="color:red">Warning</span>'
+
+        result = preprocessor._convert_html_to_markdown(html_input)
+
+        assert result == html_input
+
+    def test_convert_html_to_markdown_does_not_preserve_non_color_span(
+        self,
+        preprocessor,
+    ):
+        """Keep the existing conversion behavior for spans without colors."""
+        result = preprocessor._convert_html_to_markdown(
+            '<span style="font-weight:bold">Plain</span>'
+        )
+
+        assert result == "Plain"
+
+    def test_convert_html_to_markdown_preserves_colored_span_inside_code(
+        self,
+        preprocessor,
+    ):
+        """Leave span-like HTML inside Markdown code unchanged."""
+        markdown_input = '`<span style="color:red">Code</span>`'
+
+        result = preprocessor._convert_html_to_markdown(markdown_input)
+
+        assert result == markdown_input

@@ -12,6 +12,15 @@ from markdownify import markdownify as md
 
 logger = logging.getLogger("mcp-atlassian")
 
+_COLORED_SPAN_PATTERN = re.compile(
+    r"""<span\b[^>]*\bstyle\s*=\s*(?:
+        "[^"]*(?<![\w-])color\s*:
+        |
+        '[^']*(?<![\w-])color\s*:
+    )""",
+    flags=re.IGNORECASE | re.VERBOSE,
+)
+
 
 def _extract_blocks(
     text: str,
@@ -487,7 +496,7 @@ class BasePreprocessor:
             "HTMLCVTINLINE",
         )
 
-        if re.search(r"<[^>]+>", text):
+        if re.search(r"<[^>]+>", text) and not _COLORED_SPAN_PATTERN.search(text):
             try:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
