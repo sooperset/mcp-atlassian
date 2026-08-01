@@ -1992,8 +1992,8 @@ async def update_issue(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "For 'description', provide text in Markdown format; on Jira Cloud, "
                 "use '{expand:Title}...{expand}' for a collapsible section. "
-                "For 'parent', provide an issue key or {'key': 'PROJ-123'} to set the parent, "
-                "or null to clear it. "
+                "For 'parent', provide an issue key or "
+                '{"key": "PROJ-123"} to set the parent, or null to clear it. '
                 'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             ),
             default=None,
