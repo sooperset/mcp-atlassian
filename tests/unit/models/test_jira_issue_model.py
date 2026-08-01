@@ -258,6 +258,23 @@ class TestJiraIssue:
         assert issue.security is None
         assert issue.worklog is None
 
+    def test_from_api_response_parses_environment(self):
+        """Test that the ``environment`` system field is parsed and surfaced."""
+        local_issue_data = {
+            "id": "10001",
+            "key": "PROJ-123",
+            "fields": {
+                "summary": "Test issue",
+                "environment": "Prod cluster eu-west-1",
+            },
+        }
+        issue = JiraIssue.from_api_response(
+            local_issue_data, requested_fields="environment"
+        )
+
+        assert issue.environment == "Prod cluster eu-west-1"
+        assert issue.to_simplified_dict()["environment"] == "Prod cluster eu-west-1"
+
     def test_from_api_response_builds_browse_url(self, jira_issue_data):
         """Test creating a browser URL from the configured Jira base URL."""
         issue = JiraIssue.from_api_response(
