@@ -449,21 +449,6 @@ class TestUserTokenMiddleware:
         assert "state" not in passed_scope  # No auth state added
 
     @pytest.mark.anyio
-    async def test_mcp_session_id_logged(
-        self, middleware, mock_scope, mock_receive, mock_send, caplog
-    ):
-        """Test that mcp-session-id header is logged for debugging."""
-        mock_scope["headers"] = [
-            (b"authorization", b"Bearer valid-token"),
-            (b"mcp-session-id", b"test-session-123"),
-        ]
-
-        with caplog.at_level(logging.DEBUG, logger="mcp-atlassian.server.main"):
-            await middleware(mock_scope, mock_receive, mock_send)
-
-        assert "MCP-Session-ID header found: test-session-123" in caplog.text
-
-    @pytest.mark.anyio
     async def test_valid_bearer_token_proceeds(
         self, middleware, mock_scope, mock_receive, mock_send
     ):

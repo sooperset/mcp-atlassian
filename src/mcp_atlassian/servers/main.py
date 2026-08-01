@@ -624,14 +624,6 @@ class UserTokenMiddleware:
                     f"UserTokenMiddleware: Extracted service headers: {list(service_headers.keys())}"
                 )
 
-            # Log mcp-session-id for debugging
-            mcp_session_id = headers.get(b"mcp-session-id")
-            if mcp_session_id:
-                session_id_str = mcp_session_id.decode("latin-1")
-                logger.debug(
-                    f"UserTokenMiddleware: MCP-Session-ID header found: {session_id_str}"
-                )
-
             logger.debug(
                 f"UserTokenMiddleware: Processing auth for {scope.get('path')}, "
                 f"AuthHeader present: {bool(auth_header_str)}, "
