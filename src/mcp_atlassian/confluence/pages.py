@@ -713,10 +713,15 @@ class PagesMixin(ConfluenceClient):
             ConfluencePage model containing the new page's data
 
         Raises:
-            ValueError: If a spaces filter is configured and space_key is not in it.
+            ValueError: If a spaces filter is configured and either space_key or
+                the parent page's space is not in it.
             Exception: If there is an error creating the page
         """
         self.enforce_spaces_filter(space_key)
+        # The parent decides where the page actually lands, so an allowed
+        # space_key alone is not enough to keep the write inside the boundary.
+        if parent_id:
+            self.enforce_page_spaces_filter(parent_id, v2_adapter=self._v2_adapter)
         try:
             # Determine body and representation based on content type
             if is_markdown:

@@ -3697,6 +3697,108 @@ class TestPagesSpacesFilterEnforcement:
 
         pages_mixin.confluence.create_page.assert_called_once()
 
+    def test_create_page_blocks_disallowed_parent(self, pages_mixin):
+        """An allowed space_key is not sufficient on its own: the parent is
+        what decides where the page actually lands, so a parent outside the
+        allowlist has to be rejected before anything is written."""
+        pages_mixin.config.spaces_filter = "PROJ"
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "space": {"key": "OTHERSPACE"}
+        }
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.create_page(
+                "PROJ",
+                "New Page",
+                "<p>Body</p>",
+                parent_id="222",
+                is_markdown=False,
+            )
+
+        pages_mixin.confluence.create_page.assert_not_called()
+
+    def test_create_page_allows_parent_in_configured_space(self, pages_mixin):
+        pages_mixin.config.spaces_filter = "PROJ"
+        pages_mixin.confluence.get_page_by_id.return_value = {"space": {"key": "PROJ"}}
+
+        with patch.object(
+            pages_mixin,
+            "get_page_content",
+            return_value=ConfluencePage(id="1", title="New Page"),
+        ):
+            pages_mixin.create_page(
+                "PROJ",
+                "New Page",
+                "<p>Body</p>",
+                parent_id="222",
+                is_markdown=False,
+            )
+
+        pages_mixin.confluence.create_page.assert_called_once()
+
+    def test_create_page_v2_blocks_disallowed_parent(self, pages_mixin):
+        """The OAuth Cloud route must resolve the parent through the v2
+        adapter rather than falling back to the v1 client."""
+        pages_mixin.config.spaces_filter = "PROJ"
+        mock_adapter = MagicMock()
+        mock_adapter.get_page_space_key.return_value = "OTHERSPACE"
+
+        with (
+            patch.object(
+                type(pages_mixin),
+                "_v2_adapter",
+                new_callable=lambda: property(lambda self: mock_adapter),
+            ),
+            pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"),
+        ):
+            pages_mixin.create_page(
+                "PROJ",
+                "New Page",
+                "<p>Body</p>",
+                parent_id="222",
+                is_markdown=False,
+            )
+
+        mock_adapter.get_page_space_key.assert_called_once_with("222")
+        mock_adapter.create_page.assert_not_called()
+        pages_mixin.confluence.get_page_by_id.assert_not_called()
+
+    def test_create_page_without_parent_makes_no_extra_lookup(self, pages_mixin):
+        """No parent means no parent resolution, so the request count for
+        existing callers is unchanged."""
+        pages_mixin.config.spaces_filter = "PROJ"
+        pages_mixin.confluence.get_page_by_id.reset_mock()
+
+        with patch.object(
+            pages_mixin,
+            "get_page_content",
+            return_value=ConfluencePage(id="1", title="New Page"),
+        ):
+            pages_mixin.create_page(
+                "PROJ", "New Page", "<p>Body</p>", is_markdown=False
+            )
+
+        pages_mixin.confluence.get_page_by_id.assert_not_called()
+
+    def test_copy_page_blocks_disallowed_destination_parent(self, pages_mixin):
+        """The destination parent binds the copy the same way the target
+        parent binds a move."""
+        pages_mixin.config.spaces_filter = "PROJ"
+        pages_mixin.confluence.get_page_by_id.side_effect = [
+            {"space": {"key": "PROJ"}},
+            {"space": {"key": "OTHERSPACE"}},
+        ]
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.copy_page(
+                source_page_id="987654321",
+                destination_space_key="PROJ",
+                new_title="Copy",
+                destination_parent_id="222",
+            )
+
+        pages_mixin.confluence.post.assert_not_called()
+
     def test_get_page_children_blocks_disallowed_space(self, pages_mixin):
         # Non-Atlassian-Cloud URL forces the v1 get_page_child_by_type path
         # rather than the Cloud v2 direct-children lookup.
