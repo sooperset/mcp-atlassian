@@ -66,7 +66,7 @@ def test_init_with_basic_auth():
         assert client._current_user_account_id is None
 
 
-def test_token_auth_disables_library_retry_with_header():
+def test_token_auth_disables_library_retry_with_header() -> None:
     """atlassian-python-api's ``retry_with_header`` performs an unbounded,
     header-driven retry that melts down when a gateway returns ``Retry-After: 0``
     (endless zero-delay retries surfacing a spurious 401). The client must

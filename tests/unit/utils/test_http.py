@@ -101,7 +101,7 @@ def test_configure_retry_respects_env_overrides(monkeypatch: pytest.MonkeyPatch)
 
 def test_configure_retry_respects_retry_after_by_default(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "5")
     monkeypatch.delenv("ATLASSIAN_RETRY_IGNORE_RETRY_AFTER", raising=False)
 
@@ -117,7 +117,7 @@ def test_configure_retry_respects_retry_after_by_default(
 
 def test_configure_retry_ignores_retry_after_when_env_set(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "5")
     monkeypatch.setenv("ATLASSIAN_RETRY_IGNORE_RETRY_AFTER", "true")
 
