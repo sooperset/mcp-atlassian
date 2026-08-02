@@ -88,7 +88,11 @@ def _fenced_code_block(code_text: str, language: str) -> str:
 
 def _prefix_code_block(code_block: str, prefix: str) -> str:
     """Add a Markdown container prefix to every line in a code block."""
-    return code_block.replace("\n", f"\n{prefix}")
+    return re.sub(
+        r"\r\n|\r|\n",
+        lambda match: f"{match.group()}{prefix}",
+        code_block,
+    )
 
 
 def _restore_inline_code_macro(
@@ -175,11 +179,16 @@ def _restore_code_macro_block(
         return text.replace(placeholder, code_block, 1)
 
     body = code_block[stored_opening_end : -len(stored_fence)]
+    # The closing line contains only markdownify's continuation prefix and
+    # the fence, making it the reliable prefix for every restored body line.
+    # The placeholder line can also carry list or quote context, but unlike
+    # the closing line it may be adjacent to content in malformed HTML.
+    continuation_prefix = closing_line[: closing_match.start()]
     container_prefix = opening_line[: opening_match.start()]
     stored_opening_line = code_block[:stored_opening_end].rstrip("\n")
     restored = (
         f"{container_prefix}{stored_opening_line}\n"
-        f"{line_before}{_prefix_code_block(body, line_before)}"
+        f"{continuation_prefix}{_prefix_code_block(body, continuation_prefix)}"
         f"{stored_fence}"
     )
 
