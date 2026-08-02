@@ -33,6 +33,7 @@ from mcp_atlassian.utils.oauth import (
     DC_AUTHORIZE_PATH,
     DC_TOKEN_PATH,
 )
+from mcp_atlassian.utils.rate_limiter import get_rate_limiter
 from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
 from mcp_atlassian.utils.toolsets import (
@@ -392,7 +393,8 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
             self._active_streamable_http_path = final_path
 
         user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=self)
-        final_middleware_list = [user_token_mw]
+        rate_limit_mw = Middleware(RateLimitMiddleware)
+        final_middleware_list = [user_token_mw, rate_limit_mw]
         if middleware:
             final_middleware_list.extend(middleware)
         app = super().http_app(
@@ -408,6 +410,69 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
             allowed_origins=allowed_origins,
         )
         return app
+
+
+class RateLimitMiddleware:
+    """ASGI middleware for per-user rate limiting.
+
+    Runs after UserTokenMiddleware so the token is already in scope state.
+    Uses token hash initially, upgrades to username once resolved.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        rate_limiter = get_rate_limiter()
+        if not rate_limiter:
+            await self.app(scope, receive, send)
+            return
+
+        state = scope.get("state", {})
+        token = state.get("user_atlassian_token")
+        if not token:
+            await self.app(scope, receive, send)
+            return
+
+        allowed, key = rate_limiter.check(token)
+        if not allowed:
+            usage = rate_limiter.get_usage_for_token(token)
+            logger.warning(
+                "Rate limit exceeded for %s (%d/%d rpm)",
+                key,
+                usage,
+                rate_limiter.rpm,
+            )
+            body = json.dumps(
+                {
+                    "error": "rate_limit_exceeded",
+                    "error_description": (
+                        f"Rate limit exceeded ({rate_limiter.rpm} requests/minute). "
+                        "Please retry later."
+                    ),
+                    "retry_after_seconds": 60,
+                }
+            ).encode("utf-8")
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 429,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode("ascii")),
+                        (b"retry-after", b"60"),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            return
+
+        await self.app(scope, receive, send)
+
 
 
 class UserTokenMiddleware:
