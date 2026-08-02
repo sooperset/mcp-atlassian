@@ -2,6 +2,10 @@
 
 import logging
 import os
+from typing import Annotated
+
+from pydantic import Field, TypeAdapter
+from pydantic_core import SchemaError
 
 logger = logging.getLogger("mcp-atlassian.env")
 
@@ -102,6 +106,38 @@ def get_float_env(env_var_name: str, default: float) -> float:
             "Invalid float for %s=%r; using default %s", env_var_name, raw, default
         )
         return default
+
+
+def get_regex_env(env_var_name: str, default: str) -> str:
+    """Read an environment variable as a regex pattern, falling back to `default`.
+
+    Logs a warning and falls back to `default` if the variable is set to a
+    pattern that does not compile. Patterns read this way are consumed at import
+    time by Pydantic field validators, so an uncompilable value would otherwise
+    take the whole server down over a typo in one setting.
+
+    Args:
+        env_var_name: Name of the environment variable to read
+        default: Value to return when the variable is unset or uncompilable
+
+    Returns:
+        The configured pattern, or `default`
+    """
+    raw = os.getenv(env_var_name)
+    if not raw:
+        return default
+    try:
+        TypeAdapter(Annotated[str, Field(pattern=raw)])
+    except SchemaError as exc:
+        logger.warning(
+            "Invalid regex for %s=%r (%s); using default %r",
+            env_var_name,
+            raw,
+            exc,
+            default,
+        )
+        return default
+    return raw
 
 
 def get_custom_headers(env_var_name: str) -> dict[str, str]:

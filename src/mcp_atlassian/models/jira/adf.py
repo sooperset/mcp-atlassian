@@ -382,10 +382,19 @@ def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, An
         # --- Ordered list ---
         if re.match(r"^\d+\.\s+", line):
             items_ol: list[dict[str, Any]] = []
-            while i < len(lines) and re.match(r"^\d+\.\s+", lines[i]):
-                item_text = re.sub(r"^\d+\.\s+", "", lines[i])
-                items_ol.append(_make_list_item(item_text, jira_base_url))
-                i += 1
+            while i < len(lines):
+                if re.match(r"^\d+\.\s+", lines[i]):
+                    item_text = re.sub(r"^\d+\.\s+", "", lines[i])
+                    items_ol.append(_make_list_item(item_text, jira_base_url))
+                    i += 1
+                elif (
+                    not lines[i].strip()
+                    and i + 1 < len(lines)
+                    and re.match(r"^\d+\.\s+", lines[i + 1])
+                ):
+                    i += 1
+                else:
+                    break
             doc["content"].append({"type": "orderedList", "content": items_ol})
             continue
 

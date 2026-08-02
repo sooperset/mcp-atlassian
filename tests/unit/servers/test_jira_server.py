@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -2280,6 +2281,73 @@ def test_issue_and_project_key_patterns_reject_invalid_keys():
 
     assert not re.match(PROJECT_KEY_PATTERN, "lowercase")
     assert not re.match(PROJECT_KEY_PATTERN, "123")
+
+
+def _reload_jira_server_module():
+    """Re-import the Jira server module so import-time env reads run again."""
+    import importlib
+
+    import mcp_atlassian.servers.jira as jira_server
+
+    return importlib.reload(jira_server)
+
+
+@pytest.fixture
+def reloaded_jira_server():
+    """Yield a reloader, restoring the module from a clean env afterwards."""
+    try:
+        yield _reload_jira_server_module
+    finally:
+        for var in ("JIRA_ISSUE_KEY_PATTERN", "JIRA_PROJECT_KEY_PATTERN"):
+            os.environ.pop(var, None)
+        _reload_jira_server_module()
+
+
+def test_key_patterns_configurable_via_env(monkeypatch, reloaded_jira_server):
+    """Env overrides let Server/DC keys the defaults reject through.
+
+    Regression test: a Server/DC instance with a custom
+    `jira.projectkey.pattern` can have keys starting with a digit, which the
+    default patterns reject before the API is ever called.
+    """
+    import re
+
+    monkeypatch.setenv("JIRA_ISSUE_KEY_PATTERN", r"^[A-Z0-9][A-Z0-9_]*-\d+$")
+    monkeypatch.setenv("JIRA_PROJECT_KEY_PATTERN", r"^[A-Z0-9][A-Z0-9_]*$")
+    jira_server = reloaded_jira_server()
+
+    assert re.match(jira_server.ISSUE_KEY_PATTERN, "4ME-123")
+    assert re.match(jira_server.PROJECT_KEY_PATTERN, "4ME")
+    # Still validates: the override is a pattern, not an escape hatch
+    assert not re.match(jira_server.PROJECT_KEY_PATTERN, "not a key")
+
+
+@pytest.mark.anyio
+async def test_key_patterns_env_override_reaches_tool_schema(
+    monkeypatch, reloaded_jira_server
+):
+    """The override must land on the tool parameters, not just the constants."""
+    monkeypatch.setenv("JIRA_PROJECT_KEY_PATTERN", r"^[A-Z0-9][A-Z0-9_]*$")
+    jira_server = reloaded_jira_server()
+
+    tools = await jira_server.jira_mcp.list_tools()
+    tool = next(t for t in tools if t.name == "get_project_issues")
+    assert (
+        tool.parameters["properties"]["project_key"]["pattern"]
+        == r"^[A-Z0-9][A-Z0-9_]*$"
+    )
+
+
+def test_key_patterns_ignore_uncompilable_env_override(
+    monkeypatch, reloaded_jira_server, caplog
+):
+    """An invalid regex must not break server startup."""
+    monkeypatch.setenv("JIRA_PROJECT_KEY_PATTERN", "^[A-Z")
+    with caplog.at_level(logging.WARNING):
+        jira_server = reloaded_jira_server()
+
+    assert jira_server.PROJECT_KEY_PATTERN == r"^[A-Z][A-Z0-9_]+$"
+    assert "JIRA_PROJECT_KEY_PATTERN" in caplog.text
 
 
 # =============================================================================

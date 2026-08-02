@@ -179,6 +179,12 @@ and DCR endpoints so MCP clients can onboard users through spec-aligned OAuth:
 
 Use this for remote clients like ChatGPT/Codex that expect discovery + DCR.
 
+<Warning>
+The DCR client's `redirect_uri` must be different from the OAuth proxy's own IdP
+callback. If a client tries to register the proxy callback as its redirect URI,
+registration is rejected with `invalid_redirect_uri` to prevent a callback loop.
+</Warning>
+
 ### Multi-Cloud Support
 
 For multi-tenant applications where each user connects to their own Atlassian cloud instance:
