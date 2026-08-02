@@ -67,6 +67,24 @@ Tests with actual Atlassian APIs (requires `--use-real-data` flag).
 - **Rate Limiting**: API throttling behavior
 - **Cross-Service Linking**: Jira-Confluence integration
 
+### 8. Rate Limiter Redis (`test_rate_limiter_redis.py`)
+Tests the Redis-backed rate limiter against a real Redis instance.
+
+- **Sliding Window**: Allow/deny at limit, burst allowance
+- **Usage Tracking**: Request count accuracy
+- **Key TTL**: Sorted set expiry (≤61s)
+- **Key Independence**: Separate users don't interfere
+- **End-to-End**: RateLimiter with token-to-user mapping over Redis
+
+Requires a Redis server (auto-skipped if unavailable):
+```bash
+# Start Redis locally
+docker run -d --name redis-test -p 6379:6379 redis:7-alpine
+
+# Or use a custom URL
+export RATE_LIMIT_REDIS_URL=redis://localhost:6379/15
+```
+
 ## Running Integration Tests
 
 ### Basic Execution
