@@ -105,6 +105,29 @@ def test_code_macro_nested_in_blockquote_keeps_quote_prefix():
     assert markdown == ("> ````text\n> first line\n> ```\n> last line\n> ````")
 
 
+def test_code_macro_nested_containers_preserve_crlf_body_boundaries():
+    code_body = "first line\r\n  indented line\r\nlast line\r"
+    macro = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">text</ac:parameter>'
+        f"<ac:plain-text-body><![CDATA[{code_body}]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+
+    _, list_markdown = preprocessor.process_html_content(f"<ul><li>{macro}</li></ul>")
+    _, quote_markdown = preprocessor.process_html_content(
+        f"<blockquote>{macro}</blockquote>"
+    )
+
+    assert list_markdown == (
+        "* ```text\n  first line\r\n    indented line\r\n  last line\r  ```"
+    )
+    assert quote_markdown == (
+        "> ```text\n> first line\r\n>   indented line\r\n> last line\r> ```"
+    )
+
+
 def test_code_macro_inline_in_list_stays_inside_single_fenced_block():
     macro = (
         '<ac:structured-macro ac:name="code">'
