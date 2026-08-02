@@ -78,11 +78,11 @@ Tests the Redis-backed rate limiter against a real Redis instance.
 
 Requires a Redis server (auto-skipped if unavailable):
 ```bash
-# Start Redis locally
-docker run -d --name redis-test -p 6379:6379 redis:7-alpine
+# Start Redis via docker-compose
+docker compose -f tests/e2e/docker/docker-compose.yml up -d redis
 
-# Or use a custom URL
-export RATE_LIMIT_REDIS_URL=redis://localhost:6379/15
+# Or point to an existing Redis instance
+export RATE_LIMIT_REDIS_URL=redis://your-redis-host:6379/15
 ```
 
 ## Running Integration Tests
