@@ -170,6 +170,14 @@ This mode is opt-in. Existing API token, PAT, and header-based OAuth flows conti
 to work without enabling the proxy.
 </Note>
 
+<Warning>
+The callback configured in `ATLASSIAN_OAUTH_REDIRECT_URI` is for the upstream
+Atlassian identity provider, not a dynamically registered MCP client. A DCR
+client's `redirect_uri` must be different from this OAuth proxy IdP callback.
+Registration is rejected with `invalid_redirect_uri` if the two callbacks collide,
+preventing a callback loop.
+</Warning>
+
 ### Bring Your Own Token (BYOT)
 
 If you manage OAuth tokens externally (e.g., through a central identity provider):
