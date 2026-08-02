@@ -159,9 +159,9 @@ class DevelopmentMixin(JiraClient):
         # path (/rest/dev-status/1.0/...) not covered by the standard Jira client
         # wrappers. No higher-level wrapper method exists for this non-standard endpoint.
         url = f"{self.config.url}/rest/dev-status/1.0/issue/detail"
-        http_response = self.jira._session.get(
-            url, params=params, verify=self.config.ssl_verify
-        )
+        # SSL verification is configured at session level (adapter/CA bundle);
+        # a per-call verify bool would override it.
+        http_response = self.jira._session.get(url, params=params)
 
         if http_response.status_code == 404:
             logger.debug(
@@ -395,9 +395,7 @@ class DevelopmentMixin(JiraClient):
         params = {"issueId": str(issue_id)}
 
         try:
-            http_response = self.jira._session.get(
-                url, params=params, verify=self.config.ssl_verify
-            )
+            http_response = self.jira._session.get(url, params=params)
             if http_response.status_code in (403, 404):
                 logger.warning(
                     "Dev-status summary returned %s for %s; falling back to "

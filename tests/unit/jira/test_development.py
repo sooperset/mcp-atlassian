@@ -526,3 +526,28 @@ class TestDevelopmentMixin:
         assert pr["destination"] == ""
         assert pr["author"] == ""
         assert pr["reviewers"] == []
+
+    def test_dev_status_get_does_not_pass_verify(
+        self, development_mixin, mock_dev_status_response
+    ):
+        """A per-call verify bool would override the session's configured SSL
+        verification (SSLIgnoreAdapter or an explicit CA bundle); the session
+        default must govern."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+        mock_response = MagicMock()
+        mock_response.json.return_value = mock_dev_status_response
+        mock_response.raise_for_status = MagicMock()
+        development_mixin.jira._session.get.return_value = mock_response
+
+        development_mixin.get_issue_development_info(
+            "TEST-123", application_type="stash", data_type="pullrequest"
+        )
+        # Also drive the summary/discovery call site.
+        development_mixin._discover_application_types("TEST-123", "12345")
+
+        assert development_mixin.jira._session.get.call_count >= 2
+        for call in development_mixin.jira._session.get.call_args_list:
+            assert "verify" not in call.kwargs
