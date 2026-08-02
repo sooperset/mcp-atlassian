@@ -5,9 +5,12 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
+import fakeredis
+
 from mcp_atlassian.utils.rate_limiter import (
     InMemoryBackend,
     RateLimiter,
+    RedisBackend,
     get_rate_limiter,
     reset_rate_limiter,
 )
@@ -90,6 +93,61 @@ class TestRateLimiter:
         rl.check("tok")
         rl.check("tok")
         assert rl.get_usage_for_token("tok") == 2
+
+
+class TestRedisBackend:
+    def _make_backend(self) -> RedisBackend:
+        server = fakeredis.FakeServer()
+        client = fakeredis.FakeRedis(
+            server=server,
+            decode_responses=True,
+        )
+        return RedisBackend(client=client)
+
+    def test_allows_under_limit(self) -> None:
+        backend = self._make_backend()
+        for _ in range(10):
+            assert backend.is_allowed("user:alice", rpm=10, burst=0)
+
+    def test_blocks_over_limit(self) -> None:
+        backend = self._make_backend()
+        for _ in range(10):
+            assert backend.is_allowed("user:alice", rpm=10, burst=0)
+        assert not backend.is_allowed("user:alice", rpm=10, burst=0)
+
+    def test_burst_extends_limit(self) -> None:
+        backend = self._make_backend()
+        for _ in range(15):
+            assert backend.is_allowed("user:alice", rpm=10, burst=5)
+        assert not backend.is_allowed("user:alice", rpm=10, burst=5)
+
+    def test_separate_keys(self) -> None:
+        backend = self._make_backend()
+        for _ in range(10):
+            backend.is_allowed("user:alice", rpm=10, burst=0)
+        assert not backend.is_allowed("user:alice", rpm=10, burst=0)
+        assert backend.is_allowed("user:bob", rpm=10, burst=0)
+
+    def test_get_usage(self) -> None:
+        backend = self._make_backend()
+        assert backend.get_usage("user:alice") == 0
+        backend.is_allowed("user:alice", rpm=10, burst=0)
+        backend.is_allowed("user:alice", rpm=10, burst=0)
+        assert backend.get_usage("user:alice") == 2
+
+    def test_multiple_tokens_same_user(self) -> None:
+        backend = self._make_backend()
+        rl = RateLimiter(backend=backend, rpm=5, burst=0)
+        rl.register_token_user("token-a", "admin")
+        rl.register_token_user("token-b", "admin")
+        for _ in range(3):
+            rl.check("token-a")
+        for _ in range(2):
+            rl.check("token-b")
+        allowed, _ = rl.check("token-a")
+        assert not allowed
+        allowed, _ = rl.check("token-b")
+        assert not allowed
 
 
 class TestGetRateLimiter:

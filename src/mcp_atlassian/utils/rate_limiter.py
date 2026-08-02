@@ -8,7 +8,7 @@ import os
 import time
 from collections import deque
 from threading import Lock
-from typing import Protocol
+from typing import Any, Protocol
 
 from cachetools import TTLCache
 
@@ -75,50 +75,53 @@ class InMemoryBackend:
 class RedisBackend:
     """Sliding-window rate limiter using Redis sorted sets."""
 
-    _LUA_SCRIPT = """
-    local key = KEYS[1]
-    local now = tonumber(ARGV[1])
-    local window = tonumber(ARGV[2])
-    local limit = tonumber(ARGV[3])
-    redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
-    local count = redis.call('ZCARD', key)
-    if count >= limit then
-        return 0
-    end
-    redis.call('ZADD', key, now, now .. '-' .. math.random(1000000))
-    redis.call('EXPIRE', key, window + 1)
-    return 1
-    """
+    def __init__(
+        self,
+        redis_url: str | None = None,
+        *,
+        client: Any | None = None,
+    ) -> None:
+        if client is not None:
+            self._redis = client
+        elif redis_url:
+            try:
+                import redis as redis_lib  # type: ignore[import-untyped]
+            except ImportError as exc:
+                raise ImportError(
+                    "redis package is required for Redis rate limiting. "
+                    "Install with: uv add redis"
+                ) from exc
+            self._redis = redis_lib.Redis.from_url(
+                redis_url,
+                decode_responses=True,
+            )
+        else:
+            msg = "Either redis_url or client must be provided"
+            raise ValueError(msg)
 
-    _LUA_COUNT = """
-    local key = KEYS[1]
-    local now = tonumber(ARGV[1])
-    local window = tonumber(ARGV[2])
-    redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
-    return redis.call('ZCARD', key)
-    """
-
-    def __init__(self, redis_url: str) -> None:
-        try:
-            import redis as redis_lib  # type: ignore[import-untyped]
-        except ImportError as exc:
-            raise ImportError(
-                "redis package is required for Redis rate limiting. "
-                "Install with: uv add redis"
-            ) from exc
-        self._redis = redis_lib.Redis.from_url(redis_url, decode_responses=True)
-        self._check_script = self._redis.register_script(self._LUA_SCRIPT)
-        self._count_script = self._redis.register_script(self._LUA_COUNT)
+    def _prune_and_count(self, redis_key: str) -> int:
+        now = time.time()
+        cutoff = now - 60.0
+        pipe = self._redis.pipeline()
+        pipe.zremrangebyscore(redis_key, 0, cutoff)
+        pipe.zcard(redis_key)
+        results = pipe.execute()
+        return int(results[1])
 
     def is_allowed(self, key: str, rpm: int, burst: int) -> bool:
         limit = rpm + burst
         redis_key = f"mcp_ratelimit:{key}"
         try:
-            result = self._check_script(
-                keys=[redis_key],
-                args=[time.time(), 60, limit],
-            )
-            return bool(result)
+            count = self._prune_and_count(redis_key)
+            if count >= limit:
+                return False
+            now = time.time()
+            member = f"{now}-{id(self)}"
+            pipe = self._redis.pipeline()
+            pipe.zadd(redis_key, {member: now})
+            pipe.expire(redis_key, 61)
+            pipe.execute()
+            return True
         except (OSError, ConnectionError, TimeoutError):
             logger.warning(
                 "Redis rate limit check failed, allowing request",
@@ -129,11 +132,7 @@ class RedisBackend:
     def get_usage(self, key: str) -> int:
         redis_key = f"mcp_ratelimit:{key}"
         try:
-            result = self._count_script(
-                keys=[redis_key],
-                args=[time.time(), 60],
-            )
-            return int(result)
+            return self._prune_and_count(redis_key)
         except (OSError, ConnectionError, TimeoutError):
             logger.warning(
                 "Redis rate limit count failed",

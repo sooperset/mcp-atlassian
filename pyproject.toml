@@ -65,6 +65,7 @@ dev = [
     "pyyaml>=6.0",
     "types-pyyaml>=6.0",
     "pypac>=0.17.2",
+    "redis>=7.2.0",
 ]
 
 [tool.pytest.ini_options]
