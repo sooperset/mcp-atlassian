@@ -1746,12 +1746,23 @@ class TestHtmlConversionColorProtection:
         self,
         preprocessor,
     ):
-        """Leave all HTML unchanged when the text contains a colored span."""
+        """Convert surrounding HTML while preserving the colored span."""
         html_input = '<b>Important</b> <span style="color:red">Warning</span>'
 
         result = preprocessor._convert_html_to_markdown(html_input)
 
-        assert result == html_input
+        assert result == '**Important** <span style="color:red">Warning</span>'
+
+    def test_convert_html_to_markdown_does_not_match_background_color(
+        self,
+        preprocessor,
+    ):
+        """Convert spans whose style only sets a background color."""
+        html_input = '<span style="background-color:yellow">Warning</span>'
+
+        result = preprocessor._convert_html_to_markdown(html_input)
+
+        assert result == "Warning"
 
     def test_convert_html_to_markdown_does_not_preserve_non_color_span(
         self,

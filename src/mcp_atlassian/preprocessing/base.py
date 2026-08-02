@@ -12,13 +12,23 @@ from markdownify import markdownify as md
 
 logger = logging.getLogger("mcp-atlassian")
 
-_COLORED_SPAN_PATTERN = re.compile(
-    r"""<span\b[^>]*\bstyle\s*=\s*(?:
-        "[^"]*(?<![\w-])color\s*:
+_SPAN_TAG_PATTERN = re.compile(
+    r"""<(?P<closing>/?)span\b(?P<attributes>(?:[^'"<>]|"[^"]*"|'[^']*')*)>""",
+    flags=re.IGNORECASE,
+)
+_STYLE_ATTRIBUTE_PATTERN = re.compile(
+    r"""\bstyle\s*=\s*(?:
+        "(?P<double>[^"]*)"
         |
-        '[^']*(?<![\w-])color\s*:
+        '(?P<single>[^']*)'
+        |
+        (?P<unquoted>[^\s>]+)
     )""",
     flags=re.IGNORECASE | re.VERBOSE,
+)
+_COLOR_DECLARATION_PATTERN = re.compile(
+    r"(?:^|;)\s*color\s*:",
+    flags=re.IGNORECASE,
 )
 
 
@@ -69,6 +79,56 @@ def _restore_blocks(text: str, storage: list[str], prefix: str) -> str:
     """
     for i in range(len(storage) - 1, -1, -1):
         text = text.replace(f"\x00{prefix}{i}\x00", storage[i])
+    return text
+
+
+def _span_tag_has_color(attributes: str) -> bool:
+    """Return whether a span's style attribute declares a text color."""
+    style_match = _STYLE_ATTRIBUTE_PATTERN.search(attributes)
+    if not style_match:
+        return False
+
+    style = next(
+        (
+            value
+            for group in ("double", "single", "unquoted")
+            if (value := style_match.group(group)) is not None
+        ),
+        "",
+    )
+    return bool(_COLOR_DECLARATION_PATTERN.search(style))
+
+
+def _protect_colored_span_tags(text: str, storage: list[str]) -> str:
+    """Protect colored span tags while leaving their contents convertible."""
+    open_spans: list[tuple[int, int, bool]] = []
+    replacements: list[tuple[int, int, str]] = []
+
+    for match in _SPAN_TAG_PATTERN.finditer(text):
+        if match.group("closing"):
+            if not open_spans:
+                continue
+
+            start, end, has_color = open_spans.pop()
+            if has_color:
+                replacements.extend(
+                    [
+                        (start, end, text[start:end]),
+                        (match.start(), match.end(), match.group(0)),
+                    ]
+                )
+            continue
+
+        attributes = match.group("attributes")
+        if attributes.rstrip().endswith("/"):
+            continue
+        open_spans.append((match.start(), match.end(), _span_tag_has_color(attributes)))
+
+    for start, end, tag in sorted(replacements, reverse=True):
+        placeholder = f"\x00HTMLCVTCOLOR{len(storage)}\x00"
+        storage.append(tag)
+        text = text[:start] + placeholder + text[end:]
+
     return text
 
 
@@ -496,7 +556,10 @@ class BasePreprocessor:
             "HTMLCVTINLINE",
         )
 
-        if re.search(r"<[^>]+>", text) and not _COLORED_SPAN_PATTERN.search(text):
+        colored_span_tags: list[str] = []
+        text = _protect_colored_span_tags(text, colored_span_tags)
+
+        if re.search(r"<[^>]+>", text):
             try:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
@@ -506,7 +569,8 @@ class BasePreprocessor:
             except Exception as e:
                 logger.warning(f"Error converting HTML to markdown: {str(e)}")
 
-        # Restore in reverse order: inline first, then blocks
+        # Restore in reverse order: colored span tags, inline code, then blocks
+        text = _restore_blocks(text, colored_span_tags, "HTMLCVTCOLOR")
         text = _restore_blocks(text, inline_codes, "HTMLCVTINLINE")
         text = _restore_blocks(text, code_blocks, "HTMLCVTBLOCK")
         return text
