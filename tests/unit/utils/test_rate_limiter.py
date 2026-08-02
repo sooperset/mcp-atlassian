@@ -235,9 +235,7 @@ class TestRegisterRateLimitUser:
     def test_registers_token_user_when_enabled(self) -> None:
         from mcp_atlassian.servers.dependencies import _register_rate_limit_user
 
-        with patch.dict(
-            os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False
-        ):
+        with patch.dict(os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False):
             rl = get_rate_limiter()
             assert rl is not None
             request = MagicMock()
@@ -248,9 +246,7 @@ class TestRegisterRateLimitUser:
     def test_skips_when_no_token_on_request(self) -> None:
         from mcp_atlassian.servers.dependencies import _register_rate_limit_user
 
-        with patch.dict(
-            os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False
-        ):
+        with patch.dict(os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False):
             rl = get_rate_limiter()
             assert rl is not None
             request = MagicMock()
@@ -261,9 +257,7 @@ class TestRegisterRateLimitUser:
     def test_skips_when_empty_user_id(self) -> None:
         from mcp_atlassian.servers.dependencies import _register_rate_limit_user
 
-        with patch.dict(
-            os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False
-        ):
+        with patch.dict(os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False):
             rl = get_rate_limiter()
             assert rl is not None
             request = MagicMock()
@@ -284,11 +278,13 @@ class TestRateLimitMiddleware:
     @staticmethod
     async def _dummy_app(scope, receive, send):
         body = b'{"ok": true}'
-        await send({
-            "type": "http.response.start",
-            "status": 200,
-            "headers": [(b"content-type", b"application/json")],
-        })
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
         await send({"type": "http.response.body", "body": body})
 
     @staticmethod
@@ -317,31 +313,23 @@ class TestRateLimitMiddleware:
 
         with patch.dict(os.environ, {}, clear=True):
             mw = RateLimitMiddleware(self._dummy_app)
-            msgs = await self._collect_response(
-                mw, self._make_scope(token="tok")
-            )
+            msgs = await self._collect_response(mw, self._make_scope(token="tok"))
             assert msgs[0]["status"] == 200
 
     @pytest.mark.anyio
     async def test_passthrough_when_no_token(self) -> None:
         from mcp_atlassian.servers.main import RateLimitMiddleware
 
-        with patch.dict(
-            os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False
-        ):
+        with patch.dict(os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False):
             mw = RateLimitMiddleware(self._dummy_app)
-            msgs = await self._collect_response(
-                mw, self._make_scope(token=None)
-            )
+            msgs = await self._collect_response(mw, self._make_scope(token=None))
             assert msgs[0]["status"] == 200
 
     @pytest.mark.anyio
     async def test_passthrough_for_non_http_scope(self) -> None:
         from mcp_atlassian.servers.main import RateLimitMiddleware
 
-        with patch.dict(
-            os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False
-        ):
+        with patch.dict(os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False):
             mw = RateLimitMiddleware(self._dummy_app)
             msgs = await self._collect_response(
                 mw, self._make_scope(token="tok", scope_type="websocket")
@@ -354,15 +342,16 @@ class TestRateLimitMiddleware:
 
         with patch.dict(
             os.environ,
-            {"RATE_LIMIT_ENABLED": "true", "RATE_LIMIT_RPM": "5",
-             "RATE_LIMIT_BURST": "0"},
+            {
+                "RATE_LIMIT_ENABLED": "true",
+                "RATE_LIMIT_RPM": "5",
+                "RATE_LIMIT_BURST": "0",
+            },
             clear=False,
         ):
             mw = RateLimitMiddleware(self._dummy_app)
             for _ in range(5):
-                msgs = await self._collect_response(
-                    mw, self._make_scope(token="tok")
-                )
+                msgs = await self._collect_response(mw, self._make_scope(token="tok"))
                 assert msgs[0]["status"] == 200
 
     @pytest.mark.anyio
@@ -371,18 +360,17 @@ class TestRateLimitMiddleware:
 
         with patch.dict(
             os.environ,
-            {"RATE_LIMIT_ENABLED": "true", "RATE_LIMIT_RPM": "2",
-             "RATE_LIMIT_BURST": "0"},
+            {
+                "RATE_LIMIT_ENABLED": "true",
+                "RATE_LIMIT_RPM": "2",
+                "RATE_LIMIT_BURST": "0",
+            },
             clear=False,
         ):
             mw = RateLimitMiddleware(self._dummy_app)
             for _ in range(2):
-                await self._collect_response(
-                    mw, self._make_scope(token="tok")
-                )
-            msgs = await self._collect_response(
-                mw, self._make_scope(token="tok")
-            )
+                await self._collect_response(mw, self._make_scope(token="tok"))
+            msgs = await self._collect_response(mw, self._make_scope(token="tok"))
             assert msgs[0]["status"] == 429
             headers = dict(msgs[0]["headers"])
             assert headers[b"content-type"] == b"application/json"

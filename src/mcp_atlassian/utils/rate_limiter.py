@@ -154,9 +154,7 @@ class RateLimiter:
         self.rpm = rpm
         self.burst = burst
         # token_hash -> username, TTL 5 minutes
-        self._token_user_cache: TTLCache[str, str, int] = TTLCache(
-            maxsize=1000, ttl=300
-        )
+        self._token_user_cache: TTLCache[str, str] = TTLCache(maxsize=1000, ttl=300)
 
     @staticmethod
     def token_hash(token: str) -> str:
