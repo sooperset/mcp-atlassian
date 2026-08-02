@@ -275,6 +275,32 @@ class TestJiraIssue:
         assert issue.environment == "Prod cluster eu-west-1"
         assert issue.to_simplified_dict()["environment"] == "Prod cluster eu-west-1"
 
+    def test_from_api_response_parses_environment_adf(self):
+        """Test that the Cloud ADF environment value is converted to text."""
+        local_issue_data = {
+            "id": "10002",
+            "key": "PROJ-124",
+            "fields": {
+                "summary": "Cloud issue",
+                "environment": {
+                    "type": "doc",
+                    "version": 1,
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [{"type": "text", "text": "Cloud ADF"}],
+                        }
+                    ],
+                },
+            },
+        }
+        issue = JiraIssue.from_api_response(
+            local_issue_data, requested_fields="environment"
+        )
+
+        assert issue.environment == "Cloud ADF"
+        assert issue.to_simplified_dict()["environment"] == "Cloud ADF"
+
     def test_from_api_response_builds_browse_url(self, jira_issue_data):
         """Test creating a browser URL from the configured Jira base URL."""
         issue = JiraIssue.from_api_response(
