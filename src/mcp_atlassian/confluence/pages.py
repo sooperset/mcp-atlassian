@@ -289,8 +289,12 @@ class PagesMixin(ConfluenceClient):
                 fails with the Confluence API (401/403)
         """
         try:
-            self.enforce_page_spaces_filter(page_id)
-            ancestors = self.confluence.get_page_ancestors(page_id)
+            v2_adapter = self._v2_adapter
+            self.enforce_page_spaces_filter(page_id, v2_adapter=v2_adapter)
+            if v2_adapter:
+                ancestors = v2_adapter.get_page_ancestors(page_id)
+            else:
+                ancestors = self.confluence.get_page_ancestors(page_id)
 
             ancestor_models = []
             for ancestor in ancestors:
@@ -304,6 +308,8 @@ class PagesMixin(ConfluenceClient):
             return ancestor_models
         except HTTPError:
             raise  # let decorator handle auth errors
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"Error fetching ancestors for page {page_id}: {str(e)}")
             logger.debug("Full exception details:", exc_info=True)
@@ -718,10 +724,22 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error creating the page
         """
         self.enforce_spaces_filter(space_key)
+
+        # Select the adapter before validating the parent so the lookup uses
+        # the same API family as the write. Cloud subtype creates use v2 even
+        # for non-OAuth authentication.
+        v2_adapter = self._v2_adapter
+        if subtype:
+            v2_adapter = self._cloud_v2_adapter()
+            if not v2_adapter:
+                raise ValueError(
+                    "Confluence page subtype is only supported for Confluence Cloud"
+                )
+
         # The parent decides where the page actually lands, so an allowed
         # space_key alone is not enough to keep the write inside the boundary.
         if parent_id:
-            self.enforce_page_spaces_filter(parent_id, v2_adapter=self._v2_adapter)
+            self.enforce_page_spaces_filter(parent_id, v2_adapter=v2_adapter)
         try:
             # Determine body and representation based on content type
             if is_markdown:
@@ -739,13 +757,6 @@ class PagesMixin(ConfluenceClient):
 
             # Use v2 API for OAuth authentication and for Cloud page subtypes
             # such as Live Docs. The v1 API/client does not expose subtype.
-            v2_adapter = self._v2_adapter
-            if subtype:
-                v2_adapter = self._cloud_v2_adapter()
-                if not v2_adapter:
-                    raise ValueError(
-                        "Confluence page subtype is only supported for Confluence Cloud"
-                    )
             if v2_adapter:
                 logger.debug(
                     f"Using v2 API for OAuth authentication to create page '{title}'"
@@ -836,6 +847,8 @@ class PagesMixin(ConfluenceClient):
         try:
             v2_adapter = self._v2_adapter
             self.enforce_page_spaces_filter(page_id, v2_adapter=v2_adapter)
+            if parent_id:
+                self.enforce_page_spaces_filter(parent_id, v2_adapter=v2_adapter)
 
             # Determine body and representation based on content type
             if is_markdown:
@@ -1504,7 +1517,7 @@ class PagesMixin(ConfluenceClient):
         self.enforce_page_spaces_filter(page_id, v2_adapter=v2_adapter)
         if target_space_key:
             self.enforce_spaces_filter(target_space_key)
-        elif target_parent_id:
+        if target_parent_id:
             self.enforce_page_spaces_filter(target_parent_id, v2_adapter=v2_adapter)
 
         try:

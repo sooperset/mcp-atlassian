@@ -140,6 +140,32 @@ class TestPagesMixin:
         assert isinstance(result, list)
         assert len(result) == 0
 
+    def test_get_page_ancestors_oauth_uses_v2_for_lookup_and_fetch(self, pages_mixin):
+        """OAuth Cloud ancestors must stay on the v2 API path."""
+        pages_mixin.config.auth_type = "oauth"
+        pages_mixin.config.spaces_filter = "PROJ"
+        mock_adapter = MagicMock()
+        mock_adapter.get_page_space_key.return_value = "PROJ"
+        mock_adapter.get_page_ancestors.return_value = [
+            {
+                "id": "parent-1",
+                "title": "Parent",
+                "space": {"key": "PROJ"},
+            }
+        ]
+
+        with patch.object(
+            type(pages_mixin),
+            "_v2_adapter",
+            new_callable=lambda: property(lambda self: mock_adapter),
+        ):
+            result = pages_mixin.get_page_ancestors("page-1")
+
+        mock_adapter.get_page_space_key.assert_called_once_with("page-1")
+        mock_adapter.get_page_ancestors.assert_called_once_with("page-1")
+        pages_mixin.confluence.get_page_ancestors.assert_not_called()
+        assert result[0].id == "parent-1"
+
     def test_get_page_content_html(self, pages_mixin):
         """Test getting page content in HTML format."""
         pages_mixin.config.url = "https://example.atlassian.net/wiki"
@@ -1238,6 +1264,43 @@ class TestPagesMixin:
             assert result.id == page_id
             assert result.title == title
             assert result.version.number == 2
+
+    def test_update_page_blocks_disallowed_page_before_any_write(self, pages_mixin):
+        """A denied update cannot reach content, property, or page writes."""
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+        pages_mixin.confluence.get_page_by_id.return_value = {"space": {"key": "PROJ"}}
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.update_page(
+                page_id="987654321",
+                title="Denied",
+                body="<p>Denied</p>",
+                emoji="🔒",
+                page_width="full-width",
+            )
+
+        pages_mixin.confluence.update_page.assert_not_called()
+        pages_mixin.confluence.set_page_property.assert_not_called()
+        pages_mixin.confluence.update_page_property.assert_not_called()
+        pages_mixin.confluence.delete_page_property.assert_not_called()
+
+    def test_update_page_blocks_disallowed_parent_before_write(self, pages_mixin):
+        """Changing a page's parent must validate the destination first."""
+        pages_mixin.config.spaces_filter = "PROJ"
+        pages_mixin.confluence.get_page_by_id.side_effect = [
+            {"space": {"key": "PROJ"}},
+            {"space": {"key": "OTHERSPACE"}},
+        ]
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.update_page(
+                page_id="987654321",
+                title="Denied parent",
+                body="<p>Denied</p>",
+                parent_id="222",
+            )
+
+        pages_mixin.confluence.update_page.assert_not_called()
 
     def test_non_oauth_still_uses_v1_api(self, pages_mixin):
         """Test that non-OAuth authentication still uses v1 API."""
@@ -3763,6 +3826,34 @@ class TestPagesSpacesFilterEnforcement:
         mock_adapter.create_page.assert_not_called()
         pages_mixin.confluence.get_page_by_id.assert_not_called()
 
+    def test_create_page_subtype_uses_v2_for_parent_validation(self, pages_mixin):
+        """Cloud subtype creates must resolve parents through their v2 adapter."""
+        pages_mixin.config.spaces_filter = "PROJ"
+        mock_adapter = MagicMock()
+        mock_adapter.get_page_space_key.return_value = "OTHERSPACE"
+
+        with (
+            patch.object(
+                type(pages_mixin),
+                "_v2_adapter",
+                new_callable=lambda: property(lambda self: None),
+            ),
+            patch.object(pages_mixin, "_cloud_v2_adapter", return_value=mock_adapter),
+            pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"),
+        ):
+            pages_mixin.create_page(
+                "PROJ",
+                "Live Doc",
+                "<p>Body</p>",
+                parent_id="222",
+                is_markdown=False,
+                subtype="live",
+            )
+
+        mock_adapter.get_page_space_key.assert_called_once_with("222")
+        mock_adapter.create_page.assert_not_called()
+        pages_mixin.confluence.get_page_by_id.assert_not_called()
+
     def test_create_page_without_parent_makes_no_extra_lookup(self, pages_mixin):
         """No parent means no parent resolution, so the request count for
         existing callers is unchanged."""
@@ -3779,6 +3870,19 @@ class TestPagesSpacesFilterEnforcement:
             )
 
         pages_mixin.confluence.get_page_by_id.assert_not_called()
+
+    def test_update_page_section_blocks_before_write(self, pages_mixin):
+        """Section updates inherit the boundary before their eventual write."""
+        pages_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.update_page_section(
+                page_id="987654321",
+                heading_text="Section",
+                new_content="Denied",
+            )
+
+        pages_mixin.confluence.update_page.assert_not_called()
 
     def test_copy_page_blocks_disallowed_destination_parent(self, pages_mixin):
         """The destination parent binds the copy the same way the target
@@ -3798,6 +3902,37 @@ class TestPagesSpacesFilterEnforcement:
             )
 
         pages_mixin.confluence.post.assert_not_called()
+
+    def test_copy_page_oauth_does_not_use_v1_source_resolver(self, pages_mixin):
+        """OAuth Cloud copy validation must stay off the v1 client."""
+        pages_mixin.config.auth_type = "oauth"
+        pages_mixin.config.spaces_filter = "PROJ"
+        mock_adapter = MagicMock()
+        mock_adapter.get_page_space_key.side_effect = ["PROJ", "PROJ"]
+        mock_adapter.create_page.return_value = {"id": "copy-1"}
+
+        with (
+            patch.object(
+                type(pages_mixin),
+                "_v2_adapter",
+                new_callable=lambda: property(lambda self: mock_adapter),
+            ),
+            patch.object(
+                pages_mixin,
+                "get_page_content",
+                return_value=ConfluencePage(id="copy-1", title="Copy"),
+            ),
+        ):
+            pages_mixin.confluence.post.return_value = {"id": "copy-1"}
+            pages_mixin.copy_page(
+                source_page_id="source-1",
+                destination_space_key="PROJ",
+                new_title="Copy",
+                destination_parent_id="parent-1",
+            )
+
+        assert mock_adapter.get_page_space_key.call_count == 2
+        pages_mixin.confluence.get_page_by_id.assert_not_called()
 
     def test_get_page_children_blocks_disallowed_space(self, pages_mixin):
         # Non-Atlassian-Cloud URL forces the v1 get_page_child_by_type path
@@ -3874,6 +4009,23 @@ class TestPagesSpacesFilterEnforcement:
 
         with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
             pages_mixin.move_page("987654321", target_parent_id="222")
+
+        pages_mixin.confluence.move_page.assert_not_called()
+
+    def test_move_page_blocks_parent_even_with_target_space(self, pages_mixin):
+        """An explicit destination parent must be checked when both targets exist."""
+        pages_mixin.config.spaces_filter = "PROJ"
+        pages_mixin.confluence.get_page_by_id.side_effect = [
+            {"space": {"key": "PROJ"}},
+            {"space": {"key": "OTHERSPACE"}},
+        ]
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.move_page(
+                "987654321",
+                target_parent_id="222",
+                target_space_key="PROJ",
+            )
 
         pages_mixin.confluence.move_page.assert_not_called()
 

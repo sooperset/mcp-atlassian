@@ -113,6 +113,48 @@ class TestConfluenceV2Adapter:
             "https://example.atlassian.net/wiki/api/v2/spaces/789",
         )
 
+    def test_get_page_ancestors_uses_v2_endpoints(self, v2_adapter, mock_session):
+        """Ancestor resolution must use v2 metadata on OAuth Cloud."""
+        ancestors_response = Mock()
+        ancestors_response.json.return_value = {"results": [{"id": "parent-1"}]}
+        page_response = Mock()
+        page_response.json.return_value = {
+            "id": "parent-1",
+            "title": "Parent",
+            "spaceId": "789",
+        }
+        space_response = Mock()
+        space_response.json.return_value = {"key": "TEST"}
+        mock_session.get.side_effect = [
+            ancestors_response,
+            page_response,
+            space_response,
+        ]
+
+        result = v2_adapter.get_page_ancestors("page-1")
+
+        assert result[0]["id"] == "parent-1"
+        assert result[0]["space"]["key"] == "TEST"
+        mock_session.get.assert_any_call(
+            "https://example.atlassian.net/wiki/api/v2/pages/page-1/ancestors",
+            params={"limit": 250},
+        )
+
+    def test_get_page_space_key_fails_closed_on_space_lookup_error(
+        self, v2_adapter, mock_session
+    ):
+        """A failed v2 space lookup must not be treated as a matching key."""
+        page_response = Mock()
+        page_response.json.return_value = {"spaceId": "789"}
+        space_response = Mock()
+        space_response.raise_for_status.side_effect = requests.RequestException(
+            "space lookup failed"
+        )
+        mock_session.get.side_effect = [page_response, space_response]
+
+        with pytest.raises(ValueError, match="Failed to resolve space"):
+            v2_adapter.get_page_space_key("page-1")
+
     def test_get_page_with_minimal_response(self, v2_adapter, mock_session):
         """Test page retrieval with minimal v2 response."""
         # Mock the v2 API response without optional fields

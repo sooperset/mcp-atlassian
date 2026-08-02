@@ -295,8 +295,7 @@ class ConfluenceV2Adapter:
                 )
             else:
                 logger.error(f"Error getting space key for ID '{space_id}': {e}")
-            # Return the space_id as fallback
-            return {"id": space_id, "key": space_id, "name": f"Space {space_id}"}
+            raise ValueError(f"Failed to resolve space ID '{space_id}'") from e
 
     def _get_space_key_from_id(self, space_id: str) -> str:
         """Get space key from space ID using v2 API."""
@@ -395,6 +394,49 @@ class ConfluenceV2Adapter:
                 logger.error(f"Error getting space for page '{page_id}': {e}")
             raise ValueError(
                 f"Failed to resolve space for page '{page_id}': {e}"
+            ) from e
+
+    def get_page_ancestors(self, page_id: str) -> list[dict[str, Any]]:
+        """Get page ancestors through the Cloud v2 API.
+
+        The v2 ancestors endpoint returns minimal page references, so each
+        reference is expanded through the v2 page endpoint before returning a
+        v1-compatible response for the existing page models.
+
+        Args:
+            page_id: The ID of the page whose ancestors to retrieve.
+
+        Returns:
+            Ancestor pages in top-to-bottom order.
+
+        Raises:
+            ValueError: If the request or an ancestor lookup fails.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/ancestors"
+            response = self.session.get(url, params={"limit": 250})
+            response.raise_for_status()
+            data = response.json()
+            results = data.get("results", []) if isinstance(data, dict) else []
+            if not isinstance(results, list):
+                raise ValueError("Page ancestors response has invalid results")
+
+            ancestors: list[dict[str, Any]] = []
+            for ancestor in results:
+                if not isinstance(ancestor, dict) or not ancestor.get("id"):
+                    continue
+                ancestors.append(self.get_page(page_id=str(ancestor["id"])))
+            return ancestors
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting ancestors for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting ancestors for page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to get ancestors for page '{page_id}': {e}"
             ) from e
 
     def get_page_direct_children(

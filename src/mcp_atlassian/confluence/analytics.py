@@ -58,26 +58,36 @@ class AnalyticsMixin:
                 "Server/Data Center instances do not support the Analytics API."
             )
 
+        v2_adapter = getattr(self, "_v2_adapter", None)
+        if v2_adapter is None:
+            # Keep standalone AnalyticsMixin users compatible with the older
+            # test/client shape while ConfluenceFetcher uses the shared v2
+            # adapter property from PagesMixin.
+            v2_adapter = getattr(self, "v2_adapter", None)
+
         enforce_page_filter = getattr(self, "enforce_page_spaces_filter", None)
         if callable(enforce_page_filter):
             enforce_page_filter(
                 page_id,
-                v2_adapter=getattr(self, "_v2_adapter", None),
+                v2_adapter=v2_adapter,
             )
 
         # Get page title if requested
         page_title = None
         if include_title:
             try:
-                page_info = self.confluence.get_page_by_id(page_id, expand="title")
+                if v2_adapter:
+                    page_info = v2_adapter.get_page(page_id, expand="title")
+                else:
+                    page_info = self.confluence.get_page_by_id(page_id, expand="title")
                 page_title = page_info.get("title")
             except Exception as e:
                 logger.warning(f"Could not fetch title for page {page_id}: {e}")
 
         # Get view statistics using v2 adapter or direct API
         try:
-            if hasattr(self, "v2_adapter") and self.v2_adapter:
-                views_data = self.v2_adapter.get_page_views(page_id)
+            if v2_adapter:
+                views_data = v2_adapter.get_page_views(page_id)
             else:
                 views_data = self._get_page_views_direct(page_id)
 
