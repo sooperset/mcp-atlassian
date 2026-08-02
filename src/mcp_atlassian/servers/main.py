@@ -474,7 +474,6 @@ class RateLimitMiddleware:
         await self.app(scope, receive, send)
 
 
-
 class UserTokenMiddleware:
     """ASGI-compliant middleware to extract Atlassian user tokens/credentials.
 

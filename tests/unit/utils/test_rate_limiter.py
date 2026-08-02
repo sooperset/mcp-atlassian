@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import fakeredis
+import pytest
 
 from mcp_atlassian.utils.rate_limiter import (
     InMemoryBackend,
@@ -188,3 +191,202 @@ class TestGetRateLimiter:
             rl1 = get_rate_limiter()
             rl2 = get_rate_limiter()
             assert rl1 is rl2
+
+
+class TestRedisBackendFailOpen:
+    """Redis connection failures should fail open (allow requests)."""
+
+    def _make_failing_backend(self):
+        backend = RedisBackend.__new__(RedisBackend)
+        mock_redis = MagicMock()
+        mock_pipe = MagicMock()
+        mock_redis.pipeline.return_value = mock_pipe
+        mock_pipe.execute.side_effect = ConnectionError("redis down")
+        backend._redis = mock_redis
+        return backend
+
+    def test_is_allowed_returns_true_on_connection_error(self) -> None:
+        backend = self._make_failing_backend()
+        assert backend.is_allowed("user:alice", rpm=10, burst=0) is True
+
+    def test_get_usage_returns_zero_on_connection_error(self) -> None:
+        backend = self._make_failing_backend()
+        assert backend.get_usage("user:alice") == 0
+
+
+class TestRegisterRateLimitUser:
+    """Tests for _register_rate_limit_user in dependencies.py."""
+
+    def setup_method(self) -> None:
+        reset_rate_limiter()
+
+    def teardown_method(self) -> None:
+        reset_rate_limiter()
+
+    def test_noop_when_disabled(self) -> None:
+        from mcp_atlassian.servers.dependencies import _register_rate_limit_user
+
+        request = MagicMock()
+        request.state = SimpleNamespace(user_atlassian_token="tok123")
+        with patch.dict(os.environ, {}, clear=True):
+            _register_rate_limit_user(request, "admin")
+        # No rate limiter → nothing registered, no error
+
+    def test_registers_token_user_when_enabled(self) -> None:
+        from mcp_atlassian.servers.dependencies import _register_rate_limit_user
+
+        with patch.dict(
+            os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False
+        ):
+            rl = get_rate_limiter()
+            assert rl is not None
+            request = MagicMock()
+            request.state = SimpleNamespace(user_atlassian_token="my-token")
+            _register_rate_limit_user(request, "JIRAUSER10100")
+            assert rl.get_user_for_token("my-token") == "JIRAUSER10100"
+
+    def test_skips_when_no_token_on_request(self) -> None:
+        from mcp_atlassian.servers.dependencies import _register_rate_limit_user
+
+        with patch.dict(
+            os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False
+        ):
+            rl = get_rate_limiter()
+            assert rl is not None
+            request = MagicMock()
+            request.state = SimpleNamespace()
+            _register_rate_limit_user(request, "admin")
+            assert rl.get_user_for_token("anything") is None
+
+    def test_skips_when_empty_user_id(self) -> None:
+        from mcp_atlassian.servers.dependencies import _register_rate_limit_user
+
+        with patch.dict(
+            os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False
+        ):
+            rl = get_rate_limiter()
+            assert rl is not None
+            request = MagicMock()
+            request.state = SimpleNamespace(user_atlassian_token="tok")
+            _register_rate_limit_user(request, "")
+            assert rl.get_user_for_token("tok") is None
+
+
+class TestRateLimitMiddleware:
+    """Tests for the ASGI RateLimitMiddleware."""
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        reset_rate_limiter()
+        yield
+        reset_rate_limiter()
+
+    @staticmethod
+    async def _dummy_app(scope, receive, send):
+        body = b'{"ok": true}'
+        await send({
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"application/json")],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    @staticmethod
+    def _make_scope(token=None, scope_type="http"):
+        scope = {"type": scope_type, "state": {}}
+        if token:
+            scope["state"]["user_atlassian_token"] = token
+        return scope
+
+    @staticmethod
+    async def _collect_response(middleware, scope):
+        messages = []
+
+        async def send(msg):
+            messages.append(msg)
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        await middleware(scope, receive, send)
+        return messages
+
+    @pytest.mark.anyio
+    async def test_passthrough_when_disabled(self) -> None:
+        from mcp_atlassian.servers.main import RateLimitMiddleware
+
+        with patch.dict(os.environ, {}, clear=True):
+            mw = RateLimitMiddleware(self._dummy_app)
+            msgs = await self._collect_response(
+                mw, self._make_scope(token="tok")
+            )
+            assert msgs[0]["status"] == 200
+
+    @pytest.mark.anyio
+    async def test_passthrough_when_no_token(self) -> None:
+        from mcp_atlassian.servers.main import RateLimitMiddleware
+
+        with patch.dict(
+            os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False
+        ):
+            mw = RateLimitMiddleware(self._dummy_app)
+            msgs = await self._collect_response(
+                mw, self._make_scope(token=None)
+            )
+            assert msgs[0]["status"] == 200
+
+    @pytest.mark.anyio
+    async def test_passthrough_for_non_http_scope(self) -> None:
+        from mcp_atlassian.servers.main import RateLimitMiddleware
+
+        with patch.dict(
+            os.environ, {"RATE_LIMIT_ENABLED": "true"}, clear=False
+        ):
+            mw = RateLimitMiddleware(self._dummy_app)
+            msgs = await self._collect_response(
+                mw, self._make_scope(token="tok", scope_type="websocket")
+            )
+            assert msgs[0]["status"] == 200
+
+    @pytest.mark.anyio
+    async def test_allows_under_limit(self) -> None:
+        from mcp_atlassian.servers.main import RateLimitMiddleware
+
+        with patch.dict(
+            os.environ,
+            {"RATE_LIMIT_ENABLED": "true", "RATE_LIMIT_RPM": "5",
+             "RATE_LIMIT_BURST": "0"},
+            clear=False,
+        ):
+            mw = RateLimitMiddleware(self._dummy_app)
+            for _ in range(5):
+                msgs = await self._collect_response(
+                    mw, self._make_scope(token="tok")
+                )
+                assert msgs[0]["status"] == 200
+
+    @pytest.mark.anyio
+    async def test_returns_429_when_exceeded(self) -> None:
+        from mcp_atlassian.servers.main import RateLimitMiddleware
+
+        with patch.dict(
+            os.environ,
+            {"RATE_LIMIT_ENABLED": "true", "RATE_LIMIT_RPM": "2",
+             "RATE_LIMIT_BURST": "0"},
+            clear=False,
+        ):
+            mw = RateLimitMiddleware(self._dummy_app)
+            for _ in range(2):
+                await self._collect_response(
+                    mw, self._make_scope(token="tok")
+                )
+            msgs = await self._collect_response(
+                mw, self._make_scope(token="tok")
+            )
+            assert msgs[0]["status"] == 429
+            headers = dict(msgs[0]["headers"])
+            assert headers[b"content-type"] == b"application/json"
+            assert headers[b"retry-after"] == b"60"
+            body = json.loads(msgs[1]["body"])
+            assert body["error"] == "rate_limit_exceeded"
+            assert body["retry_after_seconds"] == 60
