@@ -1,12 +1,17 @@
+import inspect
+import logging
 from unittest.mock import MagicMock
 
 import pytest
 from fastmcp.exceptions import ToolError
+from fastmcp.tools import tool
+from fastmcp.tools.function_tool import ToolMeta
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.utils.decorators import (
     check_write_access,
+    deprecated_tool,
     handle_auth_errors,
     handle_tool_errors,
 )
@@ -74,6 +79,68 @@ async def test_handle_tool_errors_preserves_return_value():
 
     result = await good_tool()
     assert result == "success"
+
+
+# --- deprecated_tool tests ---
+
+
+def _tool_metadata(func) -> ToolMeta:
+    metadata = getattr(func, "__fastmcp__", None)
+    assert isinstance(metadata, ToolMeta)
+    return metadata
+
+
+def test_deprecated_tool_prefixes_existing_description():
+    @deprecated_tool("jira_discover")
+    @tool(description="Find Jira fields.")
+    async def legacy_description_tool():
+        return None
+
+    metadata = _tool_metadata(legacy_description_tool)
+    assert metadata.description == ("DEPRECATED: use jira_discover. Find Jira fields.")
+
+
+@pytest.mark.asyncio
+async def test_deprecated_tool_warns_once(caplog):
+    @deprecated_tool("jira_discover")
+    @tool()
+    async def legacy_warning_tool():
+        return None
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            await legacy_warning_tool()
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and "legacy_warning_tool" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+
+
+def test_deprecated_tool_replaces_toolset_tag_with_legacy():
+    @deprecated_tool("jira_discover")
+    @tool(tags={"jira", "read", "toolset:jira_fields"})
+    async def legacy_tagged_tool():
+        return None
+
+    metadata = _tool_metadata(legacy_tagged_tool)
+    assert metadata.tags == {"jira", "read", "toolset:legacy"}
+
+
+@pytest.mark.asyncio
+async def test_deprecated_tool_preserves_arguments_and_return_value():
+    @deprecated_tool("jira_discover")
+    @tool()
+    async def legacy_behavior_tool(value: int, *, multiplier: int = 1) -> int:
+        return value * multiplier
+
+    assert str(inspect.signature(legacy_behavior_tool)) == (
+        "(value: int, *, multiplier: int = 1) -> int"
+    )
+    assert await legacy_behavior_tool(4, multiplier=3) == 12
 
 
 # --- handle_auth_errors tests ---

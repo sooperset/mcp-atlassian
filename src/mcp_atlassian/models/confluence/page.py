@@ -285,6 +285,12 @@ class ConfluencePage(ApiModel, TimestampMixin):
         # Add version information if available
         if self.version:
             result["version"] = self.version.number
+            if self.version.by:
+                result["version_author"] = self.version.by.display_name
+            if self.version.when:
+                # Raw ISO 8601, unlike created/updated: the timezone offset is
+                # what makes this usable for activity tracking (see #1375)
+                result["version_date"] = self.version.when
 
         # Add attachments if available
         result["attachments"] = [

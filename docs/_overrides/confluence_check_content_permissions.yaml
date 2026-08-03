@@ -1,0 +1,4 @@
+example: |
+  {"content_id": "12345678", "user_identifier": "5b10a2844c20165700ede21g", "operation": "read"}
+platform_notes: |
+  This tool is only available for Confluence Cloud. Calling it on Server/Data Center raises `ValueError` because those deployments use different permission APIs.

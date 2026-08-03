@@ -25,6 +25,17 @@ Add a comment to a Confluence page.
 Supports Markdown formatting. Comments are added to the page's comment section.
 </Tip>
 
+---
+
+### Get Comments
+
+Get comments for a specific Confluence page.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789') |
 
 ---
 
@@ -40,7 +51,6 @@ Reply to an existing comment thread on a Confluence page.
 |-----------|------|----------|-------------|
 | `comment_id` | `string` | Yes | The ID of the parent comment to reply to |
 | `body` | `string` | Yes | The reply content in Markdown format |
-
 **Example:**
 
 ```json
@@ -51,18 +61,35 @@ Reply to an existing comment thread on a Confluence page.
 Get comment IDs from `confluence_get_comments`. Replies are threaded under the parent comment.
 </Tip>
 
-
 ---
 
-### Get Comments
+### Get Inline Comments
 
-Get comments for a specific Confluence page.
+Get all inline comments for a Confluence page.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789') |
+| `page_id` | `string` | Yes | The ID of the page to get inline comments from |
+
+---
+
+### Add Inline Comment
+
+Add an inline comment anchored to a text selection on a page.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | The ID of the page to add the inline comment to |
+| `body` | `string` | Yes | The comment content in Markdown format |
+| `text_selection` | `string` | Yes | The exact text on the page to anchor the inline comment to. Must match text that exists in the page content. |
+| `text_selection_match_count` | `integer` | No | Total number of times the selected text appears on the page. Defaults to 1. |
+| `text_selection_match_index` | `integer` | No | Zero-based index of which occurrence of the text to anchor to. Defaults to 0 (first occurrence). |
 
 ---
 
@@ -113,10 +140,8 @@ Get view statistics for a Confluence page.
 Useful for identifying popular or stale content. Available periods depend on your Confluence analytics configuration.
 </Tip>
 
-
 <Warning>
 Analytics features may require additional permissions on Server/DC.
 </Warning>
-
 
 ---

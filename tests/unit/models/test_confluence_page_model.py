@@ -123,6 +123,30 @@ class TestConfluencePage:
         # URL should be included
         assert "url" in simplified
 
+    def test_to_simplified_dict_includes_version_author_and_date(
+        self, confluence_page_data
+    ):
+        """Test that version author and ISO 8601 timestamp are surfaced."""
+        page = ConfluencePage.from_api_response(confluence_page_data)
+
+        simplified = page.to_simplified_dict()
+
+        assert simplified["version"] == 1
+        assert simplified["version_author"] == "Example User (Unlicensed)"
+        assert simplified["version_date"] == "2024-01-01T09:00:00.000Z"
+
+    def test_to_simplified_dict_omits_version_details_when_absent(self):
+        """Test that version author and date are omitted when unavailable."""
+        page = ConfluencePage.from_api_response(
+            {"id": "123456", "title": "No Version Details", "version": {"number": 3}}
+        )
+
+        simplified = page.to_simplified_dict()
+
+        assert simplified["version"] == 3
+        assert "version_author" not in simplified
+        assert "version_date" not in simplified
+
     def test_subtype_is_preserved_in_simplified_dict(self):
         """Test that Cloud page subtypes survive model conversion."""
         page = ConfluencePage.from_api_response(

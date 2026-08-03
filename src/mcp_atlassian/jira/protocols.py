@@ -240,11 +240,12 @@ class UsersOperationsProto(Protocol):
     """Protocol defining user operations interface."""
 
     @abstractmethod
-    def _get_account_id(self, assignee: str) -> str:
+    def _get_account_id(self, assignee: str, issue_key: str | None = None) -> str:
         """Get the account ID for a username.
 
         Args:
             assignee: Username or account ID
+            issue_key: Optional issue key used to scope an assignable-user fallback
 
         Returns:
             Account ID

@@ -6,11 +6,14 @@ Provides get_jira_fetcher and get_confluence_fetcher for use in tool functions.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import os
+import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
 from fastmcp import Context
 from fastmcp.server.dependencies import get_access_token, get_http_request
 from starlette.requests import Request
@@ -59,6 +62,181 @@ class _ServiceSpec:
     on_validated: Callable[
         [str, Request, Any, str, str | None], None
     ]  # logging + email backfill
+
+
+# ---------------------------------------------------------------------------
+# Cross-request credential validation cache (#1405)
+#
+# In multi-user HTTP transport, every request builds a fresh fetcher on
+# request.state, so credential validation (a network call to Atlassian) was
+# firing once per request instead of once per credential. This cache dedupes
+# that call across requests for the configured TTL. Only a SHA-256 digest of
+# the credential AND effective validation target is ever used as a key -- raw
+# tokens are never stored. Header-based PAT auth uses a per-request base URL,
+# while Cloud OAuth uses the tenant-specific Cloud ID rather than its fixed
+# configured URL.
+# ---------------------------------------------------------------------------
+
+
+def _validation_cache_ttl() -> int:
+    """TTL in seconds for cached validation results. 0 disables the cache."""
+    try:
+        return int(os.getenv("MCP_ATLASSIAN_VALIDATION_CACHE_TTL", "300"))
+    except ValueError:
+        return 300
+
+
+def _validation_cache_maxsize() -> int:
+    try:
+        return int(os.getenv("MCP_ATLASSIAN_VALIDATION_CACHE_MAXSIZE", "100"))
+    except ValueError:
+        return 100
+
+
+_CACHE_TTL = _validation_cache_ttl()
+_CACHE_MAXSIZE = _validation_cache_maxsize()
+_validation_cache: TTLCache[tuple[str, str], Any] | None = (
+    TTLCache(maxsize=_CACHE_MAXSIZE, ttl=_CACHE_TTL)
+    if _CACHE_TTL > 0 and _CACHE_MAXSIZE > 0
+    else None
+)
+_CACHE_MISS = object()  # sentinel distinguishing "not cached" from a cached None
+_validation_cache_lock = threading.RLock()
+
+
+@dataclasses.dataclass
+class _ValidationInFlight:
+    """Coordinate concurrent validation calls for one cache key."""
+
+    event: threading.Event = dataclasses.field(default_factory=threading.Event)
+    validation_data: Any = _CACHE_MISS
+    error: BaseException | None = None
+
+
+_validation_inflight: dict[tuple[str, str], _ValidationInFlight] = {}
+
+
+def _credential_for_cache(config: JiraConfig | ConfluenceConfig) -> str | None:
+    """Extract the secret that authenticates ``config``, for cache-key hashing.
+
+    Returns None when no credential-bearing field is set, so the caller can
+    skip caching rather than key on an empty/ambiguous value.
+    """
+    if config.auth_type == "oauth":
+        oauth_cfg = getattr(config, "oauth_config", None)
+        return getattr(oauth_cfg, "access_token", None) if oauth_cfg else None
+    if config.auth_type == "pat":
+        return config.personal_token
+    if config.auth_type == "basic":
+        if not config.api_token:
+            return None
+        # Username + token together identify the credential; a token reused
+        # under a different username should still validate independently.
+        return f"{getattr(config, 'username', '') or ''}:{config.api_token}"
+    return None
+
+
+def _validation_cache_key(
+    spec: _ServiceSpec, credential: str, scope: str
+) -> tuple[str, str]:
+    """Build the cache key, scoped to both the credential and target.
+
+    Header-based PAT auth accepts the base URL per-request (from
+    X-Atlassian-*-Url), so the same credential string reused against a
+    different instance must not share a cached validation result.
+    """
+    digest = hashlib.sha256(f"{scope}\x00{credential}".encode()).hexdigest()
+    return (spec.name, digest)
+
+
+def _validation_cache_scope(config: JiraConfig | ConfluenceConfig) -> str:
+    """Return the target identity to include in a validation cache key.
+
+    Cloud OAuth requests share the same API hostname, so the configured URL
+    does not identify the tenant. Use the effective Cloud ID for Cloud OAuth,
+    the OAuth base URL for Data Center OAuth, and the configured URL for other
+    authentication modes.
+    """
+    oauth_config = getattr(config, "oauth_config", None)
+    cloud_id = getattr(oauth_config, "cloud_id", None)
+    oauth_base_url = getattr(oauth_config, "base_url", None)
+    if config.auth_type == "oauth" and isinstance(cloud_id, str) and cloud_id:
+        return f"cloud-oauth\x00{cloud_id}"
+    if config.auth_type == "oauth" and isinstance(oauth_base_url, str):
+        return f"dc-oauth\x00{oauth_base_url}"
+    url = getattr(config, "url", "")
+    return f"url\x00{url if isinstance(url, str) else ''}"
+
+
+def _passthrough_cache_scope(passthrough_headers: dict[str, str]) -> str:
+    """Hash the effective passthrough headers for validation cache scoping.
+
+    Passthrough headers can identify the user even when the Atlassian token is
+    shared. Keep their values out of the cache itself and out of logs by using
+    only a stable digest of the normalized header names and values.
+    """
+    normalized_headers = sorted(
+        (header_name.lower(), header_value)
+        for header_name, header_value in passthrough_headers.items()
+    )
+    header_material = "\x00".join(
+        f"{header_name}\x00{header_value}"
+        for header_name, header_value in normalized_headers
+    )
+    return hashlib.sha256(header_material.encode()).hexdigest()
+
+
+def _validate_with_cache(
+    cache_key: tuple[str, str],
+    validation_cache: TTLCache[tuple[str, str], Any],
+    validate_fn: Callable[[], Any],
+    fn_name: str,
+    service_name: str,
+) -> Any:
+    """Return cached validation data or run one validation per cache key.
+
+    The process-wide lock protects only cache and in-flight bookkeeping. The
+    network validation runs outside it, allowing unrelated credentials to
+    validate concurrently while callers for the same key share one result.
+    """
+    with _validation_cache_lock:
+        cached_validation = validation_cache.get(cache_key, _CACHE_MISS)
+        if cached_validation is not _CACHE_MISS:
+            logger.debug(
+                f"{fn_name}: Reusing cached {service_name} credential "
+                "validation (skipped network call)."
+            )
+            return cached_validation
+
+        in_flight = _validation_inflight.get(cache_key)
+        if in_flight is None:
+            in_flight = _ValidationInFlight()
+            _validation_inflight[cache_key] = in_flight
+            owns_validation = True
+        else:
+            owns_validation = False
+
+    if not owns_validation:
+        in_flight.event.wait()
+        if in_flight.error is not None:
+            raise in_flight.error
+        return in_flight.validation_data
+
+    try:
+        validation_data = validate_fn()
+    except BaseException as error:
+        with _validation_cache_lock:
+            in_flight.error = error
+            _validation_inflight.pop(cache_key, None)
+            in_flight.event.set()
+        raise
+
+    with _validation_cache_lock:
+        validation_cache[cache_key] = validation_data
+        in_flight.validation_data = validation_data
+        _validation_inflight.pop(cache_key, None)
+        in_flight.event.set()
+    return validation_data
 
 
 def _jira_on_validated(
@@ -250,9 +428,13 @@ def _merge_passthrough_headers(
 
 
 def _with_request_passthrough_headers(
-    request: Request, spec: _ServiceSpec, config: Any
+    request: Request,
+    spec: _ServiceSpec,
+    config: Any,
+    passthrough_headers: dict[str, str] | None = None,
 ) -> Any:
-    passthrough_headers = _get_request_passthrough_headers(request, spec, config)
+    if passthrough_headers is None:
+        passthrough_headers = _get_request_passthrough_headers(request, spec, config)
     if not passthrough_headers:
         return config
 
@@ -305,6 +487,10 @@ def _create_and_validate(
 ) -> Any:
     """Create a fetcher, validate credentials, cache on request.state.
 
+    The validation network call itself is deduped across requests for the
+    same credential via ``_validation_cache`` (#1405) -- only fetcher
+    construction and ``request.state`` caching happen per-request.
+
     Args:
         request: The current Starlette request.
         spec: Service specification.
@@ -322,14 +508,44 @@ def _create_and_validate(
     fn_name = f"get_{spec.name.lower()}_fetcher"
     auth_desc = "header-based" if auth_branch == "header_pat" else "user"
     try:
-        config = _with_request_passthrough_headers(request, spec, config)
+        request_passthrough_headers = _get_request_passthrough_headers(
+            request, spec, config
+        )
+        config = _with_request_passthrough_headers(
+            request,
+            spec,
+            config,
+            request_passthrough_headers,
+        )
+        credential = _credential_for_cache(config)
+        cache_scope = _validation_cache_scope(config)
+        if request_passthrough_headers:
+            cache_scope = (
+                f"{cache_scope}\x00passthrough\x00"
+                f"{_passthrough_cache_scope(request_passthrough_headers)}"
+            )
+        cache_key = (
+            _validation_cache_key(spec, credential, cache_scope)
+            if credential and _validation_cache is not None
+            else None
+        )
         fetcher = spec.fetcher_class(config=config)
         if attach_ssrf_hook:
             session = spec.get_session(fetcher)
             session.hooks["response"].append(
                 _make_ssrf_safe_hook(validate_url_for_ssrf)
             )
-        validation_data = spec.validate_fn(fetcher)
+        validation_cache = _validation_cache
+        if cache_key is not None and validation_cache is not None:
+            validation_data = _validate_with_cache(
+                cache_key,
+                validation_cache,
+                lambda: spec.validate_fn(fetcher),
+                fn_name,
+                spec.name,
+            )
+        else:
+            validation_data = spec.validate_fn(fetcher)
         spec.on_validated(
             fn_name,
             request,

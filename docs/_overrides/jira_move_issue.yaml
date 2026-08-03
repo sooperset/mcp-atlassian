@@ -1,0 +1,4 @@
+example: |
+  {"issue_key": "PROJ-123", "target_project_key": "OTHERPROJ"}
+platform_notes: |
+  This tool is only available for Jira Cloud. The target project must support the issue's current type. Jira may assign a new issue key in the target project.

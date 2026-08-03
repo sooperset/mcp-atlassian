@@ -1,0 +1,6 @@
+example: |
+  {"project_key": "PROJ", "issue_type_id": "10002"}
+tips: |
+  Use `jira_get_field_options` to retrieve allowed values for a custom field.
+notes: |
+  Each field includes its field ID, name, required flag, and schema.

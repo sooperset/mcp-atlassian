@@ -58,7 +58,7 @@ GitHub Copilot's coding agent supports MCP servers via stdio transport. Key conf
   </Step>
 
   <Step title="Verify tool discovery">
-    If Copilot reports "Retrieved 0 tools", ensure you are using `mcp-atlassian >= 0.16.0` (which includes FastMCP updates for better protocol compliance).
+    If Copilot reports "Retrieved 0 tools", ensure you are using `mcp-atlassian >= 0.16.0` (which includes FastMCP updates for better protocol compliance). Current releases run on FastMCP v3 (`>=3.2.4,<4.0.0`) while exposing the standard MCP protocol over stdio and HTTP, so MCP clients do not need FastMCP installed. If an older client still cannot discover tools, update the client to a current MCP-compatible release.
   </Step>
 
   <Step title="Docker alternative">

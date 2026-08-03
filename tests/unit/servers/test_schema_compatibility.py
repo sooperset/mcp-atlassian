@@ -25,7 +25,7 @@ from mcp_atlassian.servers.main import _sanitize_schema_for_compatibility, main_
 def all_tool_schemas() -> dict[str, dict]:
     """Load and sanitize all tool schemas from both Jira and Confluence servers.
 
-    Uses ``main_mcp.get_tools()`` to get prefixed tool names (e.g.,
+    Uses ``main_mcp.list_tools()`` to get prefixed tool names (e.g.,
     ``jira_get_issue``, ``confluence_get_page``) and applies the same
     ``_sanitize_schema_for_compatibility`` transform that the production
     ``_list_tools_mcp`` method uses.  No Atlassian credentials are needed
@@ -34,9 +34,10 @@ def all_tool_schemas() -> dict[str, dict]:
     import asyncio
 
     async def _load() -> dict[str, dict]:
-        tools = await main_mcp.get_tools()
+        tools = await main_mcp.list_tools()
         schemas: dict[str, dict] = {}
-        for name, tool_obj in tools.items():
+        for tool_obj in tools:
+            name = tool_obj.name
             mcp_tool = tool_obj.to_mcp_tool(name=name)
             _sanitize_schema_for_compatibility(mcp_tool)
             schemas[name] = mcp_tool.inputSchema
@@ -63,8 +64,8 @@ def _get_tool_names() -> list[str]:
     import asyncio
 
     async def _load() -> list[str]:
-        tools = await main_mcp.get_tools()
-        return sorted(tools.keys())
+        tools = await main_mcp.list_tools()
+        return sorted(tool.name for tool in tools)
 
     # Use asyncio.run() which creates a fresh event loop
     # This is safe at collection time (before any test event loop exists)
@@ -212,6 +213,34 @@ class TestSanitizeSchemaForCompatibility:
         prop = tool.inputSchema["properties"]["flag"]
         assert prop["type"] == "boolean"
         assert "anyOf" not in prop
+
+    def test_flattens_nested_nullable_string(self) -> None:
+        """FastMCP 3 can emit nested nullable unions on Python 3.10."""
+        tool = self._make_tool(
+            {
+                "project_key": {
+                    "anyOf": [
+                        {
+                            "anyOf": [
+                                {"type": "string", "pattern": "^[A-Z][A-Z0-9_]+$"},
+                                {"type": "null"},
+                            ],
+                            "description": "Inner description",
+                        },
+                        {"type": "null"},
+                    ],
+                    "default": None,
+                    "description": "Outer description",
+                }
+            }
+        )
+        _sanitize_schema_for_compatibility(tool)
+        prop = tool.inputSchema["properties"]["project_key"]
+        assert prop["type"] == "string"
+        assert prop["pattern"] == "^[A-Z][A-Z0-9_]+$"
+        assert "anyOf" not in prop
+        assert prop["default"] is None
+        assert prop["description"] == "Outer description"
 
     def test_preserves_non_nullable_property(self) -> None:
         """Properties without ``anyOf`` are untouched."""

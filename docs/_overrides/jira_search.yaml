@@ -1,6 +1,10 @@
 example: |
   {"jql": "project = PROJ AND status = 'In Progress' ORDER BY updated DESC", "limit": 20}
 tips: |
-  Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
+  Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries. Every issue in the response includes `browse_url`, a direct link to that issue in the Jira web UI.
+
+  Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`. If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
+
+  Cloud supports cursor-based pagination via `page_token` for deterministic results across large datasets. Continue by passing the response's `next_page_token` back as `page_token`; Server/DC uses `start_at` instead.
 platform_notes: |
   Some JQL functions (e.g., `issueHistory()`) are Cloud-only.

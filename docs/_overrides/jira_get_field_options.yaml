@@ -1,0 +1,4 @@
+example: |
+  {"field_id": "customfield_10001", "contains": "high", "return_limit": 5, "values_only": true}
+tips: |
+  Use `contains` to filter large option lists (e.g., hundreds of values). Combine with `values_only: true` for a compact response.

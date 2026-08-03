@@ -46,7 +46,7 @@ class ProxyConfigProtocol(Protocol):
     proxy_wpad_url: str | None
 
 
-class _NoProxyAwarePACSession(PACSession):  # type: ignore[misc]
+class _NoProxyAwarePACSession(PACSession):
     """PAC-enabled session that preserves explicit NO_PROXY bypasses."""
 
     def __init__(self, pac: Any, no_proxy: str | None) -> None:

@@ -86,7 +86,7 @@ Create a Jira Service Management customer request.
 | `request_field_values` | `string` | Yes | JSON string of request field values keyed by field ID. Examples: - Summary and description: `{"summary": "Access issue", "description": "Cannot log in"}` - Multi-value field: `{"customfield_10001": ["alice", "bob"]}` |
 | `raise_on_behalf_of` | `string` | No | (Optional) Jira user identifier for raiseOnBehalfOf. For Server/DC this is typically username or key; for Cloud use the identifier expected by your JSM instance. |
 | `request_participants` | `string` | No | (Optional) JSON array string or comma-separated list of request participants. Examples: ["user1","user2"] or "user1,user2" |
-| `attachments` | `string` | No | (Optional) JSON array string of files to attach to the created request. Each object must contain 'filename', 'mime_type', and base64-encoded 'base64' content. Example: `[{"filename": "log.txt", "mime_type": "text/plain", "base64": "aGVsbG8="}]` |
+| `attachments` | `string` | No | (Optional) JSON array string of files to attach to the created request. Each object must contain 'filename', 'mime_type', and base64-encoded 'base64' content. Example: [`{"filename": "log.txt", "mime_type": "text/plain", "base64": "aGVsbG8="}`] |
 | `strict_on_behalf` | `boolean` | No | If true, fail immediately when raiseOnBehalfOf cannot be applied. If false, retry without raiseOnBehalfOf and return a fallback warning. |
 
 ---

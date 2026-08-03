@@ -71,6 +71,8 @@ Thank you for your interest in contributing to MCP Atlassian! This document prov
 
 1. Make your changes
 
+1. After changing tool signatures or registrations, run `uv run python scripts/generate_tool_docs.py` and commit the diff; CI (`Docs / check`) enforces this
+
 1. Ensure tests pass:
 
     ```sh

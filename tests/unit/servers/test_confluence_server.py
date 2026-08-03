@@ -301,7 +301,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(get_page_template)
     confluence_sub_mcp.add_tool(create_page_from_template)
 
-    test_mcp.mount(confluence_sub_mcp, prefix="confluence")
+    test_mcp.mount(confluence_sub_mcp, namespace="confluence")
 
     return test_mcp
 
@@ -384,7 +384,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(get_page_template)
     confluence_sub_mcp.add_tool(create_page_from_template)
 
-    test_mcp.mount(confluence_sub_mcp, prefix="confluence")
+    test_mcp.mount(confluence_sub_mcp, namespace="confluence")
 
     return test_mcp
 
@@ -1079,7 +1079,9 @@ async def test_update_page_accepts_empty_content(client, mock_confluence_fetcher
 
 def test_page_content_file_parameters_preserve_positional_order():
     """content_file should not shift existing positional parameters."""
-    create_params = list(inspect.signature(confluence_server.create_page.fn).parameters)
+    create_params = list(
+        inspect.signature(confluence_server.create_page.__wrapped__).parameters
+    )
     assert create_params == [
         "ctx",
         "space_key",
@@ -1096,7 +1098,9 @@ def test_page_content_file_parameters_preserve_positional_order():
         "subtype",
     ]
 
-    update_params = list(inspect.signature(confluence_server.update_page.fn).parameters)
+    update_params = list(
+        inspect.signature(confluence_server.update_page.__wrapped__).parameters
+    )
     assert update_params == [
         "ctx",
         "page_id",
