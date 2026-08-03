@@ -307,8 +307,16 @@ class TestJiraDCTransitions:
         )
         resource_tracker.add_jira_issue(issue.key)
 
-        transitions = jira_fetcher.get_transitions(issue.key)
+        transitions = jira_fetcher.get_available_transitions(
+            issue.key, expand_fields=True
+        )
         assert len(transitions) > 0
+        assert all(isinstance(t["has_screen"], bool) for t in transitions)
+        for transition in transitions:
+            assert all(
+                field.get("key") and field.get("name")
+                for field in transition.get("required_fields", [])
+            )
 
         # Find "In Progress" transition or use first available
         target_id = None
@@ -323,7 +331,9 @@ class TestJiraDCTransitions:
         jira_fetcher.transition_issue(
             issue.key,
             target_id,
-            comment=f"Data Center transition comment {uid}",
+            update_data={
+                "comment": [{"add": {"body": f"Data Center supplemental update {uid}"}}]
+            },
         )
 
         updated = jira_fetcher.get_issue(issue.key)

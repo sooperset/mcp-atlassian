@@ -670,6 +670,35 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_transition_issue_with_update_data(jira_client, mock_jira_fetcher):
+    """Test transition update data is parsed and forwarded to JiraFetcher."""
+    transitioned_issue = MagicMock()
+    transitioned_issue.to_simplified_dict.return_value = {"key": "TEST-123"}
+    mock_jira_fetcher.transition_issue.return_value = transitioned_issue
+
+    response = await jira_client.call_tool(
+        "jira_transition_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition_id": "31",
+            "fields": '{"resolution": {"name": "Done"}}',
+            "comment": "Completed",
+            "update_data": '{"worklog": [{"add": {"timeSpent": "1h"}}]}',
+        },
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Issue TEST-123 transitioned successfully"
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123",
+        transition_id="31",
+        fields={"resolution": {"name": "Done"}},
+        comment="Completed",
+        update_data={"worklog": [{"add": {"timeSpent": "1h"}}]},
+    )
+
+
+@pytest.mark.anyio
 async def test_search(jira_client, mock_jira_fetcher):
     """Test the search tool with fixture data."""
     response = await jira_client.call_tool(
@@ -3800,6 +3829,44 @@ async def test_get_issue_include_transitions_fetches_transitions(
     mock_jira_fetcher.get_available_transitions.assert_called_once_with("TEST-123")
     call_args = mock_jira_fetcher.get_issue.call_args
     assert call_args.kwargs.get("expand") is None
+
+
+@pytest.mark.anyio
+async def test_get_transitions_tool_lightweight_default(jira_client, mock_jira_fetcher):
+    """jira_get_transitions calls get_available_transitions without expand."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "11", "name": "Done", "to_status": "Done"}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_transitions",
+        {"issue_key": "TEST-123"},
+    )
+    content = json.loads(response.content[0].text)
+    assert content == [{"id": "11", "name": "Done", "to_status": "Done"}]
+    mock_jira_fetcher.get_available_transitions.assert_called_once_with(
+        "TEST-123", expand_fields=False
+    )
+
+
+@pytest.mark.anyio
+async def test_get_transitions_tool_with_expand_fields(jira_client, mock_jira_fetcher):
+    """jira_get_transitions with expand_fields=true requests metadata."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "11", "name": "Done", "to_status": "Done", "has_screen": True}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_get_transitions",
+        {"issue_key": "TEST-123", "expand_fields": True},
+    )
+    content = json.loads(response.content[0].text)
+    assert content == [
+        {"id": "11", "name": "Done", "to_status": "Done", "has_screen": True}
+    ]
+    mock_jira_fetcher.get_available_transitions.assert_called_once_with(
+        "TEST-123", expand_fields=True
+    )
 
 
 @pytest.mark.anyio
