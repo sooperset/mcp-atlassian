@@ -7,6 +7,7 @@ Run with: uv run pytest tests/integration/test_rate_limiter_redis.py --integrati
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -134,3 +135,25 @@ class TestRateLimiterRedisIntegration:
         allowed, key = limiter.check(token)
         assert allowed is True
         assert key.startswith("token:")
+
+    def test_concurrent_requests_respect_limit(
+        self, backend: RedisBackend
+    ) -> None:
+        """Race condition repro: concurrent is_allowed calls must not
+        exceed the limit. The check-then-act gap in the current
+        implementation lets multiple requests slip through."""
+        key = "test:concurrent"
+        rpm, burst = 5, 0
+        num_concurrent = 30
+
+        def try_request(_: int) -> bool:
+            return backend.is_allowed(key, rpm, burst)
+
+        with ThreadPoolExecutor(max_workers=num_concurrent) as pool:
+            results = list(pool.map(try_request, range(num_concurrent)))
+
+        allowed_count = sum(results)
+        assert allowed_count <= rpm + burst, (
+            f"Race condition: {allowed_count} requests allowed, "
+            f"expected <= {rpm + burst}"
+        )

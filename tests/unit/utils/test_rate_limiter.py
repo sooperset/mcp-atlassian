@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -50,6 +51,19 @@ class TestInMemoryBackend:
         backend.is_allowed("user:alice", rpm=10, burst=0)
         backend.is_allowed("user:alice", rpm=10, burst=0)
         assert backend.get_usage("user:alice") == 2
+
+    def test_concurrent_requests_respect_limit(self) -> None:
+        """In-memory backend holds a lock so concurrent calls stay capped."""
+        backend = InMemoryBackend()
+        rpm, burst = 5, 0
+
+        def try_request(_: int) -> bool:
+            return backend.is_allowed("user:alice", rpm, burst)
+
+        with ThreadPoolExecutor(max_workers=30) as pool:
+            results = list(pool.map(try_request, range(30)))
+
+        assert sum(results) <= rpm + burst
 
 
 class TestRateLimiter:
