@@ -15,7 +15,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 | `title` | `string` | No | The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known. |
 | `space_key` | `string` | No | The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'. |
 | `include_metadata` | `boolean` | No | Whether to include page metadata such as creation date, last update, version, and labels. |
-| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). Storage output preserves macros, embedded Jira render modes, page layout, and task metadata for safe round-tripping, but CAUTION: it significantly increases token usage in AI responses. |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
 **Example:**
 
 ```json
@@ -23,7 +23,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 ```
 
 <Tip>
-Content is returned in Markdown format by default. Set `convert_to_markdown` to `false` to retrieve exact Confluence storage XHTML when macro preservation matters, including embedded Jira card-vs-list rendering, task metadata, and page layout details. Use `include_metadata` for labels, version info, and last modified date. When Confluence supplies version details, the response metadata includes `version_author` (the author display name) and `version_date` (the raw ISO 8601 version timestamp).
+Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date. When Confluence supplies version details, the response metadata includes `version_author` (the author display name) and `version_date` (the raw ISO 8601 version timestamp).
 </Tip>
 
 ---
@@ -40,9 +40,9 @@ Create a new Confluence page.
 |-----------|------|----------|-------------|
 | `space_key` | `string` | Yes | The key of the space to create the page in (usually a short uppercase code like 'DEV', 'TEAM', or 'DOC') |
 | `title` | `string` | Yes | The title of the page |
-| `content` | `string` | No | The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, storage format, or XHTML storage format. Use storage when retransmitting macro-heavy pages or existing layout/render metadata. Either 'content' or 'content_file' must be provided, but not both. |
+| `content` | `string` | No | The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, storage format, or XHTML storage format. Either 'content' or 'content_file' must be provided, but not both. |
 | `parent_id` | `string` | No | (Optional) parent page ID. If provided, this page will be created as a child of the specified page |
-| `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use 'xhtml' when providing Confluence XHTML storage format (same as 'storage'). Wiki format uses Confluence wiki markup syntax. Choose 'storage' or 'xhtml' when embedded macros, Jira cards/lists, task metadata, or page layout must round-trip unchanged. |
+| `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use 'xhtml' when providing Confluence XHTML storage format (same as 'storage'). Wiki format uses Confluence wiki markup syntax |
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
 | `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at create time |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
@@ -78,11 +78,11 @@ Update an existing Confluence page.
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | The ID of the page to update |
 | `title` | `string` | Yes | The new title of the page |
-| `content` | `string` | No | The new content of the page. Format depends on content_format parameter and may be Markdown (default), wiki markup, storage format, or XHTML storage format. Use storage when retransmitting macro-heavy pages or existing layout/render metadata. Either 'content' or 'content_file' must be provided, but not both. |
+| `content` | `string` | No | The new content of the page. Format depends on content_format parameter and may be Markdown (default), wiki markup, storage format, or XHTML storage format. Either 'content' or 'content_file' must be provided, but not both. |
 | `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
 | `version_comment` | `string` | No | Optional comment for this version |
 | `parent_id` | `string` | No | Optional the new parent page ID |
-| `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use 'xhtml' when providing Confluence XHTML storage format (same as 'storage'). Wiki format uses Confluence wiki markup syntax. Choose 'storage' or 'xhtml' when embedded macros, Jira cards/lists, task metadata, or page layout must round-trip unchanged. |
+| `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use 'xhtml' when providing Confluence XHTML storage format (same as 'storage'). Wiki format uses Confluence wiki markup syntax |
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
 | `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at update time |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
@@ -160,7 +160,7 @@ Get a historical version of a specific Confluence page.
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
 | `version` | `integer` | Yes | The version number of the page to retrieve |
-| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). Storage output preserves macros and task metadata for safe round-tripping, but CAUTION: it significantly increases token usage in AI responses. |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
 
 ---
 
