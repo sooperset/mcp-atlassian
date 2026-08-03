@@ -1391,7 +1391,7 @@ class IssuesMixin(
                         )
                 self.jira.assign_issue(issue_key, str(assignee_identifier))
             else:
-                account_id = self._get_account_id(assignee)
+                account_id = self._get_account_id(assignee, issue_key=issue_key)
                 self.jira.assign_issue(issue_key, account_id)
 
             # Return the updated issue

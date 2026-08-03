@@ -1095,7 +1095,9 @@ class TestIssuesMixin:
             issue_key="TEST-123", assignee="user@example.com"
         )
 
-        issues_mixin._get_account_id.assert_called_once_with("user@example.com")
+        issues_mixin._get_account_id.assert_called_once_with(
+            "user@example.com", issue_key="TEST-123"
+        )
         issues_mixin.jira.assign_issue.assert_called_once_with(
             "TEST-123", "account-123"
         )

@@ -613,6 +613,23 @@ class TestMarkdownToAdf:
             assert item["type"] == "listItem"
             assert item["content"][0]["type"] == "paragraph"
 
+    @pytest.mark.parametrize(
+        "md",
+        [
+            "1. first\n\n2. second\n\n3. third",
+            "1. first\n\n1. second\n\n1. third",
+        ],
+    )
+    def test_ordered_list_with_blank_lines(self, md: str) -> None:
+        """Blank lines between items keep one loose ordered list."""
+        result = markdown_to_adf(md)
+        ordered_lists = [
+            node for node in result["content"] if node["type"] == "orderedList"
+        ]
+
+        assert len(ordered_lists) == 1
+        assert len(ordered_lists[0]["content"]) == 3
+
     def test_task_list_checked(self):
         """- [x] items produce a taskList with taskItem state=DONE."""
         md = "- [x] done task"
