@@ -328,9 +328,9 @@ async def get_page(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). "
+                "Storage output preserves macros, embedded Jira render modes, page layout, and task metadata "
+                "for safe round-tripping, but CAUTION: it significantly increases token usage in AI responses."
             ),
             default=True,
         ),
@@ -696,7 +696,9 @@ async def create_page(
             description=(
                 "The content of the page. Format depends on content_format "
                 "parameter. Can be Markdown (default), wiki markup, storage "
-                "format, or XHTML storage format. Either 'content' or "
+                "format, or XHTML storage format. Use storage when "
+                "retransmitting macro-heavy pages or existing layout/render "
+                "metadata. Either 'content' or "
                 "'content_file' must be provided, but not both."
             ),
             default=None,
@@ -718,7 +720,9 @@ async def create_page(
                 "'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use "
                 "'xhtml' when providing Confluence XHTML storage format "
                 "(same as 'storage'). Wiki format uses Confluence wiki "
-                "markup syntax"
+                "markup syntax. Choose 'storage' or 'xhtml' when embedded "
+                "macros, Jira cards/lists, task metadata, or page layout "
+                "must round-trip unchanged."
             ),
             default="markdown",
         ),
@@ -878,7 +882,9 @@ async def update_page(
             description=(
                 "The new content of the page. Format depends on "
                 "content_format parameter and may be Markdown (default), wiki "
-                "markup, storage format, or XHTML storage format. Either "
+                "markup, storage format, or XHTML storage format. Use storage "
+                "when retransmitting macro-heavy pages or existing "
+                "layout/render metadata. Either "
                 "'content' or 'content_file' must be provided, but not both."
             ),
             default=None,
@@ -903,7 +909,9 @@ async def update_page(
                 "'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use "
                 "'xhtml' when providing Confluence XHTML storage format "
                 "(same as 'storage'). Wiki format uses Confluence wiki "
-                "markup syntax"
+                "markup syntax. Choose 'storage' or 'xhtml' when embedded "
+                "macros, Jira cards/lists, task metadata, or page layout "
+                "must round-trip unchanged."
             ),
             default="markdown",
         ),
@@ -1624,9 +1632,9 @@ async def get_page_history(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). "
+                "Storage output preserves macros and task metadata for safe round-tripping, but CAUTION: "
+                "it significantly increases token usage in AI responses."
             ),
             default=True,
         ),

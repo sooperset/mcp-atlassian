@@ -7,6 +7,7 @@ reusable fixtures for model validation and serialization testing.
 """
 
 import os
+from copy import deepcopy
 from datetime import datetime, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -194,7 +195,7 @@ def confluence_page_data() -> dict[str, Any]:
     Note: This fixture is maintained for backward compatibility.
     Consider using make_confluence_page_data for new tests.
     """
-    return MOCK_PAGE_RESPONSE
+    return deepcopy(MOCK_PAGE_RESPONSE)
 
 
 @pytest.fixture
