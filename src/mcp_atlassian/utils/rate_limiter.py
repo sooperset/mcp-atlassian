@@ -40,7 +40,7 @@ class InMemoryBackend:
     """Sliding-window rate limiter using in-memory deques."""
 
     def __init__(self) -> None:
-        self._windows: dict[str, deque[float]] = {}
+        self._windows: TTLCache[str, deque[float]] = TTLCache(maxsize=10000, ttl=120)
         self._lock = Lock()
 
     def is_allowed(self, key: str, rpm: int, burst: int) -> bool:
@@ -73,7 +73,7 @@ class InMemoryBackend:
 
 
 class RedisBackend:
-    """Sliding-window rate limiter using Redis sorted sets."""
+    """Fixed-window rate limiter using Redis atomic INCR counters."""
 
     def __init__(
         self,

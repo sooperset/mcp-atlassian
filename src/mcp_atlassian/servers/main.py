@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
@@ -440,13 +441,12 @@ class RateLimitMiddleware:
 
         allowed, key = rate_limiter.check(token)
         if not allowed:
-            usage = rate_limiter.get_usage_for_token(token)
             logger.warning(
-                "Rate limit exceeded for %s (%d/%d rpm)",
+                "Rate limit exceeded for %s (limit %d rpm)",
                 key,
-                usage,
                 rate_limiter.rpm,
             )
+            retry_after = 60 - int(time.time()) % 60
             body = json.dumps(
                 {
                     "error": "rate_limit_exceeded",
@@ -454,7 +454,7 @@ class RateLimitMiddleware:
                         f"Rate limit exceeded ({rate_limiter.rpm} requests/minute). "
                         "Please retry later."
                     ),
-                    "retry_after_seconds": 60,
+                    "retry_after_seconds": retry_after,
                 }
             ).encode("utf-8")
             await send(
@@ -464,7 +464,7 @@ class RateLimitMiddleware:
                     "headers": [
                         (b"content-type", b"application/json"),
                         (b"content-length", str(len(body)).encode("ascii")),
-                        (b"retry-after", b"60"),
+                        (b"retry-after", str(retry_after).encode("ascii")),
                     ],
                 }
             )

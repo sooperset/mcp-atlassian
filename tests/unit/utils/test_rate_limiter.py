@@ -389,7 +389,8 @@ class TestRateLimitMiddleware:
             assert msgs[0]["status"] == 429
             headers = dict(msgs[0]["headers"])
             assert headers[b"content-type"] == b"application/json"
-            assert headers[b"retry-after"] == b"60"
+            retry_after = int(headers[b"retry-after"])
+            assert 1 <= retry_after <= 60
             body = json.loads(msgs[1]["body"])
             assert body["error"] == "rate_limit_exceeded"
-            assert body["retry_after_seconds"] == 60
+            assert body["retry_after_seconds"] == retry_after
