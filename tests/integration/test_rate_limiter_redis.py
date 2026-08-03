@@ -7,6 +7,7 @@ Run with: uv run pytest tests/integration/test_rate_limiter_redis.py --integrati
 from __future__ import annotations
 
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -81,24 +82,24 @@ class TestRedisBackendIntegration:
     def test_keys_have_ttl(self, backend: RedisBackend, redis_client) -> None:
         key = "test:ttl"
         backend.is_allowed(key, 10, 0)
-        redis_key = f"mcp_ratelimit:{key}"
+        window = int(time.time()) // 60
+        redis_key = f"mcp_ratelimit:{key}:{window}"
         ttl = redis_client.ttl(redis_key)
-        assert 0 < ttl <= 61
+        assert 0 < ttl <= 120
 
     def test_different_keys_are_independent(self, backend: RedisBackend) -> None:
         backend.is_allowed("test:a", 1, 0)
         backend.is_allowed("test:a", 1, 0)
         assert backend.is_allowed("test:b", 1, 0) is True
 
-    def test_sorted_set_members_are_unique(
-        self, backend: RedisBackend, redis_client
-    ) -> None:
-        key = "test:unique"
+    def test_counter_tracks_requests(self, backend: RedisBackend, redis_client) -> None:
+        key = "test:counter"
         for _ in range(5):
             backend.is_allowed(key, 10, 0)
-        redis_key = f"mcp_ratelimit:{key}"
-        members = redis_client.zcard(redis_key)
-        assert members == 5
+        window = int(time.time()) // 60
+        redis_key = f"mcp_ratelimit:{key}:{window}"
+        count = int(redis_client.get(redis_key))
+        assert count == 5
 
 
 @pytest.mark.integration
@@ -136,9 +137,7 @@ class TestRateLimiterRedisIntegration:
         assert allowed is True
         assert key.startswith("token:")
 
-    def test_concurrent_requests_respect_limit(
-        self, backend: RedisBackend
-    ) -> None:
+    def test_concurrent_requests_respect_limit(self, backend: RedisBackend) -> None:
         """Race condition repro: concurrent is_allowed calls must not
         exceed the limit. The check-then-act gap in the current
         implementation lets multiple requests slip through."""

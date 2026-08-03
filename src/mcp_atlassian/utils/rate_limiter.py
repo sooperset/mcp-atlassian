@@ -99,28 +99,22 @@ class RedisBackend:
             msg = "Either redis_url or client must be provided"
             raise ValueError(msg)
 
-    def _prune_and_count(self, redis_key: str) -> int:
-        now = time.time()
-        cutoff = now - 60.0
-        pipe = self._redis.pipeline()
-        pipe.zremrangebyscore(redis_key, 0, cutoff)
-        pipe.zcard(redis_key)
-        results = pipe.execute()
-        return int(results[1])
+    @staticmethod
+    def _window_key(key: str) -> str:
+        window = int(time.time()) // 60
+        return f"mcp_ratelimit:{key}:{window}"
 
     def is_allowed(self, key: str, rpm: int, burst: int) -> bool:
         limit = rpm + burst
-        redis_key = f"mcp_ratelimit:{key}"
+        redis_key = self._window_key(key)
         try:
-            count = self._prune_and_count(redis_key)
-            if count >= limit:
-                return False
-            now = time.time()
-            member = f"{now}-{id(self)}"
             pipe = self._redis.pipeline()
-            pipe.zadd(redis_key, {member: now})
-            pipe.expire(redis_key, 61)
-            pipe.execute()
+            pipe.incr(redis_key)
+            pipe.expire(redis_key, 120)
+            results = pipe.execute()
+            count = int(results[0])
+            if count > limit:
+                return False
             return True
         except (OSError, ConnectionError, TimeoutError):
             logger.warning(
@@ -130,9 +124,10 @@ class RedisBackend:
             return True
 
     def get_usage(self, key: str) -> int:
-        redis_key = f"mcp_ratelimit:{key}"
+        redis_key = self._window_key(key)
         try:
-            return self._prune_and_count(redis_key)
+            val = self._redis.get(redis_key)
+            return int(val) if val else 0
         except (OSError, ConnectionError, TimeoutError):
             logger.warning(
                 "Redis rate limit count failed",

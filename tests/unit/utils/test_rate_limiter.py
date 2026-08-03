@@ -216,6 +216,7 @@ class TestRedisBackendFailOpen:
         mock_pipe = MagicMock()
         mock_redis.pipeline.return_value = mock_pipe
         mock_pipe.execute.side_effect = ConnectionError("redis down")
+        mock_redis.get.side_effect = ConnectionError("redis down")
         backend._redis = mock_redis
         return backend
 
