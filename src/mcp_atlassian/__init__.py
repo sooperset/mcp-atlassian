@@ -128,7 +128,7 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
 @click.option(
     "--oauth-setup",
     is_flag=True,
-    help="Run OAuth 2.0 setup wizard for Atlassian Cloud",
+    help="Run OAuth 2.0 setup wizard (Cloud and Server/Data Center)",
 )
 @click.option(
     "--transport",
