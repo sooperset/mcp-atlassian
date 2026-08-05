@@ -14,6 +14,7 @@ def _set_required_oauth_env(monkeypatch, *, redirect_uri: str) -> None:
     monkeypatch.setenv("ATLASSIAN_OAUTH_CLIENT_ID", "client-id")
     monkeypatch.setenv("ATLASSIAN_OAUTH_CLIENT_SECRET", "client-secret")
     monkeypatch.setenv("ATLASSIAN_OAUTH_REDIRECT_URI", redirect_uri)
+    monkeypatch.setenv("ATLASSIAN_OAUTH_SCOPE", "read:jira-work")
 
 
 class _DummyProviderStorage:
@@ -94,6 +95,22 @@ def test_build_auth_provider_falls_back_to_jira_url(monkeypatch):
     assert provider is not None
 
 
+@pytest.mark.parametrize("scope", [None, "   ,   "])
+def test_build_auth_provider_requires_nonempty_scope(monkeypatch, scope, caplog):
+    """OAuth proxy routes require an explicit scope boundary."""
+    monkeypatch.setenv("JIRA_URL", "https://jira.example.com")
+    _set_required_oauth_env(monkeypatch, redirect_uri="http://localhost:3000/callback")
+    if scope is None:
+        monkeypatch.delenv("ATLASSIAN_OAUTH_SCOPE")
+    else:
+        monkeypatch.setenv("ATLASSIAN_OAUTH_SCOPE", scope)
+
+    provider = _build_auth_provider()
+
+    assert provider is None
+    assert "ATLASSIAN_OAUTH_SCOPE is missing or empty" in caplog.text
+
+
 def test_build_auth_provider_supports_service_specific_credentials(monkeypatch):
     monkeypatch.setenv("ATLASSIAN_OAUTH_PROXY_ENABLE", "true")
     monkeypatch.delenv("ATLASSIAN_OAUTH_CLIENT_ID", raising=False)
@@ -101,6 +118,7 @@ def test_build_auth_provider_supports_service_specific_credentials(monkeypatch):
     monkeypatch.setenv("JIRA_OAUTH_CLIENT_ID", "jira-client-id")
     monkeypatch.setenv("JIRA_OAUTH_CLIENT_SECRET", "jira-client-secret")
     monkeypatch.setenv("ATLASSIAN_OAUTH_REDIRECT_URI", "http://localhost:3000/callback")
+    monkeypatch.setenv("ATLASSIAN_OAUTH_SCOPE", "read:jira-work")
     monkeypatch.setenv("JIRA_URL", "https://jira.example.com")
 
     provider = _build_auth_provider()
