@@ -829,6 +829,13 @@ def _build_auth_provider() -> HardenedOAuthProxy | None:
         return None
 
     scopes = [s for part in scope_env.replace(",", " ").split() if (s := part)]
+    if not scopes:
+        logger.warning(
+            "OAuth proxy requested but ATLASSIAN_OAUTH_SCOPE is missing or empty. "
+            "Refusing to expose proxy routes without an explicit scope boundary."
+        )
+        return None
+
     is_cloud = _is_cloud_instance(instance_url)
     upstream_authorize, upstream_token = _resolve_upstream_oauth_endpoints(instance_url)
 
