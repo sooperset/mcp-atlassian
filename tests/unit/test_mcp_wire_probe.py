@@ -2,6 +2,7 @@
 
 import json
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -112,6 +113,31 @@ def test_sdk_field_supports_v1_and_v2_names() -> None:
         )
         == "v2"
     )
+
+
+def test_expected_protocol_version_accepts_matching_lane() -> None:
+    """A lane-specific expected protocol passes when negotiation matches."""
+    mcp_wire_probe._validate_protocol_version("2025-11-25", "2025-11-25")
+    mcp_wire_probe._validate_protocol_version("2025-11-25", None)
+
+
+def test_expected_protocol_version_rejects_mismatch() -> None:
+    """A lane fails clearly instead of silently testing another protocol."""
+    with pytest.raises(RuntimeError, match="Expected MCP protocol 2026-07-28"):
+        mcp_wire_probe._validate_protocol_version("2025-11-25", "2026-07-28")
+
+
+def test_installed_versions_are_sanitized_and_tolerate_missing_package() -> None:
+    """Version evidence contains package metadata only and permits absence."""
+    with patch.object(
+        mcp_wire_probe,
+        "package_version",
+        side_effect=["2.0.0", mcp_wire_probe.PackageNotFoundError("fastmcp")],
+    ):
+        versions = mcp_wire_probe._installed_versions()
+
+    assert versions == {"mcp": "2.0.0", "fastmcp": None}
+    assert "MCP_READINESS_JIRA_PAT" not in json.dumps(versions)
 
 
 def test_result_record_omits_response_content() -> None:

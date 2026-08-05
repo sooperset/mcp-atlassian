@@ -8,6 +8,8 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 
@@ -138,6 +140,24 @@ def _validate_staging_tools(tool_names: set[str]) -> None:
         raise RuntimeError(message)
 
 
+def _installed_versions() -> dict[str, str | None]:
+    """Return readiness package versions without importing their internals."""
+    versions: dict[str, str | None] = {}
+    for distribution in ("mcp", "fastmcp"):
+        try:
+            versions[distribution] = package_version(distribution)
+        except PackageNotFoundError:
+            versions[distribution] = None
+    return versions
+
+
+def _validate_protocol_version(actual: str, expected: str | None) -> None:
+    """Fail a version-specific readiness lane on protocol mismatch."""
+    if expected is not None and actual != expected:
+        message = f"Expected MCP protocol {expected}, negotiated {actual}"
+        raise RuntimeError(message)
+
+
 async def probe(args: argparse.Namespace) -> dict[str, Any]:
     """Initialize, list tools, and optionally run paced staging reads."""
     profile = build_staging_profile(os.environ.copy()) if args.staging_dc_pat else None
@@ -155,6 +175,17 @@ async def probe(args: argparse.Namespace) -> dict[str, Any]:
         async with stdio_client(parameters) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 initialized = await session.initialize()
+                protocol_version = str(
+                    _sdk_field(
+                        initialized,
+                        "protocol_version",
+                        "protocolVersion",
+                        default="unknown",
+                    )
+                )
+                _validate_protocol_version(
+                    protocol_version, args.expect_protocol_version
+                )
                 listed = await session.list_tools()
                 tool_names = sorted(tool.name for tool in listed.tools)
 
@@ -178,14 +209,8 @@ async def probe(args: argparse.Namespace) -> dict[str, Any]:
         "transport": "stdio",
         "staging_profile": "jira-dc-confluence-dc-pat" if profile else None,
         "max_rpm": profile.max_rpm if profile else None,
-        "protocol_version": str(
-            _sdk_field(
-                initialized,
-                "protocol_version",
-                "protocolVersion",
-                default="unknown",
-            )
-        ),
+        "protocol_version": protocol_version,
+        "package_versions": _installed_versions(),
         "tool_count": len(tool_names),
         "tool_names": tool_names,
         "probes": probes,
@@ -200,6 +225,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--server-arg", action="append", default=[])
     parser.add_argument("--cwd", type=Path)
     parser.add_argument("--timeout", type=float, default=60.0)
+    parser.add_argument("--expect-protocol-version")
     parser.add_argument("--staging-dc-pat", action="store_true")
     parser.add_argument("--output", type=Path)
     return parser
