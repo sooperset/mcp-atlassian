@@ -2884,6 +2884,37 @@ class TestUnauthenticatedGlobalFallbackRegression:
         get_resolver.assert_not_called()
 
     @pytest.mark.security_regression
+    async def test_external_auth_exemption_does_not_cover_deferred_commands(
+        self, mock_context, mock_request, config_factory
+    ) -> None:
+        """External auth is exempt from the guard; a pending command is not.
+
+        ``auth_type="external"`` holds no operator credentials — the caller
+        supplies them per request — so it may serve unauthenticated HTTP. A
+        configured ``*_COMMAND`` does produce operator credentials, so the
+        exemption must not extend to it.
+        """
+        _setup_mock_request_state(mock_request)
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(auth_type="external"),
+            has_deferred_jira_auth=True,
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                return_value=mock_request,
+            ),
+            patch("mcp_atlassian.servers.dependencies.get_resolver") as get_resolver,
+            patch.dict("os.environ", {"ALLOW_GLOBAL_CRED_FALLBACK": ""}),
+            pytest.raises(ValueError, match="operator's global credentials"),
+        ):
+            await get_jira_fetcher(mock_context)
+
+        get_resolver.assert_not_called()
+
+    @pytest.mark.security_regression
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
     async def test_unauthenticated_http_request_refuses_global_confluence_fetcher(
