@@ -1010,6 +1010,31 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             "allow the global-credential fallback (single-user deployments only)."
         )
 
+    # Deferred *_COMMAND credentials come first: the flag is only set when they
+    # match or outrank whatever loaded eagerly at startup.
+    if has_deferred_fallback:
+        resolver = get_resolver()
+        try:
+            await asyncio.to_thread(resolver.resolve, spec.name.lower())
+        except ValueError as exc:
+            if global_config_fallback is None:
+                raise
+            logger.warning(
+                "%s credential command failed (%s); falling back to the "
+                "eagerly loaded %s configuration.",
+                spec.name,
+                exc,
+                global_config_fallback.auth_type,
+            )
+        else:
+            config = spec.config_class.from_env()  # type: ignore[attr-defined]
+            fetcher = spec.fetcher_class(config=config)
+            logger.info(
+                "%s credentials resolved from *_COMMAND env vars on first use.",
+                spec.name,
+            )
+            return fetcher
+
     if global_config_fallback:
         logger.debug(
             f"{fn_name}: Using global {spec.name}Fetcher "
@@ -1055,18 +1080,6 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 request, spec, global_config_fallback
             )
         return spec.fetcher_class(config=global_config_fallback)
-
-    # Try deferred credential resolution via *_COMMAND env vars
-    if has_deferred_fallback:
-        resolver = get_resolver()
-        await asyncio.to_thread(resolver.resolve, spec.name.lower())
-        config = spec.config_class.from_env()  # type: ignore[attr-defined]
-        fetcher = spec.fetcher_class(config=config)
-        logger.info(
-            "%s credentials resolved from *_COMMAND env vars on first use.",
-            spec.name,
-        )
-        return fetcher
 
     logger.error(f"{spec.name} configuration could not be resolved.")
     raise ValueError(

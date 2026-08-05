@@ -896,6 +896,59 @@ class TestMCPProtocolIntegration:
 
         run_command.assert_not_called()
 
+    async def test_lifespan_deferred_pat_outranks_static_basic(self) -> None:
+        """A deferred Server/DC PAT keeps the precedence a static one would have."""
+        env = {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_USERNAME": "test@example.com",
+            "JIRA_API_TOKEN": "static-basic-token",
+            "JIRA_PERSONAL_TOKEN_COMMAND": "get-jira-pat",
+        }
+        with (
+            MockEnvironment.clean_env(),
+            patch.dict(os.environ, env),
+            patch(
+                "mcp_atlassian.utils.credential_command.subprocess.run"
+            ) as run_command,
+        ):
+            app = MagicMock()
+            async with main_lifespan(app) as context:
+                app_context = context["app_lifespan_context"]
+                # The eager config stays available for URL/SSL inheritance.
+                assert app_context.full_jira_config is not None
+                assert app_context.full_jira_config.auth_type == "basic"
+                assert app_context.has_deferred_jira_auth is True
+
+        run_command.assert_not_called()
+
+    async def test_lifespan_cloud_oauth_ignores_api_token_command(self) -> None:
+        """Cloud OAuth outranks a deferred API token, so no command is queued."""
+        env = {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test@example.com",
+            "JIRA_API_TOKEN_COMMAND": "get-jira-token",
+            "ATLASSIAN_OAUTH_CLIENT_ID": "client-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "http://localhost:8080/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "read:jira-work",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "cloud-id",
+        }
+        with (
+            MockEnvironment.clean_env(),
+            patch.dict(os.environ, env),
+            patch(
+                "mcp_atlassian.utils.credential_command.subprocess.run"
+            ) as run_command,
+        ):
+            app = MagicMock()
+            async with main_lifespan(app) as context:
+                app_context = context["app_lifespan_context"]
+                assert app_context.full_jira_config is not None
+                assert app_context.full_jira_config.auth_type == "oauth"
+                assert app_context.has_deferred_jira_auth is False
+
+        run_command.assert_not_called()
+
     async def test_lifespan_with_partial_configuration(self):
         """Test lifespan with only Jira configured."""
         env_vars = {

@@ -192,7 +192,23 @@ JIRA_API_TOKEN_COMMAND='gopass show -o my/jira/token'
 The plain token variable takes precedence over its `*_COMMAND` counterpart.
 API token commands still require the matching `*_USERNAME`. Commands run
 without an implicit shell; invoke one explicitly (for example, `sh -c '...'`)
-if you need pipes or redirects.
+if you need pipes or redirects. Standard input is closed, so a helper can't
+read from it — this keeps it from consuming the MCP stdio transport.
+
+On Server/Data Center, `*_PERSONAL_TOKEN_COMMAND` outranks static
+username/API-token basic auth, matching the precedence a plain
+`*_PERSONAL_TOKEN` would have. If the command then fails, the eagerly loaded
+configuration is used instead, so a locked secret store can't take down a
+server that has other working credentials. On Cloud, OAuth still outranks
+`*_API_TOKEN_COMMAND`, and the command is never run in that case.
+
+<Note>
+On Windows the command string is passed to `CreateProcess` unparsed, so use
+double quotes (`op read "op://Vault/Jira PAT/credential"`) — POSIX single
+quotes don't quote there. `.bat`, `.cmd`, and PowerShell helpers need an
+explicit `cmd /c` or `powershell -NoProfile -Command` prefix. On POSIX,
+arguments follow `shlex` rules.
+</Note>
 
 ### Filtering Options
 

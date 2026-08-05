@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from unittest.mock import patch
@@ -12,6 +14,8 @@ import pytest
 
 from mcp_atlassian.utils.credential_command import (
     CredentialCommandResolver,
+    _parse_command,
+    deferred_pat_outranks,
 )
 
 # ---------------------------------------------------------------------------
@@ -203,6 +207,7 @@ class TestResolve:
         mock_run.assert_called_once_with(
             ["echo", "secret"],
             shell=False,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=5,
@@ -315,3 +320,147 @@ class TestResolve:
     ) -> None:
         with pytest.raises(ValueError, match="Unsupported credential service"):
             resolver.resolve("unknown")
+
+    def test_command_cannot_consume_stdin(
+        self, resolver: CredentialCommandResolver
+    ) -> None:
+        """A helper reading stdin must not see the MCP stdio transport.
+
+        Runs a real subprocess with a readable pipe on file descriptor 0. Under
+        pytest's default capture fd 0 is already ``/dev/null``, so the pipe is
+        what makes this fail when the child inherits stdin.
+        """
+        frame = b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n'
+        os.environ["JIRA_API_TOKEN_COMMAND"] = shlex.join(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.write(sys.stdin.read() or 'ISOLATED')",
+            ]
+        )
+
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, frame)
+        os.close(write_fd)
+        saved_stdin = os.dup(0)
+        try:
+            os.dup2(read_fd, 0)
+            resolver.resolve("jira")
+            leftover = os.read(0, len(frame))
+        finally:
+            os.dup2(saved_stdin, 0)
+            os.close(saved_stdin)
+            os.close(read_fd)
+
+        assert os.environ["JIRA_API_TOKEN"] == "ISOLATED"
+        assert leftover == frame
+
+
+# ---------------------------------------------------------------------------
+# _parse_command
+# ---------------------------------------------------------------------------
+
+
+class TestParseCommand:
+    def test_windows_returns_raw_string(self) -> None:
+        """Windows argument rules are applied by CreateProcess, not shlex."""
+        command = 'op read "op://Vault/Jira PAT/credential"'
+        assert (
+            _parse_command(command, "JIRA_PERSONAL_TOKEN_COMMAND", is_windows=True)
+            == command
+        )
+
+    def test_windows_keeps_quoted_executable_path(self) -> None:
+        command = '"C:\\Program Files\\1Password CLI\\op.exe" read op://Vault/PAT'
+        assert (
+            _parse_command(command, "JIRA_PERSONAL_TOKEN_COMMAND", is_windows=True)
+            == command
+        )
+
+    def test_posix_splits_without_quotes(self) -> None:
+        assert _parse_command(
+            'op read "op://Vault/Jira PAT/credential"',
+            "JIRA_PERSONAL_TOKEN_COMMAND",
+            is_windows=False,
+        ) == ["op", "read", "op://Vault/Jira PAT/credential"]
+
+    @pytest.mark.parametrize("is_windows", [True, False])
+    def test_empty_command(self, is_windows: bool) -> None:
+        with pytest.raises(ValueError, match="is empty"):
+            _parse_command("   ", "JIRA_API_TOKEN_COMMAND", is_windows=is_windows)
+
+    def test_posix_invalid_quoting(self) -> None:
+        with pytest.raises(ValueError, match="invalid quoting"):
+            _parse_command(
+                "secret-tool 'unterminated",
+                "JIRA_API_TOKEN_COMMAND",
+                is_windows=False,
+            )
+
+    def test_windows_tolerates_unbalanced_quotes(self) -> None:
+        """Windows has no parsing step, so quoting errors surface at spawn."""
+        command = "secret-tool 'unterminated"
+        assert (
+            _parse_command(command, "JIRA_API_TOKEN_COMMAND", is_windows=True)
+            == command
+        )
+
+
+# ---------------------------------------------------------------------------
+# deferred_pat_outranks
+# ---------------------------------------------------------------------------
+
+
+class TestDeferredPatOutranks:
+    @pytest.mark.parametrize(
+        ("env", "is_cloud", "auth_type", "expected"),
+        [
+            # Server/DC: a deferred PAT beats Basic and OAuth, as a static one would.
+            ({"JIRA_PERSONAL_TOKEN_COMMAND": "get-pat"}, False, "basic", True),
+            ({"JIRA_PERSONAL_TOKEN_COMMAND": "get-pat"}, False, "oauth", True),
+            # Already using a PAT — nothing to gain.
+            ({"JIRA_PERSONAL_TOKEN_COMMAND": "get-pat"}, False, "pat", False),
+            # A static personal token wins over its command variant.
+            (
+                {
+                    "JIRA_PERSONAL_TOKEN_COMMAND": "get-pat",
+                    "JIRA_PERSONAL_TOKEN": "static-pat",
+                },
+                False,
+                "basic",
+                False,
+            ),
+            # Cloud ignores personal tokens entirely.
+            ({"JIRA_PERSONAL_TOKEN_COMMAND": "get-pat"}, True, "oauth", False),
+            # No command configured.
+            ({}, False, "basic", False),
+            # An API token command is Basic auth — never outranks.
+            ({"JIRA_API_TOKEN_COMMAND": "get-token"}, False, "oauth", False),
+        ],
+    )
+    def test_jira(
+        self,
+        env: dict[str, str],
+        is_cloud: bool,
+        auth_type: str,
+        expected: bool,
+    ) -> None:
+        os.environ.update(env)
+        assert (
+            deferred_pat_outranks("jira", is_cloud=is_cloud, auth_type=auth_type)
+            is expected
+        )
+
+    def test_confluence(self) -> None:
+        os.environ["CONFLUENCE_PERSONAL_TOKEN_COMMAND"] = "get-pat"
+        assert (
+            deferred_pat_outranks("confluence", is_cloud=False, auth_type="basic")
+            is True
+        )
+        assert deferred_pat_outranks("jira", is_cloud=False, auth_type="basic") is False
+
+    def test_unknown_service(self) -> None:
+        os.environ["JIRA_PERSONAL_TOKEN_COMMAND"] = "get-pat"
+        assert (
+            deferred_pat_outranks("unknown", is_cloud=False, auth_type="basic") is False
+        )
