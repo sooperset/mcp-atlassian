@@ -13,6 +13,32 @@ _VALID_WRITE_ARGUMENTS = {
     "summary": "Policy contract must not create this issue",
     "issue_type": "Task",
 }
+_POLICY_CASES = [
+    pytest.param(
+        {
+            "READ_ONLY_MODE": "true",
+            "ENABLED_TOOLS": None,
+            "TOOLSETS": "all",
+        },
+        id="read-only",
+    ),
+    pytest.param(
+        {
+            "READ_ONLY_MODE": "false",
+            "ENABLED_TOOLS": "jira_get_issue",
+            "TOOLSETS": "all",
+        },
+        id="enabled-tools",
+    ),
+    pytest.param(
+        {
+            "READ_ONLY_MODE": "false",
+            "ENABLED_TOOLS": None,
+            "TOOLSETS": "jira_comments",
+        },
+        id="toolsets",
+    ),
+]
 
 
 def _is_error(result: Any) -> bool:
@@ -45,35 +71,28 @@ def _configure_jira(
             monkeypatch.setenv(name, value)
 
 
-@pytest.mark.parametrize(
-    "policy_env",
-    [
-        pytest.param(
-            {
-                "READ_ONLY_MODE": "true",
-                "ENABLED_TOOLS": None,
-                "TOOLSETS": "all",
-            },
-            id="read-only",
-        ),
-        pytest.param(
-            {
-                "READ_ONLY_MODE": "false",
-                "ENABLED_TOOLS": "jira_get_issue",
-                "TOOLSETS": "all",
-            },
-            id="enabled-tools",
-        ),
-        pytest.param(
-            {
-                "READ_ONLY_MODE": "false",
-                "ENABLED_TOOLS": None,
-                "TOOLSETS": "jira_comments",
-            },
-            id="toolsets",
-        ),
-    ],
-)
+@pytest.mark.parametrize("policy_env", _POLICY_CASES)
+@pytest.mark.anyio
+@pytest.mark.security_regression
+async def test_hidden_tool_is_absent_from_public_listing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    policy_env: dict[str, str | None],
+) -> None:
+    """Policy-hidden tools remain undiscoverable (GHSA-3r68, issue #1541)."""
+    _configure_jira(monkeypatch, tmp_path, policy_env)
+    main_module = importlib.import_module("mcp_atlassian.servers.main")
+
+    async with Client(main_module.main_mcp) as client:
+        tools = await client.list_tools()
+
+    visible_tools = {tool.name for tool in tools}
+    assert "jira_create_issue" not in visible_tools, (
+        "tool visibility policy exposed jira_create_issue"
+    )
+
+
+@pytest.mark.parametrize("policy_env", _POLICY_CASES)
 @pytest.mark.anyio
 @pytest.mark.security_regression
 async def test_hidden_tool_cannot_be_called_through_public_client(
@@ -92,12 +111,12 @@ async def test_hidden_tool_cannot_be_called_through_public_client(
         side_effect=AssertionError("hidden write reached the Jira fetcher"),
     ) as get_jira_fetcher:
         async with Client(main_module.main_mcp) as client:
-            tools = await client.list_tools()
             hidden_call = await client.call_tool_mcp(
                 "jira_create_issue", _VALID_WRITE_ARGUMENTS
             )
             unknown_call = await client.call_tool_mcp("jira_no_such_tool", {})
 
+    get_jira_fetcher.assert_not_awaited()
     hidden_error = _error_text(hidden_call)
     unknown_error = _error_text(unknown_call)
 
@@ -108,8 +127,6 @@ async def test_hidden_tool_cannot_be_called_through_public_client(
     assert hidden_error.replace("jira_create_issue", "<tool>") == (
         unknown_error.replace("jira_no_such_tool", "<tool>")
     )
-    assert "jira_create_issue" not in {tool.name for tool in tools}
-    get_jira_fetcher.assert_not_awaited()
 
 
 @pytest.mark.anyio

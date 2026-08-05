@@ -127,16 +127,67 @@ def test_expected_protocol_version_rejects_mismatch() -> None:
         mcp_wire_probe._validate_protocol_version("2025-11-25", "2026-07-28")
 
 
+def test_tool_expectations_accept_matching_listing() -> None:
+    """Presence and absence expectations pass for a matching public listing."""
+    mcp_wire_probe._validate_tool_expectations(
+        {"jira_get_issue"},
+        {"jira_get_issue"},
+        {"jira_create_issue"},
+    )
+
+
+def test_tool_expectations_reject_missing_expected_tool() -> None:
+    """A lane fails clearly when a required tool is not discoverable."""
+    with pytest.raises(RuntimeError, match="Expected tools are missing"):
+        mcp_wire_probe._validate_tool_expectations(
+            set(),
+            {"jira_get_issue"},
+            set(),
+        )
+
+
+def test_tool_expectations_reject_visible_hidden_tool() -> None:
+    """A lane fails clearly when policy exposes an expected-hidden tool."""
+    with pytest.raises(RuntimeError, match="Expected-hidden tools are visible"):
+        mcp_wire_probe._validate_tool_expectations(
+            {"jira_create_issue"},
+            set(),
+            {"jira_create_issue"},
+        )
+
+
+def test_tool_expectations_reject_contradictory_configuration() -> None:
+    """A caller cannot configure the same tool as both present and absent."""
+    with pytest.raises(ValueError, match="cannot be both expected and absent"):
+        mcp_wire_probe._validate_tool_expectations(
+            {"jira_get_issue"},
+            {"jira_get_issue"},
+            {"jira_get_issue"},
+        )
+
+
 def test_installed_versions_are_sanitized_and_tolerate_missing_package() -> None:
     """Version evidence contains package metadata only and permits absence."""
     with patch.object(
         mcp_wire_probe,
         "package_version",
-        side_effect=["2.0.0", mcp_wire_probe.PackageNotFoundError("fastmcp")],
+        side_effect=[
+            "2.0.0",
+            "2.0.0",
+            "4.0.0b1",
+            "4.0.0b1",
+            mcp_wire_probe.PackageNotFoundError("cryptography"),
+        ],
     ):
         versions = mcp_wire_probe._installed_versions()
 
-    assert versions == {"mcp": "2.0.0", "fastmcp": None}
+    assert versions == {
+        "mcp": "2.0.0",
+        "mcp-types": "2.0.0",
+        "fastmcp": "4.0.0b1",
+        "fastmcp-slim": "4.0.0b1",
+        "cryptography": None,
+    }
     assert "MCP_READINESS_JIRA_PAT" not in json.dumps(versions)
 
 

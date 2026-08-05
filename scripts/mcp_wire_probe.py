@@ -143,7 +143,13 @@ def _validate_staging_tools(tool_names: set[str]) -> None:
 def _installed_versions() -> dict[str, str | None]:
     """Return readiness package versions without importing their internals."""
     versions: dict[str, str | None] = {}
-    for distribution in ("mcp", "fastmcp"):
+    for distribution in (
+        "mcp",
+        "mcp-types",
+        "fastmcp",
+        "fastmcp-slim",
+        "cryptography",
+    ):
         try:
             versions[distribution] = package_version(distribution)
         except PackageNotFoundError:
@@ -155,6 +161,28 @@ def _validate_protocol_version(actual: str, expected: str | None) -> None:
     """Fail a version-specific readiness lane on protocol mismatch."""
     if expected is not None and actual != expected:
         message = f"Expected MCP protocol {expected}, negotiated {actual}"
+        raise RuntimeError(message)
+
+
+def _validate_tool_expectations(
+    actual: set[str],
+    expected_present: set[str],
+    expected_absent: set[str],
+) -> None:
+    """Fail a readiness lane when public tool discovery violates expectations."""
+    contradictory = expected_present & expected_absent
+    if contradictory:
+        message = f"Tools cannot be both expected and absent: {sorted(contradictory)}"
+        raise ValueError(message)
+
+    missing = expected_present - actual
+    if missing:
+        message = f"Expected tools are missing: {sorted(missing)}"
+        raise RuntimeError(message)
+
+    unexpectedly_present = expected_absent & actual
+    if unexpectedly_present:
+        message = f"Expected-hidden tools are visible: {sorted(unexpectedly_present)}"
         raise RuntimeError(message)
 
 
@@ -170,6 +198,9 @@ async def probe(args: argparse.Namespace) -> dict[str, Any]:
     )
     started = time.monotonic()
     probes: list[dict[str, Any]] = []
+    validation_error: ValueError | RuntimeError | None = None
+    protocol_version = "unknown"
+    tool_names: list[str] = []
 
     with anyio.fail_after(args.timeout):
         async with stdio_client(parameters) as (read_stream, write_stream):
@@ -183,14 +214,28 @@ async def probe(args: argparse.Namespace) -> dict[str, Any]:
                         default="unknown",
                     )
                 )
-                _validate_protocol_version(
-                    protocol_version, args.expect_protocol_version
-                )
-                listed = await session.list_tools()
-                tool_names = sorted(tool.name for tool in listed.tools)
+                try:
+                    _validate_protocol_version(
+                        protocol_version, args.expect_protocol_version
+                    )
+                except RuntimeError as exc:
+                    validation_error = exc
 
-                if profile:
-                    _validate_staging_tools(set(tool_names))
+                if validation_error is None:
+                    listed = await session.list_tools()
+                    tool_names = sorted(tool.name for tool in listed.tools)
+                    try:
+                        _validate_tool_expectations(
+                            set(tool_names),
+                            set(args.expect_tool_present),
+                            set(args.expect_tool_absent),
+                        )
+                        if profile:
+                            _validate_staging_tools(set(tool_names))
+                    except (ValueError, RuntimeError) as exc:
+                        validation_error = exc
+
+                if profile and validation_error is None:
                     jira_result = await session.call_tool(
                         "jira_get_issue",
                         {"issue_key": profile.jira_issue_key},
@@ -204,6 +249,9 @@ async def probe(args: argparse.Namespace) -> dict[str, Any]:
                     probes.append(
                         _result_record("confluence_get_page", confluence_result)
                     )
+
+    if validation_error is not None:
+        raise validation_error
 
     return {
         "transport": "stdio",
@@ -226,6 +274,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--cwd", type=Path)
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--expect-protocol-version")
+    parser.add_argument("--expect-tool-present", action="append", default=[])
+    parser.add_argument("--expect-tool-absent", action="append", default=[])
     parser.add_argument("--staging-dc-pat", action="store_true")
     parser.add_argument("--output", type=Path)
     return parser

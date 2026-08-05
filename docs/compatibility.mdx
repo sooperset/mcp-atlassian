@@ -32,9 +32,10 @@ uv run python scripts/mcp_wire_probe.py \
 ```
 
 The default probe does not invoke any Atlassian tool. It emits machine-readable
-JSON with the negotiated protocol version, installed MCP/FastMCP package
-versions, and discovered tool names, making it useful for comparing supported
-SDK and framework versions.
+JSON with the negotiated protocol version, discovered tool names, and installed
+versions of MCP, MCP types, FastMCP, FastMCP slim, and cryptography. Missing
+distributions are reported as `null`, making the output useful for comparing
+supported SDK and framework environments.
 
 Version-specific test lanes can make protocol negotiation an explicit gate:
 
@@ -43,13 +44,20 @@ uv run python scripts/mcp_wire_probe.py \
   --server-command uv \
   --server-arg=run \
   --server-arg=mcp-atlassian \
-  --expect-protocol-version=2025-11-25
+  --expect-protocol-version=2025-11-25 \
+  --expect-tool-absent=jira_create_issue
 ```
 
 The expected revision is lane-specific. Do not infer it from the installed MCP
 SDK major version: an SDK can retain an older protocol revision unless the
 newer protocol era is explicitly selected. See the MCP 2 / FastMCP 4 findings
 in [issue #1541](https://github.com/sooperset/mcp-atlassian/issues/1541).
+
+Repeat `--expect-tool-present` or `--expect-tool-absent` to make public tool
+discovery an explicit gate. These checks run immediately after `tools/list` and
+before any optional staging reads, so they can diagnose policy visibility
+without contacting Atlassian. Contradictory expectations fail as a probe
+configuration error.
 
 An explicit `--staging-dc-pat` profile can additionally call one fixed Jira DC
 issue and one fixed Confluence DC page. Configure these variables securely
