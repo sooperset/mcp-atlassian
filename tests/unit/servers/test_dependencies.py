@@ -277,6 +277,49 @@ class TestCreateUserConfigForFetcher:
         )  # Should preserve minimal config
 
     @pytest.mark.parametrize("config_type", ["jira", "confluence"])
+    @pytest.mark.parametrize(
+        "cloud_id,expected_cloud_id,expected_base_url",
+        [
+            ("request-cloud-id", "request-cloud-id", None),
+            (None, None, "https://dc.example.com"),
+        ],
+    )
+    def test_oauth_request_cloud_id_overrides_global_dc_config(
+        self,
+        config_factory,
+        config_type,
+        cloud_id,
+        expected_cloud_id,
+        expected_base_url,
+    ):
+        """Request Cloud IDs take precedence over global Data Center OAuth."""
+        dc_base_url = "https://dc.example.com"
+        global_oauth_config = OAuthConfig(
+            client_id="global-client-id",
+            client_secret="global-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read",
+            base_url=dc_base_url,
+        )
+        config_builder = getattr(config_factory, f"create_{config_type}_config")
+        base_config = config_builder(
+            auth_type="oauth",
+            url=dc_base_url,
+            oauth_config=global_oauth_config,
+        )
+
+        result_config = _create_user_config_for_fetcher(
+            base_config=base_config,
+            auth_type="oauth",
+            credentials={"oauth_access_token": "user-access-token"},
+            cloud_id=cloud_id,
+        )
+
+        assert result_config.oauth_config is not None
+        assert result_config.oauth_config.cloud_id == expected_cloud_id
+        assert result_config.oauth_config.base_url == expected_base_url
+
+    @pytest.mark.parametrize("config_type", ["jira", "confluence"])
     def test_create_user_config_preserves_proxy_and_wpad_fields(
         self, config_factory, config_type
     ):
