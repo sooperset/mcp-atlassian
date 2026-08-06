@@ -58,6 +58,13 @@ CONFLUENCE_PERSONAL_TOKEN=your_personal_access_token
 ```
 
 <Note>
+For multi-user HTTP deployments where clients send their own PATs, follow the
+[Server/DC per-request authentication setup](/docs/http-transport#authentication-methods).
+That setup uses non-empty server-side PAT values only to initialize the service
+configuration; each request's `Authorization: Token ...` value replaces them.
+</Note>
+
+<Note>
 Enterprise CA certificates in the OS trust store (Windows Certificate Store, macOS Keychain, Linux system CAs) are trusted automatically.
 For self-signed certificates not in the OS trust store, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
 </Note>
