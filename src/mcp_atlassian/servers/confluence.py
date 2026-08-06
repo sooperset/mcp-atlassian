@@ -179,6 +179,23 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _validate_adf_content(content: str) -> None:
+    """Validate the required root shape of an ADF document."""
+    try:
+        document = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise ValueError("ADF content must be valid JSON.") from exc
+
+    if not isinstance(document, dict):
+        raise ValueError("ADF content must be a JSON object.")
+    if type(document.get("version")) is not int or document["version"] != 1:
+        raise ValueError("ADF content must have integer version 1.")
+    if document.get("type") != "doc":
+        raise ValueError("ADF content must have type 'doc'.")
+    if not isinstance(document.get("content"), list):
+        raise ValueError("ADF content must have a content array.")
+
+
 confluence_mcp = ErrorPreservingFastMCP(
     name="Confluence MCP Service",
     instructions="Provides tools for interacting with Atlassian Confluence.",
@@ -335,6 +352,18 @@ async def get_page(
             default=True,
         ),
     ] = True,
+    content_format: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional explicit content format. Options: 'markdown', "
+                "'storage', or 'atlas_doc_format'. This overrides "
+                "convert_to_markdown. Raw ADF is available only for "
+                "Confluence Cloud pages fetched by page_id."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Get content of a specific Confluence page by its ID, or by its title and space key.
 
@@ -346,12 +375,23 @@ async def get_page(
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+        content_format: Optional explicit output format. Raw ADF requires page_id.
 
     Returns:
         JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     page_object = None
+
+    if content_format not in (None, "markdown", "storage", "atlas_doc_format"):
+        raise ValueError(
+            "Invalid content_format. Must be 'markdown', 'storage', or "
+            "'atlas_doc_format'."
+        )
+    if content_format == "atlas_doc_format" and not page_id:
+        raise ValueError("atlas_doc_format retrieval requires page_id.")
+    if content_format in ("markdown", "storage"):
+        convert_to_markdown = content_format == "markdown"
 
     if page_id:
         if title or space_key:
@@ -364,9 +404,12 @@ async def get_page(
             # Resolve page ID from URL or tiny link
             page_id_str = _resolve_page_id(page_id_str)
 
-            page_object = confluence_fetcher.get_page_content(
-                page_id_str, convert_to_markdown=convert_to_markdown
-            )
+            if content_format == "atlas_doc_format":
+                page_object = confluence_fetcher.get_page_content_adf(page_id_str)
+            else:
+                page_object = confluence_fetcher.get_page_content(
+                    page_id_str, convert_to_markdown=convert_to_markdown
+                )
         except Exception as e:
             logger.error(f"Error fetching page by ID '{page_id}': {e}")
             return json.dumps(
@@ -696,7 +739,7 @@ async def create_page(
             description=(
                 "The content of the page. Format depends on content_format "
                 "parameter. Can be Markdown (default), wiki markup, storage "
-                "format, or XHTML storage format. Either 'content' or "
+                "format, XHTML storage format, or serialised ADF. Either 'content' or "
                 "'content_file' must be provided, but not both."
             ),
             default=None,
@@ -715,10 +758,12 @@ async def create_page(
         Field(
             description=(
                 "(Optional) The format of the content parameter. Options: "
-                "'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use "
+                "'markdown' (default), 'wiki', 'storage', 'xhtml', or "
+                "'atlas_doc_format'. Use "
                 "'xhtml' when providing Confluence XHTML storage format "
                 "(same as 'storage'). Wiki format uses Confluence wiki "
-                "markup syntax"
+                "markup syntax. atlas_doc_format requires a serialised ADF "
+                "document and Confluence Cloud."
             ),
             default="markdown",
         ),
@@ -802,7 +847,7 @@ async def create_page(
             Useful for bodies too large to pass as an inline tool argument.
         parent_id: Optional parent page ID.
         content_format: The format of the content ('markdown', 'wiki',
-            'storage', or 'xhtml').
+            'storage', 'xhtml', or 'atlas_doc_format').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
@@ -819,13 +864,22 @@ async def create_page(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     # Validate content_format
-    if content_format not in ["markdown", "wiki", "storage", "xhtml"]:
-        raise ValueError(
+    if content_format not in [
+        "markdown",
+        "wiki",
+        "storage",
+        "xhtml",
+        "atlas_doc_format",
+    ]:
+        error_msg = (
             f"Invalid content_format: {content_format}. Must be "
-            "'markdown', 'wiki', 'storage', or 'xhtml'"
+            "'markdown', 'wiki', 'storage', 'xhtml', or 'atlas_doc_format'"
         )
+        raise ValueError(error_msg)
 
     resolved_content = _resolve_page_content(content, content_file)
+    if content_format == "atlas_doc_format":
+        _validate_adf_content(resolved_content)
 
     # Determine parameters based on content format
     if content_format == "markdown":
@@ -878,7 +932,8 @@ async def update_page(
             description=(
                 "The new content of the page. Format depends on "
                 "content_format parameter and may be Markdown (default), wiki "
-                "markup, storage format, or XHTML storage format. Either "
+                "markup, storage format, XHTML storage format, or serialised "
+                "ADF. Either "
                 "'content' or 'content_file' must be provided, but not both."
             ),
             default=None,
@@ -900,10 +955,12 @@ async def update_page(
         Field(
             description=(
                 "(Optional) The format of the content parameter. Options: "
-                "'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use "
+                "'markdown' (default), 'wiki', 'storage', 'xhtml', or "
+                "'atlas_doc_format'. Use "
                 "'xhtml' when providing Confluence XHTML storage format "
                 "(same as 'storage'). Wiki format uses Confluence wiki "
-                "markup syntax"
+                "markup syntax. atlas_doc_format requires a serialised ADF "
+                "document and Confluence Cloud."
             ),
             default="markdown",
         ),
@@ -980,7 +1037,7 @@ async def update_page(
         version_comment: Optional comment for this version.
         parent_id: Optional new parent page ID.
         content_format: The format of the content ('markdown', 'wiki',
-            'storage', or 'xhtml').
+            'storage', 'xhtml', or 'atlas_doc_format').
         enable_heading_anchors: Whether to enable heading anchors (markdown only).
         include_content: Whether to include page content in the response.
         emoji: Optional page title emoji (icon shown in navigation).
@@ -996,13 +1053,22 @@ async def update_page(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     # Validate content_format
-    if content_format not in ["markdown", "wiki", "storage", "xhtml"]:
-        raise ValueError(
+    if content_format not in [
+        "markdown",
+        "wiki",
+        "storage",
+        "xhtml",
+        "atlas_doc_format",
+    ]:
+        error_msg = (
             f"Invalid content_format: {content_format}. Must be "
-            "'markdown', 'wiki', 'storage', or 'xhtml'"
+            "'markdown', 'wiki', 'storage', 'xhtml', or 'atlas_doc_format'"
         )
+        raise ValueError(error_msg)
 
     resolved_content = _resolve_page_content(content, content_file)
+    if content_format == "atlas_doc_format":
+        _validate_adf_content(resolved_content)
 
     # Determine parameters based on content format
     if content_format == "markdown":

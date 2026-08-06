@@ -270,6 +270,36 @@ class PagesMixin(ConfluenceClient):
             raise Exception(f"Error retrieving page content: {str(e)}") from e
 
     @handle_auth_errors("Confluence API")
+    def get_page_content_adf(self, page_id: str) -> ConfluencePage:
+        """Get a Confluence Cloud page with its raw ADF body."""
+        v2_adapter = self._cloud_v2_adapter()
+        if not v2_adapter:
+            raise ValueError("atlas_doc_format is only supported for Confluence Cloud")
+
+        try:
+            page = v2_adapter.get_page(
+                page_id=page_id,
+                body_format="atlas_doc_format",
+            )
+            content = page.get("body", {}).get("atlas_doc_format", {}).get("value", "")
+            return ConfluencePage.from_api_response(
+                page,
+                base_url=self.config.url,
+                include_body=True,
+                content_override=content,
+                content_format="atlas_doc_format",
+                is_cloud=True,
+                emoji=self._get_page_emoji(page_id),
+                page_width=self._get_page_width(page_id),
+            )
+        except HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"Error retrieving ADF for page ID {page_id}: {str(e)}")
+            error_msg = f"Error retrieving page ADF: {str(e)}"
+            raise Exception(error_msg) from e
+
+    @handle_auth_errors("Confluence API")
     def get_page_ancestors(self, page_id: str) -> list[ConfluencePage]:
         """
         Get ancestors (parent pages) of a specific page.
@@ -719,14 +749,14 @@ class PagesMixin(ConfluenceClient):
                 final_body = body
                 representation = content_representation or "storage"
 
-            # Use v2 API for OAuth authentication and for Cloud page subtypes
-            # such as Live Docs. The v1 API/client does not expose subtype.
+            # ADF and page subtypes require the Confluence Cloud v2 API.
             v2_adapter = self._v2_adapter
-            if subtype:
+            if subtype or representation == "atlas_doc_format":
                 v2_adapter = self._cloud_v2_adapter()
                 if not v2_adapter:
                     raise ValueError(
-                        "Confluence page subtype is only supported for Confluence Cloud"
+                        "Confluence page subtype and atlas_doc_format are only "
+                        "supported for Confluence Cloud"
                     )
             if v2_adapter:
                 logger.debug(
@@ -832,8 +862,18 @@ class PagesMixin(ConfluenceClient):
 
             logger.debug(f"Updating page {page_id} with title '{title}'")
 
-            # Use v2 API for OAuth authentication, v1 API for token/basic auth
+            # ADF requires the Confluence Cloud v2 API for every auth mode.
             v2_adapter = self._v2_adapter
+            if representation == "atlas_doc_format":
+                if parent_id:
+                    raise ValueError(
+                        "parent_id is not supported with atlas_doc_format updates"
+                    )
+                v2_adapter = self._cloud_v2_adapter()
+                if not v2_adapter:
+                    raise ValueError(
+                        "atlas_doc_format is only supported for Confluence Cloud"
+                    )
             if v2_adapter:
                 logger.debug(
                     f"Using v2 API for OAuth authentication to update page '{page_id}'"

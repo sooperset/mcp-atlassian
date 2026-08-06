@@ -306,12 +306,14 @@ class ConfluenceV2Adapter:
         self,
         page_id: str,
         expand: str | None = None,
+        body_format: str = "storage",
     ) -> dict[str, Any]:
         """Get a page using the v2 API.
 
         Args:
             page_id: The ID of the page to retrieve
             expand: Fields to expand in the response (not used in v2 API, for compatibility only)
+            body_format: Content representation to request from the v2 API
 
         Returns:
             The page data from the API response in v1-compatible format
@@ -324,7 +326,10 @@ class ConfluenceV2Adapter:
             url = f"{self.base_url}/api/v2/pages/{page_id}"
 
             # Convert v1 expand parameters to v2 format
-            params = {"body-format": "storage"}
+            if body_format not in ("storage", "atlas_doc_format"):
+                error_msg = f"Unsupported page body format: {body_format}"
+                raise ValueError(error_msg)
+            params = {"body-format": body_format}
 
             response = self.session.get(url, params=params)
             response.raise_for_status()
@@ -339,11 +344,15 @@ class ConfluenceV2Adapter:
             # Convert v2 response to v1-compatible format
             v1_compatible = self._convert_v2_to_v1_format(v2_response, space_key)
 
-            # Add body.storage structure if body content exists
-            if "body" in v2_response and v2_response["body"].get("storage"):
-                storage_value = v2_response["body"]["storage"].get("value", "")
+            # Add the requested body representation to the v1-compatible result.
+            body = v2_response.get("body", {})
+            if isinstance(body, dict) and body.get(body_format):
+                body_value = body[body_format].get("value", "")
                 v1_compatible["body"] = {
-                    "storage": {"value": storage_value, "representation": "storage"}
+                    body_format: {
+                        "value": body_value,
+                        "representation": body_format,
+                    }
                 }
 
             # Add space information with more details

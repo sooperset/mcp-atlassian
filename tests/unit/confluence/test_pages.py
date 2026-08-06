@@ -353,6 +353,40 @@ class TestPagesMixin:
                 assert isinstance(result, ConfluencePage)
                 assert result.id == "live_123456789"
 
+    def test_create_page_with_adf_uses_v2_for_cloud_basic_auth(self, pages_mixin):
+        """Test creating ADF uses v2 for Cloud API-token authentication."""
+        adf = '{"version":1,"type":"doc","content":[]}'
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.create_page.return_value = {
+                "id": "adf_123",
+                "title": "ADF Page",
+            }
+            with patch.object(
+                pages_mixin,
+                "get_page_content",
+                return_value=ConfluencePage(id="adf_123", title="ADF Page"),
+            ):
+                pages_mixin.create_page(
+                    "PROJ",
+                    "ADF Page",
+                    adf,
+                    is_markdown=False,
+                    content_representation="atlas_doc_format",
+                )
+
+        mock_v2_adapter.create_page.assert_called_once_with(
+            space_key="PROJ",
+            title="ADF Page",
+            body=adf,
+            parent_id=None,
+            representation="atlas_doc_format",
+        )
+        pages_mixin.confluence.create_page.assert_not_called()
+
     def test_create_page_error(self, pages_mixin):
         """Test error handling when creating a page."""
         # Arrange
@@ -501,6 +535,40 @@ class TestPagesMixin:
             # Verify result is a ConfluencePage
             assert isinstance(result, ConfluencePage)
             assert result.id == page_id
+
+    def test_update_page_with_adf_uses_v2_for_cloud_basic_auth(self, pages_mixin):
+        """Test updating ADF uses v2 for Cloud API-token authentication."""
+        adf = '{"version":1,"type":"doc","content":[]}'
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as mock_v2_adapter_class:
+            mock_v2_adapter = MagicMock()
+            mock_v2_adapter_class.return_value = mock_v2_adapter
+            mock_v2_adapter.update_page.return_value = {
+                "id": "adf_123",
+                "title": "ADF Page",
+            }
+            with patch.object(
+                pages_mixin,
+                "get_page_content",
+                return_value=ConfluencePage(id="adf_123", title="ADF Page"),
+            ):
+                pages_mixin.update_page(
+                    "adf_123",
+                    "ADF Page",
+                    adf,
+                    is_markdown=False,
+                    content_representation="atlas_doc_format",
+                )
+
+        mock_v2_adapter.update_page.assert_called_once_with(
+            page_id="adf_123",
+            title="ADF Page",
+            body=adf,
+            representation="atlas_doc_format",
+            version_comment="",
+        )
+        pages_mixin.confluence.update_page.assert_not_called()
 
     def test_delete_page_success(self, pages_mixin):
         """Test successfully deleting a page."""

@@ -616,6 +616,27 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_get_page_adf(client, mock_confluence_fetcher):
+    """Test get_page can request a raw ADF body."""
+    adf_page = ConfluencePage(
+        id="123456",
+        title="ADF Page",
+        content='{"version":1,"type":"doc","content":[]}',
+        content_format="atlas_doc_format",
+    )
+    mock_confluence_fetcher.get_page_content_adf.return_value = adf_page
+
+    response = await client.call_tool(
+        "confluence_get_page",
+        {"page_id": "123456", "content_format": "atlas_doc_format"},
+    )
+
+    mock_confluence_fetcher.get_page_content_adf.assert_called_once_with("123456")
+    result_data = json.loads(response.content[0].text)
+    assert result_data["metadata"]["content"]["format"] == "atlas_doc_format"
+
+
+@pytest.mark.anyio
 async def test_get_page_children(client, mock_confluence_fetcher):
     """Test the get_page_children tool."""
     response = await client.call_tool(
@@ -896,6 +917,47 @@ async def test_create_page_with_xhtml_format(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_create_page_with_adf_format(client, mock_confluence_fetcher):
+    """Test create_page validates and forwards a serialised ADF document."""
+    adf = '{"version":1,"type":"doc","content":[]}'
+
+    response = await client.call_tool(
+        "confluence_create_page",
+        {
+            "space_key": "TEST",
+            "title": "ADF Page",
+            "content": adf,
+            "content_format": "atlas_doc_format",
+        },
+    )
+
+    call_kwargs = mock_confluence_fetcher.create_page.call_args.kwargs
+    assert call_kwargs["body"] == adf
+    assert call_kwargs["is_markdown"] is False
+    assert call_kwargs["content_representation"] == "atlas_doc_format"
+    assert (
+        json.loads(response.content[0].text)["message"] == "Page created successfully"
+    )
+
+
+@pytest.mark.anyio
+async def test_create_page_rejects_invalid_adf(client, mock_confluence_fetcher):
+    """Test create_page rejects malformed ADF before calling Confluence."""
+    with pytest.raises(ToolError, match="ADF content must have integer version 1"):
+        await client.call_tool(
+            "confluence_create_page",
+            {
+                "space_key": "TEST",
+                "title": "Invalid ADF Page",
+                "content": '{"type":"doc","content":[]}',
+                "content_format": "atlas_doc_format",
+            },
+        )
+
+    mock_confluence_fetcher.create_page.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_update_page_with_numeric_parent_id(client, mock_confluence_fetcher):
     """Test updating a page with numeric parent_id (integer) - should convert to string."""
     response = await client.call_tool(
@@ -993,6 +1055,30 @@ async def test_update_page_with_xhtml_format(client, mock_confluence_fetcher):
 
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Page updated successfully"
+
+
+@pytest.mark.anyio
+async def test_update_page_with_adf_format(client, mock_confluence_fetcher):
+    """Test update_page validates and forwards a serialised ADF document."""
+    adf = '{"version":1,"type":"doc","content":[]}'
+
+    response = await client.call_tool(
+        "confluence_update_page",
+        {
+            "page_id": "999999",
+            "title": "Updated ADF Page",
+            "content": adf,
+            "content_format": "atlas_doc_format",
+        },
+    )
+
+    call_kwargs = mock_confluence_fetcher.update_page.call_args.kwargs
+    assert call_kwargs["body"] == adf
+    assert call_kwargs["is_markdown"] is False
+    assert call_kwargs["content_representation"] == "atlas_doc_format"
+    assert (
+        json.loads(response.content[0].text)["message"] == "Page updated successfully"
+    )
 
 
 @pytest.mark.anyio

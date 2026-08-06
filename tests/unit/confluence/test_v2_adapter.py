@@ -93,6 +93,33 @@ class TestConfluenceV2Adapter:
         with pytest.raises(ValueError, match="Failed to get page '999999'"):
             v2_adapter.get_page("999999")
 
+    def test_get_page_adf(self, v2_adapter, mock_session):
+        """Test retrieval of a raw ADF page body."""
+        adf = '{"version":1,"type":"doc","content":[]}'
+        page_response = Mock()
+        page_response.json.return_value = {
+            "id": "123456",
+            "title": "ADF Page",
+            "spaceId": "789",
+            "body": {
+                "atlas_doc_format": {
+                    "value": adf,
+                    "representation": "atlas_doc_format",
+                }
+            },
+        }
+        space_response = Mock()
+        space_response.json.return_value = {"key": "TEST"}
+        mock_session.get.side_effect = [page_response, space_response]
+
+        result = v2_adapter.get_page("123456", body_format="atlas_doc_format")
+
+        mock_session.get.assert_any_call(
+            "https://example.atlassian.net/wiki/api/v2/pages/123456",
+            params={"body-format": "atlas_doc_format"},
+        )
+        assert result["body"]["atlas_doc_format"]["value"] == adf
+
     def test_get_page_with_minimal_response(self, v2_adapter, mock_session):
         """Test page retrieval with minimal v2 response."""
         # Mock the v2 API response without optional fields
