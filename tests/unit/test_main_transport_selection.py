@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from click.testing import CliRunner
 
 from mcp_atlassian import _run_stdio_with_stdin_guard, main
 
@@ -188,3 +189,56 @@ class TestMainTransportSelection:
                             assert (
                                 mock_exit.call_args_list[1][0][0] == 0
                             )  # Finally exit
+
+    @pytest.mark.parametrize(
+        ("option", "environment_variable"),
+        [
+            ("--confluence-token", "CONFLUENCE_API_TOKEN"),
+            ("--jira-token", "JIRA_API_TOKEN"),
+            ("--oauth-client-secret", "ATLASSIAN_OAUTH_CLIENT_SECRET"),
+            ("--oauth-access-token", "ATLASSIAN_OAUTH_ACCESS_TOKEN"),
+        ],
+    )
+    def test_deprecated_secret_cli_options_emit_warning(
+        self, option: str, environment_variable: str
+    ) -> None:
+        """Deprecated secret flags should emit migration warnings."""
+        mock_logger = MagicMock()
+
+        with patch("mcp_atlassian.setup_logging", return_value=mock_logger):
+            with patch("asyncio.run"):
+                with patch.dict("os.environ", {"TRANSPORT": "stdio"}):
+                    with patch(
+                        "sys.argv",
+                        [
+                            "mcp-atlassian",
+                            option,
+                            "secret-token",
+                        ],
+                    ):
+                        try:
+                            main()
+                        except SystemExit:
+                            pass
+
+        warning_calls = [call.args for call in mock_logger.warning.call_args_list]
+        assert any(
+            len(args) >= 3
+            and "--%s is deprecated" in str(args[0])
+            and args[1] == option.removeprefix("--")
+            and args[2] == environment_variable
+            for args in warning_calls
+        )
+
+    def test_deprecated_secret_cli_options_keep_descriptive_help(self) -> None:
+        """Deprecated flags should retain their original purpose in CLI help."""
+        result = CliRunner().invoke(main, ["--help"])
+        normalized_help = " ".join(result.output.split())
+
+        assert result.exit_code == 0
+        assert "Jira API token (for Jira Cloud)." in normalized_help
+        assert "OAuth 2.0 client secret for Atlassian Cloud." in normalized_help
+        assert (
+            "Atlassian Cloud OAuth 2.0 access token for this session."
+            in normalized_help
+        )
