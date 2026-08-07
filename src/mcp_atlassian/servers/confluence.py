@@ -26,6 +26,7 @@ from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
     is_image_attachment,
+    is_text_attachment,
 )
 
 logger = logging.getLogger(__name__)
@@ -2177,20 +2178,18 @@ async def download_attachment(
         ),
     ],
 ) -> TextContent | EmbeddedResource:
-    """Download an attachment from Confluence as an embedded resource.
+    """Download an attachment from Confluence.
 
-    Returns the attachment content as a base64-encoded embedded resource so
-    that it is available over the MCP protocol without requiring filesystem
-    access on the server. Files larger than 50 MB are not downloaded inline;
-    a descriptive error message is returned instead.
+    Text-based files are returned as readable text content. Binary files are
+    returned as base64-encoded embedded resources. Files larger than 50 MB are
+    not downloaded inline; a descriptive error message is returned instead.
 
     Args:
         ctx: The FastMCP context.
         attachment_id: The ID of the attachment.
 
     Returns:
-        An EmbeddedResource with base64-encoded content, or a TextContent
-        with an error or size-exceeded message.
+        TextContent for a text attachment or error, otherwise EmbeddedResource.
     """
 
     confluence_fetcher = await get_confluence_fetcher(ctx)
@@ -2288,6 +2287,27 @@ async def download_attachment(
                 ),
             )
 
+        # Return text directly because some MCP clients omit embedded blob data.
+        if is_text_attachment(mime_type, filename):
+            try:
+                text_content = data_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                text_content = data_bytes.decode("latin-1")
+            return TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "success": True,
+                        "attachment_id": attachment_id,
+                        "filename": filename,
+                        "mimeType": mime_type,
+                        "content": text_content,
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
+
         encoded = base64.b64encode(data_bytes).decode("ascii")
         return EmbeddedResource(
             type="resource",
@@ -2328,20 +2348,18 @@ async def download_content_attachments(
         ),
     ],
 ) -> list[TextContent | EmbeddedResource]:
-    """Download all attachments for a Confluence content item as embedded resources.
+    """Download all attachments for a Confluence content item.
 
-    Returns attachment contents as base64-encoded embedded resources so that
-    they are available over the MCP protocol without requiring filesystem
-    access on the server. Files larger than 50 MB are skipped with an error
-    entry in the summary.
+    Text-based files are returned as readable text content. Binary files are
+    returned as base64-encoded embedded resources. Files larger than 50 MB are
+    skipped with an error entry in the summary.
 
     Args:
         ctx: The FastMCP context.
         content_id: The ID of the content.
 
     Returns:
-        A list with a text summary followed by one EmbeddedResource per
-        successfully downloaded attachment.
+        A text summary followed by one content item per downloaded attachment.
     """
 
     confluence_fetcher = await get_confluence_fetcher(ctx)
@@ -2437,16 +2455,41 @@ async def download_content_attachments(
             continue
 
         fetched.append({"filename": filename, "size": fetched_bytes})
-        contents.append(
-            EmbeddedResource(
-                type="resource",
-                resource=BlobResourceContents(
-                    uri=f"attachment:///{content_id}/{filename}",
-                    mimeType=mime_type,
-                    blob=encoded,
-                ),
+
+        # Return text directly because some MCP clients omit embedded blob data.
+        if is_text_attachment(mime_type, filename):
+            raw_bytes = base64.b64decode(encoded, validate=True)
+            try:
+                text_content = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                text_content = raw_bytes.decode("latin-1")
+            contents.append(
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "success": True,
+                            "content_id": content_id,
+                            "filename": filename,
+                            "mimeType": mime_type,
+                            "content": text_content,
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
             )
-        )
+        else:
+            contents.append(
+                EmbeddedResource(
+                    type="resource",
+                    resource=BlobResourceContents(
+                        uri=f"attachment:///{content_id}/{filename}",
+                        mimeType=mime_type,
+                        blob=encoded,
+                    ),
+                )
+            )
 
     summary: dict[str, object] = {
         "success": True,
