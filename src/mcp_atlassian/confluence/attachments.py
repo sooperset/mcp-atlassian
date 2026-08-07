@@ -8,7 +8,7 @@ from typing import Any
 
 from ..models.confluence import ConfluenceAttachment
 from ..utils.io import validate_safe_path
-from ..utils.urls import resolve_relative_url
+from ..utils.urls import resolve_relative_url, validate_url_for_ssrf
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
 from .v2_adapter import ConfluenceV2Adapter
@@ -348,6 +348,11 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             logger.error("No URL provided for attachment fetch")
             return None
 
+        ssrf_error = validate_url_for_ssrf(url)
+        if ssrf_error:
+            logger.error(f"Refusing to fetch attachment: {ssrf_error}")
+            return None
+
         try:
             logger.info(f"Fetching attachment from {url}")
             response = self.confluence._session.get(url, stream=True)
@@ -380,6 +385,11 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         """
         if not url:
             logger.error("No URL provided for attachment download")
+            return False
+
+        ssrf_error = validate_url_for_ssrf(url)
+        if ssrf_error:
+            logger.error(f"Refusing to download attachment: {ssrf_error}")
             return False
 
         try:
