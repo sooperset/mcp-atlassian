@@ -135,14 +135,14 @@ This sets:
 
 ### Custom OAuth Client Storage (factory mode)
 
-For advanced deployments, you can provide a custom storage backend factory
-without changing core chart API:
+For advanced deployments, you can provide an explicitly allowed custom storage
+backend factory without changing the core chart API:
 
 ```yaml
 oauthClientStorage:
   mode: factory
   factory:
-    importPath: "my_pkg.storage:create_store"
+    importPath: "mcp_atlassian.storage.redis:factory"
     configJsonSecret:
       name: mcp-atlassian-storage-config
       key: config.json
@@ -155,7 +155,20 @@ This sets:
 - `ATLASSIAN_OAUTH_CLIENT_STORAGE_CONFIG_JSON` (optional)
 
 The factory callable should return an async key/value compatible storage object
-used by FastMCP OAuth proxy client registration storage.
+used by FastMCP OAuth proxy client registration storage. Factory paths must be
+listed in `ALLOWED_STORAGE_FACTORIES`; unknown paths are rejected before Python
+imports the requested module. Add a downstream factory path to that allowlist
+when building an image with a custom storage backend. The built-in Redis
+factory accepts the backend's keyword arguments through
+`configJson`, for example:
+
+```yaml
+oauthClientStorage:
+  mode: factory
+  factory:
+    importPath: "mcp_atlassian.storage.redis:factory"
+    configJson: '{"url":"redis://redis:6379/0"}'
+```
 
 ### Health Checks and Readiness Probe
 

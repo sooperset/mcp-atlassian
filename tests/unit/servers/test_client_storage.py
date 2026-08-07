@@ -7,10 +7,12 @@ from typing import Any
 
 import pytest
 
+from mcp_atlassian.servers import client_storage
 from mcp_atlassian.servers.client_storage import (
     CLIENT_STORAGE_CONFIG_JSON_ENV,
     CLIENT_STORAGE_FACTORY_ENV,
     CLIENT_STORAGE_MODE_ENV,
+    REQUIRED_STORAGE_METHODS,
     build_oauth_client_storage_from_env,
 )
 
@@ -81,6 +83,14 @@ def _type_error_in_factory(config: dict[str, Any] | None = None) -> _DummyStorag
     return _DummyStorage(config=config)
 
 
+def _allow_test_factory(monkeypatch: pytest.MonkeyPatch, factory_path: str) -> None:
+    monkeypatch.setattr(
+        client_storage,
+        "ALLOWED_STORAGE_FACTORIES",
+        {*client_storage.ALLOWED_STORAGE_FACTORIES, factory_path},
+    )
+
+
 def test_storage_builder_default_mode_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -112,6 +122,10 @@ def test_storage_builder_factory_rejects_invalid_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    _allow_test_factory(
+        monkeypatch,
+        "tests.unit.servers.test_client_storage:_dummy_storage_factory",
+    )
     monkeypatch.setenv(
         CLIENT_STORAGE_FACTORY_ENV,
         "tests.unit.servers.test_client_storage:_dummy_storage_factory",
@@ -124,6 +138,10 @@ def test_storage_builder_factory_rejects_invalid_json(
 
 def test_storage_builder_factory_loads_storage(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    _allow_test_factory(
+        monkeypatch,
+        "tests.unit.servers.test_client_storage:_dummy_storage_factory",
+    )
     monkeypatch.setenv(
         CLIENT_STORAGE_FACTORY_ENV,
         "tests.unit.servers.test_client_storage:_dummy_storage_factory",
@@ -145,10 +163,35 @@ def test_storage_builder_factory_loads_storage(monkeypatch: pytest.MonkeyPatch) 
     assert storage.factory_config == {"bucket": "mcp-client"}
 
 
+def test_storage_builder_factory_loads_shipped_redis_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    monkeypatch.setenv(
+        CLIENT_STORAGE_FACTORY_ENV,
+        "mcp_atlassian.storage.redis:factory",
+    )
+    monkeypatch.setenv(
+        CLIENT_STORAGE_CONFIG_JSON_ENV,
+        '{"url":"redis://localhost:6379/0"}',
+    )
+
+    storage = build_oauth_client_storage_from_env()
+
+    assert storage is not None
+    assert storage.__class__.__name__ == "RedisStore"
+    for method in REQUIRED_STORAGE_METHODS:
+        assert callable(getattr(storage, method, None))
+
+
 def test_storage_builder_factory_rejects_incompatible_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    _allow_test_factory(
+        monkeypatch,
+        "tests.unit.servers.test_client_storage:_invalid_storage_factory",
+    )
     monkeypatch.setenv(
         CLIENT_STORAGE_FACTORY_ENV,
         "tests.unit.servers.test_client_storage:_invalid_storage_factory",
@@ -162,6 +205,10 @@ def test_storage_builder_factory_rejects_partially_implemented_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    _allow_test_factory(
+        monkeypatch,
+        "tests.unit.servers.test_client_storage:_partial_storage_factory",
+    )
     monkeypatch.setenv(
         CLIENT_STORAGE_FACTORY_ENV,
         "tests.unit.servers.test_client_storage:_partial_storage_factory",
@@ -175,6 +222,10 @@ def test_storage_builder_does_not_mask_internal_factory_typeerror(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    _allow_test_factory(
+        monkeypatch,
+        "tests.unit.servers.test_client_storage:_type_error_in_factory",
+    )
     monkeypatch.setenv(
         CLIENT_STORAGE_FACTORY_ENV,
         "tests.unit.servers.test_client_storage:_type_error_in_factory",
@@ -186,3 +237,13 @@ def test_storage_builder_does_not_mask_internal_factory_typeerror(
         build_oauth_client_storage_from_env()
 
     assert os.getenv(_TYPE_ERROR_FACTORY_CALLS_ENV) == "1"
+
+
+def test_storage_builder_factory_rejects_unallowlisted_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    monkeypatch.setenv(CLIENT_STORAGE_FACTORY_ENV, "os:system")
+
+    with pytest.raises(ValueError, match="not in the allowed list"):
+        build_oauth_client_storage_from_env()
