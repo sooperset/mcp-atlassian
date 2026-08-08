@@ -157,6 +157,30 @@ async def test_verify_token_rejects_resource_from_another_cloud_instance() -> No
 
 
 @pytest.mark.anyio
+async def test_verify_token_rejects_cloud_id_from_another_cloud_instance() -> None:
+    verifier = AtlassianOpaqueTokenVerifier(
+        instance_url="https://expected.atlassian.net",
+        cloud_id="cloud-1",
+        required_scopes=["read:jira-work"],
+    )
+
+    async def _resources(_token: str) -> list[dict]:
+        return [
+            {
+                "id": "cloud-1",
+                "url": "https://other.atlassian.net",
+                "scopes": ["read:jira-work"],
+            }
+        ]
+
+    verifier._fetch_accessible_resources = _resources  # type: ignore[method-assign]
+
+    token = await verifier.verify_token("opaque-token")
+
+    assert token is None
+
+
+@pytest.mark.anyio
 async def test_verify_token_returns_none_for_empty_token() -> None:
     verifier = AtlassianOpaqueTokenVerifier(required_scopes=[])
 

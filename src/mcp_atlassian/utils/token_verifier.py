@@ -121,15 +121,22 @@ class AtlassianOpaqueTokenVerifier(TokenVerifier):
         ):
             return False
 
-        if self.cloud_id:
-            return resource_id == self.cloud_id
-
-        if not self.instance_url:
+        if self.cloud_id and resource_id != self.cloud_id:
             return False
 
+        if not self.instance_url:
+            return bool(self.cloud_id)
+
         instance_identity = self._url_identity(self.instance_url)
+        if instance_identity is None:
+            return False
+
+        instance_hostname = instance_identity[1]
+        if instance_hostname in {"api.atlassian.com", "auth.atlassian.com"}:
+            return bool(self.cloud_id)
+
         resource_identity = self._url_identity(resource_url)
-        if instance_identity is None or resource_identity is None:
+        if resource_identity is None:
             return False
 
         return resource_identity == instance_identity
