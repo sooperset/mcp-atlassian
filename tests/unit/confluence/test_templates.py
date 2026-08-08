@@ -206,6 +206,35 @@ class TestGetPageTemplate:
             params=None,
         )
 
+    def test_allowlisted_space_template_is_returned(self, templates_mixin):
+        """get_page_template permits a template from an allowlisted space."""
+        templates_mixin.config.spaces_filter = "ENG"
+        template = {**_TEMPLATE_SUMMARY, "spaceKey": "eng"}
+        _set_api_response(templates_mixin, template)
+
+        assert templates_mixin.get_page_template("tpl-001") == template
+
+    def test_disallowed_space_template_is_rejected(self, templates_mixin):
+        """get_page_template rejects a template from a filtered-out space."""
+        templates_mixin.config.spaces_filter = "ENG"
+        _set_api_response(
+            templates_mixin,
+            {**_TEMPLATE_SUMMARY, "spaceKey": "SECRET"},
+        )
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            templates_mixin.get_page_template("tpl-001")
+
+    def test_global_template_is_returned_when_space_filter_is_configured(
+        self, templates_mixin
+    ):
+        """Global templates remain available because they have no space key."""
+        templates_mixin.config.spaces_filter = "ENG"
+        global_template = {**_TEMPLATE_SUMMARY, "spaceKey": None}
+        _set_api_response(templates_mixin, global_template)
+
+        assert templates_mixin.get_page_template("tpl-001") == global_template
+
 
 # ---------------------------------------------------------------------------
 # create_page_from_template

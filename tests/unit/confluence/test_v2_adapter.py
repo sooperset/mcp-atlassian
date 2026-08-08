@@ -113,6 +113,26 @@ class TestConfluenceV2Adapter:
             "https://example.atlassian.net/wiki/api/v2/spaces/789",
         )
 
+    def test_get_blog_post_space_key_requests_v2_metadata(
+        self, v2_adapter, mock_session
+    ):
+        """Blog post space resolution stays on the Cloud v2 API."""
+        blog_post_response = Mock()
+        blog_post_response.json.return_value = {"spaceId": "789"}
+        space_response = Mock()
+        space_response.json.return_value = {"key": "NEWS"}
+        mock_session.get.side_effect = [blog_post_response, space_response]
+
+        result = v2_adapter.get_blog_post_space_key("blog-1")
+
+        assert result == "NEWS"
+        assert mock_session.get.call_args_list[0].args == (
+            "https://example.atlassian.net/wiki/api/v2/blogposts/blog-1",
+        )
+        assert mock_session.get.call_args_list[1].args == (
+            "https://example.atlassian.net/wiki/api/v2/spaces/789",
+        )
+
     def test_get_page_ancestors_uses_v2_endpoints(self, v2_adapter, mock_session):
         """Ancestor resolution must use v2 metadata on OAuth Cloud."""
         ancestors_response = Mock()
@@ -381,6 +401,11 @@ class TestConfluenceV2Adapter:
                 "/api/v2/pages/123/attachments",
             ),
             (
+                "get_blog_post_attachments",
+                {"blog_post_id": "blog-1"},
+                "/api/v2/blogposts/blog-1/attachments",
+            ),
+            (
                 "get_attachment_by_id",
                 {"attachment_id": "att-1"},
                 "/api/v2/attachments/att-1",
@@ -391,7 +416,13 @@ class TestConfluenceV2Adapter:
                 "/api/v2/attachments/att-1",
             ),
         ],
-        ids=["analytics", "page_attachments", "get_attachment", "delete_attachment"],
+        ids=[
+            "analytics",
+            "page_attachments",
+            "blog_post_attachments",
+            "get_attachment",
+            "delete_attachment",
+        ],
     )
     def test_no_double_wiki_prefix(
         self, v2_adapter, mock_session, method, call_kwargs, expected_path
@@ -413,6 +444,28 @@ class TestConfluenceV2Adapter:
 
         assert "/wiki/wiki/" not in url, f"Double /wiki in URL: {url}"
         assert url.endswith(expected_path), f"Expected {expected_path}, got {url}"
+
+    def test_attachment_conversion_preserves_page_and_blog_parent_ids(
+        self, v2_adapter, mock_session
+    ):
+        """v2 attachment conversion retains both possible content parents."""
+        response = Mock()
+        response.json.return_value = {
+            "id": "att-1",
+            "title": "release.txt",
+            "pageId": "page-1",
+            "blogPostId": "blog-1",
+            "spaceId": "space-1",
+            "mediaType": "text/plain",
+            "fileSize": 12,
+        }
+        mock_session.get.return_value = response
+
+        attachment = v2_adapter.get_attachment_by_id("att-1")
+
+        assert attachment["pageId"] == "page-1"
+        assert attachment["blogPostId"] == "blog-1"
+        assert attachment["spaceId"] == "space-1"
 
 
 class TestConfluenceV2AdapterComments:

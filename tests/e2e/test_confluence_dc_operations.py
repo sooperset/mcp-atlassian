@@ -21,6 +21,29 @@ class TestConfluenceDCBehavior:
     def test_is_not_cloud(self, confluence_fetcher: ConfluenceFetcher) -> None:
         assert confluence_fetcher.config.is_cloud is False
 
+
+class TestConfluenceDCSpacesFilter:
+    """The configured space allowlist applies to Server/DC v1 paths."""
+
+    def test_allowlisted_space_works_with_dc_basic_auth(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        """Server/DC page and attachment reads succeed in the test space."""
+        original_filter = confluence_fetcher.config.spaces_filter
+        confluence_fetcher.config.spaces_filter = dc_instance.space_key
+        try:
+            page = confluence_fetcher.get_page_content(dc_instance.test_page_id)
+            attachments = confluence_fetcher.get_content_attachments(
+                dc_instance.test_page_id
+            )
+        finally:
+            confluence_fetcher.config.spaces_filter = original_filter
+
+        assert page.id == dc_instance.test_page_id
+        assert attachments["success"] is True
+
     def test_no_wiki_prefix(self, dc_instance: DCInstanceInfo) -> None:
         """DC Confluence URL should not have /wiki prefix."""
         assert "/wiki" not in dc_instance.confluence_url
