@@ -133,6 +133,26 @@ class TestResolve:
         assert os.environ["JIRA_API_TOKEN"] == "my-secret-token"
         mock_run.assert_called_once()
 
+    def test_windows_command_reaches_subprocess_without_literal_quotes(self) -> None:
+        command = 'op read "op://Vault/Jira PAT/credential"'
+        os.environ["JIRA_PERSONAL_TOKEN_COMMAND"] = command
+        resolver = CredentialCommandResolver(is_windows=True)
+
+        with patch("mcp_atlassian.utils.credential_command.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=command, returncode=0, stdout="pat-token\n", stderr=""
+            )
+            resolver.resolve("jira")
+
+        mock_run.assert_called_once_with(
+            command,
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
     def test_resolve_is_idempotent(self, resolver: CredentialCommandResolver) -> None:
         os.environ["JIRA_API_TOKEN_COMMAND"] = "echo secret"
         with patch("mcp_atlassian.utils.credential_command.subprocess.run") as mock_run:

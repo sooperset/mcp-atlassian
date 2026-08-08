@@ -34,7 +34,7 @@ _DEFAULT_TIMEOUT = 30
 
 
 def _parse_command(
-    command: str, command_var: str, *, is_windows: bool = os.name == "nt"
+    command: str, command_var: str, *, is_windows: bool | None = None
 ) -> str | list[str]:
     """Parse a credential command into a form ``subprocess.run`` accepts.
 
@@ -59,6 +59,8 @@ def _parse_command(
     empty_message = f"Credential command in {command_var} is empty"
     if not command.strip():
         raise ValueError(empty_message)
+    if is_windows is None:
+        is_windows = os.name == "nt"
     if is_windows:
         return command
 
@@ -102,8 +104,15 @@ def deferred_pat_outranks(
 class CredentialCommandResolver:
     """Resolve credentials produced by configured commands exactly once."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, is_windows: bool | None = None) -> None:
+        """Initialize a resolver.
+
+        Args:
+            is_windows: Optional platform override for deterministic tests. When
+                omitted, command parsing follows the current operating system.
+        """
         self._resolved_services: set[str] = set()
+        self._is_windows = is_windows
         self._service_locks = {
             service: threading.Lock() for service in _SERVICE_COMMANDS
         }
@@ -173,7 +182,9 @@ class CredentialCommandResolver:
                 if not command or os.getenv(target_var):
                     continue
 
-                arguments = _parse_command(command, command_var)
+                arguments = _parse_command(
+                    command, command_var, is_windows=self._is_windows
+                )
 
                 logger.debug("Resolving %s via %s", target_var, command_var)
                 try:

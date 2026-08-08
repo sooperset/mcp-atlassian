@@ -896,13 +896,39 @@ class TestMCPProtocolIntegration:
 
         run_command.assert_not_called()
 
-    async def test_lifespan_deferred_pat_outranks_static_basic(self) -> None:
+    @pytest.mark.parametrize(
+        ("service", "url_var", "username_var", "api_token_var", "command_var"),
+        [
+            (
+                "jira",
+                "JIRA_URL",
+                "JIRA_USERNAME",
+                "JIRA_API_TOKEN",
+                "JIRA_PERSONAL_TOKEN_COMMAND",
+            ),
+            (
+                "confluence",
+                "CONFLUENCE_URL",
+                "CONFLUENCE_USERNAME",
+                "CONFLUENCE_API_TOKEN",
+                "CONFLUENCE_PERSONAL_TOKEN_COMMAND",
+            ),
+        ],
+    )
+    async def test_lifespan_deferred_pat_outranks_static_basic(
+        self,
+        service: str,
+        url_var: str,
+        username_var: str,
+        api_token_var: str,
+        command_var: str,
+    ) -> None:
         """A deferred Server/DC PAT keeps the precedence a static one would have."""
         env = {
-            "JIRA_URL": "https://jira.example.com",
-            "JIRA_USERNAME": "test@example.com",
-            "JIRA_API_TOKEN": "static-basic-token",
-            "JIRA_PERSONAL_TOKEN_COMMAND": "get-jira-pat",
+            url_var: f"https://{service}.example.com",
+            username_var: "test@example.com",
+            api_token_var: "static-basic-token",
+            command_var: f"get-{service}-pat",
         }
         with (
             MockEnvironment.clean_env(),
@@ -915,9 +941,10 @@ class TestMCPProtocolIntegration:
             async with main_lifespan(app) as context:
                 app_context = context["app_lifespan_context"]
                 # The eager config stays available for URL/SSL inheritance.
-                assert app_context.full_jira_config is not None
-                assert app_context.full_jira_config.auth_type == "basic"
-                assert app_context.has_deferred_jira_auth is True
+                loaded_config = getattr(app_context, f"full_{service}_config")
+                assert loaded_config is not None
+                assert loaded_config.auth_type == "basic"
+                assert getattr(app_context, f"has_deferred_{service}_auth") is True
 
         run_command.assert_not_called()
 
