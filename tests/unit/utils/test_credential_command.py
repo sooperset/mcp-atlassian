@@ -417,7 +417,7 @@ class TestParseCommand:
                 is_windows=False,
             )
 
-    def test_windows_tolerates_unbalanced_quotes(self) -> None:
+    def test_windows_unbalanced_quotes(self) -> None:
         """Windows has no parsing step, so quoting errors surface at spawn."""
         command = "secret-tool 'unterminated"
         assert (
