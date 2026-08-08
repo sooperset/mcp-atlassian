@@ -190,7 +190,8 @@ oauthClientStorage:
   mode: "default" # default | factory
   factory:
     importPath: "" # e.g. "mcp_atlassian.storage.redis:factory"
-    # Optional JSON object passed to the factory.
+    # Optional JSON object passed to the factory. Keep Redis credentials and
+    # encryption_key in configJsonSecret for production deployments.
     configJson: ""
     # Optionally source JSON from an existing secret key.
     configJsonSecret:

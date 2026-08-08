@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
 import pytest
+from cryptography.fernet import Fernet
 
 from mcp_atlassian.servers import client_storage
 from mcp_atlassian.servers.client_storage import (
@@ -173,15 +175,85 @@ def test_storage_builder_factory_loads_shipped_redis_storage(
     )
     monkeypatch.setenv(
         CLIENT_STORAGE_CONFIG_JSON_ENV,
-        '{"url":"redis://localhost:6379/0"}',
+        json.dumps(
+            {
+                "url": "rediss://redis.example.com:6380/0",
+                "password": "redis-password-sentinel",
+                "encryption_key": Fernet.generate_key().decode("ascii"),
+            }
+        ),
     )
 
     storage = build_oauth_client_storage_from_env()
 
     assert storage is not None
-    assert storage.__class__.__name__ == "RedisStore"
+    assert storage.__class__.__name__ == "FernetEncryptionWrapper"
+    assert storage.key_value.__class__.__name__ == "RedisStore"
     for method in REQUIRED_STORAGE_METHODS:
         assert callable(getattr(storage, method, None))
+
+
+def test_storage_builder_factory_requires_redis_encryption_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    monkeypatch.setenv(
+        CLIENT_STORAGE_FACTORY_ENV,
+        "mcp_atlassian.storage.redis:factory",
+    )
+    monkeypatch.setenv(
+        CLIENT_STORAGE_CONFIG_JSON_ENV,
+        '{"url":"rediss://redis.example.com:6380/0"}',
+    )
+
+    with pytest.raises(ValueError, match="encryption_key"):
+        build_oauth_client_storage_from_env()
+
+
+@pytest.mark.anyio
+async def test_redis_storage_encrypts_values_before_writing() -> None:
+    from fakeredis.aioredis import FakeRedis
+
+    from mcp_atlassian.storage.redis import factory
+
+    client = FakeRedis(decode_responses=True)
+    storage = factory(
+        {
+            "client": client,
+            "encryption_key": Fernet.generate_key().decode("ascii"),
+        }
+    )
+    secret_values = {
+        "client_secret": "oauth-client-secret-sentinel",
+        "access_token": "oauth-access-token-sentinel",
+        "refresh_token": "oauth-refresh-token-sentinel",
+    }
+
+    await storage.put("sentinel", secret_values, collection="oauth")
+
+    raw_values = await client.mget("oauth::sentinel")
+    assert raw_values[0] is not None
+    raw_value = raw_values[0]
+    assert all(secret not in raw_value for secret in secret_values.values())
+    assert "__encrypted_data__" in raw_value
+    assert await storage.get("sentinel", collection="oauth") == secret_values
+
+    await client.aclose()
+
+
+def test_redis_storage_enables_certificate_verification_for_rediss() -> None:
+    from mcp_atlassian.storage.redis import factory
+
+    storage = factory(
+        {
+            "url": "rediss://redis.example.com:6380/0",
+            "encryption_key": Fernet.generate_key().decode("ascii"),
+        }
+    )
+
+    connection_kwargs = storage.key_value._client.connection_pool.connection_kwargs
+    assert connection_kwargs["ssl_cert_reqs"] == "required"
+    assert connection_kwargs["ssl_check_hostname"] is True
 
 
 def test_storage_builder_factory_rejects_incompatible_storage(

@@ -108,17 +108,41 @@ The factory callable should return an async key/value compatible storage object
 used by FastMCP OAuth proxy client registration storage. Factory paths must be
 listed in `ALLOWED_STORAGE_FACTORIES`; unknown paths are rejected before Python
 imports the requested module. Add a downstream factory path to that allowlist
-when building an image with a custom storage backend. The built-in Redis
-factory accepts the backend's keyword arguments through
-`configJson`, for example:
+when building an image with a custom storage backend.
+
+The built-in Redis factory encrypts values in the application before writing
+them to Redis. Keep the Fernet key and Redis credentials in the existing Secret
+referenced by `configJsonSecret`. Use a stable Fernet key across restarts:
 
 ```yaml
+# Create this Secret outside the chart. Generate the encryption key with
+# `Fernet.generate_key()` and replace the placeholder values.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mcp-atlassian-storage-config
+type: Opaque
+stringData:
+  config.json: |
+    {
+      "url": "rediss://redis.example.com:6380/0",
+      "username": "default",
+      "password": "replace-with-redis-password",
+      "encryption_key": "replace-with-a-stable-fernet-key"
+    }
+---
 oauthClientStorage:
   mode: factory
   factory:
     importPath: "mcp_atlassian.storage.redis:factory"
-    configJson: '{"url":"redis://redis:6379/0"}'
+    configJsonSecret:
+      name: mcp-atlassian-storage-config
+      key: config.json
 ```
+
+`rediss://` enables TLS and the factory requires certificate verification and
+hostname checking. Mount a custom CA bundle if the Redis certificate is signed
+by a private CA, then add its path as `ssl_ca_certs` in the Secret JSON.
 
 ### Health Checks and Readiness Probe
 
