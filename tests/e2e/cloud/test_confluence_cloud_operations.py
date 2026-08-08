@@ -75,6 +75,13 @@ class TestConfluenceCloudSpacesFilter:
         assert page.id == cloud_instance.test_page_id
         assert attachments["success"] is True
 
+        try:
+            confluence_fetcher.config.spaces_filter = "MCP_ATLASSIAN_FILTER_DENIED"
+            with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+                confluence_fetcher.get_page_content(cloud_instance.test_page_id)
+        finally:
+            confluence_fetcher.config.spaces_filter = original_filter
+
     def test_allowlisted_space_works_with_cloud_oauth_v2(
         self,
         auth_variants: list[AuthVariant],
@@ -103,6 +110,13 @@ class TestConfluenceCloudSpacesFilter:
 
         assert page.id == cloud_instance.test_page_id
         assert attachments["success"] is True
+
+        try:
+            confluence_fetcher.config.spaces_filter = "MCP_ATLASSIAN_FILTER_DENIED"
+            with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+                confluence_fetcher.get_page_content(cloud_instance.test_page_id)
+        finally:
+            confluence_fetcher.config.spaces_filter = original_filter
 
 
 class TestConfluenceCloudAnalytics:
