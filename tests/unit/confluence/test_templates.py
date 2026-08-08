@@ -214,12 +214,31 @@ class TestGetPageTemplate:
 
         assert templates_mixin.get_page_template("tpl-001") == template
 
+    def test_allowlisted_nested_space_template_is_returned(self, templates_mixin):
+        """get_page_template recognizes the API's nested space representation."""
+        templates_mixin.config.spaces_filter = "ENG"
+        template = {**_TEMPLATE_SUMMARY, "space": {"key": "eng"}}
+        _set_api_response(templates_mixin, template)
+
+        assert templates_mixin.get_page_template("tpl-001") == template
+
     def test_disallowed_space_template_is_rejected(self, templates_mixin):
         """get_page_template rejects a template from a filtered-out space."""
         templates_mixin.config.spaces_filter = "ENG"
         _set_api_response(
             templates_mixin,
             {**_TEMPLATE_SUMMARY, "spaceKey": "SECRET"},
+        )
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            templates_mixin.get_page_template("tpl-001")
+
+    def test_disallowed_nested_space_template_is_rejected(self, templates_mixin):
+        """Nested template space metadata is subject to the same allowlist."""
+        templates_mixin.config.spaces_filter = "ENG"
+        _set_api_response(
+            templates_mixin,
+            {**_TEMPLATE_SUMMARY, "space": {"key": "SECRET"}},
         )
 
         with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):

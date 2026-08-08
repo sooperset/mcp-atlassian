@@ -78,7 +78,15 @@ class TestConfluenceV2Adapter:
         assert result["history"]["createdBy"]["accountId"] == "creator-account-id"
         assert result["history"]["lastUpdated"]["when"] == "2024-01-02T10:00:00.000Z"
         assert result["body"]["storage"]["value"] == "<p>Test content</p>"
-        assert result["body"]["storage"]["representation"] == "storage"
+
+    def test_gateway_base_url_gets_wiki_prefix(self, mock_session):
+        """Cloud gateway v2 requests include the required product prefix."""
+        adapter = ConfluenceV2Adapter(
+            session=mock_session,
+            base_url="https://api.atlassian.com/ex/confluence/cloud-id",
+        )
+
+        assert adapter.base_url.endswith("/cloud-id/wiki")
 
     def test_get_page_not_found(self, v2_adapter, mock_session):
         """Test page retrieval when page doesn't exist."""

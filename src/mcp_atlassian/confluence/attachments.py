@@ -567,7 +567,28 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             # Use v2 API for OAuth authentication, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
             if v2_adapter:
-                if self._get_allowed_spaces() is None:
+                try:
+                    space_key = v2_adapter.get_page_space_key(content_id)
+                    is_blog_post = False
+                except ValueError as page_error:
+                    try:
+                        space_key = v2_adapter.get_blog_post_space_key(content_id)
+                    except ValueError:
+                        raise page_error
+                    is_blog_post = True
+
+                if self._get_allowed_spaces() is not None:
+                    self.enforce_spaces_filter(space_key, page_id=content_id)
+
+                if is_blog_post:
+                    response = v2_adapter.get_blog_post_attachments(
+                        blog_post_id=content_id,
+                        start=start,
+                        limit=limit,
+                        filename=filename,
+                        media_type=media_type,
+                    )
+                else:
                     response = v2_adapter.get_page_attachments(
                         page_id=content_id,
                         start=start,
@@ -575,31 +596,6 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                         filename=filename,
                         media_type=media_type,
                     )
-                else:
-                    try:
-                        space_key = v2_adapter.get_page_space_key(content_id)
-                    except ValueError as page_error:
-                        try:
-                            space_key = v2_adapter.get_blog_post_space_key(content_id)
-                        except ValueError:
-                            raise page_error
-                        self.enforce_spaces_filter(space_key, page_id=content_id)
-                        response = v2_adapter.get_blog_post_attachments(
-                            blog_post_id=content_id,
-                            start=start,
-                            limit=limit,
-                            filename=filename,
-                            media_type=media_type,
-                        )
-                    else:
-                        self.enforce_spaces_filter(space_key, page_id=content_id)
-                        response = v2_adapter.get_page_attachments(
-                            page_id=content_id,
-                            start=start,
-                            limit=limit,
-                            filename=filename,
-                            media_type=media_type,
-                        )
             else:
                 self.enforce_content_spaces_filter(content_id)
                 logger.debug(
@@ -876,14 +872,14 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         v2_adapter = self._v2_adapter
         if v2_adapter:
             attachment = v2_adapter.get_attachment_by_id(attachment_id)
-            page_id = attachment.get("pageId") or attachment.get("parentId")
-            if page_id:
-                self.enforce_page_spaces_filter(str(page_id), v2_adapter=v2_adapter)
-                return
             blog_post_id = attachment.get("blogPostId")
             if blog_post_id:
                 space_key = v2_adapter.get_blog_post_space_key(str(blog_post_id))
                 self.enforce_spaces_filter(space_key, page_id=attachment_id)
+                return
+            page_id = attachment.get("pageId") or attachment.get("parentId")
+            if page_id:
+                self.enforce_page_spaces_filter(str(page_id), v2_adapter=v2_adapter)
                 return
             self.enforce_spaces_filter("", page_id=attachment_id)
             return

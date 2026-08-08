@@ -44,6 +44,13 @@ class TestConfluenceDCSpacesFilter:
         assert page.id == dc_instance.test_page_id
         assert attachments["success"] is True
 
+        try:
+            confluence_fetcher.config.spaces_filter = "MCP_ATLASSIAN_FILTER_DENIED"
+            with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+                confluence_fetcher.get_page_content(dc_instance.test_page_id)
+        finally:
+            confluence_fetcher.config.spaces_filter = original_filter
+
     def test_no_wiki_prefix(self, dc_instance: DCInstanceInfo) -> None:
         """DC Confluence URL should not have /wiki prefix."""
         assert "/wiki" not in dc_instance.confluence_url

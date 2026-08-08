@@ -26,7 +26,10 @@ class ConfluenceV2Adapter:
             base_url: Base URL for the Confluence instance
         """
         self.session = session
-        self.base_url = base_url
+        normalized_base_url = base_url.rstrip("/")
+        if not normalized_base_url.endswith("/wiki"):
+            normalized_base_url = f"{normalized_base_url}/wiki"
+        self.base_url = normalized_base_url
 
     @staticmethod
     def _user_ref_from_account_id(account_id: str | None) -> dict[str, str] | None:
@@ -1629,10 +1632,21 @@ class ConfluenceV2Adapter:
             "_links": v2_attachment.get("_links", {}),
         }
 
-        page_id = v2_attachment.get("pageId") or v2_attachment.get("parentId")
+        page_id = v2_attachment.get("pageId")
+        blog_post_id = v2_attachment.get("blogPostId")
         if page_id is not None:
             converted["pageId"] = page_id
-        for parent_field in ("blogPostId", "customContentId", "spaceId"):
+        if blog_post_id is not None:
+            converted["blogPostId"] = blog_post_id
+        elif page_id is None:
+            # Older v2-compatible responses used a generic parentId. Preserve
+            # the existing page fallback, but never let it replace an explicit
+            # blogPostId that the filter needs to resolve through /blogposts.
+            parent_id = v2_attachment.get("parentId")
+            if parent_id is not None:
+                converted["pageId"] = parent_id
+
+        for parent_field in ("customContentId", "spaceId"):
             parent_id = v2_attachment.get(parent_field)
             if parent_id is not None:
                 converted[parent_field] = parent_id
