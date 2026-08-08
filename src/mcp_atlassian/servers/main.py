@@ -23,6 +23,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.credential_command import (
+    deferred_pat_outranks,
+    get_resolver,
+)
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
@@ -139,6 +143,9 @@ async def health_check(request: Request) -> JSONResponse:
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
     services = get_available_services()
+    resolver = get_resolver()
+    has_deferred_jira_auth = resolver.has_deferred_credentials("jira")
+    has_deferred_confluence_auth = resolver.has_deferred_credentials("confluence")
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
     enabled_toolsets = get_enabled_toolsets()
@@ -158,6 +165,11 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.warning(
                     "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
                 )
+        except ValueError as e:
+            if has_deferred_jira_auth:
+                logger.info("Jira credential resolution deferred until first use.")
+            else:
+                logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
 
@@ -173,12 +185,43 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.warning(
                     "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
                 )
+        except ValueError as e:
+            if has_deferred_confluence_auth:
+                logger.info(
+                    "Confluence credential resolution deferred until first use."
+                )
+            else:
+                logger.error(
+                    f"Failed to load Confluence configuration: {e}", exc_info=True
+                )
         except Exception as e:
             logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
+
+    # A deferred credential wins when nothing loaded eagerly, or when it would
+    # have outranked what did load (Server/DC personal tokens beat Basic and
+    # OAuth in from_env, but a deferred one is invisible to it at startup).
+    deferred_jira_wins = has_deferred_jira_auth and (
+        loaded_jira_config is None
+        or deferred_pat_outranks(
+            "jira",
+            is_cloud=loaded_jira_config.is_cloud,
+            auth_type=loaded_jira_config.auth_type,
+        )
+    )
+    deferred_confluence_wins = has_deferred_confluence_auth and (
+        loaded_confluence_config is None
+        or deferred_pat_outranks(
+            "confluence",
+            is_cloud=loaded_confluence_config.is_cloud,
+            auth_type=loaded_confluence_config.auth_type,
+        )
+    )
 
     app_context = MainAppContext(
         full_jira_config=loaded_jira_config,
         full_confluence_config=loaded_confluence_config,
+        has_deferred_jira_auth=deferred_jira_wins,
+        has_deferred_confluence_auth=deferred_confluence_wins,
         read_only=read_only,
         enabled_tools=enabled_tools,
         enabled_toolsets=enabled_toolsets,
@@ -311,9 +354,11 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         if app_lifespan_state:
             jira_available = (
                 app_lifespan_state.full_jira_config is not None
+                or app_lifespan_state.has_deferred_jira_auth
             ) or header_based_services.get("jira", False)
             confluence_available = (
                 app_lifespan_state.full_confluence_config is not None
+                or app_lifespan_state.has_deferred_confluence_auth
             ) or header_based_services.get("confluence", False)
             if is_jira_tool and not jira_available:
                 return False
