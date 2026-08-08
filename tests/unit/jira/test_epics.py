@@ -852,6 +852,18 @@ class TestEpicsMixin:
 
         assert epics_mixin._is_epic_link_cleared("TEST-123", "parent") is True
 
+    def test_is_epic_link_cleared_rejects_omitted_parent_on_dc(
+        self, epics_mixin: EpicsMixin
+    ) -> None:
+        """DC must return the requested parent field to confirm a clear."""
+        epics_mixin.config = MagicMock(is_cloud=False)
+        epics_mixin.jira.get_issue.return_value = {
+            "id": "123456",
+            "key": "TEST-123",
+        }
+
+        assert epics_mixin._is_epic_link_cleared("TEST-123", "parent") is False
+
     def test_unlink_issue_from_epic_uses_agile_fallback(
         self, epics_mixin: EpicsMixin
     ) -> None:

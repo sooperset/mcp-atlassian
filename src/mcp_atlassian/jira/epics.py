@@ -452,9 +452,11 @@ class EpicsMixin(
             # Cloud omits the fields object entirely when the only requested
             # field is an unset parent.
             if fields is None:
-                return True
+                return self.config.is_cloud
             if not isinstance(fields, dict):
                 return False
+            if not self.config.is_cloud:
+                return field_id in fields and fields[field_id] is None
             return fields.get(field_id) is None
 
         if not isinstance(fields, dict):
