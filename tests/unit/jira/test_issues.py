@@ -1342,15 +1342,15 @@ class TestIssuesMixin:
             issue_key="TEST-123", update={"fields": {"parent": {"key": "EPIC-2"}}}
         )
 
-    def test_update_issue_clear_parent_with_none(self, issues_mixin: IssuesMixin):
-        """Regression test (#1500): parent=None must clear the parent link
-        rather than being silently dropped by falsy-value filtering.
-
-        Previously the None case fell into the branch's ``else`` — it logged
-        a warning and never added "parent" to update_fields, so no PUT was
-        sent, yet update_issue still returned the (unchanged) issue as if the
-        clear had succeeded.
-        """
+    @pytest.mark.parametrize("parent_value", [None, ""])
+    @pytest.mark.parametrize("input_style", ["keyword", "fields"])
+    def test_update_issue_clear_parent_on_cloud(
+        self,
+        issues_mixin: IssuesMixin,
+        parent_value: None | str,
+        input_style: str,
+    ):
+        """Cloud sends an explicit null when clearing an issue parent."""
         issue_data = {
             "id": "12345",
             "key": "TEST-123",
@@ -1364,17 +1364,26 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.return_value = issue_data
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
-        document = issues_mixin.update_issue(issue_key="TEST-123", parent=None)
+        if input_style == "keyword":
+            document = issues_mixin.update_issue(
+                issue_key="TEST-123", parent=parent_value
+            )
+        else:
+            document = issues_mixin.update_issue(
+                issue_key="TEST-123", fields={"parent": parent_value}
+            )
 
         issues_mixin.jira.update_issue.assert_called_once_with(
             issue_key="TEST-123", update={"fields": {"parent": None}}
         )
         assert document.key == "TEST-123"
 
-    def test_update_issue_clear_parent_with_empty_string(
-        self, issues_mixin: IssuesMixin
+    @pytest.mark.parametrize("parent_value", [None, ""])
+    def test_update_issue_clear_parent_on_server_dc(
+        self, issues_mixin: IssuesMixin, parent_value: None | str
     ):
-        """Test clearing a parent via an empty string, mirroring assignee."""
+        """Server/DC rejects parent clearing before making an update request."""
+        issues_mixin.config.url = "https://jira.example.com"
         issue_data = {
             "id": "12345",
             "key": "TEST-123",
@@ -1388,11 +1397,26 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.return_value = issue_data
         issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
 
-        issues_mixin.update_issue(issue_key="TEST-123", parent="")
+        with pytest.raises(ValueError, match="supported only on Jira Cloud"):
+            issues_mixin.update_issue(issue_key="TEST-123", parent=parent_value)
 
-        issues_mixin.jira.update_issue.assert_called_once_with(
-            issue_key="TEST-123", update={"fields": {"parent": None}}
-        )
+        issues_mixin.jira.update_issue.assert_not_called()
+        issues_mixin.jira.get_issue.assert_not_called()
+
+    @pytest.mark.parametrize("parent_value", [None, ""])
+    def test_update_issue_clear_parent_in_fields_on_server_dc(
+        self, issues_mixin: IssuesMixin, parent_value: None | str
+    ):
+        """Server/DC rejects a JSON ``{"parent": null}`` field update early."""
+        issues_mixin.config.url = "https://jira.example.com"
+
+        with pytest.raises(ValueError, match="customfield_10014"):
+            issues_mixin.update_issue(
+                issue_key="TEST-123", fields={"parent": parent_value}
+            )
+
+        issues_mixin.jira.update_issue.assert_not_called()
+        issues_mixin.jira.get_issue.assert_not_called()
 
     def test_update_issue_invalid_parent_value_is_skipped(
         self, issues_mixin: IssuesMixin, caplog
