@@ -133,7 +133,7 @@ class TestResolve:
         assert os.environ["JIRA_API_TOKEN"] == "my-secret-token"
         mock_run.assert_called_once()
 
-    def test_windows_command_reaches_subprocess_without_literal_quotes(self) -> None:
+    def test_windows_command_uses_native_line(self) -> None:
         command = 'op read "op://Vault/Jira PAT/credential"'
         os.environ["JIRA_PERSONAL_TOKEN_COMMAND"] = command
         resolver = CredentialCommandResolver(is_windows=True)

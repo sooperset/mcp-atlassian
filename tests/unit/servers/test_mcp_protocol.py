@@ -915,7 +915,7 @@ class TestMCPProtocolIntegration:
             ),
         ],
     )
-    async def test_lifespan_deferred_pat_outranks_static_basic(
+    async def test_lifespan_deferred_pat_priority(
         self,
         service: str,
         url_var: str,
