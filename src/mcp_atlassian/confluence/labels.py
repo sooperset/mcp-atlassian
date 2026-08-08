@@ -22,9 +22,13 @@ class LabelsMixin(ConfluenceClient):
             List of ConfluenceLabel models containing label content and metadata
 
         Raises:
+            ValueError: If a spaces filter is configured and the page's
+                space is not in it.
             Exception: If there is an error getting the label
         """
         try:
+            self.enforce_page_spaces_filter(page_id)
+
             # Get labels with expanded content
             labels_response = self.confluence.get_page_labels(page_id=page_id)
 
@@ -59,10 +63,13 @@ class LabelsMixin(ConfluenceClient):
             Label model containing the updated list of labels
 
         Raises:
+            ValueError: If a spaces filter is configured and the page's
+                space is not in it.
             Exception: If there is an error adding the label
         """
         try:
             logger.debug(f"Adding label with name '{name}' to page {page_id}")
+            self.enforce_page_spaces_filter(page_id)
 
             update_kwargs = {
                 "page_id": page_id,
