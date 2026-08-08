@@ -2005,3 +2005,228 @@ class TestAttachmentSpacesFilterEnforcement:
         assert result["success"] is False
         assert "CONFLUENCE_SPACES_FILTER" in result["error"]
         attachments_mixin.confluence._session.delete.assert_not_called()
+
+    def test_cloud_v2_page_download_blocks_before_binary_request(
+        self, attachments_mixin, tmp_path
+    ):
+        """A disallowed Cloud page never reaches attachment binary download."""
+        attachments_mixin.config.auth_type = "oauth"
+        attachments_mixin.config.spaces_filter = "SAFE"
+
+        with (
+            patch(
+                "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+            ) as adapter_class,
+            patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
+        ):
+            adapter = MagicMock()
+            adapter.get_page_space_key.return_value = "SECRET"
+            adapter_class.return_value = adapter
+
+            result = attachments_mixin.download_content_attachments(
+                "page-1", str(tmp_path)
+            )
+
+        assert result["success"] is False
+        assert "CONFLUENCE_SPACES_FILTER" in result["error"]
+        adapter.get_page_attachments.assert_not_called()
+        attachments_mixin.confluence._session.get.assert_not_called()
+
+    def test_cloud_v2_page_download_allows_attachment_binary_request(
+        self, attachments_mixin, tmp_path
+    ):
+        """An allowlisted Cloud page uses its v2 attachment endpoint."""
+        attachments_mixin.config.auth_type = "oauth"
+        attachments_mixin.config.spaces_filter = "SAFE"
+
+        with (
+            patch(
+                "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+            ) as adapter_class,
+            patch.object(
+                attachments_mixin, "download_attachment", return_value=True
+            ) as download_attachment,
+            patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
+        ):
+            adapter = MagicMock()
+            adapter.get_page_space_key.return_value = "SAFE"
+            adapter.get_page_attachments.return_value = {
+                "results": [
+                    {
+                        "id": "att-page",
+                        "title": "page.txt",
+                        "extensions": {"fileSize": 4, "mediaType": "text/plain"},
+                        "_links": {"download": "/download/page.txt"},
+                    }
+                ],
+                "size": 1,
+            }
+            adapter_class.return_value = adapter
+
+            result = attachments_mixin.download_content_attachments(
+                "page-1", str(tmp_path)
+            )
+
+        assert result["success"] is True
+        assert result["downloaded"][0]["filename"] == "page.txt"
+        adapter.get_page_attachments.assert_called_once_with(
+            page_id="page-1",
+            start=0,
+            limit=50,
+            filename=None,
+            media_type=None,
+        )
+        download_attachment.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/content/page-1/"
+            "child/attachment/att-page/download",
+            str(tmp_path / "page.txt"),
+            attachment_id="att-page",
+        )
+
+    def test_cloud_v2_blog_download_allows_attachment_binary_request(
+        self, attachments_mixin, tmp_path
+    ):
+        """An allowlisted Cloud blog post uses its v2 attachment endpoint."""
+        attachments_mixin.config.auth_type = "oauth"
+        attachments_mixin.config.spaces_filter = "SAFE"
+
+        with (
+            patch(
+                "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+            ) as adapter_class,
+            patch.object(
+                attachments_mixin, "download_attachment", return_value=True
+            ) as download_attachment,
+            patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
+        ):
+            adapter = MagicMock()
+            adapter.get_page_space_key.side_effect = ValueError("not a page")
+            adapter.get_blog_post_space_key.return_value = "SAFE"
+            adapter.get_blog_post_attachments.return_value = {
+                "results": [
+                    {
+                        "id": "att-blog",
+                        "title": "blog.txt",
+                        "extensions": {"fileSize": 4, "mediaType": "text/plain"},
+                        "_links": {"download": "/download/blog.txt"},
+                    }
+                ],
+                "size": 1,
+            }
+            adapter_class.return_value = adapter
+
+            result = attachments_mixin.download_content_attachments(
+                "blog-1", str(tmp_path)
+            )
+
+        assert result["success"] is True
+        assert result["downloaded"][0]["filename"] == "blog.txt"
+        adapter.get_page_attachments.assert_not_called()
+        adapter.get_blog_post_attachments.assert_called_once_with(
+            blog_post_id="blog-1",
+            start=0,
+            limit=50,
+            filename=None,
+            media_type=None,
+        )
+        download_attachment.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/content/blog-1/"
+            "child/attachment/att-blog/download",
+            str(tmp_path / "blog.txt"),
+            attachment_id="att-blog",
+        )
+
+    def test_cloud_v2_blog_download_blocks_before_binary_request(
+        self, attachments_mixin, tmp_path
+    ):
+        """A disallowed Cloud blog post never reaches attachment binary download."""
+        attachments_mixin.config.auth_type = "oauth"
+        attachments_mixin.config.spaces_filter = "SAFE"
+
+        with (
+            patch(
+                "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+            ) as adapter_class,
+            patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
+        ):
+            adapter = MagicMock()
+            adapter.get_page_space_key.side_effect = ValueError("not a page")
+            adapter.get_blog_post_space_key.return_value = "SECRET"
+            adapter_class.return_value = adapter
+
+            result = attachments_mixin.download_content_attachments(
+                "blog-1", str(tmp_path)
+            )
+
+        assert result["success"] is False
+        assert "CONFLUENCE_SPACES_FILTER" in result["error"]
+        adapter.get_blog_post_attachments.assert_not_called()
+        attachments_mixin.confluence._session.get.assert_not_called()
+
+    def test_cloud_v2_blog_delete_allows_attachment(self, attachments_mixin):
+        """An allowlisted Cloud blog attachment can be deleted through v2."""
+        attachments_mixin.config.auth_type = "oauth"
+        attachments_mixin.config.spaces_filter = "SAFE"
+
+        with patch(
+            "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+        ) as adapter_class:
+            adapter = MagicMock()
+            adapter.get_attachment_by_id.return_value = {
+                "id": "att-blog",
+                "blogPostId": "blog-1",
+            }
+            adapter.get_blog_post_space_key.return_value = "SAFE"
+            adapter_class.return_value = adapter
+
+            result = attachments_mixin.delete_attachment("att-blog")
+
+        assert result["success"] is True
+        adapter.delete_attachment.assert_called_once_with("att-blog")
+        attachments_mixin.confluence._session.delete.assert_not_called()
+
+    def test_cloud_v2_page_delete_blocks_before_delete_request(self, attachments_mixin):
+        """A disallowed Cloud page attachment never reaches v2 DELETE."""
+        attachments_mixin.config.auth_type = "oauth"
+        attachments_mixin.config.spaces_filter = "SAFE"
+
+        with patch(
+            "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+        ) as adapter_class:
+            adapter = MagicMock()
+            adapter.get_attachment_by_id.return_value = {
+                "id": "att-page",
+                "pageId": "page-1",
+            }
+            adapter.get_page_space_key.return_value = "SECRET"
+            adapter_class.return_value = adapter
+
+            result = attachments_mixin.delete_attachment("att-page")
+
+        assert result["success"] is False
+        assert "CONFLUENCE_SPACES_FILTER" in result["error"]
+        adapter.delete_attachment.assert_not_called()
+        attachments_mixin.confluence._session.delete.assert_not_called()
+
+    def test_cloud_v2_blog_delete_blocks_before_delete_request(self, attachments_mixin):
+        """A disallowed Cloud blog attachment never reaches v2 DELETE."""
+        attachments_mixin.config.auth_type = "oauth"
+        attachments_mixin.config.spaces_filter = "SAFE"
+
+        with patch(
+            "mcp_atlassian.confluence.attachments.ConfluenceV2Adapter"
+        ) as adapter_class:
+            adapter = MagicMock()
+            adapter.get_attachment_by_id.return_value = {
+                "id": "att-blog",
+                "blogPostId": "blog-1",
+            }
+            adapter.get_blog_post_space_key.return_value = "SECRET"
+            adapter_class.return_value = adapter
+
+            result = attachments_mixin.delete_attachment("att-blog")
+
+        assert result["success"] is False
+        assert "CONFLUENCE_SPACES_FILTER" in result["error"]
+        adapter.delete_attachment.assert_not_called()
+        attachments_mixin.confluence._session.delete.assert_not_called()

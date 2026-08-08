@@ -396,6 +396,38 @@ class ConfluenceV2Adapter:
                 f"Failed to resolve space for page '{page_id}': {e}"
             ) from e
 
+    def get_blog_post_space_key(self, blog_post_id: str) -> str:
+        """Get a blog post's space key without requesting its body.
+
+        Args:
+            blog_post_id: The ID of the blog post to inspect.
+
+        Returns:
+            The blog post's space key.
+
+        Raises:
+            ValueError: If the blog post or its space cannot be resolved.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/blogposts/{blog_post_id}"
+            response = self.session.get(url)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict) or not data.get("spaceId"):
+                raise ValueError(f"Blog post '{blog_post_id}' has no space ID")
+            return self._get_space_key_from_id(str(data["spaceId"]))
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting space for blog post '{blog_post_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting space for blog post '{blog_post_id}': {e}")
+            raise ValueError(
+                f"Failed to resolve space for blog post '{blog_post_id}': {e}"
+            ) from e
+
     def get_page_ancestors(self, page_id: str) -> list[dict[str, Any]]:
         """Get page ancestors through the Cloud v2 API.
 
@@ -1402,6 +1434,74 @@ class ConfluenceV2Adapter:
                 f"Failed to get attachments for page '{page_id}': {e}"
             ) from e
 
+    def get_blog_post_attachments(
+        self,
+        blog_post_id: str,
+        start: int = 0,
+        limit: int = 50,
+        filename: str | None = None,
+        media_type: str | None = None,
+        sort: str | None = None,
+    ) -> dict[str, Any]:
+        """Get attachments for a blog post using the v2 API.
+
+        Args:
+            blog_post_id: The blog post ID.
+            start: Starting index for pagination (default: 0).
+            limit: Maximum number of results (default: 50, max: 250).
+            filename: Filter by filename.
+            media_type: Filter by media type (for example, ``image/png``).
+            sort: Sort field (for example, ``created-date``).
+
+        Returns:
+            Dictionary containing the attachment results and pagination data.
+
+        Raises:
+            HTTPError: If the API request fails (propagates 401/403).
+            ValueError: If the blog post is not found or another error occurs.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/blogposts/{blog_post_id}/attachments"
+            params: dict[str, Any] = {"start": start, "limit": limit}
+
+            if filename:
+                params["filename"] = filename
+            if media_type:
+                params["media-type"] = media_type
+            if sort:
+                params["sort"] = sort
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            data = response.json()
+            logger.debug(
+                f"Successfully retrieved attachments for blog post '{blog_post_id}' "
+                f"(found {len(data.get('results', []))})"
+            )
+            return self._convert_attachments_v2_to_v1(data)
+
+        except HTTPError as e:
+            if e.response is not None and e.response.status_code in [401, 403]:
+                logger.error(
+                    "Authentication error getting attachments for blog post "
+                    f"'{blog_post_id}': {e}"
+                )
+                raise
+            logger.warning(
+                f"HTTP error getting attachments for blog post '{blog_post_id}': {e}"
+            )
+            raise ValueError(
+                f"Failed to get attachments for blog post '{blog_post_id}': {e}"
+            ) from e
+        except Exception as e:
+            logger.error(
+                f"Error getting attachments for blog post '{blog_post_id}': {e}"
+            )
+            raise ValueError(
+                f"Failed to get attachments for blog post '{blog_post_id}': {e}"
+            ) from e
+
     def get_attachment_by_id(self, attachment_id: str) -> dict[str, Any]:
         """Get a single attachment by ID using v2 API.
 
@@ -1512,13 +1612,11 @@ class ConfluenceV2Adapter:
         Returns:
             Attachment formatted like v1 API for compatibility
         """
-        return {
+        converted: dict[str, Any] = {
             "id": v2_attachment.get("id"),
             "type": "attachment",
             "status": v2_attachment.get("status", "current"),
             "title": v2_attachment.get("title"),
-            "pageId": v2_attachment.get("pageId") or v2_attachment.get("parentId"),
-            "spaceId": v2_attachment.get("spaceId"),
             "metadata": {
                 "mediaType": v2_attachment.get("mediaType"),
                 "comment": v2_attachment.get("comment"),
@@ -1530,3 +1628,13 @@ class ConfluenceV2Adapter:
             "version": v2_attachment.get("version", {}),
             "_links": v2_attachment.get("_links", {}),
         }
+
+        page_id = v2_attachment.get("pageId") or v2_attachment.get("parentId")
+        if page_id is not None:
+            converted["pageId"] = page_id
+        for parent_field in ("blogPostId", "customContentId", "spaceId"):
+            parent_id = v2_attachment.get(parent_field)
+            if parent_id is not None:
+                converted[parent_field] = parent_id
+
+        return converted
