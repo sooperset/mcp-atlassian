@@ -355,7 +355,17 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Links
         output = re.sub(r"\[([^|]+)\|(.+?)\]", r"[\1](\2)", output)
-        output = re.sub(r"\[(.+?)\]([^\(])", r"\1\2", output)
+        # Bare links: [https://example.com] -> https://example.com. Anchored on a
+        # URI scheme so only actual link targets are unwrapped; an unanchored
+        # `\[(.+?)\]` also strips ordinary bracketed text that carries meaning
+        # ([~user] mentions, [eBay], [redacted], ...) — see #1566. The negative
+        # lookahead keeps already-converted `[text](url)` output from the line
+        # above intact.
+        output = re.sub(
+            r"\[([a-zA-Z][a-zA-Z0-9+.-]*://[^\]\s]+)\](?!\()",
+            r"\1",
+            output,
+        )
 
         # Colored text
         output = re.sub(
