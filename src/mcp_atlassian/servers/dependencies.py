@@ -13,6 +13,7 @@ from fastmcp import Context
 from fastmcp.server.dependencies import get_http_request
 from starlette.requests import Request
 
+from mcp_atlassian.aio import AIOConfig, AIOFetcher
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.context import MainAppContext
@@ -297,6 +298,76 @@ async def get_jira_fetcher(ctx: Context) -> JiraFetcher:
     logger.error("Jira configuration could not be resolved.")
     raise ValueError(
         "Jira client (fetcher) not available. Ensure server is configured correctly."
+    )
+
+
+async def get_aio_fetcher(ctx: Context) -> AIOFetcher:
+    """Returns an AIOFetcher instance appropriate for the current request context.
+
+    AIO Tests authenticates with its own access token rather than the Atlassian
+    user token, so a per-request token is only taken from the dedicated
+    ``X-Aio-Api-Token`` header. Otherwise the global configuration is used.
+
+    Args:
+        ctx: The FastMCP context.
+
+    Returns:
+        AIOFetcher instance for the current user or global config.
+
+    Raises:
+        ValueError: If configuration or credentials are invalid.
+    """
+    logger.debug(f"get_aio_fetcher: ENTERED. Context ID: {id(ctx)}")
+    global_config: AIOConfig | None = None
+    lifespan_ctx_dict = ctx.request_context.lifespan_context  # type: ignore
+    app_lifespan_ctx: MainAppContext | None = (
+        lifespan_ctx_dict.get("app_lifespan_context")
+        if isinstance(lifespan_ctx_dict, dict)
+        else None
+    )
+    if app_lifespan_ctx:
+        global_config = app_lifespan_ctx.full_aio_config
+
+    try:
+        request: Request = get_http_request()
+        if hasattr(request.state, "aio_fetcher") and request.state.aio_fetcher:
+            logger.debug("get_aio_fetcher: Returning AIOFetcher from request.state.")
+            return request.state.aio_fetcher
+
+        service_headers = getattr(request.state, "atlassian_service_headers", {})
+        user_token = service_headers.get("X-Aio-Api-Token")
+        if user_token:
+            if not global_config:
+                raise ValueError(
+                    "AIO Tests global configuration (URL, SSL) is not available "
+                    "from lifespan context."
+                )
+            logger.info("Creating user-specific AIOFetcher from X-Aio-Api-Token header")
+            user_config = dataclasses.replace(
+                global_config, auth_type="token", api_token=user_token
+            )
+            try:
+                user_aio_fetcher = AIOFetcher(config=user_config)
+            except Exception as e:
+                logger.error(
+                    f"get_aio_fetcher: Failed to create user-specific AIOFetcher: {e}",
+                    exc_info=True,
+                )
+                raise ValueError(f"Invalid user AIO Tests token or configuration: {e}")
+            request.state.aio_fetcher = user_aio_fetcher
+            return user_aio_fetcher
+    except RuntimeError:
+        logger.debug(
+            "Not in an HTTP request context. Attempting global AIOFetcher for non-HTTP."
+        )
+
+    if global_config:
+        logger.debug("get_aio_fetcher: Using global AIOFetcher from lifespan_context.")
+        return AIOFetcher(config=global_config)
+    logger.error("AIO Tests configuration could not be resolved.")
+    raise ValueError(
+        "AIO Tests client (fetcher) not available. Set AIO_API_TOKEN (Cloud) or "
+        "AIO_ENABLED=true with Jira Server/Data Center credentials."
     )
 
 

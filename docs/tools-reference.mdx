@@ -1,11 +1,11 @@
 ---
 title: "Tools Reference"
-description: "All available MCP Atlassian tools for Jira and Confluence"
+description: "All available MCP Atlassian tools for Jira, Confluence and AIO Tests"
 ---
 
 # Tools Reference
 
-MCP Atlassian provides tools for interacting with Jira and Confluence.
+MCP Atlassian provides tools for interacting with Jira, Confluence and AIO Tests.
 
 ## Key Tools
 
@@ -27,6 +27,15 @@ MCP Atlassian provides tools for interacting with Jira and Confluence.
     | `confluence_get_page` | Get content of a specific page |
     | `confluence_create_page` | Create a new page |
     | `confluence_update_page` | Update an existing page |
+  </Card>
+  <Card title="AIO Tests Tools" icon="vial">
+    | Tool | Description |
+    |------|-------------|
+    | `aio_get_test_case_schema` | Fields and allowed values of a project |
+    | `aio_search_test_cases` | Search and filter test cases |
+    | `aio_get_test_case` | Get a test case with its steps |
+    | `aio_create_test_case` | Create a Classic or BDD test case |
+    | `aio_update_test_case` | Update an existing test case |
   </Card>
 </CardGroup>
 
@@ -67,6 +76,34 @@ MCP Atlassian provides tools for interacting with Jira and Confluence.
 
 <Note>
 \* `jira_batch_get_changelogs` is only available on Jira Cloud
+</Note>
+
+## AIO Tests Tools
+
+[AIO Tests](https://www.aiotests.com/) is a test management app for Jira. These
+tools are hidden unless AIO Tests is configured — see
+[Configuration](/docs/configuration#aio-tests).
+
+| Operation | Tool | Description |
+|-----------|------|-------------|
+| **Read** | `aio_get_project` | Check whether AIO Tests is enabled for a project and get its key and ID |
+| | `aio_get_test_case_schema` | Built-in fields, custom fields, required fields and allowed values |
+| | `aio_search_test_cases` | Search by title, folder, status, priority, type, tag, owner, requirement or date |
+| | `aio_get_test_case` | Full case details including steps, tags, folder and custom fields |
+| | `aio_get_test_case_versions` | Version history of a test case |
+| | `aio_get_folder_hierarchy` | Folder tree with parent-child relationships and full paths |
+| | `aio_get_tags` | Tags configured for the project |
+| **Write** | `aio_create_test_case` | Create a case with Classic or BDD steps |
+| | `aio_update_test_case` | Update steps, metadata, priority, status or tags |
+| | `aio_create_folder` | Create a folder, or a whole folder path in one call |
+
+Lookup fields accept names or numeric IDs, so `priority: "Critical"` and
+`folder: "/Regression/Checkout"` work as well as their IDs. Names are resolved
+against the project's configuration.
+
+<Note>
+AIO Tests has no public API for renaming, moving or re-describing a folder, so
+there is no `aio_update_folder` tool. Do those edits in the AIO Tests UI.
 </Note>
 
 ## Tool Access Control

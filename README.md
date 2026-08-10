@@ -86,6 +86,7 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 | Confluence | Server/Data Center | Supported (v6.0+) |
 | Jira | Cloud | Fully supported |
 | Jira | Server/Data Center | Supported (v8.14+) |
+| AIO Tests | Cloud & Server/Data Center | Supported (opt-in) |
 
 ## Key Tools
 
@@ -97,6 +98,10 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 | `jira_update_issue` - Update issues | `confluence_update_page` - Update pages |
 | `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments |
 | `jira_get_issue_sla` - Calculate SLA metrics | `confluence_get_page_views` - Get page view stats (Cloud only) |
+
+**AIO Tests** (test management for Jira) adds `aio_search_test_cases`,
+`aio_get_test_case`, `aio_create_test_case`, `aio_update_test_case` and more.
+Set `AIO_API_TOKEN` (Cloud) or `AIO_ENABLED=true` (Server/DC) to turn them on.
 
 See [Tools Reference](https://personal-1d37018d.mintlify.app/docs/tools-reference) for the complete list.
 

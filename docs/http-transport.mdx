@@ -182,6 +182,8 @@ For multi-tenant applications where each user connects to their own Atlassian cl
 2. Users provide authentication via HTTP headers:
    - `Authorization: Bearer <user_oauth_token>`
    - `X-Atlassian-Cloud-Id: <user_cloud_id>`
+   - `X-Aio-Api-Token: <user_aio_token>` (AIO Tests only; overrides `AIO_API_TOKEN`
+     for that request)
 
 ### Python Example
 

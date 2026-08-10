@@ -1,10 +1,26 @@
 """
-Pydantic models for Jira and Confluence API responses.
+Pydantic models for Jira, Confluence and AIO Tests API responses.
 
 This package provides type-safe models for working with Atlassian API data,
 including conversion methods from API responses to structured models and
 simplified dictionaries for API responses.
 """
+
+# AIO Tests models
+from .aio import (
+    AIOCustomField,
+    AIOEntity,
+    AIOFolder,
+    AIOFolderTree,
+    AIOProject,
+    AIOSchemaField,
+    AIOTag,
+    AIOTestCase,
+    AIOTestCaseSchema,
+    AIOTestCaseSearchResult,
+    AIOTestCaseVersion,
+    AIOTestStep,
+)
 
 # Re-export models for easier imports
 from .base import ApiModel, TimestampMixin
@@ -63,6 +79,19 @@ __all__ = [
     # Base models
     "ApiModel",
     "TimestampMixin",
+    # AIO Tests models
+    "AIOCustomField",
+    "AIOEntity",
+    "AIOFolder",
+    "AIOFolderTree",
+    "AIOProject",
+    "AIOSchemaField",
+    "AIOTag",
+    "AIOTestCase",
+    "AIOTestCaseSchema",
+    "AIOTestCaseSearchResult",
+    "AIOTestCaseVersion",
+    "AIOTestStep",
     # Constants
     "CONFLUENCE_DEFAULT_ID",
     "CONFLUENCE_DEFAULT_SPACE",

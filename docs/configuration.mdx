@@ -153,6 +153,46 @@ This guide covers IDE integration, environment variables, and advanced configura
 
 See [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.example) for all available options.
 
+## AIO Tests
+
+[AIO Tests](https://www.aiotests.com/) is a test management app for Jira with its
+own REST API. Its tools stay hidden until you configure it, so nothing changes
+for deployments that do not use the app.
+
+<Tabs>
+  <Tab title="Cloud">
+    Generate an access token in Jira under **AIO Tests → (?) → API Access Token**,
+    then set it. That single variable enables the AIO Tests tools; `JIRA_URL` is
+    not required.
+
+    ```bash
+    AIO_API_TOKEN=your_aio_access_token
+    ```
+  </Tab>
+  <Tab title="Server / Data Center">
+    The API is served from your Jira base URL and reuses the Jira credentials, so
+    it has to be enabled explicitly.
+
+    ```bash
+    JIRA_URL=https://jira.your-company.com
+    JIRA_PERSONAL_TOKEN=your_jira_pat
+    AIO_ENABLED=true
+    ```
+  </Tab>
+</Tabs>
+
+| Variable | Description |
+|----------|-------------|
+| `AIO_API_TOKEN` | AIO Tests access token (Cloud). Enables the tools on its own |
+| `AIO_ENABLED` | Enable AIO Tests on Server/Data Center (`true`/`false`) |
+| `AIO_URL` | Override the API base URL |
+| `AIO_PERSONAL_TOKEN` | Override the PAT used for AIO Tests (defaults to `JIRA_PERSONAL_TOKEN`) |
+| `AIO_USERNAME` / `AIO_PASSWORD` | Override the basic-auth credentials (default to the `JIRA_*` ones) |
+| `AIO_SSL_VERIFY` | SSL verification (`true`/`false`) |
+
+In multi-user HTTP deployments, a per-request token can be passed in the
+`X-Aio-Api-Token` header, which overrides `AIO_API_TOKEN` for that request.
+
 ## Proxy Configuration
 
 MCP Atlassian supports routing API requests through HTTP/HTTPS/SOCKS proxies.

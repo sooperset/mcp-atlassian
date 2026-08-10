@@ -16,6 +16,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from mcp_atlassian.aio.config import AIOConfig
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira import JiraFetcher
@@ -25,6 +26,7 @@ from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
 
+from .aio import aio_mcp
 from .confluence import confluence_mcp
 from .context import MainAppContext
 from .jira import jira_mcp
@@ -45,6 +47,7 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
 
     loaded_jira_config: JiraConfig | None = None
     loaded_confluence_config: ConfluenceConfig | None = None
+    loaded_aio_config: AIOConfig | None = None
 
     if services.get("jira"):
         try:
@@ -76,9 +79,26 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
         except Exception as e:
             logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
 
+    if services.get("aio"):
+        try:
+            aio_config = AIOConfig.from_env()
+            if aio_config.is_auth_configured():
+                loaded_aio_config = aio_config
+                logger.info(
+                    "AIO Tests configuration loaded and authentication is configured."
+                )
+            else:
+                logger.warning(
+                    "AIO Tests URL found, but authentication is not fully configured. "
+                    "AIO Tests tools will be unavailable."
+                )
+        except Exception as e:
+            logger.error(f"Failed to load AIO Tests configuration: {e}", exc_info=True)
+
     app_context = MainAppContext(
         full_jira_config=loaded_jira_config,
         full_confluence_config=loaded_confluence_config,
+        full_aio_config=loaded_aio_config,
         read_only=read_only,
         enabled_tools=enabled_tools,
     )
@@ -99,6 +119,8 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict]:
                 logger.debug("Cleaning up Jira resources...")
             if loaded_confluence_config:
                 logger.debug("Cleaning up Confluence resources...")
+            if loaded_aio_config:
+                logger.debug("Cleaning up AIO Tests resources...")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}", exc_info=True)
         logger.info("Main Atlassian MCP server lifespan shutdown complete.")
@@ -167,10 +189,22 @@ class AtlassianMCP(FastMCP[MainAppContext]):
                 )
                 continue
 
-            # Exclude Jira/Confluence tools if config is not fully authenticated
+            # Exclude Jira/Confluence/AIO tools if config is not fully authenticated
             is_jira_tool = "jira" in tool_tags
             is_confluence_tool = "confluence" in tool_tags
+            is_aio_tool = "aio" in tool_tags
             service_configured_and_available = True
+            if is_aio_tool:
+                aio_available = (
+                    app_lifespan_state is not None
+                    and app_lifespan_state.full_aio_config is not None
+                ) or header_based_services.get("aio", False)
+                if not aio_available:
+                    logger.debug(
+                        f"Excluding AIO Tests tool '{registered_name}' as AIO Tests "
+                        "configuration/authentication is incomplete."
+                    )
+                    continue
             if app_lifespan_state:
                 jira_available = (
                     app_lifespan_state.full_jira_config is not None
@@ -372,6 +406,7 @@ class UserTokenMiddleware:
                 b"x-atlassian-confluence-personal-token"
             )
             confluence_url_header = headers.get(b"x-atlassian-confluence-url")
+            aio_token_header = headers.get(b"x-aio-api-token")
 
             # Convert service header bytes to strings
             jira_token_str = (
@@ -390,9 +425,14 @@ class UserTokenMiddleware:
                 if confluence_url_header
                 else None
             )
+            aio_token_str = (
+                aio_token_header.decode("latin-1") if aio_token_header else None
+            )
 
             # Build service headers dict
             service_headers = {}
+            if aio_token_str:
+                service_headers["X-Aio-Api-Token"] = aio_token_str
             if jira_token_str:
                 service_headers["X-Atlassian-Jira-Personal-Token"] = jira_token_str
             if jira_url_str:
@@ -501,6 +541,7 @@ class UserTokenMiddleware:
 main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
 main_mcp.mount(jira_mcp, "jira")
 main_mcp.mount(confluence_mcp, "confluence")
+main_mcp.mount(aio_mcp, "aio")
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)

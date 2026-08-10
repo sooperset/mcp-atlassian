@@ -57,9 +57,15 @@ def env_scenarios():
     }
 
 
-def _assert_service_availability(result, confluence_expected, jira_expected):
+def _assert_service_availability(
+    result, confluence_expected, jira_expected, aio_expected=False
+):
     """Helper to assert service availability."""
-    assert result == {"confluence": confluence_expected, "jira": jira_expected}
+    assert result == {
+        "confluence": confluence_expected,
+        "jira": jira_expected,
+        "aio": aio_expected,
+    }
 
 
 def _assert_authentication_logs(caplog, auth_type, services):
@@ -236,7 +242,7 @@ class TestGetAvailableServices:
             result = get_available_services()
 
             assert isinstance(result, dict)
-            assert set(result.keys()) == {"confluence", "jira"}
+            assert set(result.keys()) == {"confluence", "jira", "aio"}
             assert all(isinstance(v, bool) for v in result.values())
 
     @pytest.mark.parametrize(
@@ -392,3 +398,61 @@ class TestGetAvailableServicesWithHeaders:
             _assert_service_availability(
                 result, confluence_expected=False, jira_expected=False
             )
+
+
+class TestGetAvailableServicesAIO:
+    """Test cases for AIO Tests availability detection."""
+
+    def test_not_configured_by_default(self, caplog):
+        """AIO Tests stays off unless it is explicitly configured."""
+        with MockEnvironment.clean_env():
+            result = get_available_services()
+
+            assert result["aio"] is False
+            assert "AIO Tests is not configured" in caplog.text
+
+    def test_cloud_token_enables_aio(self, caplog):
+        """An AIO Tests access token is enough to enable the service."""
+        import os
+
+        with MockEnvironment.clean_env():
+            os.environ["AIO_API_TOKEN"] = "aio-token"
+
+            result = get_available_services()
+
+            assert result["aio"] is True
+            assert "Using AIO Tests" in caplog.text
+
+    def test_jira_alone_does_not_enable_aio(self):
+        """A configured Jira instance does not imply the AIO Tests app."""
+        import os
+
+        with MockEnvironment.clean_env():
+            os.environ["JIRA_URL"] = "https://jira.company.com"
+            os.environ["JIRA_PERSONAL_TOKEN"] = "pat"
+
+            result = get_available_services()
+
+            assert result["jira"] is True
+            assert result["aio"] is False
+
+    def test_server_opt_in_flag_enables_aio(self):
+        """AIO_ENABLED opts a Server/Data Center deployment in."""
+        import os
+
+        with MockEnvironment.clean_env():
+            os.environ["JIRA_URL"] = "https://jira.company.com"
+            os.environ["JIRA_PERSONAL_TOKEN"] = "pat"
+            os.environ["AIO_ENABLED"] = "true"
+
+            result = get_available_services()
+
+            assert result["aio"] is True
+
+    def test_header_token_enables_aio(self, caplog):
+        """A per-request AIO token makes the tools available."""
+        with MockEnvironment.clean_env():
+            result = get_available_services(headers={"X-Aio-Api-Token": "user-token"})
+
+            assert result["aio"] is True
+            assert "AIO Tests authentication from header access token" in caplog.text

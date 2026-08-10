@@ -3,6 +3,7 @@
 import logging
 import os
 
+from ..aio.config import is_aio_enabled
 from .urls import is_atlassian_cloud_url
 
 logger = logging.getLogger("mcp-atlassian.utils.environment")
@@ -135,6 +136,13 @@ def get_available_services(
             jira_is_setup = True
             logger.info("Using Jira authentication from header personal token")
 
+    aio_is_setup = is_aio_enabled()
+    if aio_is_setup:
+        logger.info("Using AIO Tests (test management for Jira)")
+    elif headers.get("X-Aio-Api-Token"):
+        aio_is_setup = True
+        logger.info("Using AIO Tests authentication from header access token")
+
     if not confluence_is_setup:
         logger.info(
             "Confluence is not configured or required environment variables are missing."
@@ -143,5 +151,14 @@ def get_available_services(
         logger.info(
             "Jira is not configured or required environment variables are missing."
         )
+    if not aio_is_setup:
+        logger.info(
+            "AIO Tests is not configured. Set AIO_API_TOKEN (Cloud) or "
+            "AIO_ENABLED=true (Server/Data Center) to enable it."
+        )
 
-    return {"confluence": confluence_is_setup, "jira": jira_is_setup}
+    return {
+        "confluence": confluence_is_setup,
+        "jira": jira_is_setup,
+        "aio": aio_is_setup,
+    }

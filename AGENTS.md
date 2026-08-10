@@ -13,6 +13,7 @@ This file provides guidance for autonomous coding agents working inside the **MC
 | `src/mcp_atlassian/` | Library source code (Python ≥ 3.10) |
 | `  ├─ jira/` | Jira client, mixins, and operations |
 | `  ├─ confluence/` | Confluence client, mixins, and operations |
+| `  ├─ aio/` | AIO Tests client, mixins, and operations |
 | `  ├─ models/` | Pydantic data models for API responses |
 | `  ├─ servers/` | FastMCP server implementations |
 | `  └─ utils/` | Shared utilities (auth, logging, SSL) |

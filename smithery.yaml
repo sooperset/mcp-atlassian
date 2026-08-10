@@ -55,6 +55,16 @@ startCommand:
         type: string
         description: "(Optional) Comma-separated list of Jira project keys to limit searches to (e.g., 'PROJ1,PROJ2')."
 
+      # AIO Tests Config (test management app for Jira)
+      aioApiToken:
+        type: string
+        description: "(Optional) AIO Tests access token (Cloud). Setting it enables the AIO Tests tools."
+        format: password
+      aioEnabled:
+        type: boolean
+        description: "(Optional, Server/DC only) Enable the AIO Tests tools using the Jira credentials. Defaults to false."
+        default: false
+
       # General Config
       readOnlyMode:
         type: boolean
@@ -89,6 +99,10 @@ startCommand:
         JIRA_PERSONAL_TOKEN: config.jiraPersonalToken,
         JIRA_SSL_VERIFY: config.jiraSslVerify !== undefined ? String(config.jiraSslVerify) : 'true',
         JIRA_PROJECTS_FILTER: config.jiraProjectsFilter,
+
+        // AIO Tests ENV VARS
+        AIO_API_TOKEN: config.aioApiToken,
+        AIO_ENABLED: config.aioEnabled !== undefined ? String(config.aioEnabled) : undefined,
 
         // General ENV VARS
         READ_ONLY_MODE: config.readOnlyMode !== undefined ? String(config.readOnlyMode) : 'false',
