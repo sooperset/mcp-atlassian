@@ -80,6 +80,10 @@ class TestUsersMixin:
                 "accountId": "5b10ac8d82e05b22cc7d4ef5",
                 "displayName": "John Doe",
                 "groups": {"size": 1, "items": [{"name": "jira-users"}]},
+                "applicationRoles": {
+                    "size": 1,
+                    "items": [{"key": "jira-software", "name": "Jira Software"}],
+                },
             }
         )
 
@@ -90,6 +94,10 @@ class TestUsersMixin:
         )
         assert user["account_id"] == "5b10ac8d82e05b22cc7d4ef5"
         assert user["groups"] == {"size": 1, "items": [{"name": "jira-users"}]}
+        assert user["applicationRoles"] == {
+            "size": 1,
+            "items": [{"key": "jira-software", "name": "Jira Software"}],
+        }
 
     def test_get_current_user_profile_unexpected_type(self, users_mixin):
         """A non-dict /myself response raises an error."""
