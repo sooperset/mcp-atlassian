@@ -518,7 +518,7 @@ class TestServerTLSConfiguration:
         )
         assert "MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE" not in errors
 
-    def test_tls_under_stdio_via_cli_flags_warns(self, cert_key):
+    def test_stdio_cli_tls_warns(self, cert_key):
         """The stdio warning also fires when the certs arrive via CLI flags
         rather than env vars."""
         cert, key = cert_key
