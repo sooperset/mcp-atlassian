@@ -116,6 +116,18 @@ Retrieve profile information for a specific Jira user.
 
 ---
 
+### Get Current User
+
+Retrieve the profile of the user the current credentials belong to.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `expand` | `string` | No | (Optional) Comma-separated sections to expand on the returned user, e.g. 'groups' or 'groups,applicationRoles'. Recognised sections are included verbatim in the response. |
+
+---
+
 ### Search Assignable Users
 
 Search Jira users assignable in a given project or issue.

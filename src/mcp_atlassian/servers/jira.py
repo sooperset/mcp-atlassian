@@ -319,6 +319,68 @@ async def get_user_profile(
 
 @jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_users"},
+    annotations={"title": "Get Current User", "readOnlyHint": True},
+)
+async def get_current_user(
+    ctx: Context,
+    expand: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated sections to expand on the returned "
+                "user, e.g. 'groups' or 'groups,applicationRoles'. Recognised "
+                "sections are included verbatim in the response."
+            ),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Retrieve the profile of the user the current credentials belong to.
+
+    Calls ``/rest/api/2/myself``, so the identity is resolved from the token
+    used for this request. Works on Jira Cloud, Server/Data Center, and Jira
+    Service Management, and needs no "Browse Users" permission.
+
+    Use this to answer "who am I?", to obtain the caller's own ``account_id``
+    (Cloud) or ``name`` / ``key`` (Server/DC) before setting assignee,
+    reporter, or watcher fields, or to confirm which account a token maps to
+    in BYOT deployments. Use ``get_user_profile`` instead when you need to
+    look up somebody else by email, username, key, or account ID.
+
+    Args:
+        ctx: The FastMCP context.
+        expand: Optional comma-separated sections to expand (e.g. 'groups').
+
+    Returns:
+        JSON string representing the current Jira user profile object, or an
+        error object.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        user = jira.get_current_user_profile(expand=expand)
+        response_data = {"success": True, "user": user}
+    except Exception as e:
+        error_message = ""
+        log_level = logging.ERROR
+        if isinstance(e, MCPAtlassianAuthenticationError):
+            error_message = f"Authentication/Permission Error: {str(e)}"
+        elif isinstance(e, OSError | HTTPError):
+            error_message = f"Network or API Error: {str(e)}"
+        else:
+            error_message = (
+                "An unexpected error occurred while fetching the current user."
+            )
+            logger.exception("Unexpected error in get_current_user:")
+        logger.log(log_level, f"get_current_user failed: {error_message}")
+        response_data = {"success": False, "error": str(e)}
+    return json.dumps(response_data, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_users"},
     annotations={"title": "Search Assignable Users", "readOnlyHint": True},
 )
 async def search_assignable_users(

@@ -52,6 +52,53 @@ class TestUsersMixin:
         # Verify self.jira.myself was called
         users_mixin.jira.myself.assert_called_once()
 
+    def test_get_current_user_profile_from_api(self, users_mixin):
+        """get_current_user_profile returns simplified fields from /myself."""
+        users_mixin.jira.resource_url = MagicMock(return_value="rest/api/2/myself")
+        users_mixin.jira.get = MagicMock(
+            return_value={
+                "name": "jdoe",
+                "key": "JIRAUSER12345",
+                "displayName": "John Doe",
+                "emailAddress": "john.doe@example.com",
+            }
+        )
+
+        user = users_mixin.get_current_user_profile()
+
+        users_mixin.jira.get.assert_called_once_with("rest/api/2/myself", params=None)
+        assert user["name"] == "jdoe"
+        assert user["key"] == "JIRAUSER12345"
+        assert user["display_name"] == "John Doe"
+        assert user["email"] == "john.doe@example.com"
+
+    def test_get_current_user_profile_with_expand(self, users_mixin):
+        """expand is forwarded to the API and known sections are returned."""
+        users_mixin.jira.resource_url = MagicMock(return_value="rest/api/2/myself")
+        users_mixin.jira.get = MagicMock(
+            return_value={
+                "accountId": "5b10ac8d82e05b22cc7d4ef5",
+                "displayName": "John Doe",
+                "groups": {"size": 1, "items": [{"name": "jira-users"}]},
+            }
+        )
+
+        user = users_mixin.get_current_user_profile(expand="groups")
+
+        users_mixin.jira.get.assert_called_once_with(
+            "rest/api/2/myself", params={"expand": "groups"}
+        )
+        assert user["account_id"] == "5b10ac8d82e05b22cc7d4ef5"
+        assert user["groups"] == {"size": 1, "items": [{"name": "jira-users"}]}
+
+    def test_get_current_user_profile_unexpected_type(self, users_mixin):
+        """A non-dict /myself response raises an error."""
+        users_mixin.jira.resource_url = MagicMock(return_value="rest/api/2/myself")
+        users_mixin.jira.get = MagicMock(return_value=["not", "a", "dict"])
+
+        with pytest.raises(Exception, match="Error processing current user profile"):
+            users_mixin.get_current_user_profile()
+
     def test_get_current_user_account_id_data_center_timestamp_issue(self, users_mixin):
         """Test that get_current_user_account_id handles Jira Data Center with problematic timestamps."""
         # Ensure no cached value

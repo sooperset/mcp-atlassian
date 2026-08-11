@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from requests.exceptions import HTTPError
 from unidecode import unidecode
@@ -598,3 +598,43 @@ class UsersMixin(JiraClient):
             raise Exception(
                 f"Error processing user profile for '{identifier}': {str(e)}"
             ) from e
+
+    @handle_auth_errors("Jira API")
+    def get_current_user_profile(self, expand: str | None = None) -> dict[str, Any]:
+        """Retrieve the profile of the currently authenticated user.
+
+        Calls the Jira ``/myself`` endpoint, which resolves the user from the
+        request credentials. This is BYOT-friendly: each request's own token
+        determines the returned identity.
+
+        Args:
+            expand: Optional comma-separated sections to expand, e.g.
+                ``"groups,applicationRoles"``. Recognised sections are returned
+                verbatim alongside the simplified user fields.
+
+        Returns:
+            Simplified user dict, plus any requested expand sections.
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails.
+            Exception: For other API errors or an unexpected response shape.
+        """
+        try:
+            logger.debug("Calling /myself to get the current user profile.")
+            params = {"expand": expand} if expand else None
+            user_data = self.jira.get(self.jira.resource_url("myself"), params=params)
+            if not isinstance(user_data, dict):
+                raise ValueError(
+                    "Current user lookup via /myself returned unexpected type: "
+                    f"{type(user_data)}."
+                )
+            result = JiraUser.from_api_response(user_data).to_simplified_dict()
+            for section in ("groups", "applicationRoles"):
+                if section in user_data:
+                    result[section] = user_data[section]
+            return result
+        except HTTPError:
+            raise  # decorator handles 401/403; other HTTP errors propagate
+        except Exception as e:
+            logger.exception("Unexpected error getting current user profile:")
+            raise Exception(f"Error processing current user profile: {str(e)}") from e
