@@ -17,8 +17,8 @@ Search Jira issues using JQL (Jira Query Language).
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
 | `projects_filter` | `string` | No | (Optional) Comma-separated list of project keys to filter results by. Overrides the environment variable JIRA_PROJECTS_FILTER if provided. |
 | `expand` | `string` | No | (Optional) fields to expand. Examples: 'renderedFields', 'transitions', 'changelog' |
-| `page_token` | `string` | No | Pagination token from a previous search result. Cloud only — Server/DC uses `start_at` for pagination. |
-| `use_display_names` | `boolean` | No | When true, custom field keys in the output use human-readable display names (e.g. 'Story Points') instead of opaque IDs (e.g. 'customfield_10243'). The `names` expansion is added automatically. Standard fields are unaffected. Default: false. |
+| `page_token` | `string` | No | (Optional) Pagination token from a previous search result. Cloud only — Server/DC uses start_at for pagination. |
+| `use_display_names` | `boolean` | No | When true, custom field keys in the output use human-readable display names (e.g. 'Story Points') instead of opaque IDs (e.g. 'customfield_10243'). The 'names' expansion is added automatically. Standard fields are unaffected. |
 **Example:**
 
 ```json
@@ -26,23 +26,16 @@ Search Jira issues using JQL (Jira Query Language).
 ```
 
 <Tip>
-Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries.
-</Tip>
+Always use `ORDER BY` for deterministic results. Use `fields` parameter to limit returned data for faster queries. Every issue in the response includes `browse_url`, a direct link to that issue in the Jira web UI.
 
-<Tip>
-Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`.
-If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
-</Tip>
+Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`. If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
 
+Cloud supports cursor-based pagination via `page_token` for deterministic results across large datasets. Continue by passing the response's `next_page_token` back as `page_token`; Server/DC uses `start_at` instead.
+</Tip>
 
 <Warning>
 Some JQL functions (e.g., `issueHistory()`) are Cloud-only.
 </Warning>
-
-<Tip>
-Cloud supports cursor-based pagination via `page_token` for deterministic results across large datasets. The token is returned in the `next_page_token` field of search results.
-</Tip>
-
 
 ---
 
@@ -67,7 +60,6 @@ Search Jira fields by keyword with fuzzy match.
 Use this to discover custom field IDs before using them in `jira_create_issue` or `jira_update_issue`.
 </Tip>
 
-
 ---
 
 ### Get Field Options
@@ -85,7 +77,6 @@ Get allowed option values for a custom field.
 | `contains` | `string` | No | Case-insensitive substring filter on option values. Also matches child values in cascading selects. |
 | `return_limit` | `integer` | No | Maximum number of results to return (applied after filtering). |
 | `values_only` | `boolean` | No | If true, return only value strings in a compact JSON format instead of full option objects. |
-
 **Example:**
 
 ```json
@@ -100,43 +91,73 @@ Use `contains` to filter large option lists (e.g., hundreds of values). Combine 
 
 ### Get Project Issue Types
 
-List the issue types that can be created in a Jira project.
+Get available issue types for a Jira project.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `project_key` | `string` | Yes | Jira project key (for example, `PROJ`) |
-
-The response includes each type's ID, name, description, subtask flag, and
-untranslated name when Jira provides one.
-
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'JTEST') |
 **Example:**
 
 ```json
 {"project_key": "PROJ"}
 ```
 
+<Note>
+The response includes each type's ID, name, description, subtask flag, and untranslated name when Jira provides one.
+</Note>
+
 ---
 
 ### Get Create Fields
 
-List the fields available when creating one issue type in a Jira project.
+Get fields available for creating an issue of a specific type.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `project_key` | `string` | Yes | Jira project key (for example, `PROJ`) |
-| `issue_type_id` | `string` | Yes | Issue type ID returned by `jira_get_project_issue_types` |
-
-Each field includes its ID, name, required flag, and schema. Use
-`jira_get_field_options` to retrieve allowed values for a field.
-
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'JTEST') |
+| `issue_type_id` | `string` | Yes | The issue type ID (from get_project_issue_types). Example: '10002' for Task. |
 **Example:**
 
 ```json
 {"project_key": "PROJ", "issue_type_id": "10002"}
 ```
+
+<Tip>
+Use `jira_get_field_options` to retrieve allowed values for a custom field.
+</Tip>
+
+<Note>
+Each field includes its field ID, name, required flag, and schema.
+</Note>
+
+---
+
+### Get Project Fields
+
+Get the fields available on issues of a project (the create schema),
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | The project key, e.g. 'PROJ'. |
+
+---
+
+### Search Projects
+
+Search for Jira projects by name or key prefix.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Name or key prefix to search for |
+| `max_results` | `integer` | No | Maximum number of results to return |
+| `current_project_ids` | `string` | No | Comma-separated list of project IDs to exclude from results |
 
 ---

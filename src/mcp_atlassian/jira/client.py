@@ -112,6 +112,19 @@ class JiraClient:
                 verify_ssl=self.config.ssl_verify,
                 timeout=self.config.timeout,
             )
+        elif self.config.auth_type == "cert":
+            logger.debug(
+                f"Initializing Jira client with mTLS certificate auth. "
+                f"URL: {self.config.url}, "
+                f"Cert configured: {bool(self.config.client_cert)}"
+            )
+            self.jira = Jira(
+                url=self.config.url,
+                cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
+            self.jira._session.trust_env = False
         elif self.config.auth_type == "external":
             logger.debug(
                 f"Initializing Jira client in external auth passthrough mode. "
@@ -176,6 +189,14 @@ class JiraClient:
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
         mount_ssrf_pinning(self.jira._session, transport_url)
+
+        # atlassian-python-api's built-in retry_with_header performs an UNBOUNDED,
+        # header-driven retry (``time.sleep(int(Retry-After)); retry``). It melts
+        # down when a gateway returns ``Retry-After: 0`` — endless zero-delay retries
+        # that the server then treats as anonymous, surfacing a spurious 401 — and it
+        # now overlaps with configure_retry() below. Disable it so the bounded
+        # urllib3 Retry policy is the single source of retry truth.
+        self.jira.retry_with_header = False
 
         # Apply opt-in HTTP hardening after SSL setup and after the pinning
         # adapter is mounted: these wrappers patch send() in place on whatever

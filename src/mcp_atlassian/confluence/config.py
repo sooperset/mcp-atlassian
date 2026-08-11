@@ -30,7 +30,9 @@ class ConfluenceConfig:
     """
 
     url: str  # Base URL for Confluence
-    auth_type: Literal["basic", "pat", "oauth", "external"]  # Authentication type
+    auth_type: Literal[
+        "basic", "pat", "oauth", "cert", "external"
+    ]  # Authentication type
     username: str | None = None  # Email or username
     api_token: str | None = None  # API token used as password
     personal_token: str | None = None  # Personal access token (Server/DC)
@@ -123,6 +125,7 @@ class ConfluenceConfig:
         username = os.getenv("CONFLUENCE_USERNAME")
         api_token = os.getenv("CONFLUENCE_API_TOKEN")
         personal_token = os.getenv("CONFLUENCE_PERSONAL_TOKEN")
+        client_cert_env = os.getenv("CONFLUENCE_CLIENT_CERT")
 
         # Check for OAuth configuration (pass service info for DC detection)
         oauth_config = get_oauth_config_from_env(
@@ -178,14 +181,17 @@ class ConfluenceConfig:
                 auth_type = "oauth"
             elif username and api_token:
                 auth_type = "basic"
+            elif client_cert_env:
+                auth_type = "cert"
             else:
                 error_msg = (
                     "Server/Data Center authentication requires "
-                    "CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and "
-                    "CONFLUENCE_API_TOKEN. "
+                    "CONFLUENCE_PERSONAL_TOKEN, CONFLUENCE_USERNAME and "
+                    "CONFLUENCE_API_TOKEN, or CONFLUENCE_CLIENT_CERT for mTLS. "
                     "Confluence Server/Data Center authentication is incomplete. "
-                    "Set CONFLUENCE_PERSONAL_TOKEN, or set both "
-                    "CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN."
+                    "Set CONFLUENCE_PERSONAL_TOKEN, set both "
+                    "CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, "
+                    "or set CONFLUENCE_CLIENT_CERT."
                 )
                 raise ValueError(error_msg)
 
@@ -300,6 +306,8 @@ class ConfluenceConfig:
             return bool(self.personal_token)
         elif self.auth_type == "basic":
             return bool(self.username and self.api_token)
+        elif self.auth_type == "cert":
+            return bool(self.client_cert)
         elif self.auth_type == "external":
             return True
         logger.warning(

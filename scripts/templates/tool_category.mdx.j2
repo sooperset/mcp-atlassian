@@ -19,17 +19,28 @@ description: "{{ category.description }}"
 {% for param in tool.parameters -%}
 | `{{ param.name }}` | `{{ param.type }}` | {{ "Yes" if param.required else "No" }} | {{ param.description | escape_pipe | escape_mdx }} |
 {% endfor %}
-{% if tool.override and tool.override.example %}
-**Example:**
+{% if tool.override and tool.override.all_examples %}
+**Example{% if tool.override.all_examples | length > 1 %}s{% endif %}:**
 
+{% for example in tool.override.all_examples %}
 ```json
-{{ tool.override.example }}```
+{{ example }}```
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}
 {% endif %}
 {% if tool.override and tool.override.tips %}
 
 <Tip>
 {{ tool.override.tips | trim }}
 </Tip>
+{% endif %}
+{% if tool.override and tool.override.notes %}
+
+<Note>
+{{ tool.override.notes | trim }}
+</Note>
 {% endif %}
 {% if tool.override and tool.override.platform_notes %}
 

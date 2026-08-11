@@ -66,6 +66,31 @@ def test_init_with_basic_auth():
         assert client._current_user_account_id is None
 
 
+def test_token_auth_disables_library_retry_with_header() -> None:
+    """atlassian-python-api's ``retry_with_header`` performs an unbounded,
+    header-driven retry that melts down when a gateway returns ``Retry-After: 0``
+    (endless zero-delay retries surfacing a spurious 401). The client must
+    disable it so the bounded urllib3 Retry policy is the only retry layer.
+    """
+    import requests
+
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_jira.return_value._session = requests.Session()
+        client = JiraClient(
+            config=JiraConfig(
+                url="https://jira.example.com",
+                auth_type="pat",
+                personal_token="t",
+                ssl_verify=False,
+            )
+        )
+
+    assert client.jira.retry_with_header is False
+
+
 @pytest.mark.security_regression
 def test_base_session_has_ssrf_redirect_hook():
     """Every fetcher's underlying session must validate redirects for SSRF, not
@@ -515,6 +540,50 @@ def test_jira_client_basic_auth_preserves_trust_env():
         JiraClient(config=config)
 
         assert mock_session.trust_env is True
+
+
+# ---------------------------------------------------------------------------
+# mTLS client certificate auth tests
+# ---------------------------------------------------------------------------
+
+
+def test_init_cert_auth() -> None:
+    """Test that cert auth initializes without credentials and disables trust_env."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch(
+            "mcp_atlassian.jira.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
+    ):
+        mock_session = MagicMock()
+        mock_session.headers = {}
+        mock_jira.return_value._session = mock_session
+
+        config = JiraConfig(
+            url="https://jira.example.com",
+            auth_type="cert",
+            client_cert="/path/to/cert.pem",
+        )
+
+        JiraClient(config=config)
+
+        mock_jira.assert_called_once_with(
+            url="https://jira.example.com",
+            cloud=False,
+            verify_ssl=True,
+            timeout=75,
+        )
+        assert mock_session.trust_env is False
+        mock_configure_ssl.assert_called_once_with(
+            service_name="Jira",
+            url="https://jira.example.com",
+            session=mock_session,
+            ssl_verify=True,
+            client_cert="/path/to/cert.pem",
+            client_key=None,
+            client_key_password=None,
+            no_proxy=None,
+        )
 
 
 def test_jira_client_sets_default_user_agent() -> None:

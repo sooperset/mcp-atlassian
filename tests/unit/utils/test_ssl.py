@@ -176,7 +176,7 @@ def test_ssl_ignore_adapter():
 
 
 def test_configure_ssl_with_client_cert():
-    """Test configure_ssl_verification with client certificate."""
+    """Test configure_ssl_verification with certificate and key files."""
     # Arrange
     session = MagicMock()
     logger_mock = MagicMock()
@@ -193,9 +193,44 @@ def test_configure_ssl_with_client_cert():
         )
 
         # Assert
+        cert_configured = True
+        key_configured = True
         assert session.cert == ("/path/to/cert.pem", "/path/to/key.pem")
         logger_mock.info.assert_called_once_with(
-            "TestService client certificate authentication configured with cert: /path/to/cert.pem"
+            "%s client certificate authentication configured "
+            "(cert configured: %s, key configured: %s)",
+            "TestService",
+            cert_configured,
+            key_configured,
+        )
+
+
+def test_configure_ssl_with_combined_client_cert():
+    """Test configure_ssl_verification with a combined PEM client certificate."""
+    # Arrange
+    session = MagicMock()
+    logger_mock = MagicMock()
+
+    with patch("mcp_atlassian.utils.ssl.logger", logger_mock):
+        # Act
+        configure_ssl_verification(
+            service_name="TestService",
+            url="https://example.com",
+            session=session,
+            ssl_verify=True,
+            client_cert="/path/to/combined.pem",
+        )
+
+        # Assert
+        cert_configured = True
+        key_configured = False
+        assert session.cert == "/path/to/combined.pem"
+        logger_mock.info.assert_called_once_with(
+            "%s client certificate authentication configured "
+            "(cert configured: %s, key configured: %s)",
+            "TestService",
+            cert_configured,
+            key_configured,
         )
 
 

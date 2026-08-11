@@ -107,6 +107,20 @@ Both transport types support per-request authentication where each user provides
     ```
   </Tab>
   <Tab title="Server/DC (PAT)">
+    Set a URL and a non-empty server-side PAT value for each enabled service:
+
+    ```bash
+    JIRA_URL=https://jira.your-company.com
+    JIRA_PERSONAL_TOKEN=unused
+
+    CONFLUENCE_URL=https://confluence.your-company.com
+    CONFLUENCE_PERSONAL_TOKEN=unused
+    ```
+
+    These values let the server build its URL, SSL, and proxy configuration at
+    startup. The PAT sent with each request replaces the corresponding
+    server-side value for that API call.
+
     ```json
     {
       "mcpServers": {
@@ -119,6 +133,12 @@ Both transport types support per-request authentication where each user provides
       }
     }
     ```
+
+    <Warning>
+      Keep `ALLOW_GLOBAL_CRED_FALLBACK` disabled when using placeholder values.
+      Requests without a PAT are rejected by default; enabling fallback would
+      use the server-side value as a credential.
+    </Warning>
   </Tab>
 </Tabs>
 
@@ -179,6 +199,12 @@ and DCR endpoints so MCP clients can onboard users through spec-aligned OAuth:
 
 Use this for remote clients like ChatGPT/Codex that expect discovery + DCR.
 
+<Warning>
+The DCR client's `redirect_uri` must be different from the OAuth proxy's own IdP
+callback. If a client tries to register the proxy callback as its redirect URI,
+registration is rejected with `invalid_redirect_uri` to prevent a callback loop.
+</Warning>
+
 ### Multi-Cloud Support
 
 For multi-tenant applications where each user connects to their own Atlassian cloud instance:
@@ -228,7 +254,7 @@ asyncio.run(main())
 ```
 
 <Note>
-- The server uses fallback authentication when requests don't include user-specific credentials
+- Requests without user-specific credentials are rejected unless `ALLOW_GLOBAL_CRED_FALLBACK=true`
 - User tokens are isolated per request - no cross-tenant data leakage
 - Falls back to global `ATLASSIAN_OAUTH_CLOUD_ID` if header not provided
 </Note>

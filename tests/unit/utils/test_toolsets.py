@@ -34,12 +34,12 @@ class TestGetEnabledToolsets:
         assert result == expected
 
     def test_all_keyword(self, monkeypatch):
-        """Test 'all' keyword returns all 24 toolset names."""
+        """Test 'all' keyword returns all 25 toolset names."""
         monkeypatch.setenv("TOOLSETS", "all")
         result = get_enabled_toolsets()
         assert result is not None
         assert result == set(ALL_TOOLSETS.keys())
-        assert len(result) == 24
+        assert len(result) == 25
 
     def test_all_keyword_case_insensitive(self, monkeypatch):
         """Test 'ALL' keyword is case-insensitive."""
@@ -47,7 +47,7 @@ class TestGetEnabledToolsets:
         result = get_enabled_toolsets()
         assert result is not None
         assert result == set(ALL_TOOLSETS.keys())
-        assert len(result) == 24
+        assert len(result) == 25
 
     def test_default_keyword(self, monkeypatch):
         """Test 'default' keyword returns 6 default toolset names."""
@@ -64,6 +64,13 @@ class TestGetEnabledToolsets:
         result = get_enabled_toolsets()
         assert result is not None
         assert result == DEFAULT_TOOLSETS | {"jira_agile"}
+
+    def test_legacy_only_excludes_default_toolsets(self, monkeypatch):
+        """Test 'legacy' enables only deprecated tools, not defaults."""
+        monkeypatch.setenv("TOOLSETS", "legacy")
+        result = get_enabled_toolsets()
+        assert result == {"legacy"}
+        assert result.isdisjoint(DEFAULT_TOOLSETS)
 
     def test_mixed_valid_and_unknown(self, monkeypatch):
         """Test 'default,typo_name' returns defaults only (typo ignored)."""
@@ -91,8 +98,8 @@ class TestGetEnabledToolsets:
         assert DEFAULT_TOOLSETS == expected_defaults
 
     def test_all_toolsets_count(self):
-        """Verify ALL_TOOLSETS has exactly 24 entries."""
-        assert len(ALL_TOOLSETS) == 24
+        """Verify ALL_TOOLSETS has exactly 25 entries."""
+        assert len(ALL_TOOLSETS) == 25
 
     def test_all_toolsets_contains_jira_and_confluence(self):
         """Verify ALL_TOOLSETS has both Jira and Confluence toolsets."""
@@ -181,27 +188,33 @@ class TestToolsetTagCompleteness:
 
     @pytest.fixture()
     def jira_tools(self):
-        """Get all registered Jira tools."""
+        """Get all registered Jira tools as a name-indexed dict."""
         import asyncio
 
         from mcp_atlassian.servers.jira import jira_mcp
 
+        async def _load() -> dict:
+            return {tool.name: tool for tool in await jira_mcp.list_tools()}
+
         loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(jira_mcp.get_tools())
+            return loop.run_until_complete(_load())
         finally:
             loop.close()
 
     @pytest.fixture()
     def confluence_tools(self):
-        """Get all registered Confluence tools."""
+        """Get all registered Confluence tools as a name-indexed dict."""
         import asyncio
 
         from mcp_atlassian.servers.confluence import confluence_mcp
 
+        async def _load() -> dict:
+            return {tool.name: tool for tool in await confluence_mcp.list_tools()}
+
         loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(confluence_mcp.get_tools())
+            return loop.run_until_complete(_load())
         finally:
             loop.close()
 

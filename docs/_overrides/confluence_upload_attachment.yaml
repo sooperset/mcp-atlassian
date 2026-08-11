@@ -1,4 +1,7 @@
-example: |
-  {"page_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
+examples:
+  - |
+    {"content_id": "12345678", "file_path": "/path/to/diagram.png", "comment": "Updated architecture diagram"}
+  - |
+    {"content_id": "12345678", "content_base64": "SGVsbG8=", "filename": "hello.txt"}
 tips: |
   Supports any file type. If an attachment with the same name exists, it's updated (new version created).

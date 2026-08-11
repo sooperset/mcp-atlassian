@@ -208,6 +208,28 @@ Header values containing sensitive information are automatically masked in logs.
     ```
   </Accordion>
 
+  <Accordion title="String should match pattern — issue_key / project_key rejected">
+    **Symptom:** A tool call fails before reaching Jira with a validation error such as
+    `project_key: String should match pattern '^[A-Z][A-Z0-9_]+$'`, even though the
+    project exists and the key is correct.
+
+    **Cause:** `issue_key` and `project_key` arguments are validated against a regex
+    first. The defaults require an uppercase letter followed by at least one more
+    character, which is the fixed Cloud format. Server/Data Center instances configure
+    their own `jira.projectkey.pattern` and may allow keys the defaults reject — a
+    leading digit (`4ME`), a single character, or lowercase.
+
+    **Fix:** Widen the patterns to match your instance, then restart the server (they
+    are read once at startup):
+
+    ```bash
+    JIRA_ISSUE_KEY_PATTERN=^[A-Z0-9][A-Z0-9_]*-\d+(?:-\d+)*$
+    JIRA_PROJECT_KEY_PATTERN=^[A-Z0-9][A-Z0-9_]*$
+    ```
+
+    See [Jira Key Validation](/docs/configuration#jira-key-validation).
+  </Accordion>
+
   <Accordion title="Issue type not found or not available">
     **Cause:** The specified issue type doesn't exist in the project.
 
@@ -255,7 +277,12 @@ Header values containing sensitive information are automatically masked in logs.
     CONFLUENCE_SSL_VERIFY=false
     ```
 
-    For mTLS (mutual TLS) authentication:
+    For mTLS (mutual TLS) authentication, set either a combined cert/key PEM:
+    ```bash
+    JIRA_CLIENT_CERT=/path/to/client-combined.pem
+    ```
+
+    Or set separate certificate and key files:
     ```bash
     JIRA_CLIENT_CERT=/path/to/client-cert.pem
     JIRA_CLIENT_KEY=/path/to/client-key.pem

@@ -726,6 +726,83 @@ class TestFormatFieldValueForWrite:
         )
         assert result == expected
 
+    # -- Rich-text (textarea) custom fields ------------------------------
+
+    def test_textarea_custom_field_converts_markdown(self, mixin):
+        # A multi-line-text (textarea) custom field carries Markdown that must be converted
+        # the same way the description field is: to ADF on Cloud. Regression for #554, where
+        # the value was sent through verbatim and rendered as literal Markdown in Jira.
+        mixin.config.is_cloud = True
+        mixin.config.url = "https://example.atlassian.net"
+        field_def = {
+            "name": "Resolution Summary",
+            "schema": {
+                "type": "string",
+                "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+            },
+        }
+        result = mixin._format_field_value_for_write(
+            "customfield_10078", "## Summary\n\n- one\n- two", field_def
+        )
+        assert isinstance(result, dict)
+        assert result.get("type") == "doc"
+
+    def test_textarea_custom_field_converts_markdown_for_server(self, mixin):
+        """Textarea Markdown is converted to wiki markup on Server/DC."""
+        mixin.config.is_cloud = False
+        field_def = {
+            "name": "Resolution Summary",
+            "schema": {
+                "type": "string",
+                "custom": (
+                    "com.atlassian.jira.plugin.system.customfieldtypes:textarea"
+                ),
+            },
+        }
+        source = "## Summary\n\n- one\n- two"
+
+        result = mixin._format_field_value_for_write(
+            "customfield_10078", source, field_def
+        )
+
+        assert isinstance(result, str)
+        assert result != source
+        assert "Summary" in result
+
+    def test_single_line_textfield_custom_field_is_left_untouched(self, mixin):
+        # Only rich text (:textarea) is converted; a single-line :textfield must pass through
+        # unchanged, so plain short-text fields are not turned into ADF.
+        field_def = {
+            "name": "Short Text",
+            "schema": {
+                "type": "string",
+                "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textfield",
+            },
+        }
+        result = mixin._format_field_value_for_write(
+            "customfield_10099", "just text", field_def
+        )
+        assert result == "just text"
+
+    def test_textarea_custom_field_keeps_non_string_values(self, mixin):
+        """Non-string textarea values are passed through unchanged."""
+        field_def = {
+            "name": "Resolution Summary",
+            "schema": {
+                "type": "string",
+                "custom": (
+                    "com.atlassian.jira.plugin.system.customfieldtypes:textarea"
+                ),
+            },
+        }
+        value = {"version": 1, "type": "doc", "content": []}
+
+        result = mixin._format_field_value_for_write(
+            "customfield_10078", value, field_def
+        )
+
+        assert result is value
+
     # -- Multi-select ----------------------------------------------------
 
     @pytest.mark.parametrize(

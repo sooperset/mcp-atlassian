@@ -1,0 +1,4 @@
+example: |
+  {"sprint_id": "42", "issue_keys": "PROJ-1,PROJ-2,PROJ-3"}
+tips: |
+  Get sprint IDs from `jira_get_sprints_from_board`. Issue keys are validated server-side — invalid keys will cause an error.

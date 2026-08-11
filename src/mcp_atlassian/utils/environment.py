@@ -18,6 +18,7 @@ def _check_service_auth(
     username_env: str,
     api_env: str,
     pat_env: str,
+    client_cert_env: str | None = None,
 ) -> bool:
     """Detect whether a single Atlassian service is authenticated.
 
@@ -30,6 +31,8 @@ def _check_service_auth(
         username_env: Env var name for the Basic Auth username.
         api_env: Env var name for the Basic Auth API token / password.
         pat_env: Env var name for the Personal Access Token (Server/DC only).
+        client_cert_env: Env var name for the client certificate path
+            (mTLS, Server/DC only).
 
     Returns:
         ``True`` when a valid auth configuration is detected, ``False`` otherwise.
@@ -80,6 +83,9 @@ def _check_service_auth(
                 service_name,
             )
             return True
+        if client_cert_env and os.getenv(client_cert_env):
+            logger.info("Using %s mTLS client certificate authentication", service_name)
+            return True
 
     return False
 
@@ -108,6 +114,7 @@ def get_available_services(
             username_env="CONFLUENCE_USERNAME",
             api_env="CONFLUENCE_API_TOKEN",
             pat_env="CONFLUENCE_PERSONAL_TOKEN",
+            client_cert_env="CONFLUENCE_CLIENT_CERT",
         )
 
     if not confluence_is_setup and os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
@@ -154,6 +161,7 @@ def get_available_services(
             username_env="JIRA_USERNAME",
             api_env="JIRA_API_TOKEN",
             pat_env="JIRA_PERSONAL_TOKEN",
+            client_cert_env="JIRA_CLIENT_CERT",
         )
 
     if not jira_is_setup and os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (

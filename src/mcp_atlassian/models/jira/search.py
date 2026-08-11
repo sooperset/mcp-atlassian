@@ -55,6 +55,7 @@ class JiraSearchResult(ApiModel):
         top_level_names = data.get("names")
         base_url = kwargs.get("base_url")
         if isinstance(issues_data, list):
+            base_url = kwargs.get("base_url")
             for issue_data in issues_data:
                 if issue_data:
                     if top_level_names and isinstance(issue_data, dict):

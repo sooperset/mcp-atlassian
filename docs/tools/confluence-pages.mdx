@@ -11,7 +11,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `page_id` | `string` | No | Confluence page ID, full page URL, or tiny link (for example, `https://example.atlassian.net/wiki/x/N4CIO`). Provide this OR both `title` and `space_key`. If `page_id` is provided, `title` and `space_key` are ignored. |
+| `page_id` | `string` | No | Confluence page ID, full page URL, or tiny link. For example: '123456789', 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', or 'https://example.atlassian.net/wiki/x/N4CIO'. Provide this OR both 'title' and 'space_key'. If page_id is provided, title and space_key will be ignored. |
 | `title` | `string` | No | The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known. |
 | `space_key` | `string` | No | The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'. |
 | `include_metadata` | `boolean` | No | Whether to include page metadata such as creation date, last update, version, and labels. |
@@ -23,9 +23,8 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 ```
 
 <Tip>
-Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date.
+Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date. When Confluence supplies version details, the response metadata includes `version_author` (the author display name) and `version_date` (the raw ISO 8601 version timestamp).
 </Tip>
-
 
 ---
 
@@ -41,16 +40,16 @@ Create a new Confluence page.
 |-----------|------|----------|-------------|
 | `space_key` | `string` | Yes | The key of the space to create the page in (usually a short uppercase code like 'DEV', 'TEAM', or 'DOC') |
 | `title` | `string` | Yes | The title of the page |
-| `content` | `string` | No* | The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, storage format, or XHTML storage format |
-| `content_file` | `string` | No* | Absolute or relative filesystem path to read the page body from (UTF-8). Mutually exclusive with `content`. |
+| `content` | `string` | No | The content of the page. Format depends on content_format parameter. Can be Markdown (default), wiki markup, storage format, or XHTML storage format. Either 'content' or 'content_file' must be provided, but not both. |
 | `parent_id` | `string` | No | (Optional) parent page ID. If provided, this page will be created as a child of the specified page |
-| `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use 'xhtml' for Confluence XHTML storage format. Wiki format uses Confluence wiki markup syntax |
+| `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use 'xhtml' when providing Confluence XHTML storage format (same as 'storage'). Wiki format uses Confluence wiki markup syntax |
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
-| `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at create time. |
+| `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at create time |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
+| `content_file` | `string` | No | (Optional) Absolute or relative filesystem path to read the page body from (UTF-8). Use this instead of 'content' when the body is too large to pass comfortably as a tool argument. Mutually exclusive with 'content'. |
+| `page_width` | `string` | No | (Optional) Page layout width. Options: 'full-width', 'default'. Defaults to null (Confluence default). |
+| `table_layout` | `string` | No | (Optional) Table width preset applied to all markdown tables. Options: 'full-width' (1800 px), 'wide' (960 px), 'default' (760 px). Only applies when content_format is 'markdown'. |
 | `subtype` | `string` | No | (Optional) Confluence page subtype. Use 'live' to create a Confluence Live Doc. Only supported for Confluence Cloud. |
-| `page_width` | `string` | No | Page layout width. Options: 'full-width', 'default'. |
-| `table_layout` | `string` | No | Table width preset for Markdown tables. Options: 'full-width', 'wide', 'default'. |
 **Example:**
 
 ```json
@@ -61,8 +60,9 @@ Create a new Confluence page.
 Use Markdown for content — it's auto-converted to Confluence storage format. Specify `parent_id` to create as a child page. Set `subtype` to `live` on Confluence Cloud to create a Live Doc.
 </Tip>
 
-<Note>Exactly one of `content` or `content_file` must be provided.</Note>
-
+<Note>
+Exactly one of `content` or `content_file` must be provided.
+</Note>
 
 ---
 
@@ -78,17 +78,17 @@ Update an existing Confluence page.
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | The ID of the page to update |
 | `title` | `string` | Yes | The new title of the page |
-| `content` | `string` | No* | The new content of the page. Format depends on content_format parameter |
-| `content_file` | `string` | No* | Absolute or relative filesystem path to read the new page body from (UTF-8). Mutually exclusive with `content`. |
+| `content` | `string` | No | The new content of the page. Format depends on content_format parameter and may be Markdown (default), wiki markup, storage format, or XHTML storage format. Either 'content' or 'content_file' must be provided, but not both. |
 | `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
 | `version_comment` | `string` | No | Optional comment for this version |
 | `parent_id` | `string` | No | Optional the new parent page ID |
-| `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use 'xhtml' for Confluence XHTML storage format. Wiki format uses Confluence wiki markup syntax |
+| `content_format` | `string` | No | (Optional) The format of the content parameter. Options: 'markdown' (default), 'wiki', 'storage', or 'xhtml'. Use 'xhtml' when providing Confluence XHTML storage format (same as 'storage'). Wiki format uses Confluence wiki markup syntax |
 | `enable_heading_anchors` | `boolean` | No | (Optional) Whether to enable automatic heading anchor generation. Only applies when content_format is 'markdown' |
-| `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at update time. |
+| `include_content` | `boolean` | No | (Optional) Whether to include page content in the response. Defaults to false since callers already have the content at update time |
 | `emoji` | `string` | No | (Optional) Page title emoji (icon shown in navigation). Can be any emoji character like '📝', '🚀', '📚'. Set to null/None to remove. |
-| `page_width` | `string` | No | Page layout width. Options: 'full-width', 'default'. Use an empty string to reset to default. |
-| `table_layout` | `string` | No | Table width preset for Markdown tables. Options: 'full-width', 'wide', 'default'. |
+| `content_file` | `string` | No | (Optional) Absolute or relative filesystem path to read the new page body from (UTF-8). Use this instead of 'content' when the body is too large to pass comfortably as a tool argument. Mutually exclusive with 'content'. |
+| `page_width` | `string` | No | (Optional) Page layout width. Options: 'full-width', 'default'. Defaults to null (preserve existing). |
+| `table_layout` | `string` | No | (Optional) Table width preset applied to all markdown tables. Options: 'full-width' (1800 px), 'wide' (960 px), 'default' (760 px). Only applies when content_format is 'markdown'. |
 **Example:**
 
 ```json
@@ -99,42 +99,9 @@ Update an existing Confluence page.
 Set `is_minor_edit: true` to skip notification emails. The page version is auto-incremented.
 </Tip>
 
-<Note>Exactly one of `content` or `content_file` must be provided.</Note>
-
-
----
-
-### Update Page Section
-
-Update a single section of a Confluence page without affecting the rest.
-
-<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `page_id` | `string` | Yes | The ID of the page to update |
-| `heading_text` | `string` | Yes | Exact text of the heading that starts the section to replace. Matching is case-sensitive. Use `confluence_get_page` with `convert_to_markdown=false` to inspect exact heading text when unsure. |
-| `new_content` | `string` | Yes | Replacement content for the section body. Do not include the heading itself — only the body beneath it. Format is controlled by `content_format`. |
-| `content_format` | `string` | No | Format of `new_content`. Options: `'markdown'` (default) or `'storage'` (raw Confluence storage XML). Use `'storage'` to insert macros or elements that markdown cannot express. |
-| `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
-| `version_comment` | `string` | No | Optional comment for this version |
-
-**Example:**
-
-```json
-{"page_id": "12345678", "heading_text": "Weekly Update", "new_content": "- Shipped v2.1\n- Started v2.2 planning", "version_comment": "Weekly sync"}
-```
-
-<Tip>
-Use this instead of `confluence_update_page` when the page contains macros, layouts, task lists, or other Confluence-specific elements you don't want to lose. The tool fetches the page as raw storage XML, surgically replaces only the target section, and writes the full XML back — so everything outside the section is preserved exactly.
-</Tip>
-
-<Warning>
-`heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised.
-</Warning>
-
+<Note>
+Exactly one of `content` or `content_file` must be provided.
+</Note>
 
 ---
 
@@ -170,6 +137,19 @@ Get child pages and folders of a specific Confluence page.
 
 ---
 
+### Get Space Page Tree
+
+Get page hierarchy for a Confluence space as a flat list.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `space_key` | `string` | Yes | Space key |
+| `limit` | `integer` | No | Max pages to fetch |
+
+---
+
 ### Get Page History
 
 Get a historical version of a specific Confluence page.
@@ -184,6 +164,38 @@ Get a historical version of a specific Confluence page.
 
 ---
 
+### Update Page Section
+
+Update a single section of a Confluence page without affecting the rest.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | The ID of the page to update |
+| `heading_text` | `string` | Yes | Exact text of the heading that starts the section to replace. Matching is case-sensitive. Use confluence_get_page with convert_to_markdown=false to inspect exact heading text when unsure. |
+| `new_content` | `string` | Yes | Replacement content for the section body. Do NOT include the heading itself — only the body beneath it. Format is controlled by content_format. |
+| `content_format` | `string` | No | (Optional) Format of new_content. Options: 'markdown' (default) or 'storage' (raw Confluence storage XML). Use 'storage' to insert macros or elements that markdown cannot express. |
+| `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
+| `version_comment` | `string` | No | Optional comment for this version |
+**Example:**
+
+```json
+{"page_id": "12345678", "heading_text": "Weekly Update", "new_content": "- Shipped v2.1\n- Started v2.2 planning", "version_comment": "Weekly sync"}
+```
+
+<Tip>
+Use this instead of `confluence_update_page` when the page contains macros, layouts, task lists, or other Confluence-specific elements you don't want to lose. The tool fetches the page as raw storage XML, surgically replaces only the target section, and writes the full XML back — so everything outside the section is preserved exactly.
+</Tip>
+
+<Warning>
+`heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised without updating the page.
+</Warning>
+
+---
+
 ### Move Page
 
 Move a Confluence page to a new parent or space.
@@ -195,24 +207,22 @@ Move a Confluence page to a new parent or space.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | ID of the page to move |
-| `target_parent_id` | `string` | No* | Target parent page ID. If omitted with `target_space_key`, moves to space root. |
-| `target_space_key` | `string` | No* | Target space key for cross-space moves |
+| `target_parent_id` | `string` | No | Target parent page ID. If omitted with target_space_key, moves to space root. |
+| `target_space_key` | `string` | No | Target space key for cross-space moves |
 | `position` | `string` | No | Position: 'append' (default, move as child of target), 'above' (move before target as sibling), or 'below' (move after target as sibling) |
-
 **Example:**
 
 ```json
 {"page_id": "12345678", "target_parent_id": "98765432"}
 ```
 
-<Warning>
-At least one of `target_parent_id` or `target_space_key` must be provided.
-</Warning>
-
 <Tip>
 Use `target_space_key` to move pages between spaces. Omit `target_parent_id` with a space key to move to the space root.
 </Tip>
 
+<Warning>
+At least one of `target_parent_id` or `target_space_key` must be provided.
+</Warning>
 
 ---
 
@@ -227,11 +237,10 @@ Copy a Confluence page to a new location.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `source_page_id` | `string` | Yes | The ID of the page to copy |
-| `destination_space_key` | `string` | Yes | Space key for the new page |
-| `new_title` | `string` | Yes | Title for the copied page |
-| `destination_parent_id` | `string` | No | Parent page ID in the destination space. Omit to copy to the space root. |
-| `copy_attachments` | `boolean` | No | Whether to copy attachments. Supported on Confluence Cloud. |
-
+| `destination_space_key` | `string` | Yes | Space key for the new page (e.g. 'DEV', 'TEAM') |
+| `new_title` | `string` | Yes | Title for the new copied page |
+| `destination_parent_id` | `string` | No | (Optional) Parent page ID in the destination space. When omitted the page is created at the space root. |
+| `copy_attachments` | `boolean` | No | (Optional) Whether to copy attachments to the new page. Defaults to true. Only supported on Confluence Cloud. |
 **Example:**
 
 ```json
@@ -254,7 +263,7 @@ Get view and edit restrictions for a Confluence page.
 
 ### Set Page Restrictions
 
-Replace view and edit restrictions for a Confluence page.
+Set view and edit restrictions on a Confluence page.
 
 <Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
 
@@ -263,16 +272,18 @@ Replace view and edit restrictions for a Confluence page.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | The ID of the page to restrict |
-| `read_users` | `array` | No | Account IDs (Cloud) or usernames (Server/DC) allowed to view the page |
-| `read_groups` | `array` | No | Group names allowed to view the page |
-| `edit_users` | `array` | No | Account IDs (Cloud) or usernames (Server/DC) allowed to edit the page |
-| `edit_groups` | `array` | No | Group names allowed to edit the page |
+| `read_users` | `array` | No | (Optional) Account IDs (Cloud) or usernames (Server/DC) allowed to view the page. Empty list = unrestricted. |
+| `read_groups` | `array` | No | (Optional) Group names allowed to view the page. |
+| `edit_users` | `array` | No | (Optional) Account IDs (Cloud) or usernames (Server/DC) allowed to edit the page. |
+| `edit_groups` | `array` | No | (Optional) Group names allowed to edit the page. |
 
-<Warning>Omitting all restriction lists or passing empty lists removes all page restrictions.</Warning>
+<Warning>
+Omitting all restriction lists or passing empty lists removes all page restrictions.
+</Warning>
 
 ---
 
-### Get Page Diff
+### Get Page Version Diff
 
 Get a unified diff between two versions of a Confluence page.
 
@@ -281,9 +292,8 @@ Get a unified diff between two versions of a Confluence page.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be found in the page URL). For example, in 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', the page ID is '123456789'. |
-| `from_version` | `integer` | Yes | Source version number (>=1) |
-| `to_version` | `integer` | Yes | Target version number (>=1) |
-
+| `from_version` | `integer` | Yes | Source version number |
+| `to_version` | `integer` | Yes | Target version number |
 **Example:**
 
 ```json
@@ -293,6 +303,5 @@ Get a unified diff between two versions of a Confluence page.
 <Tip>
 Use `confluence_get_page_history` to discover available version numbers. The diff is in unified format, showing additions and removals between versions.
 </Tip>
-
 
 ---

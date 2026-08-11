@@ -22,6 +22,8 @@ def setup_api3_passthrough_mocks(mixin: Any) -> None:
     def _mock_post_api3(resource: str, data: dict) -> dict:
         if resource == "issue":
             return mixin.jira.create_issue(fields=data.get("fields", data))
+        if resource == "issue/bulk":
+            return mixin.jira.create_issues(data["issueUpdates"])
         return mixin.jira.post(resource, data=data)
 
     def _mock_put_api3(resource: str, data: dict) -> dict:

@@ -2,3 +2,5 @@ example: |
   {"space_key": "DEV", "title": "Architecture Decision Record", "content": "## Context\n\nWe need to decide...", "parent_id": "98765432", "subtype": "live"}
 tips: |
   Use Markdown for content — it's auto-converted to Confluence storage format. Specify `parent_id` to create as a child page. Set `subtype` to `live` on Confluence Cloud to create a Live Doc.
+notes: |
+  Exactly one of `content` or `content_file` must be provided.

@@ -19,6 +19,84 @@ MCP Atlassian works with any MCP-compatible client. This page documents platform
 | OpenAI Gateway | Compatible | stdio / HTTP | |
 | ChatGPT | Not tested | HTTP | See [ChatGPT notes](#chatgpt) |
 
+## MCP stdio readiness probe
+
+Maintainers can exercise the public MCP initialize and `tools/list` boundary
+without depending on FastMCP internals:
+
+```bash
+uv run python scripts/mcp_wire_probe.py \
+  --server-command uv \
+  --server-arg=run \
+  --server-arg=mcp-atlassian
+```
+
+The default probe does not invoke any Atlassian tool. It emits machine-readable
+JSON with the negotiated protocol version, discovered tool names, and installed
+versions of MCP, MCP types, FastMCP, FastMCP slim, and cryptography. Missing
+distributions are reported as `null`, making the output useful for comparing
+supported SDK and framework environments.
+
+Version-specific test lanes can make protocol negotiation an explicit gate:
+
+```bash
+uv run python scripts/mcp_wire_probe.py \
+  --server-command uv \
+  --server-arg=run \
+  --server-arg=mcp-atlassian \
+  --expect-protocol-version=2025-11-25 \
+  --expect-tool-absent=jira_create_issue
+```
+
+The expected revision is lane-specific. Do not infer it from the installed MCP
+SDK major version: an SDK can retain an older protocol revision unless the
+newer protocol era is explicitly selected. See the MCP 2 / FastMCP 4 findings
+in [issue #1541](https://github.com/sooperset/mcp-atlassian/issues/1541).
+
+Repeat `--expect-tool-present` or `--expect-tool-absent` to make public tool
+discovery an explicit gate. These checks run immediately after `tools/list` and
+before any optional staging reads, so they can diagnose policy visibility
+without contacting Atlassian. Contradictory expectations fail as a probe
+configuration error.
+
+An explicit `--staging-dc-pat` profile can additionally call one fixed Jira DC
+issue and one fixed Confluence DC page. Configure these variables securely
+before running it:
+
+| Variable | Purpose |
+|----------|---------|
+| `MCP_READINESS_JIRA_URL` | Jira DC staging URL |
+| `MCP_READINESS_JIRA_PAT` | Jira DC staging personal access token |
+| `MCP_READINESS_JIRA_ISSUE_KEY` | Fixed issue approved for a read probe |
+| `MCP_READINESS_CONFLUENCE_URL` | Confluence DC staging URL |
+| `MCP_READINESS_CONFLUENCE_PAT` | Confluence DC staging personal access token |
+| `MCP_READINESS_CONFLUENCE_PAGE_ID` | Fixed page approved for a read probe |
+| `MCP_READINESS_MAX_RPM` | Optional request rate from 1–30; defaults to 30 |
+
+Then add the live-profile flag to the preceding command:
+
+```bash
+uv run python scripts/mcp_wire_probe.py \
+  --server-command uv \
+  --server-arg=run \
+  --server-arg=mcp-atlassian \
+  --staging-dc-pat
+```
+
+The profile fails closed: it forces read-only mode, exposes only
+`jira_get_issue` and `confluence_get_page`, disables retries, limits concurrency
+to one, and caps traffic at 30 requests per minute. It stops before a live call
+if any unexpected tool is exposed. Output records only protocol and result
+shape—it excludes credentials, URLs, request identifiers, and response bodies.
+
+Direct-call policy regressions, including GHSA-3r68, are tested hermetically
+with a mocked backend. The live staging profile intentionally does not call a
+hidden write tool: if policy had regressed, such a canary could perform the
+write it was intended to detect.
+
+Passing this probe verifies the public MCP behaviors it exercises; it does not
+by itself establish compatibility with a future FastMCP major version.
+
 ## Schema Compatibility
 
 MCP Atlassian includes automatic schema sanitization to ensure compatibility with strict AI platforms:
@@ -58,7 +136,7 @@ GitHub Copilot's coding agent supports MCP servers via stdio transport. Key conf
   </Step>
 
   <Step title="Verify tool discovery">
-    If Copilot reports "Retrieved 0 tools", ensure you are using `mcp-atlassian >= 0.16.0` (which includes FastMCP updates for better protocol compliance).
+    If Copilot reports "Retrieved 0 tools", ensure you are using `mcp-atlassian >= 0.16.0` (which includes FastMCP updates for better protocol compliance). Current releases run on FastMCP v3 (`>=3.2.4,<4.0.0`) while exposing the standard MCP protocol over stdio and HTTP, so MCP clients do not need FastMCP installed. If an older client still cannot discover tools, update the client to a current MCP-compatible release.
   </Step>
 
   <Step title="Docker alternative">

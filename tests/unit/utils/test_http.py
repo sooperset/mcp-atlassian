@@ -99,6 +99,40 @@ def test_configure_retry_respects_env_overrides(monkeypatch: pytest.MonkeyPatch)
     assert "DELETE" in retry.allowed_methods
 
 
+def test_configure_retry_respects_retry_after_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "5")
+    monkeypatch.delenv("ATLASSIAN_RETRY_IGNORE_RETRY_AFTER", raising=False)
+
+    session = _new_session()
+    configure_retry(session, service="Test")
+
+    adapter = next(iter(session.adapters.values()))
+    assert isinstance(adapter, HTTPAdapter)
+    retry = adapter.max_retries
+    assert isinstance(retry, Retry)
+    assert retry.respect_retry_after_header is True
+
+
+def test_configure_retry_ignores_retry_after_when_env_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "5")
+    monkeypatch.setenv("ATLASSIAN_RETRY_IGNORE_RETRY_AFTER", "true")
+
+    session = _new_session()
+    configure_retry(session, service="Test")
+
+    adapter = next(iter(session.adapters.values()))
+    assert isinstance(adapter, HTTPAdapter)
+    retry = adapter.max_retries
+    assert isinstance(retry, Retry)
+    # A gateway sending `Retry-After: 0` would otherwise trigger instant retries;
+    # ignoring the header forces exponential backoff instead.
+    assert retry.respect_retry_after_header is False
+
+
 def test_configure_retry_disabled_when_total_le_zero(
     monkeypatch: pytest.MonkeyPatch,
 ):
