@@ -527,7 +527,7 @@ class TestDevelopmentMixin:
         assert pr["author"] == ""
         assert pr["reviewers"] == []
 
-    def test_dev_status_get_omits_verify(
+    def testdev_status_get_omits_verify(
         self, development_mixin, mock_dev_status_response
     ):
         """A per-call verify bool would override the session's configured SSL
