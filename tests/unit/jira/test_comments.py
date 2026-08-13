@@ -648,7 +648,7 @@ class TestCommentsMixin:
         comments_mixin._post_api3 = Mock()
         comments_mixin.jira.issue_add_comment = Mock()
 
-        with pytest.raises(Exception, match="ServiceDesk"):
+        with pytest.raises(Exception, match="ServiceDesk|JSM service desk"):
             comments_mixin.add_comment("TEST-123", "Internal note", public=False)
 
         comments_mixin._post_api3.assert_not_called()
@@ -860,7 +860,7 @@ class TestInternalOnlyProjectsGuard:
         guarded_mixin._post_api3 = Mock()
         guarded_mixin.jira.issue_add_comment = Mock()
 
-        with pytest.raises(Exception, match="ServiceDesk"):
+        with pytest.raises(Exception, match="ServiceDesk|JSM service desk"):
             guarded_mixin.add_comment("CC-1", "Internal note", public=False)
 
         guarded_mixin.jira.post.assert_called_once()
@@ -968,6 +968,131 @@ class TestInternalOnlyProjectsGuard:
         guarded_mixin.jira.get.return_value = response
         with pytest.raises(ValueError, match="PUBLIC"):
             guarded_mixin.edit_comment("CC-1", "5", "Updated text")
+
+
+class TestInternalOnlyNonRequestIssues:
+    """A guarded project may also hold issues that are not JSM requests.
+
+    JIRA_INTERNAL_ONLY_PROJECTS names a project, but only a customer
+    request has a portal view. An agent-created Task or Sub-task in the
+    same project has no portal audience, and the ServiceDesk comment API
+    does not exist for it — so enforcing the guard there left no way to
+    comment on it at all.
+    """
+
+    @pytest.fixture
+    def guarded_mixin(self, jira_config_factory):
+        """CommentsMixin with 'CC' configured as an internal-only project."""
+        config = jira_config_factory(internal_only_projects=frozenset({"CC"}))
+        mixin = CommentsMixin(config=config)
+        mixin.jira = Mock()
+        mixin.jira.default_headers = {}
+        mixin.preprocessor = Mock()
+        mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
+        mixin._clean_text = Mock(side_effect=lambda x: x)
+        mixin._post_api3 = Mock(
+            return_value={
+                "id": "1",
+                "body": "note",
+                "created": "2024-01-01T10:00:00.000+0000",
+                "author": {"displayName": "A"},
+            }
+        )
+        return mixin
+
+    @staticmethod
+    def _not_a_request(guarded_mixin) -> None:
+        """Make the request lookup answer 404 (definitely not a request)."""
+        guarded_mixin.jira.get.side_effect = HTTPError(response=Mock(status_code=404))
+
+    @pytest.mark.parametrize("public", [None, True, False])
+    def test_non_request_issue_posts_via_ordinary_path(self, guarded_mixin, public):
+        """A non-request issue accepts a comment whatever `public` says.
+
+        There is no portal audience to leak to, so the guard does not apply
+        and the ordinary comment path is used. Before this, public=True and
+        an omitted public were rejected outright, while public=False failed
+        against a ServiceDesk endpoint that does not exist for the issue —
+        leaving no way in.
+        """
+        self._not_a_request(guarded_mixin)
+        result = guarded_mixin.add_comment("CC-1", "note", public=public)
+        guarded_mixin._post_api3.assert_called_once()
+        guarded_mixin.jira.post.assert_not_called()
+        assert result["id"] == "1"
+
+    def test_request_issue_still_guarded(self, guarded_mixin):
+        """A genuine customer request keeps the guard."""
+        guarded_mixin.jira.get.return_value = {"issueId": "10001"}
+        with pytest.raises(ValueError, match="internal-only"):
+            guarded_mixin.add_comment("CC-1", "Client update", public=True)
+        guarded_mixin._post_api3.assert_not_called()
+        guarded_mixin.jira.post.assert_not_called()
+
+    @pytest.mark.parametrize("status_code", [401, 403, 429, 500, 503])
+    def test_lookup_failure_keeps_guard(self, guarded_mixin, status_code):
+        """Anything short of a definite 404 fails closed."""
+        guarded_mixin.jira.get.side_effect = HTTPError(
+            response=Mock(status_code=status_code)
+        )
+        with pytest.raises(ValueError, match="internal-only"):
+            guarded_mixin.add_comment("CC-1", "Client update", public=True)
+        guarded_mixin._post_api3.assert_not_called()
+
+    def test_lookup_non_http_error_keeps_guard(self, guarded_mixin):
+        """A transport error is not evidence that the issue is unguarded."""
+        guarded_mixin.jira.get.side_effect = Exception("connection reset")
+        with pytest.raises(ValueError, match="internal-only"):
+            guarded_mixin.add_comment("CC-1", "Client update", public=True)
+
+    @pytest.mark.parametrize("response", [{}, {"issueId": None}, "not a dict", None])
+    def test_lookup_unexpected_body_keeps_guard(self, guarded_mixin, response):
+        """An unrecognisable response is not proof of a non-request."""
+        guarded_mixin.jira.get.return_value = response
+        with pytest.raises(ValueError, match="internal-only"):
+            guarded_mixin.add_comment("CC-1", "Client update", public=True)
+
+    def test_unlisted_project_pays_no_lookup(self, guarded_mixin):
+        """Projects outside the setting never pay the extra round-trip."""
+        guarded_mixin.add_comment("TEST-1", "note")
+        guarded_mixin.jira.get.assert_not_called()
+
+
+class TestServiceDeskErrorStatusDetection:
+    """Status classification must not depend on the exception's text.
+
+    An HTTPError raised for a response with an empty body stringifies to
+    "", so the 403/404 branches that matched on str(e) never fired and the
+    caller got the generic message with nothing after the colon.
+    """
+
+    @pytest.fixture
+    def comments_mixin(self, jira_config_factory):
+        mixin = CommentsMixin(config=jira_config_factory())
+        mixin.jira = Mock()
+        mixin.jira.default_headers = {}
+        mixin._clean_text = Mock(side_effect=lambda x: x)
+        return mixin
+
+    @pytest.mark.parametrize(
+        ("status_code", "expected"),
+        [(403, "lack permission"), (404, "does not exist")],
+    )
+    def test_empty_message_still_classified(
+        self, comments_mixin, status_code, expected
+    ):
+        """The status on the exception is used when the message is empty."""
+        comments_mixin.jira.post.side_effect = HTTPError(
+            response=Mock(status_code=status_code)
+        )
+        with pytest.raises(Exception, match=expected):
+            comments_mixin._add_servicedesk_comment("TEST-1", "note", public=False)
+
+    def test_generic_failure_names_the_exception_type(self, comments_mixin):
+        """An unclassified failure still says something after the colon."""
+        comments_mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=500))
+        with pytest.raises(Exception, match="HTTPError"):
+            comments_mixin._add_servicedesk_comment("TEST-1", "note", public=False)
 
 
 def _strong_text_nodes(adf: dict) -> list[str]:

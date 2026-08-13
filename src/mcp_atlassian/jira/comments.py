@@ -13,16 +13,40 @@ Internal-only guard (JIRA_INTERNAL_ONLY_PROJECTS) coverage map:
   no production caller (the transition path uses
   TransitionsMixin._add_comment_to_transition_data, whose caller is
   guarded), and update_issue never emits an update.comment block.
+- Scope: the setting names whole *projects*, but the customer-visibility
+  risk it exists for is per *issue* — only a JSM customer request has a
+  portal view. add_comment therefore exempts issues in a guarded project
+  that are not requests (see _is_servicedesk_request), because the
+  ServiceDesk comment API they would need does not exist for them.
 """
 
 import logging
 from typing import Any
+
+from requests.exceptions import HTTPError
 
 from ..models.jira.adf import adf_to_text
 from ..utils import parse_date
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
+
+
+def _http_status(exc: BaseException) -> int | None:
+    """Extract the HTTP status code from an exception, if it carries one.
+
+    Preferred over matching on ``str(exc)``: an HTTPError raised for a
+    response with an empty body stringifies to ``""``, so a substring test
+    silently misses the status it is looking for.
+
+    Args:
+        exc: The exception to inspect.
+
+    Returns:
+        The HTTP status code, or None if the exception does not carry one.
+    """
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status if isinstance(status, int) else None
 
 
 class CommentsMixin(JiraClient):
@@ -77,6 +101,73 @@ class CommentsMixin(JiraClient):
         except Exception as e:
             logger.error(f"Error getting comments for issue {issue_key}: {str(e)}")
             raise Exception(f"Error getting comments: {str(e)}") from e
+
+    def _is_servicedesk_request(self, issue_key: str) -> bool:
+        """Check whether an issue is a JSM customer request.
+
+        JIRA_INTERNAL_ONLY_PROJECTS names whole projects, but only a JSM
+        customer request has a portal view and customer participants. An
+        issue raised internally in the same project — an agent-created Task
+        or Sub-task, say — has no portal presence, so an ordinary Jira
+        comment on it cannot reach a customer.
+
+        The distinction matters because the guard would otherwise leave no
+        way to comment on such an issue at all: ``public=False`` posts via
+        ``rest/servicedeskapi/request/<key>/comment``, which does not exist
+        for a non-request, while ``public=True`` or an omitted ``public`` is
+        refused by :meth:`_enforce_internal_only_add`.
+
+        Fails closed. Only an explicit 404 counts as a negative; every other
+        outcome — 403, 5xx, timeout, unexpected body — reports True so the
+        guard stays in force. Called only for projects listed in
+        JIRA_INTERNAL_ONLY_PROJECTS, so other projects never pay the extra
+        round-trip.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+
+        Returns:
+            True if the issue is a JSM customer request, or if that could
+            not be established. False only on a definite 404.
+        """
+        try:
+            response = self.jira.get(
+                f"rest/servicedeskapi/request/{issue_key}",
+                headers={
+                    **self.jira.default_headers,
+                    "X-ExperimentalApi": "opt-in",
+                },
+            )
+        except HTTPError as exc:
+            if _http_status(exc) == 404:
+                logger.info(
+                    f"{issue_key} is not a JSM customer request; an ordinary "
+                    "Jira comment there has no portal audience, so the "
+                    "internal-only guard does not apply."
+                )
+                return False
+            logger.warning(
+                f"Could not establish whether {issue_key} is a JSM customer "
+                f"request; treating it as one so the internal-only guard "
+                f"stays in force: {exc}"
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                f"Could not establish whether {issue_key} is a JSM customer "
+                f"request; treating it as one so the internal-only guard "
+                f"stays in force: {exc}"
+            )
+            return True
+
+        if isinstance(response, dict) and response.get("issueId"):
+            return True
+        logger.warning(
+            f"ServiceDesk API returned no issueId for {issue_key}; treating "
+            "it as a customer request so the internal-only guard stays in "
+            "force."
+        )
+        return True
 
     def _enforce_internal_only_add(self, issue_key: str, public: bool | None) -> None:
         """Reject add_comment calls that would post client-visible content
@@ -216,7 +307,10 @@ class CommentsMixin(JiraClient):
                 markdown→ADF guarantees of the regular comment path).
                 Cannot be combined with visibility. If issue_key's
                 project is listed in JIRA_INTERNAL_ONLY_PROJECTS, only
-                public=False is accepted.
+                public=False is accepted — unless issue_key is not a JSM
+                customer request, in which case it has no portal audience,
+                this argument is ignored, and the comment posts through
+                the ordinary path.
 
         Returns:
             The created comment details
@@ -227,7 +321,19 @@ class CommentsMixin(JiraClient):
                 exactly False
             Exception: If there is an error adding the comment
         """
-        self._enforce_internal_only_add(issue_key, public)
+        # The guard names a project, but the leak it prevents is per issue.
+        # An issue that is not a JSM customer request has no portal audience,
+        # and the ServiceDesk comment API that public=False needs does not
+        # exist for it — so enforcing the guard there blocks every route
+        # instead of protecting anyone. Fall through to the ordinary comment
+        # path for those. _is_servicedesk_request fails closed, so anything
+        # short of a definite 404 keeps the guard in force.
+        if self._is_internal_only_project(issue_key) and not (
+            self._is_servicedesk_request(issue_key)
+        ):
+            public = None
+        else:
+            self._enforce_internal_only_add(issue_key, public)
 
         # ServiceDesk API path for internal/public comments
         if public is not None:
@@ -348,19 +454,26 @@ class CommentsMixin(JiraClient):
             }
         except Exception as e:
             error_msg = str(e)
-            if "403" in error_msg or "forbidden" in error_msg.lower():
+            # Prefer the status carried on the exception. Matching on the
+            # message alone misses a status whose response body is empty:
+            # str(e) is then "", and the caller gets the generic message
+            # below with nothing after the colon.
+            status = _http_status(e)
+            if status == 403 or "403" in error_msg or "forbidden" in error_msg.lower():
                 raise Exception(
                     f"Issue {issue_key} is not a JSM service "
                     f"desk issue or you lack permission: "
-                    f"{error_msg}"
+                    f"{error_msg or 'HTTP 403'}"
                 ) from e
-            if "404" in error_msg or "not found" in error_msg.lower():
+            if status == 404 or "404" in error_msg or "not found" in error_msg.lower():
                 raise Exception(
                     f"Issue {issue_key} is not a JSM service "
-                    f"desk issue or does not exist: {error_msg}"
+                    f"desk issue or does not exist: "
+                    f"{error_msg or 'HTTP 404'}"
                 ) from e
             raise Exception(
-                f"Error adding ServiceDesk comment to {issue_key}: {error_msg}"
+                f"Error adding ServiceDesk comment to {issue_key}: "
+                f"{error_msg or type(e).__name__}"
             ) from e
 
     def edit_comment(
