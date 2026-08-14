@@ -473,7 +473,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 )
 
         return {
-            "success": True,
+            "success": bool(uploaded),
             "issue_key": issue_key,
             "total": len(file_paths),
             "uploaded": uploaded,
