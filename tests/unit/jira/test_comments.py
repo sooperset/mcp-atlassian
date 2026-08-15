@@ -1021,7 +1021,7 @@ class TestInternalOnlyNonRequestIssues:
         guarded_mixin.jira.post.assert_not_called()
         assert result["id"] == "1"
 
-    def test_non_request_issue_allows_visibility(self, guarded_mixin):
+    def test_restricted(self, guarded_mixin):
         """A non-request issue can use ordinary Jira visibility restrictions."""
         self._not_a_request(guarded_mixin)
         visibility = {"type": "group", "value": "jira-users"}
