@@ -22,7 +22,17 @@ _IMAGE_MIME_TYPES = frozenset(
     }
 )
 
-_AMBIGUOUS_MIME_TYPES = frozenset({"application/octet-stream", "application/binary"})
+# MIME types that carry no reliable information about the actual file type,
+# so detection falls back to the filename extension. "multipart/form-data" is
+# what Jira Service Management reports for attachments uploaded through the
+# customer portal, which is the usual source of screenshots on support tickets.
+_AMBIGUOUS_MIME_TYPES = frozenset(
+    {
+        "application/octet-stream",
+        "application/binary",
+        "multipart/form-data",
+    }
+)
 
 _IMAGE_EXTENSIONS = frozenset(
     {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"}
