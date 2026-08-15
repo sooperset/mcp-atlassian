@@ -2502,7 +2502,11 @@ async def add_comment(
                 "with visibility. If the issue's project is "
                 "listed in JIRA_INTERNAL_ONLY_PROJECTS, only "
                 "public=false is accepted — public=true or "
-                "omitting this field is rejected."
+                "omitting this field is rejected. Issues in such "
+                "a project that are not JSM customer requests "
+                "(e.g. an agent-created Task) have no portal "
+                "audience and are exempt: they post through the "
+                "ordinary comment path and ignore this field."
             )
         ),
     ] = None,
