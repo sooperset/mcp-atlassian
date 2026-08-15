@@ -21,6 +21,7 @@ Internal-only guard (JIRA_INTERNAL_ONLY_PROJECTS) coverage map:
 """
 
 import logging
+import re
 from typing import Any
 
 from requests.exceptions import HTTPError
@@ -31,6 +32,8 @@ from .client import JiraClient
 from .config import normalize_project_key
 
 logger = logging.getLogger("mcp-jira")
+
+_CANONICAL_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
 
 
 def _http_status(exc: BaseException) -> int | None:
@@ -83,12 +86,16 @@ class CommentsMixin(JiraClient):
             if separator
             else normalized
         )
-        if issue_key != canonical or any(char.isspace() for char in canonical):
+        if (
+            issue_key != canonical
+            or any(char.isspace() for char in canonical)
+            or _CANONICAL_ISSUE_KEY_RE.fullmatch(canonical) is None
+        ):
             raise ValueError(
                 f"Issue key {issue_key!r} belongs to an internal-only project "
-                "but is not canonical. Padded, lowercase, whitespace, or "
-                "invisible-character variants are rejected before checking "
-                "whether the issue is a JSM customer request."
+                "but is not canonical. Malformed, padded, lowercase, "
+                "whitespace, or invisible-character variants are rejected "
+                "before checking whether the issue is a JSM customer request."
             )
         return canonical
 

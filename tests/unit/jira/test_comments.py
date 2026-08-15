@@ -1075,6 +1075,10 @@ class TestInternalOnlyNonRequestIssues:
             " cc-1 ",
             "C\u200bC-1",
             "\ufeffCC-1",
+            "CC-1-2",
+            "CC-1/../../PROJ-2",
+            "CC-1?comment=public",
+            "CC-1#comment",
         ],
     )
     @pytest.mark.parametrize("public", [None, True, False])
