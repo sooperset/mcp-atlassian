@@ -1021,6 +1021,20 @@ class TestInternalOnlyNonRequestIssues:
         guarded_mixin.jira.post.assert_not_called()
         assert result["id"] == "1"
 
+    def test_non_request_issue_allows_visibility(self, guarded_mixin):
+        """A non-request issue can use ordinary Jira visibility restrictions."""
+        self._not_a_request(guarded_mixin)
+        visibility = {"type": "group", "value": "jira-users"}
+
+        result = guarded_mixin.add_comment(
+            "CC-1", "note", visibility=visibility, public=True
+        )
+
+        guarded_mixin._post_api3.assert_called_once()
+        assert guarded_mixin._post_api3.call_args.args[1]["visibility"] == visibility
+        guarded_mixin.jira.post.assert_not_called()
+        assert result["id"] == "1"
+
     def test_request_issue_still_guarded(self, guarded_mixin):
         """A genuine customer request keeps the guard."""
         guarded_mixin.jira.get.return_value = {"issueId": "10001"}
