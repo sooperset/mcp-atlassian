@@ -214,14 +214,17 @@ class TestTransitionsMixin:
 
         transitions_mixin._post_api3.assert_not_called()
 
-    def test_transition_comment_internal_only_whitespace_padded_key_rejected(
-        self, transitions_mixin: TransitionsMixin
+    @pytest.mark.parametrize("issue_key", [" CC-1", "CC%2D1", "%43C-1"])
+    def test_transition_comment_internal_only_noncanonical_key_rejected(
+        self, transitions_mixin: TransitionsMixin, issue_key: str
     ):
-        """Whitespace-padded issue keys do not bypass the transition guard."""
+        """Noncanonical keys do not bypass the transition comment guard."""
         transitions_mixin.config.internal_only_projects = frozenset({"CC"})
 
         with pytest.raises(ValueError, match="internal-only"):
-            transitions_mixin.transition_issue(" CC-1", "10", comment="Client update")
+            transitions_mixin.transition_issue(issue_key, "10", comment="Client update")
+
+        transitions_mixin._post_api3.assert_not_called()
 
     def test_transition_comment_unlisted_project_unaffected(
         self, transitions_mixin: TransitionsMixin
