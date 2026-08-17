@@ -41,6 +41,22 @@ def test_attachment_max_bytes_value() -> None:
             "doc.pdf",
             (False, "application/octet-stream"),
         ),
+        # JSM customer-portal uploads report multipart/form-data
+        (
+            "multipart/form-data",
+            "WhatsApp Image 2026-08-15 at 23.28.03.jpeg",
+            (True, "image/jpeg"),
+        ),
+        (
+            "multipart/form-data",
+            "screenshot.png",
+            (True, "image/png"),
+        ),
+        (
+            "multipart/form-data",
+            "report.pdf",
+            (False, "multipart/form-data"),
+        ),
         # None MIME + image extension -> detected as image
         (None, "photo.png", (True, "image/png")),
         # None MIME + non-image extension -> not an image
@@ -56,6 +72,9 @@ def test_attachment_max_bytes_value() -> None:
         "octet-stream-jpg-ext",
         "binary-png-ext",
         "octet-stream-pdf-ext",
+        "jsm-portal-jpeg-ext",
+        "jsm-portal-png-ext",
+        "jsm-portal-pdf-ext",
         "none-mime-image-ext",
         "none-mime-pdf-ext",
         "both-none",

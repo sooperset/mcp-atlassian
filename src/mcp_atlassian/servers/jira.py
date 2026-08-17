@@ -2192,12 +2192,21 @@ async def update_issue(
             issue = jira.update_issue(
                 issue_key=issue_key, return_fields=return_fields_list, **all_updates
             )
-            operations_performed.append("fields_updated")
+            if any(key != "attachments" for key in all_updates):
+                operations_performed.append("fields_updated")
             if (
                 hasattr(issue, "custom_fields")
                 and "attachment_results" in issue.custom_fields
             ):
                 attachment_results = issue.custom_fields["attachment_results"]
+                if attachment_results.get("uploaded"):
+                    operations_performed.append("attachments_uploaded")
+                for failure in attachment_results.get("failed", []):
+                    operations_failed.append(
+                        "attachment: "
+                        f"{failure.get('filename', 'unknown')}: "
+                        f"{failure.get('error', 'upload failed')}"
+                    )
         except Exception as e:  # noqa: BLE001 - preserve later operations
             logger.error(
                 f"Error updating fields for issue {issue_key}: {str(e)}",
@@ -2505,7 +2514,11 @@ async def add_comment(
                 "with visibility. If the issue's project is "
                 "listed in JIRA_INTERNAL_ONLY_PROJECTS, only "
                 "public=false is accepted — public=true or "
-                "omitting this field is rejected."
+                "omitting this field is rejected. Issues in such "
+                "a project that are not JSM customer requests "
+                "(e.g. an agent-created Task) have no portal "
+                "audience and are exempt: they post through the "
+                "ordinary comment path and ignore this field."
             )
         ),
     ] = None,

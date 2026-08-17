@@ -2815,6 +2815,65 @@ async def test_update_issue_reports_failure_when_all_operations_fail(
 
 
 @pytest.mark.anyio
+async def test_update_issue_reports_failed_attachments(jira_client, mock_jira_fetcher):
+    """Attachment-only failures must not be reported as a successful update."""
+    issue = MagicMock()
+    issue.custom_fields = {
+        "attachment_results": {
+            "success": False,
+            "issue_key": "TEST-123",
+            "total": 1,
+            "uploaded": [],
+            "failed": [{"filename": "missing.xlsx", "error": "File not found"}],
+        }
+    }
+    mock_jira_fetcher.update_issue.side_effect = None
+    mock_jira_fetcher.update_issue.return_value = issue
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {"issue_key": "TEST-123", "attachments": '["missing.xlsx"]'},
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Issue update failed"
+    assert result["operations_performed"] == []
+    assert result["operations_failed"] == ["attachment: missing.xlsx: File not found"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_reports_partial_attachment_failure(
+    jira_client, mock_jira_fetcher
+):
+    """A mixed attachment result reports both its success and failure."""
+    issue = MagicMock()
+    issue.custom_fields = {
+        "attachment_results": {
+            "success": True,
+            "issue_key": "TEST-123",
+            "total": 2,
+            "uploaded": [{"filename": "report.xlsx", "id": "1", "size": 10}],
+            "failed": [{"filename": "missing.xlsx", "error": "File not found"}],
+        }
+    }
+    mock_jira_fetcher.update_issue.side_effect = None
+    mock_jira_fetcher.update_issue.return_value = issue
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "attachments": '["report.xlsx", "missing.xlsx"]',
+        },
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Issue update completed with errors"
+    assert result["operations_performed"] == ["attachments_uploaded"]
+    assert result["operations_failed"] == ["attachment: missing.xlsx: File not found"]
+
+
+@pytest.mark.anyio
 async def test_update_issue_reports_when_no_operations_are_requested(
     jira_client, mock_jira_fetcher
 ):
