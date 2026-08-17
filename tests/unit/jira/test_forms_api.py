@@ -672,6 +672,17 @@ class TestProFormaFormAnswerParsing:
         assert form.fields[0].id == "42"
         assert form.fields[0].value == "orphan"
 
+    def test_unknown_empty_answer_shape_is_preserved(self):
+        response = {
+            "id": "form-uuid",
+            "design": {"questions": {}},
+            "state": {"answers": {"42": {}}},
+        }
+
+        form = ProFormaForm.from_api_response(response)
+
+        assert form.fields[0].value == {}
+
     def test_list_response_without_state_has_no_fields(self):
         response = {"id": "form-uuid", "name": "A form", "submitted": False}
 

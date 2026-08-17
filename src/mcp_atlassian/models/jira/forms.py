@@ -124,7 +124,7 @@ class ProFormaForm(ApiModel):
         for key in ("text", "choices", "adf", "date", "time", "users"):
             if key in answer:
                 return answer[key]
-        return answer or None
+        return answer
 
     @classmethod
     def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "ProFormaForm":
