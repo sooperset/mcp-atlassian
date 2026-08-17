@@ -1553,7 +1553,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anyio", specifier = ">=4.0.0" },
-    { name = "atlassian-python-api", specifier = ">=4.0.0" },
+    { name = "atlassian-python-api", specifier = ">=4.0.0,<5.0.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.3" },
     { name = "cachetools", specifier = ">=5.0.0" },
     { name = "click", specifier = ">=8.1.7" },
