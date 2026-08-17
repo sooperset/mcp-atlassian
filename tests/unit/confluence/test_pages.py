@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
+from atlassian.errors import ApiError
 from requests.exceptions import ConnectionError, HTTPError
 
 from mcp_atlassian.confluence.pages import PagesMixin
@@ -2271,11 +2272,12 @@ class TestPageEmoji:
         """Test removing emoji when none exists still succeeds."""
         page_id = "no_emoji_123"
 
-        # Mock delete returning 404 (property doesn't exist)
+        # The Atlassian client wraps a 404 from delete_page_property in ApiError.
         response = MagicMock()
         response.status_code = 404
-        pages_mixin.confluence.delete_page_property.side_effect = HTTPError(
-            "404 Not Found", response=response
+        pages_mixin.confluence.delete_page_property.side_effect = ApiError(
+            "There is no content with the given id or permission to view it",
+            reason=HTTPError("404 Not Found", response=response),
         )
 
         result = pages_mixin._set_page_emoji(page_id, None)

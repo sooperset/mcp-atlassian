@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import requests
+from atlassian.errors import ApiError
 from bs4 import BeautifulSoup, Tag
 from requests.exceptions import HTTPError
 
@@ -366,9 +367,13 @@ class PagesMixin(ConfluenceClient):
                 # the removal did not happen and must not be reported as done.
                 try:
                     self.confluence.delete_page_property(page_id, property_key)
-                except HTTPError as http_err:
+                except (HTTPError, ApiError) as api_err:
+                    http_err = (
+                        api_err if isinstance(api_err, HTTPError) else api_err.reason
+                    )
                     if (
-                        http_err.response is not None
+                        isinstance(http_err, HTTPError)
+                        and http_err.response is not None
                         and http_err.response.status_code == 404
                     ):
                         logger.debug(
