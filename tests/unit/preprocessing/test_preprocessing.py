@@ -1175,6 +1175,48 @@ some code
 # Confluence ac:image tag processing tests
 
 
+class TestSetextHeadings:
+    """Setext headings must not swallow blank lines (issue #1587)."""
+
+    def test_horizontal_rule_after_blank_line_is_preserved(
+        self, preprocessor_with_jira
+    ):
+        """`----` on its own line is a horizontal rule, not an empty heading."""
+        result = preprocessor_with_jira.markdown_to_jira("before\n\n----\n\nafter")
+        assert "h2." not in result
+        assert "----" in result
+        assert result == "before\n\n----\n\nafter"
+
+    def test_horizontal_rule_at_start_of_text_is_preserved(
+        self, preprocessor_with_jira
+    ):
+        """A leading rule has no preceding line to consume."""
+        result = preprocessor_with_jira.markdown_to_jira("----\n\nafter")
+        assert "h2." not in result
+        assert result.startswith("----")
+
+    def test_whitespace_only_line_is_not_a_heading(self, preprocessor_with_jira):
+        """A line of spaces is not heading text either."""
+        result = preprocessor_with_jira.markdown_to_jira("before\n   \n----\nafter")
+        assert "h2." not in result
+        assert "----" in result
+
+    def test_setext_h2_still_converts(self, preprocessor_with_jira):
+        """The legitimate `text` over `---` heading is unaffected."""
+        result = preprocessor_with_jira.markdown_to_jira("My Heading\n---\nbody")
+        assert "h2. My Heading" in result
+
+    def test_setext_h1_still_converts(self, preprocessor_with_jira):
+        """The legitimate `text` over `===` heading is unaffected."""
+        result = preprocessor_with_jira.markdown_to_jira("My Heading\n===\nbody")
+        assert "h1. My Heading" in result
+
+    def test_rule_directly_under_text_is_still_a_heading(self, preprocessor_with_jira):
+        """No blank line means it is a setext underline, per CommonMark."""
+        result = preprocessor_with_jira.markdown_to_jira("Some text\n----\nbody")
+        assert "h2. Some text" in result
+
+
 class TestImageProcessing:
     """Tests for Confluence ac:image tag processing."""
 
