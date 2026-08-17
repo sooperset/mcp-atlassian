@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
+from requests.exceptions import ConnectionError, HTTPError
 
 from mcp_atlassian.confluence.pages import PagesMixin
 from mcp_atlassian.confluence.utils import extract_emoji_from_property
@@ -2270,9 +2271,11 @@ class TestPageEmoji:
         """Test removing emoji when none exists still succeeds."""
         page_id = "no_emoji_123"
 
-        # Mock delete returning an error (property doesn't exist)
-        pages_mixin.confluence.delete_page_property.side_effect = Exception(
-            "Property not found"
+        # Mock delete returning 404 (property doesn't exist)
+        response = MagicMock()
+        response.status_code = 404
+        pages_mixin.confluence.delete_page_property.side_effect = HTTPError(
+            "404 Not Found", response=response
         )
 
         result = pages_mixin._set_page_emoji(page_id, None)
@@ -2287,6 +2290,34 @@ class TestPageEmoji:
         pages_mixin.confluence.delete_page_property.assert_any_call(
             page_id, "emoji-title-draft"
         )
+
+    def test_set_page_emoji_remove_reports_failure_on_denied_delete(self, pages_mixin):
+        """A delete rejected by the API must not be reported as a removal."""
+        page_id = "denied_emoji_123"
+
+        response = MagicMock()
+        response.status_code = 403
+        pages_mixin.confluence.delete_page_property.side_effect = HTTPError(
+            "403 Forbidden", response=response
+        )
+
+        result = pages_mixin._set_page_emoji(page_id, None)
+
+        assert result is False
+
+    def test_set_page_emoji_remove_reports_failure_on_transport_error(
+        self, pages_mixin
+    ):
+        """A dropped connection must not be reported as a removal."""
+        page_id = "dropped_emoji_123"
+
+        pages_mixin.confluence.delete_page_property.side_effect = ConnectionError(
+            "connection reset"
+        )
+
+        result = pages_mixin._set_page_emoji(page_id, None)
+
+        assert result is False
 
     def test_set_page_emoji_failure(self, pages_mixin):
         """Test handling failure when setting emoji."""

@@ -360,12 +360,33 @@ class PagesMixin(ConfluenceClient):
         """
         try:
             if value is None:
-                # Delete the property
+                # Delete the property. A property that is already absent leaves the
+                # page in the requested state, so only a 404 counts as success --
+                # anything else (denied, locked, throttled, transport failure) means
+                # the removal did not happen and must not be reported as done.
                 try:
                     self.confluence.delete_page_property(page_id, property_key)
+                except HTTPError as http_err:
+                    if (
+                        http_err.response is not None
+                        and http_err.response.status_code == 404
+                    ):
+                        logger.debug(
+                            f"Property '{property_key}' already absent on page "
+                            f"{page_id}"
+                        )
+                        return True
+                    logger.warning(
+                        f"Could not delete property '{property_key}' for page "
+                        f"{page_id}: {http_err}"
+                    )
+                    return False
                 except Exception as e:
-                    # Property might not exist, which is fine
-                    logger.debug(f"Could not delete property '{property_key}': {e}")
+                    logger.warning(
+                        f"Could not delete property '{property_key}' for page "
+                        f"{page_id}: {e}"
+                    )
+                    return False
                 return True
 
             # Check if the property already exists (need version for update)
