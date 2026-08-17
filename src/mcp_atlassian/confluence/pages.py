@@ -20,10 +20,6 @@ from .v2_adapter import ConfluenceV2Adapter
 logger = logging.getLogger("mcp-atlassian")
 
 
-class _PagePropertyUpdateError(RuntimeError):
-    """Raised when a requested page property update fails."""
-
-
 class PagesMixin(ConfluenceClient):
     """Mixin for Confluence page operations."""
 
@@ -843,7 +839,6 @@ class PagesMixin(ConfluenceClient):
             ConfluencePage model containing the updated page's data
 
         Raises:
-            _PagePropertyUpdateError: If an emoji or page width update fails
             Exception: If there is an error updating the page
         """
         try:
@@ -905,7 +900,7 @@ class PagesMixin(ConfluenceClient):
                         f"Page content was updated, but page emoji update failed "
                         f"for page {page_id}"
                     )
-                    raise _PagePropertyUpdateError(error_message)
+                    raise RuntimeError(error_message)
 
             # Set or remove the page width if provided
             if page_width is not None:
@@ -917,12 +912,10 @@ class PagesMixin(ConfluenceClient):
                         f"Page content was updated, but page width update failed "
                         f"for page {page_id}"
                     )
-                    raise _PagePropertyUpdateError(error_message)
+                    raise RuntimeError(error_message)
 
             # After update, refresh the page data
             return self.get_page_content(page_id)
-        except _PagePropertyUpdateError:
-            raise
         except Exception as e:
             logger.error(f"Error updating page {page_id}: {str(e)}")
             raise Exception(f"Failed to update page {page_id}: {str(e)}") from e
