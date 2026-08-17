@@ -1993,6 +1993,9 @@ class TestAttachmentSpacesFilterEnforcement:
             mixin.confluence = confluence_client.confluence
             mixin.config = confluence_client.config
             mixin.preprocessor = confluence_client.preprocessor
+            # Cloud OAuth reads the base URL off the underlying client rather
+            # than the config, so keep the two consistent for these tests.
+            mixin.confluence.url = confluence_client.config.url
             return mixin
 
     def test_get_content_attachments_blocks_before_api_call(self, attachments_mixin):
