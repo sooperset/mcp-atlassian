@@ -899,16 +899,24 @@ class PagesMixin(ConfluenceClient):
             if emoji is not None:
                 # Empty string means remove emoji, otherwise set it
                 emoji_to_set = emoji if emoji else None
-                if not self._set_page_emoji(page_id, emoji_to_set):
-                    error_message = f"Failed to set page emoji for page {page_id}"
+                emoji_updated = self._set_page_emoji(page_id, emoji_to_set)
+                if not emoji_updated:
+                    error_message = (
+                        f"Page content was updated, but page emoji update failed "
+                        f"for page {page_id}"
+                    )
                     raise _PagePropertyUpdateError(error_message)
 
             # Set or remove the page width if provided
             if page_width is not None:
                 # Empty string means reset to default, otherwise set it
                 width_to_set = page_width if page_width else None
-                if not self._set_page_width(page_id, width_to_set):
-                    error_message = f"Failed to set page width for page {page_id}"
+                width_updated = self._set_page_width(page_id, width_to_set)
+                if not width_updated:
+                    error_message = (
+                        f"Page content was updated, but page width update failed "
+                        f"for page {page_id}"
+                    )
                     raise _PagePropertyUpdateError(error_message)
 
             # After update, refresh the page data

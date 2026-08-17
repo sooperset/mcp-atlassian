@@ -458,7 +458,7 @@ class TestPagesMixin:
                 pages_mixin, "_set_page_emoji", return_value=False
             ) as mock_set,
             patch.object(pages_mixin, "get_page_content") as mock_get,
-            pytest.raises(RuntimeError, match="Failed to set page emoji"),
+            pytest.raises(RuntimeError) as exc_info,
         ):
             pages_mixin.update_page(
                 page_id,
@@ -470,6 +470,9 @@ class TestPagesMixin:
 
         mock_set.assert_called_once_with(page_id, None)
         mock_get.assert_not_called()
+        assert str(exc_info.value) == (
+            f"Page content was updated, but page emoji update failed for page {page_id}"
+        )
 
     def test_update_page_width_reset_failure_is_reported(self, pages_mixin):
         """Test that a failed width reset prevents returning stale page data."""
@@ -480,7 +483,7 @@ class TestPagesMixin:
                 pages_mixin, "_set_page_width", return_value=False
             ) as mock_set,
             patch.object(pages_mixin, "get_page_content") as mock_get,
-            pytest.raises(RuntimeError, match="Failed to set page width"),
+            pytest.raises(RuntimeError) as exc_info,
         ):
             pages_mixin.update_page(
                 page_id,
@@ -492,6 +495,9 @@ class TestPagesMixin:
 
         mock_set.assert_called_once_with(page_id, None)
         mock_get.assert_not_called()
+        assert str(exc_info.value) == (
+            f"Page content was updated, but page width update failed for page {page_id}"
+        )
 
     def test_update_page_error(self, pages_mixin):
         """Test error handling when updating a page."""
