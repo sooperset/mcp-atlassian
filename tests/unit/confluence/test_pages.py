@@ -458,7 +458,7 @@ class TestPagesMixin:
                 pages_mixin, "_set_page_emoji", return_value=False
             ) as mock_set,
             patch.object(pages_mixin, "get_page_content") as mock_get,
-            pytest.raises(Exception, match="Failed to set page emoji"),
+            pytest.raises(RuntimeError, match="Failed to set page emoji"),
         ):
             pages_mixin.update_page(
                 page_id,
@@ -480,7 +480,7 @@ class TestPagesMixin:
                 pages_mixin, "_set_page_width", return_value=False
             ) as mock_set,
             patch.object(pages_mixin, "get_page_content") as mock_get,
-            pytest.raises(Exception, match="Failed to set page width"),
+            pytest.raises(RuntimeError, match="Failed to set page width"),
         ):
             pages_mixin.update_page(
                 page_id,
