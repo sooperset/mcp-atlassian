@@ -619,3 +619,62 @@ class TestFormsApiDateTimeLimitation:
         assert "Workaround" in docstring
         assert "jira.update_issue" in docstring or "custom field" in docstring.lower()
         assert "customfield" in docstring
+
+
+class TestProFormaFormAnswerParsing:
+    """Answers live in `state.answers` on the form detail response (#1322)."""
+
+    DETAIL_RESPONSE = {
+        "id": "form-uuid",
+        "updated": "2026-04-23T07:29:09.855Z",
+        "design": {
+            "questions": {
+                "177": {"type": "ts", "label": "Product Name", "required": True},
+                "199": {"type": "cs", "label": "Environment"},
+                "209": {"type": "rt", "label": "Details"},
+            }
+        },
+        "state": {
+            "visibility": "e",
+            "status": "o",
+            "answers": {
+                "177": {"text": "Some Product Name"},
+                "199": {"choices": ["2"]},
+                "209": {"adf": {"version": 1, "type": "doc", "content": []}},
+            },
+        },
+    }
+
+    def test_detail_response_answers_populate_fields(self):
+        form = ProFormaForm.from_api_response(self.DETAIL_RESPONSE, issue_key="PROJ-1")
+
+        assert len(form.fields) == 3
+
+        by_id = {field.id: field for field in form.fields}
+        assert by_id["177"].name == "Product Name"
+        assert by_id["177"].type == "ts"
+        assert by_id["177"].value == "Some Product Name"
+        assert by_id["177"].required is True
+
+        assert by_id["199"].value == ["2"]
+        assert by_id["209"].value == {"version": 1, "type": "doc", "content": []}
+
+    def test_answer_without_question_definition_still_returned(self):
+        response = {
+            "id": "form-uuid",
+            "design": {"questions": {}},
+            "state": {"answers": {"42": {"text": "orphan"}}},
+        }
+
+        form = ProFormaForm.from_api_response(response)
+
+        assert len(form.fields) == 1
+        assert form.fields[0].id == "42"
+        assert form.fields[0].value == "orphan"
+
+    def test_list_response_without_state_has_no_fields(self):
+        response = {"id": "form-uuid", "name": "A form", "submitted": False}
+
+        form = ProFormaForm.from_api_response(response)
+
+        assert form.fields == []
