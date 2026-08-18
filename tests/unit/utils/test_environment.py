@@ -1,6 +1,7 @@
 """Tests for the environment utilities module."""
 
 import logging
+import os
 
 import pytest
 
@@ -532,3 +533,38 @@ class TestGetAvailableServicesWithHeaders:
             _assert_service_availability(
                 result, confluence_expected=False, jira_expected=False
             )
+
+
+class TestMockEnvironmentCleanEnv:
+    """Regression tests for MockEnvironment.clean_env().
+
+    clean_env() previously only cleared JIRA_URL/USERNAME/API_TOKEN and the
+    Confluence/OAuth equivalents, silently leaving PERSONAL_TOKEN and
+    CLIENT_CERT/CLIENT_KEY* vars untouched. Any developer with real PAT or
+    mTLS credentials already exported in their shell (e.g. for manual
+    testing against a live instance) would have those values leak into
+    parametrized auth-scenario tests that assume a clean environment,
+    causing spurious failures unrelated to the code under test.
+    """
+
+    @pytest.mark.parametrize(
+        "var_name",
+        [
+            "JIRA_PERSONAL_TOKEN",
+            "JIRA_CLIENT_CERT",
+            "JIRA_CLIENT_KEY",
+            "JIRA_CLIENT_KEY_PASSWORD",
+            "CONFLUENCE_PERSONAL_TOKEN",
+            "CONFLUENCE_CLIENT_CERT",
+            "CONFLUENCE_CLIENT_KEY",
+            "CONFLUENCE_CLIENT_KEY_PASSWORD",
+        ],
+    )
+    def test_clean_env_clears_pat_and_mtls_vars(self, var_name):
+        """clean_env() must clear PAT and mTLS-related env vars too."""
+        os.environ[var_name] = "leaked-from-developer-shell"
+        try:
+            with MockEnvironment.clean_env():
+                assert os.environ.get(var_name) is None
+        finally:
+            os.environ.pop(var_name, None)
