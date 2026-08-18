@@ -145,9 +145,7 @@ class SearchMixin(ConfluenceClient):
             # space etc. at the top level, while /rest/api/search nests
             # them under a "content" key. Normalize to the /rest/api/search
             # format so the downstream model parser works unchanged.
-            if isinstance(results, dict) and isinstance(
-                results.get("results"), list
-            ):
+            if isinstance(results, dict) and isinstance(results.get("results"), list):
                 results["results"] = [
                     {"content": item, "excerpt": item.get("excerpt", "")}
                     if "content" not in item
