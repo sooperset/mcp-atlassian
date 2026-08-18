@@ -501,6 +501,60 @@ class TestPagesMixin:
             f"page width update failed for page {page_id}"
         )
 
+    def test_create_page_emoji_failure_is_reported(self, pages_mixin):
+        """Test that a failed emoji set prevents reporting a clean creation."""
+        page_id = "123456789"
+        pages_mixin.confluence.create_page.return_value = {"id": page_id}
+
+        with (
+            patch.object(
+                pages_mixin, "_set_page_emoji", return_value=False
+            ) as mock_set,
+            patch.object(pages_mixin, "get_page_content") as mock_get,
+            pytest.raises(Exception) as exc_info,
+        ):
+            pages_mixin.create_page(
+                "PROJ",
+                "New Page",
+                "<p>Content</p>",
+                is_markdown=False,
+                emoji="\U0001f680",
+            )
+
+        mock_set.assert_called_once_with(page_id, "\U0001f680")
+        mock_get.assert_not_called()
+        assert str(exc_info.value) == (
+            f"Failed to create page 'New Page' in space PROJ: Page was created, "
+            f"but page emoji update failed for page {page_id}"
+        )
+
+    def test_create_page_width_failure_is_reported(self, pages_mixin):
+        """Test that a failed width set prevents reporting a clean creation."""
+        page_id = "123456789"
+        pages_mixin.confluence.create_page.return_value = {"id": page_id}
+
+        with (
+            patch.object(
+                pages_mixin, "_set_page_width", return_value=False
+            ) as mock_set,
+            patch.object(pages_mixin, "get_page_content") as mock_get,
+            pytest.raises(Exception) as exc_info,
+        ):
+            pages_mixin.create_page(
+                "PROJ",
+                "New Page",
+                "<p>Content</p>",
+                is_markdown=False,
+                page_width="full-width",
+            )
+
+        mock_set.assert_called_once_with(page_id, "full-width")
+        mock_get.assert_not_called()
+        assert str(exc_info.value) == (
+            f"Failed to create page 'New Page' in space PROJ: Page was created, "
+            f"but page width update failed for page {page_id}"
+        )
+
     def test_update_page_error(self, pages_mixin):
         """Test error handling when updating a page."""
         # Arrange

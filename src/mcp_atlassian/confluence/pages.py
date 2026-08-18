@@ -787,11 +787,23 @@ class PagesMixin(ConfluenceClient):
 
             # Set the page emoji if provided
             if emoji:
-                self._set_page_emoji(page_id, emoji)
+                emoji_updated = self._set_page_emoji(page_id, emoji)
+                if not emoji_updated:
+                    error_message = (
+                        f"Page was created, but page emoji update failed "
+                        f"for page {page_id}"
+                    )
+                    raise RuntimeError(error_message)
 
             # Set the page width if provided
             if page_width:
-                self._set_page_width(page_id, page_width)
+                width_updated = self._set_page_width(page_id, page_width)
+                if not width_updated:
+                    error_message = (
+                        f"Page was created, but page width update failed "
+                        f"for page {page_id}"
+                    )
+                    raise RuntimeError(error_message)
 
             return self.get_page_content(page_id)
         except Exception as e:
