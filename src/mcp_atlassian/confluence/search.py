@@ -123,6 +123,38 @@ class SearchMixin(ConfluenceClient):
             cql=cql, limit=limit, expand="content.history,content.version"
         )
 
+        # Some Confluence Cloud instances return HTTP 400 with an HTML body
+        # from /rest/api/search instead of a JSON error. When this happens
+        # the library returns the raw HTML string rather than a dict. Fall
+        # back to the /rest/api/content/search endpoint which uses a
+        # different backend and works on affected instances.
+        if not isinstance(results, dict) or "results" not in results:
+            logger.warning(
+                "Primary search endpoint (/rest/api/search) returned a "
+                "non-JSON response; falling back to /rest/api/content/search"
+            )
+            results = self.confluence.get(
+                "rest/api/content/search",
+                params={
+                    "cql": cql,
+                    "limit": limit,
+                    "expand": "history,version",
+                },
+            )
+            # /rest/api/content/search returns results with id, title,
+            # space etc. at the top level, while /rest/api/search nests
+            # them under a "content" key. Normalize to the /rest/api/search
+            # format so the downstream model parser works unchanged.
+            if isinstance(results, dict) and isinstance(
+                results.get("results"), list
+            ):
+                results["results"] = [
+                    {"content": item, "excerpt": item.get("excerpt", "")}
+                    if "content" not in item
+                    else item
+                    for item in results["results"]
+                ]
+
         # Surface malformed responses (missing "results") as errors while
         # allowing a genuine "results": [] to return an empty list.
         self._validate_search_response(results, "search")
