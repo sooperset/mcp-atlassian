@@ -346,6 +346,44 @@ class TestConfluenceCloudPageLayout:
         assert 'data-table-width="1800"' in storage_body
 
 
+class TestConfluenceCloudPagePropertyRemoval:
+    """Page property removal handling."""
+
+    def test_remove_page_emoji_and_width(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Property Removal Test {uid}",
+            body="<p>Property removal test.</p>",
+            is_markdown=False,
+            content_representation="storage",
+            emoji="📄",
+            page_width="full-width",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        assert page.emoji
+        assert page.page_width == "full-width"
+
+        updated = confluence_fetcher.update_page(
+            page.id,
+            page.title,
+            "<p>Property removal test, updated.</p>",
+            is_markdown=False,
+            content_representation="storage",
+            emoji="",
+            page_width="",
+        )
+
+        assert updated.emoji is None
+        assert updated.page_width is None
+
+
 class TestConfluenceCloudCopyAndRestrictions:
     """Page copy and restriction operations."""
 

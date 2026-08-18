@@ -3,6 +3,8 @@
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
+from atlassian.errors import ApiError
+from requests.exceptions import ConnectionError, HTTPError
 
 from mcp_atlassian.confluence.pages import PagesMixin
 from mcp_atlassian.confluence.utils import extract_emoji_from_property
@@ -446,6 +448,112 @@ class TestPagesMixin:
                 version_comment=version_comment,
                 always_update=True,
             )
+
+    def test_update_page_emoji_removal_failure_is_reported(self, pages_mixin):
+        """Test that a failed emoji removal prevents returning stale page data."""
+        page_id = "987654321"
+
+        with (
+            patch.object(
+                pages_mixin, "_set_page_emoji", return_value=False
+            ) as mock_set,
+            patch.object(pages_mixin, "get_page_content") as mock_get,
+            pytest.raises(Exception) as exc_info,
+        ):
+            pages_mixin.update_page(
+                page_id,
+                "Updated Page",
+                "<p>Updated content</p>",
+                is_markdown=False,
+                emoji="",
+            )
+
+        mock_set.assert_called_once_with(page_id, None)
+        mock_get.assert_not_called()
+        assert str(exc_info.value) == (
+            f"Failed to update page {page_id}: Page content was updated, but "
+            f"page emoji update failed for page {page_id}"
+        )
+
+    def test_update_page_width_reset_failure_is_reported(self, pages_mixin):
+        """Test that a failed width reset prevents returning stale page data."""
+        page_id = "987654321"
+
+        with (
+            patch.object(
+                pages_mixin, "_set_page_width", return_value=False
+            ) as mock_set,
+            patch.object(pages_mixin, "get_page_content") as mock_get,
+            pytest.raises(Exception) as exc_info,
+        ):
+            pages_mixin.update_page(
+                page_id,
+                "Updated Page",
+                "<p>Updated content</p>",
+                is_markdown=False,
+                page_width="",
+            )
+
+        mock_set.assert_called_once_with(page_id, None)
+        mock_get.assert_not_called()
+        assert str(exc_info.value) == (
+            f"Failed to update page {page_id}: Page content was updated, but "
+            f"page width update failed for page {page_id}"
+        )
+
+    def test_create_page_emoji_failure_is_reported(self, pages_mixin):
+        """Test that a failed emoji set prevents reporting a clean creation."""
+        page_id = "123456789"
+        pages_mixin.confluence.create_page.return_value = {"id": page_id}
+
+        with (
+            patch.object(
+                pages_mixin, "_set_page_emoji", return_value=False
+            ) as mock_set,
+            patch.object(pages_mixin, "get_page_content") as mock_get,
+            pytest.raises(Exception) as exc_info,
+        ):
+            pages_mixin.create_page(
+                "PROJ",
+                "New Page",
+                "<p>Content</p>",
+                is_markdown=False,
+                emoji="\U0001f680",
+            )
+
+        mock_set.assert_called_once_with(page_id, "\U0001f680")
+        mock_get.assert_not_called()
+        assert str(exc_info.value) == (
+            f"Failed to create page 'New Page' in space PROJ: Page was created, "
+            f"but page emoji update failed for page {page_id}"
+        )
+
+    def test_create_page_width_failure_is_reported(self, pages_mixin):
+        """Test that a failed width set prevents reporting a clean creation."""
+        page_id = "123456789"
+        pages_mixin.confluence.create_page.return_value = {"id": page_id}
+
+        with (
+            patch.object(
+                pages_mixin, "_set_page_width", return_value=False
+            ) as mock_set,
+            patch.object(pages_mixin, "get_page_content") as mock_get,
+            pytest.raises(Exception) as exc_info,
+        ):
+            pages_mixin.create_page(
+                "PROJ",
+                "New Page",
+                "<p>Content</p>",
+                is_markdown=False,
+                page_width="full-width",
+            )
+
+        mock_set.assert_called_once_with(page_id, "full-width")
+        mock_get.assert_not_called()
+        assert str(exc_info.value) == (
+            f"Failed to create page 'New Page' in space PROJ: Page was created, "
+            f"but page width update failed for page {page_id}"
+        )
 
     def test_update_page_error(self, pages_mixin):
         """Test error handling when updating a page."""
@@ -2270,9 +2378,12 @@ class TestPageEmoji:
         """Test removing emoji when none exists still succeeds."""
         page_id = "no_emoji_123"
 
-        # Mock delete returning an error (property doesn't exist)
-        pages_mixin.confluence.delete_page_property.side_effect = Exception(
-            "Property not found"
+        # The Atlassian client wraps a 404 from delete_page_property in ApiError.
+        response = MagicMock()
+        response.status_code = 404
+        pages_mixin.confluence.delete_page_property.side_effect = ApiError(
+            "There is no content with the given id or permission to view it",
+            reason=HTTPError("404 Not Found", response=response),
         )
 
         result = pages_mixin._set_page_emoji(page_id, None)
@@ -2287,6 +2398,34 @@ class TestPageEmoji:
         pages_mixin.confluence.delete_page_property.assert_any_call(
             page_id, "emoji-title-draft"
         )
+
+    def test_set_page_emoji_remove_reports_failure_on_denied_delete(self, pages_mixin):
+        """A delete rejected by the API must not be reported as a removal."""
+        page_id = "denied_emoji_123"
+
+        response = MagicMock()
+        response.status_code = 403
+        pages_mixin.confluence.delete_page_property.side_effect = HTTPError(
+            "403 Forbidden", response=response
+        )
+
+        result = pages_mixin._set_page_emoji(page_id, None)
+
+        assert result is False
+
+    def test_set_page_emoji_remove_reports_failure_on_transport_error(
+        self, pages_mixin
+    ):
+        """A dropped connection must not be reported as a removal."""
+        page_id = "dropped_emoji_123"
+
+        pages_mixin.confluence.delete_page_property.side_effect = ConnectionError(
+            "connection reset"
+        )
+
+        result = pages_mixin._set_page_emoji(page_id, None)
+
+        assert result is False
 
     def test_set_page_emoji_failure(self, pages_mixin):
         """Test handling failure when setting emoji."""
