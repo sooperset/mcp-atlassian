@@ -560,11 +560,8 @@ class TestMockEnvironmentCleanEnv:
             "CONFLUENCE_CLIENT_KEY_PASSWORD",
         ],
     )
-    def test_clean_env_clears_pat_and_mtls_vars(self, var_name):
+    def test_clean_env_clears_pat_and_mtls_vars(self, var_name, monkeypatch):
         """clean_env() must clear PAT and mTLS-related env vars too."""
-        os.environ[var_name] = "leaked-from-developer-shell"
-        try:
-            with MockEnvironment.clean_env():
-                assert os.environ.get(var_name) is None
-        finally:
-            os.environ.pop(var_name, None)
+        monkeypatch.setenv(var_name, "leaked-from-developer-shell")
+        with MockEnvironment.clean_env():
+            assert os.environ.get(var_name) is None
