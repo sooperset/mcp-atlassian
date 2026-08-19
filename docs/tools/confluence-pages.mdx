@@ -128,7 +128,7 @@ Get child pages and folders of a specific Confluence page.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `parent_id` | `string` | Yes | The ID of the parent page whose children you want to retrieve |
-| `expand` | `string` | No | Fields to expand in the response (e.g., 'version', 'body.storage') |
+| `expand` | `string` | No | Fields to expand in the response (e.g., 'version', 'body.storage'). Defaults to 'version,history'. |
 | `limit` | `integer` | No | Maximum number of child items to return (1-50) |
 | `include_content` | `boolean` | No | Whether to include the page content in the response |
 | `convert_to_markdown` | `boolean` | No | Whether to convert page content to markdown (true) or keep it in raw HTML format (false). Only relevant if include_content is true. |

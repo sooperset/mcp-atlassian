@@ -421,10 +421,13 @@ async def get_page_children(
     expand: Annotated[
         str,
         Field(
-            description="Fields to expand in the response (e.g., 'version', 'body.storage')",
-            default="version",
+            description=(
+                "Fields to expand in the response (e.g., 'version', "
+                "'body.storage'). Defaults to 'version,history'."
+            ),
+            default="version,history",
         ),
-    ] = "version",
+    ] = "version,history",
     limit: Annotated[
         int,
         Field(

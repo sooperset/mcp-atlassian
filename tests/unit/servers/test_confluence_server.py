@@ -627,7 +627,7 @@ async def test_get_page_children(client, mock_confluence_fetcher):
     assert call_kwargs["page_id"] == "123456"
     assert call_kwargs.get("start") == 0
     assert call_kwargs.get("limit") == 25
-    assert call_kwargs.get("expand") == "version"
+    assert call_kwargs.get("expand") == "version,history"
 
     result_data = json.loads(response.content[0].text)
     assert "parent_id" in result_data

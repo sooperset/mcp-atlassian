@@ -1069,7 +1069,7 @@ class PagesMixin(ConfluenceClient):
         page_id: str,
         start: int = 0,
         limit: int = 25,
-        expand: str = "version",
+        expand: str = "version,history",
         *,
         convert_to_markdown: bool = True,
         include_folders: bool = True,
