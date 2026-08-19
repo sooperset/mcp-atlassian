@@ -203,6 +203,7 @@ class PagesMixin(ConfluenceClient):
         try:
             # Use v2 API for OAuth, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
+            self.enforce_page_spaces_filter(page_id, v2_adapter=v2_adapter)
             if v2_adapter:
                 logger.debug(
                     f"Using v2 API for OAuth authentication to get page '{page_id}'"
@@ -227,6 +228,7 @@ class PagesMixin(ConfluenceClient):
                 raise Exception(error_msg)
 
             space_key = page.get("space", {}).get("key", "")
+            self.enforce_spaces_filter(space_key, page_id=page_id)
             try:
                 content = page["body"]["storage"]["value"]
             except (KeyError, TypeError) as e:
@@ -288,7 +290,12 @@ class PagesMixin(ConfluenceClient):
                 fails with the Confluence API (401/403)
         """
         try:
-            ancestors = self.confluence.get_page_ancestors(page_id)
+            v2_adapter = self._v2_adapter
+            self.enforce_page_spaces_filter(page_id, v2_adapter=v2_adapter)
+            if v2_adapter:
+                ancestors = v2_adapter.get_page_ancestors(page_id)
+            else:
+                ancestors = self.confluence.get_page_ancestors(page_id)
 
             ancestor_models = []
             for ancestor in ancestors:
@@ -302,6 +309,8 @@ class PagesMixin(ConfluenceClient):
             return ancestor_models
         except HTTPError:
             raise  # let decorator handle auth errors
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"Error fetching ancestors for page {page_id}: {str(e)}")
             logger.debug("Full exception details:", exc_info=True)
@@ -564,7 +573,11 @@ class PagesMixin(ConfluenceClient):
 
         Returns:
             ConfluencePage model containing the page content and metadata, or None if not found
+
+        Raises:
+            ValueError: If a spaces filter is configured and space_key is not in it.
         """
+        self.enforce_spaces_filter(space_key)
         try:
             # Directly try to find the page by title
             page = self.confluence.get_page_by_title(
@@ -647,7 +660,11 @@ class PagesMixin(ConfluenceClient):
 
         Returns:
             List of ConfluencePage models containing page content and metadata
+
+        Raises:
+            ValueError: If a spaces filter is configured and space_key is not in it.
         """
+        self.enforce_spaces_filter(space_key)
         pages = self.confluence.get_all_pages_from_space(
             space=space_key, start=start, limit=limit, expand="body.storage"
         )
@@ -728,8 +745,27 @@ class PagesMixin(ConfluenceClient):
             ConfluencePage model containing the new page's data
 
         Raises:
+            ValueError: If a spaces filter is configured and either space_key or
+                the parent page's space is not in it.
             Exception: If there is an error creating the page
         """
+        self.enforce_spaces_filter(space_key)
+
+        # Select the adapter before validating the parent so the lookup uses
+        # the same API family as the write. Cloud subtype creates use v2 even
+        # for non-OAuth authentication.
+        v2_adapter = self._v2_adapter
+        if subtype:
+            v2_adapter = self._cloud_v2_adapter()
+            if not v2_adapter:
+                raise ValueError(
+                    "Confluence page subtype is only supported for Confluence Cloud"
+                )
+
+        # The parent decides where the page actually lands, so an allowed
+        # space_key alone is not enough to keep the write inside the boundary.
+        if parent_id:
+            self.enforce_page_spaces_filter(parent_id, v2_adapter=v2_adapter)
         try:
             # Determine body and representation based on content type
             if is_markdown:
@@ -747,13 +783,6 @@ class PagesMixin(ConfluenceClient):
 
             # Use v2 API for OAuth authentication and for Cloud page subtypes
             # such as Live Docs. The v1 API/client does not expose subtype.
-            v2_adapter = self._v2_adapter
-            if subtype:
-                v2_adapter = self._cloud_v2_adapter()
-                if not v2_adapter:
-                    raise ValueError(
-                        "Confluence page subtype is only supported for Confluence Cloud"
-                    )
             if v2_adapter:
                 logger.debug(
                     f"Using v2 API for OAuth authentication to create page '{title}'"
@@ -854,6 +883,11 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error updating the page
         """
         try:
+            v2_adapter = self._v2_adapter
+            self.enforce_page_spaces_filter(page_id, v2_adapter=v2_adapter)
+            if parent_id:
+                self.enforce_page_spaces_filter(parent_id, v2_adapter=v2_adapter)
+
             # Determine body and representation based on content type
             if is_markdown:
                 # Convert markdown to Confluence storage format
@@ -871,7 +905,6 @@ class PagesMixin(ConfluenceClient):
             logger.debug(f"Updating page {page_id} with title '{title}'")
 
             # Use v2 API for OAuth authentication, v1 API for token/basic auth
-            v2_adapter = self._v2_adapter
             if v2_adapter:
                 logger.debug(
                     f"Using v2 API for OAuth authentication to update page '{page_id}'"
@@ -1093,6 +1126,10 @@ class PagesMixin(ConfluenceClient):
             limit = clamp_limit(limit, context="confluence.get_page_children")
 
             v2_adapter = self._page_children_v2_adapter
+            space_key = ""
+            if self._get_allowed_spaces() is not None:
+                space_key = self._resolve_page_space_key(page_id, v2_adapter=v2_adapter)
+                self.enforce_spaces_filter(space_key, page_id=page_id)
             if v2_adapter:
                 logger.debug(f"Using v2 API to get children for Cloud page '{page_id}'")
                 child_items = self._get_v2_page_children_items(
@@ -1151,15 +1188,22 @@ class PagesMixin(ConfluenceClient):
                         )
 
             # Get space key from the first result if available
-            space_key = ""
             if child_items:
                 first_item = child_items[0]
-                if "space" in first_item:
-                    space_key = first_item.get("space", {}).get("key", "")
+                if "space" in first_item and isinstance(first_item["space"], dict):
+                    item_space_key = first_item["space"].get("key", "")
+                    if item_space_key:
+                        space_key = item_space_key
                 elif expandable := first_item.get("_expandable", {}):
                     if space_path := expandable.get("space"):
                         if space_path.startswith("/rest/api/space/"):
                             space_key = space_path.split("/rest/api/space/")[1]
+
+                # Children live in the same space as their parent, so this
+                # single check covers the whole result set. Skipped when
+                # there are no children: an empty result exposes nothing, and
+                # older Confluence responses may omit space data entirely.
+                self.enforce_spaces_filter(space_key, page_id=page_id)
 
             # Process results
             page_models = []
@@ -1227,8 +1271,10 @@ class PagesMixin(ConfluenceClient):
             - Note: parent_id is None for root pages
 
         Raises:
+            ValueError: If a spaces filter is configured and space_key is not in it.
             Exception: If there is an error fetching pages
         """
+        self.enforce_spaces_filter(space_key)
         try:
             limit = clamp_limit(limit, context="confluence.get_space_page_tree")
 
@@ -1344,6 +1390,8 @@ class PagesMixin(ConfluenceClient):
             Boolean indicating success (True) or failure (False)
 
         Raises:
+            ValueError: If a spaces filter is configured and the page's
+                space is not in it.
             Exception: If there is an error deleting the page
         """
         try:
@@ -1351,6 +1399,7 @@ class PagesMixin(ConfluenceClient):
 
             # Use v2 API for OAuth authentication, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
+            self.enforce_page_spaces_filter(page_id, v2_adapter=v2_adapter)
             if v2_adapter:
                 logger.debug(
                     f"Using v2 API for OAuth authentication to delete page '{page_id}'"
@@ -1411,6 +1460,7 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error getting page history
         """
         try:
+            self.enforce_page_spaces_filter(page_id, v2_adapter=self._v2_adapter)
             v2_adapter = self._v2_adapter
             if v2_adapter:
                 logger.debug(
@@ -1449,6 +1499,7 @@ class PagesMixin(ConfluenceClient):
                 content = ""
 
             space_key = page.get("space", {}).get("key", "")
+            self.enforce_spaces_filter(space_key, page_id=page_id)
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
@@ -1501,7 +1552,9 @@ class PagesMixin(ConfluenceClient):
 
         Raises:
             ValueError: If neither target_parent_id nor target_space_key
-                is provided.
+                is provided, or if a spaces filter is configured and the
+                source page's space (or an explicit target_space_key) is
+                not in it.
             MCPAtlassianAuthenticationError: If authentication fails.
         """
         if not target_parent_id and not target_space_key:
@@ -1509,9 +1562,15 @@ class PagesMixin(ConfluenceClient):
                 "At least one of target_parent_id or target_space_key must be provided."
             )
 
+        # Use v2 adapter for OAuth authentication
+        v2_adapter = self._v2_adapter
+        self.enforce_page_spaces_filter(page_id, v2_adapter=v2_adapter)
+        if target_space_key:
+            self.enforce_spaces_filter(target_space_key)
+        if target_parent_id:
+            self.enforce_page_spaces_filter(target_parent_id, v2_adapter=v2_adapter)
+
         try:
-            # Use v2 adapter for OAuth authentication
-            v2_adapter = self._v2_adapter
             if v2_adapter:
                 logger.debug(
                     f"Using REST API for OAuth authentication to move page '{page_id}'"
@@ -1620,9 +1679,18 @@ class PagesMixin(ConfluenceClient):
             ConfluencePage model for the newly created copy.
 
         Raises:
+            ValueError: If a spaces filter is configured and the source
+                page's space or destination_space_key is not in it.
             MCPAtlassianAuthenticationError: If authentication fails.
             Exception: If the copy operation fails.
         """
+        v2_adapter = self._v2_adapter
+        self.enforce_page_spaces_filter(source_page_id, v2_adapter=v2_adapter)
+        self.enforce_spaces_filter(destination_space_key)
+        if destination_parent_id:
+            self.enforce_page_spaces_filter(
+                destination_parent_id, v2_adapter=v2_adapter
+            )
         try:
             if self.config.is_cloud:
                 payload: dict[str, object] = {

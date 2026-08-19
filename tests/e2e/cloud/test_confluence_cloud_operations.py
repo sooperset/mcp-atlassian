@@ -12,7 +12,7 @@ import requests
 from mcp_atlassian.confluence import ConfluenceFetcher
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 
-from .conftest import CloudInstanceInfo, CloudResourceTracker
+from .conftest import AuthVariant, CloudInstanceInfo, CloudResourceTracker
 
 pytestmark = pytest.mark.cloud_e2e
 
@@ -52,6 +52,72 @@ class TestConfluenceCloudBehavior:
     def test_wiki_prefix_in_url(self, cloud_instance: CloudInstanceInfo) -> None:
         """Cloud Confluence URL should contain /wiki."""
         assert "/wiki" in cloud_instance.confluence_url
+
+
+class TestConfluenceCloudSpacesFilter:
+    """The configured Cloud space allowlist applies to v1 and v2 paths."""
+
+    def test_allowlisted_space_works_with_cloud_basic_auth(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Cloud basic-auth page and attachment reads succeed in the test space."""
+        original_filter = confluence_fetcher.config.spaces_filter
+        confluence_fetcher.config.spaces_filter = cloud_instance.space_key
+        try:
+            page = confluence_fetcher.get_page_content(cloud_instance.test_page_id)
+            attachments = confluence_fetcher.get_content_attachments(
+                cloud_instance.test_page_id
+            )
+        finally:
+            confluence_fetcher.config.spaces_filter = original_filter
+
+        assert page.id == cloud_instance.test_page_id
+        assert attachments["success"] is True
+
+        try:
+            confluence_fetcher.config.spaces_filter = "MCP_ATLASSIAN_FILTER_DENIED"
+            with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+                confluence_fetcher.get_page_content(cloud_instance.test_page_id)
+        finally:
+            confluence_fetcher.config.spaces_filter = original_filter
+
+    def test_allowlisted_space_works_with_cloud_oauth_v2(
+        self,
+        auth_variants: list[AuthVariant],
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Cloud OAuth page and attachment reads stay on the v2 path."""
+        oauth_variant = next(
+            (variant for variant in auth_variants if variant.name == "byo_oauth"),
+            None,
+        )
+        if oauth_variant is None:
+            pytest.skip("CLOUD_E2E_OAUTH_ACCESS_TOKEN is not configured")
+
+        confluence_fetcher = ConfluenceFetcher(
+            config=oauth_variant.confluence_config,
+        )
+        original_filter = confluence_fetcher.config.spaces_filter
+        confluence_fetcher.config.spaces_filter = cloud_instance.space_key
+        try:
+            page = confluence_fetcher.get_page_content(cloud_instance.test_page_id)
+            attachments = confluence_fetcher.get_content_attachments(
+                cloud_instance.test_page_id
+            )
+        finally:
+            confluence_fetcher.config.spaces_filter = original_filter
+
+        assert page.id == cloud_instance.test_page_id
+        assert attachments["success"] is True
+
+        try:
+            confluence_fetcher.config.spaces_filter = "MCP_ATLASSIAN_FILTER_DENIED"
+            with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+                confluence_fetcher.get_page_content(cloud_instance.test_page_id)
+        finally:
+            confluence_fetcher.config.spaces_filter = original_filter
 
 
 class TestConfluenceCloudAnalytics:

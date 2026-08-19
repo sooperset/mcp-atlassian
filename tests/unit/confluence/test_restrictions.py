@@ -35,6 +35,7 @@ def restrictions_mixin_server_dc(confluence_client):
         # Use a MagicMock config so is_cloud can be set freely
         mixin.config = MagicMock()
         mixin.config.is_cloud = False
+        mixin.config.spaces_filter = None
         mixin.preprocessor = confluence_client.preprocessor
         return mixin
 
@@ -225,3 +226,44 @@ class TestSetPageRestrictions:
             == "https://api.atlassian.com/ex/confluence/cloud-123/wiki"
             "/rest/api/content/123/restriction"
         )
+
+
+class TestRestrictionsSpacesFilterEnforcement:
+    """CONFLUENCE_SPACES_FILTER must be enforced here too (see issue #1495).
+
+    Restriction tools are addressed by page ID only, so enforcement resolves
+    the page's space with a lookup (``confluence_client``'s default mocked
+    ``get_page_by_id`` response lives in space "PROJ").
+    """
+
+    def test_get_page_restrictions_blocks_disallowed_space(self, restrictions_mixin):
+        restrictions_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            restrictions_mixin.get_page_restrictions("987654321")
+
+        restrictions_mixin.confluence.get.assert_not_called()
+
+    def test_get_page_restrictions_allows_configured_space(self, restrictions_mixin):
+        restrictions_mixin.config.spaces_filter = "PROJ"
+        restrictions_mixin.confluence.get.return_value = {}
+
+        result = restrictions_mixin.get_page_restrictions("987654321")
+
+        assert result["read"] == {"users": [], "groups": []}
+
+    def test_set_page_restrictions_blocks_disallowed_space(self, restrictions_mixin):
+        restrictions_mixin.config.spaces_filter = "OTHERSPACE"
+
+        with pytest.raises(Exception, match="CONFLUENCE_SPACES_FILTER"):
+            restrictions_mixin.set_page_restrictions("987654321", read_users=["u1"])
+
+        restrictions_mixin.confluence._session.put.assert_not_called()
+
+    def test_no_filter_configured_is_unaffected(self, restrictions_mixin):
+        restrictions_mixin.config.spaces_filter = None
+        restrictions_mixin.confluence.get.return_value = {}
+
+        result = restrictions_mixin.get_page_restrictions("987654321")
+
+        assert result["read"] == {"users": [], "groups": []}

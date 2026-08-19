@@ -26,7 +26,10 @@ class ConfluenceV2Adapter:
             base_url: Base URL for the Confluence instance
         """
         self.session = session
-        self.base_url = base_url
+        normalized_base_url = base_url.rstrip("/")
+        if not normalized_base_url.endswith("/wiki"):
+            normalized_base_url = f"{normalized_base_url}/wiki"
+        self.base_url = normalized_base_url
 
     @staticmethod
     def _user_ref_from_account_id(account_id: str | None) -> dict[str, str] | None:
@@ -295,8 +298,7 @@ class ConfluenceV2Adapter:
                 )
             else:
                 logger.error(f"Error getting space key for ID '{space_id}': {e}")
-            # Return the space_id as fallback
-            return {"id": space_id, "key": space_id, "name": f"Space {space_id}"}
+            raise ValueError(f"Failed to resolve space ID '{space_id}'") from e
 
     def _get_space_key_from_id(self, space_id: str) -> str:
         """Get space key from space ID using v2 API."""
@@ -364,6 +366,113 @@ class ConfluenceV2Adapter:
             else:
                 logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
+
+    def get_page_space_key(self, page_id: str) -> str:
+        """Get a page's space key without requesting its body.
+
+        Args:
+            page_id: The ID of the page to inspect.
+
+        Returns:
+            The page's space key.
+
+        Raises:
+            ValueError: If the page or its space cannot be resolved.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}"
+            response = self.session.get(url)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict) or not data.get("spaceId"):
+                raise ValueError(f"Page '{page_id}' has no space ID")
+            return self._get_space_key_from_id(str(data["spaceId"]))
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting space for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting space for page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to resolve space for page '{page_id}': {e}"
+            ) from e
+
+    def get_blog_post_space_key(self, blog_post_id: str) -> str:
+        """Get a blog post's space key without requesting its body.
+
+        Args:
+            blog_post_id: The ID of the blog post to inspect.
+
+        Returns:
+            The blog post's space key.
+
+        Raises:
+            ValueError: If the blog post or its space cannot be resolved.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/blogposts/{blog_post_id}"
+            response = self.session.get(url)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict) or not data.get("spaceId"):
+                raise ValueError(f"Blog post '{blog_post_id}' has no space ID")
+            return self._get_space_key_from_id(str(data["spaceId"]))
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting space for blog post '{blog_post_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting space for blog post '{blog_post_id}': {e}")
+            raise ValueError(
+                f"Failed to resolve space for blog post '{blog_post_id}': {e}"
+            ) from e
+
+    def get_page_ancestors(self, page_id: str) -> list[dict[str, Any]]:
+        """Get page ancestors through the Cloud v2 API.
+
+        The v2 ancestors endpoint returns minimal page references, so each
+        reference is expanded through the v2 page endpoint before returning a
+        v1-compatible response for the existing page models.
+
+        Args:
+            page_id: The ID of the page whose ancestors to retrieve.
+
+        Returns:
+            Ancestor pages in top-to-bottom order.
+
+        Raises:
+            ValueError: If the request or an ancestor lookup fails.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/ancestors"
+            response = self.session.get(url, params={"limit": 250})
+            response.raise_for_status()
+            data = response.json()
+            results = data.get("results", []) if isinstance(data, dict) else []
+            if not isinstance(results, list):
+                raise ValueError("Page ancestors response has invalid results")
+
+            ancestors: list[dict[str, Any]] = []
+            for ancestor in results:
+                if not isinstance(ancestor, dict) or not ancestor.get("id"):
+                    continue
+                ancestors.append(self.get_page(page_id=str(ancestor["id"])))
+            return ancestors
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting ancestors for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting ancestors for page '{page_id}': {e}")
+            raise ValueError(
+                f"Failed to get ancestors for page '{page_id}': {e}"
+            ) from e
 
     def get_page_direct_children(
         self,
@@ -1328,6 +1437,74 @@ class ConfluenceV2Adapter:
                 f"Failed to get attachments for page '{page_id}': {e}"
             ) from e
 
+    def get_blog_post_attachments(
+        self,
+        blog_post_id: str,
+        start: int = 0,
+        limit: int = 50,
+        filename: str | None = None,
+        media_type: str | None = None,
+        sort: str | None = None,
+    ) -> dict[str, Any]:
+        """Get attachments for a blog post using the v2 API.
+
+        Args:
+            blog_post_id: The blog post ID.
+            start: Starting index for pagination (default: 0).
+            limit: Maximum number of results (default: 50, max: 250).
+            filename: Filter by filename.
+            media_type: Filter by media type (for example, ``image/png``).
+            sort: Sort field (for example, ``created-date``).
+
+        Returns:
+            Dictionary containing the attachment results and pagination data.
+
+        Raises:
+            HTTPError: If the API request fails (propagates 401/403).
+            ValueError: If the blog post is not found or another error occurs.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/blogposts/{blog_post_id}/attachments"
+            params: dict[str, Any] = {"start": start, "limit": limit}
+
+            if filename:
+                params["filename"] = filename
+            if media_type:
+                params["media-type"] = media_type
+            if sort:
+                params["sort"] = sort
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            data = response.json()
+            logger.debug(
+                f"Successfully retrieved attachments for blog post '{blog_post_id}' "
+                f"(found {len(data.get('results', []))})"
+            )
+            return self._convert_attachments_v2_to_v1(data)
+
+        except HTTPError as e:
+            if e.response is not None and e.response.status_code in [401, 403]:
+                logger.error(
+                    "Authentication error getting attachments for blog post "
+                    f"'{blog_post_id}': {e}"
+                )
+                raise
+            logger.warning(
+                f"HTTP error getting attachments for blog post '{blog_post_id}': {e}"
+            )
+            raise ValueError(
+                f"Failed to get attachments for blog post '{blog_post_id}': {e}"
+            ) from e
+        except Exception as e:
+            logger.error(
+                f"Error getting attachments for blog post '{blog_post_id}': {e}"
+            )
+            raise ValueError(
+                f"Failed to get attachments for blog post '{blog_post_id}': {e}"
+            ) from e
+
     def get_attachment_by_id(self, attachment_id: str) -> dict[str, Any]:
         """Get a single attachment by ID using v2 API.
 
@@ -1438,7 +1615,7 @@ class ConfluenceV2Adapter:
         Returns:
             Attachment formatted like v1 API for compatibility
         """
-        return {
+        converted: dict[str, Any] = {
             "id": v2_attachment.get("id"),
             "type": "attachment",
             "status": v2_attachment.get("status", "current"),
@@ -1454,3 +1631,24 @@ class ConfluenceV2Adapter:
             "version": v2_attachment.get("version", {}),
             "_links": v2_attachment.get("_links", {}),
         }
+
+        page_id = v2_attachment.get("pageId")
+        blog_post_id = v2_attachment.get("blogPostId")
+        if page_id is not None:
+            converted["pageId"] = page_id
+        if blog_post_id is not None:
+            converted["blogPostId"] = blog_post_id
+        elif page_id is None:
+            # Older v2-compatible responses used a generic parentId. Preserve
+            # the existing page fallback, but never let it replace an explicit
+            # blogPostId that the filter needs to resolve through /blogposts.
+            parent_id = v2_attachment.get("parentId")
+            if parent_id is not None:
+                converted["pageId"] = parent_id
+
+        for parent_field in ("customContentId", "spaceId"):
+            parent_id = v2_attachment.get(parent_field)
+            if parent_id is not None:
+                converted[parent_field] = parent_id
+
+        return converted

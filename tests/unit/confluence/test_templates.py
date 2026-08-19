@@ -130,6 +130,28 @@ class TestListPageTemplates:
 
         assert result == []
 
+    def test_unscoped_list_filters_templates_from_disallowed_spaces(
+        self, templates_mixin
+    ):
+        templates_mixin.config.spaces_filter = "ENG"
+        _set_api_response(
+            templates_mixin,
+            {
+                "results": [
+                    {**_TEMPLATE_SUMMARY, "spaceKey": "ENG"},
+                    {**_TEMPLATE_SUMMARY_2, "spaceKey": "SECRET"},
+                    {"templateId": "global", "name": "Global"},
+                ]
+            },
+        )
+
+        result = templates_mixin.list_page_templates()
+
+        assert [template["templateId"] for template in result] == [
+            "tpl-001",
+            "global",
+        ]
+
     def test_api_error_raises(self, templates_mixin):
         """list_page_templates propagates non-authentication API errors."""
         response = _set_api_response(templates_mixin, {})
@@ -184,6 +206,54 @@ class TestGetPageTemplate:
             params=None,
         )
 
+    def test_allowlisted_space_template_is_returned(self, templates_mixin):
+        """get_page_template permits a template from an allowlisted space."""
+        templates_mixin.config.spaces_filter = "ENG"
+        template = {**_TEMPLATE_SUMMARY, "spaceKey": "eng"}
+        _set_api_response(templates_mixin, template)
+
+        assert templates_mixin.get_page_template("tpl-001") == template
+
+    def test_allowlisted_nested_space_template_is_returned(self, templates_mixin):
+        """get_page_template recognizes the API's nested space representation."""
+        templates_mixin.config.spaces_filter = "ENG"
+        template = {**_TEMPLATE_SUMMARY, "space": {"key": "eng"}}
+        _set_api_response(templates_mixin, template)
+
+        assert templates_mixin.get_page_template("tpl-001") == template
+
+    def test_disallowed_space_template_is_rejected(self, templates_mixin):
+        """get_page_template rejects a template from a filtered-out space."""
+        templates_mixin.config.spaces_filter = "ENG"
+        _set_api_response(
+            templates_mixin,
+            {**_TEMPLATE_SUMMARY, "spaceKey": "SECRET"},
+        )
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            templates_mixin.get_page_template("tpl-001")
+
+    def test_disallowed_nested_space_template_is_rejected(self, templates_mixin):
+        """Nested template space metadata is subject to the same allowlist."""
+        templates_mixin.config.spaces_filter = "ENG"
+        _set_api_response(
+            templates_mixin,
+            {**_TEMPLATE_SUMMARY, "space": {"key": "SECRET"}},
+        )
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            templates_mixin.get_page_template("tpl-001")
+
+    def test_global_template_is_returned_when_space_filter_is_configured(
+        self, templates_mixin
+    ):
+        """Global templates remain available because they have no space key."""
+        templates_mixin.config.spaces_filter = "ENG"
+        global_template = {**_TEMPLATE_SUMMARY, "spaceKey": None}
+        _set_api_response(templates_mixin, global_template)
+
+        assert templates_mixin.get_page_template("tpl-001") == global_template
+
 
 # ---------------------------------------------------------------------------
 # create_page_from_template
@@ -191,6 +261,20 @@ class TestGetPageTemplate:
 
 
 class TestCreatePageFromTemplate:
+    def test_rejects_disallowed_destination_before_template_fetch(
+        self, templates_mixin
+    ):
+        templates_mixin.config.spaces_filter = "ENG"
+
+        with pytest.raises(ValueError, match="CONFLUENCE_SPACES_FILTER"):
+            templates_mixin.create_page_from_template(
+                space_key="SECRET",
+                title="Secret",
+                template_id="tpl-001",
+            )
+
+        templates_mixin.confluence._session.get.assert_not_called()
+
     def test_creates_page_with_template_body(self, templates_mixin):
         """create_page_from_template uses the shared page creation path."""
         _set_api_response(templates_mixin, _TEMPLATE_SUMMARY)

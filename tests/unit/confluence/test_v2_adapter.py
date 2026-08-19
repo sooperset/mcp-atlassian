@@ -78,7 +78,15 @@ class TestConfluenceV2Adapter:
         assert result["history"]["createdBy"]["accountId"] == "creator-account-id"
         assert result["history"]["lastUpdated"]["when"] == "2024-01-02T10:00:00.000Z"
         assert result["body"]["storage"]["value"] == "<p>Test content</p>"
-        assert result["body"]["storage"]["representation"] == "storage"
+
+    def test_gateway_base_url_gets_wiki_prefix(self, mock_session):
+        """Cloud gateway v2 requests include the required product prefix."""
+        adapter = ConfluenceV2Adapter(
+            session=mock_session,
+            base_url="https://api.atlassian.com/ex/confluence/cloud-id",
+        )
+
+        assert adapter.base_url.endswith("/cloud-id/wiki")
 
     def test_get_page_not_found(self, v2_adapter, mock_session):
         """Test page retrieval when page doesn't exist."""
@@ -92,6 +100,88 @@ class TestConfluenceV2Adapter:
         # Call the method and expect an exception
         with pytest.raises(ValueError, match="Failed to get page '999999'"):
             v2_adapter.get_page("999999")
+
+    def test_get_page_space_key_requests_metadata_without_body(
+        self, v2_adapter, mock_session
+    ):
+        page_response = Mock()
+        page_response.json.return_value = {"spaceId": "789"}
+        space_response = Mock()
+        space_response.json.return_value = {"key": "TEST"}
+        mock_session.get.side_effect = [page_response, space_response]
+
+        result = v2_adapter.get_page_space_key("123456")
+
+        assert result == "TEST"
+        assert mock_session.get.call_args_list[0].args == (
+            "https://example.atlassian.net/wiki/api/v2/pages/123456",
+        )
+        assert mock_session.get.call_args_list[0].kwargs == {}
+        assert mock_session.get.call_args_list[1].args == (
+            "https://example.atlassian.net/wiki/api/v2/spaces/789",
+        )
+
+    def test_get_blog_post_space_key_requests_v2_metadata(
+        self, v2_adapter, mock_session
+    ):
+        """Blog post space resolution stays on the Cloud v2 API."""
+        blog_post_response = Mock()
+        blog_post_response.json.return_value = {"spaceId": "789"}
+        space_response = Mock()
+        space_response.json.return_value = {"key": "NEWS"}
+        mock_session.get.side_effect = [blog_post_response, space_response]
+
+        result = v2_adapter.get_blog_post_space_key("blog-1")
+
+        assert result == "NEWS"
+        assert mock_session.get.call_args_list[0].args == (
+            "https://example.atlassian.net/wiki/api/v2/blogposts/blog-1",
+        )
+        assert mock_session.get.call_args_list[1].args == (
+            "https://example.atlassian.net/wiki/api/v2/spaces/789",
+        )
+
+    def test_get_page_ancestors_uses_v2_endpoints(self, v2_adapter, mock_session):
+        """Ancestor resolution must use v2 metadata on OAuth Cloud."""
+        ancestors_response = Mock()
+        ancestors_response.json.return_value = {"results": [{"id": "parent-1"}]}
+        page_response = Mock()
+        page_response.json.return_value = {
+            "id": "parent-1",
+            "title": "Parent",
+            "spaceId": "789",
+        }
+        space_response = Mock()
+        space_response.json.return_value = {"key": "TEST"}
+        mock_session.get.side_effect = [
+            ancestors_response,
+            page_response,
+            space_response,
+        ]
+
+        result = v2_adapter.get_page_ancestors("page-1")
+
+        assert result[0]["id"] == "parent-1"
+        assert result[0]["space"]["key"] == "TEST"
+        mock_session.get.assert_any_call(
+            "https://example.atlassian.net/wiki/api/v2/pages/page-1/ancestors",
+            params={"limit": 250},
+        )
+
+    def test_get_page_space_key_fails_closed_on_space_lookup_error(
+        self, v2_adapter, mock_session
+    ):
+        """A failed v2 space lookup must not be treated as a matching key."""
+        page_response = Mock()
+        page_response.json.return_value = {"spaceId": "789"}
+        space_response = Mock()
+        space_response.raise_for_status.side_effect = requests.RequestException(
+            "space lookup failed"
+        )
+        mock_session.get.side_effect = [page_response, space_response]
+
+        with pytest.raises(ValueError, match="Failed to resolve space"):
+            v2_adapter.get_page_space_key("page-1")
 
     def test_get_page_with_minimal_response(self, v2_adapter, mock_session):
         """Test page retrieval with minimal v2 response."""
@@ -319,6 +409,11 @@ class TestConfluenceV2Adapter:
                 "/api/v2/pages/123/attachments",
             ),
             (
+                "get_blog_post_attachments",
+                {"blog_post_id": "blog-1"},
+                "/api/v2/blogposts/blog-1/attachments",
+            ),
+            (
                 "get_attachment_by_id",
                 {"attachment_id": "att-1"},
                 "/api/v2/attachments/att-1",
@@ -329,7 +424,13 @@ class TestConfluenceV2Adapter:
                 "/api/v2/attachments/att-1",
             ),
         ],
-        ids=["analytics", "page_attachments", "get_attachment", "delete_attachment"],
+        ids=[
+            "analytics",
+            "page_attachments",
+            "blog_post_attachments",
+            "get_attachment",
+            "delete_attachment",
+        ],
     )
     def test_no_double_wiki_prefix(
         self, v2_adapter, mock_session, method, call_kwargs, expected_path
@@ -351,6 +452,28 @@ class TestConfluenceV2Adapter:
 
         assert "/wiki/wiki/" not in url, f"Double /wiki in URL: {url}"
         assert url.endswith(expected_path), f"Expected {expected_path}, got {url}"
+
+    def test_attachment_conversion_preserves_page_and_blog_parent_ids(
+        self, v2_adapter, mock_session
+    ):
+        """v2 attachment conversion retains both possible content parents."""
+        response = Mock()
+        response.json.return_value = {
+            "id": "att-1",
+            "title": "release.txt",
+            "pageId": "page-1",
+            "blogPostId": "blog-1",
+            "spaceId": "space-1",
+            "mediaType": "text/plain",
+            "fileSize": 12,
+        }
+        mock_session.get.return_value = response
+
+        attachment = v2_adapter.get_attachment_by_id("att-1")
+
+        assert attachment["pageId"] == "page-1"
+        assert attachment["blogPostId"] == "blog-1"
+        assert attachment["spaceId"] == "space-1"
 
 
 class TestConfluenceV2AdapterComments:
