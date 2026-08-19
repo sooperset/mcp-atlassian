@@ -448,8 +448,12 @@ class TestConfluenceCloudCopyAndRestrictions:
                 edit_users=[account_id],
             )
         except MCPAtlassianAuthenticationError as exc:
+            cause_response = getattr(exc.__cause__, "response", None)
+            if getattr(cause_response, "status_code", None) != 403:
+                raise
             # Altering content restrictions is plan-gated on Confluence Cloud
-            # (PermissionException on Free sites) — not a client regression.
+            # (403 PermissionException on Free sites) — not a client regression.
+            # A 401 (expired/invalid credential) must still fail loudly.
             pytest.skip(f"Page restrictions not available on this site: {exc}")
 
         try:

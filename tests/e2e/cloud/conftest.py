@@ -496,6 +496,8 @@ def cloud_image_page(
 # (api.atlassian.com/ex/confluence/{cloudId}) since ~2026-08-17, which breaks
 # every v1-backed operation in OAuth mode until the client migrates to v2.
 # CQL search and /user/current are the only survivors. See issue #1598.
+# If these tests start XPASSing (the v2 migration landed or Atlassian restored
+# the endpoints), this hook has outlived its purpose — delete it.
 _BYO_OAUTH_V1_REMOVED = {
     "test_get_page",
     "test_get_spaces",
