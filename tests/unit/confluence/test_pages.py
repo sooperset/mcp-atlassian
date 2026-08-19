@@ -695,6 +695,47 @@ class TestPagesMixin:
         assert results[2].id == "111222"
         assert results[2].title == "Child Folder 1"
 
+    def test_get_page_children_default_expands_history(self, pages_mixin):
+        """Test default child lookup requests and returns page metadata."""
+        parent_id = "123456"
+        pages_mixin.config.url = "https://confluence.example.com"
+        pages_mixin.confluence.get_page_child_by_type.return_value = {
+            "results": [
+                {
+                    "id": "789012",
+                    "title": "Child Page With Metadata",
+                    "type": "page",
+                    "space": {"key": "DEMO"},
+                    "history": {
+                        "createdDate": "2026-07-27T16:40:47.000+0200",
+                        "lastUpdated": {"when": "2026-08-17T13:19:17.000+0200"},
+                        "createdBy": {"displayName": "Page Author"},
+                    },
+                    "version": {
+                        "number": 3,
+                        "when": "2026-08-18T09:00:00.000+0200",
+                    },
+                }
+            ]
+        }
+
+        results = pages_mixin.get_page_children(
+            page_id=parent_id, include_folders=False
+        )
+
+        pages_mixin.confluence.get_page_child_by_type.assert_called_once_with(
+            page_id=parent_id,
+            type="page",
+            start=0,
+            limit=25,
+            expand="version,history",
+        )
+        assert len(results) == 1
+        assert results[0].created == "2026-07-27T16:40:47.000+0200"
+        assert results[0].updated == "2026-08-17T13:19:17.000+0200"
+        assert results[0].author is not None
+        assert results[0].author.display_name == "Page Author"
+
     def test_get_page_children_without_folders(self, pages_mixin):
         """Test getting child pages only (without folders)."""
         # Arrange
