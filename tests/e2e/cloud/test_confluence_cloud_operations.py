@@ -10,6 +10,7 @@ import pytest
 import requests
 
 from mcp_atlassian.confluence import ConfluenceFetcher
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 
 from .conftest import CloudInstanceInfo, CloudResourceTracker
 
@@ -446,6 +447,12 @@ class TestConfluenceCloudCopyAndRestrictions:
                 read_users=[account_id],
                 edit_users=[account_id],
             )
+        except MCPAtlassianAuthenticationError as exc:
+            # Altering content restrictions is plan-gated on Confluence Cloud
+            # (PermissionException on Free sites) — not a client regression.
+            pytest.skip(f"Page restrictions not available on this site: {exc}")
+
+        try:
             assert result["read"]["users"] == [account_id]
             assert result["update"]["users"] == [account_id]
 
