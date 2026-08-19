@@ -1899,7 +1899,7 @@ async def batch_create_issues(
 
 
 @jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_issues"},
+    tags={"jira", "read", "cloud_only", "toolset:jira_issues"},
     annotations={"title": "Batch Get Changelogs", "readOnlyHint": True},
 )
 async def batch_get_changelogs(
@@ -2385,7 +2385,7 @@ async def delete_issue(
 
 
 @jira_mcp.tool(
-    tags={"jira", "write", "toolset:jira_issues"},
+    tags={"jira", "write", "cloud_only", "toolset:jira_issues"},
     annotations={"title": "Move Issue to Project", "destructiveHint": True},
 )
 @check_write_access
