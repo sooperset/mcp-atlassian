@@ -111,7 +111,7 @@ class TestConfluenceCloudStorageFormat:
         storage_content = (
             "<h1>Cloud E2E Storage Format Test</h1>"
             "<p>This page uses <strong>storage format</strong>.</p>"
-            "<ul><li>Item 1</li><li>Item 2</li></ul>"
+            '<ac:figure><ri:attachment ri:filename="diagram.png" /></ac:figure>'
         )
         page = confluence_fetcher.create_page(
             space_key=cloud_instance.space_key,
@@ -122,6 +122,20 @@ class TestConfluenceCloudStorageFormat:
         )
         resource_tracker.add_confluence_page(page.id)
         assert page.id is not None
+
+        raw_page = confluence_fetcher.confluence.get_page_by_id(
+            page.id,
+            expand="body.storage",
+        )
+        raw_storage = raw_page["body"]["storage"]["value"]
+        fetched = confluence_fetcher.get_page_content(
+            page.id,
+            convert_to_markdown=False,
+        )
+
+        assert "<ri:attachment" in raw_storage
+        assert fetched.content == raw_storage
+        assert fetched.content_format == "storage"
 
 
 class TestConfluenceCloudPageSubtype:
