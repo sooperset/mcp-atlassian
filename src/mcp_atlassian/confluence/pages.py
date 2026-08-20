@@ -246,7 +246,7 @@ class PagesMixin(ConfluenceClient):
                 attachments=page_attachments,
             )
 
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            page_content = processed_markdown if convert_to_markdown else content
 
             # Fetch page emoji and width from content properties
             emoji = self._get_page_emoji(page_id)
