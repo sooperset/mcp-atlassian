@@ -16,6 +16,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 | `space_key` | `string` | No | The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'. |
 | `include_metadata` | `boolean` | No | Whether to include page metadata such as creation date, last update, version, and labels. |
 | `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
+| `include` | `string` | No | Comma-separated sections to inline in the response. Supported: comments, labels, views, all. |
 **Example:**
 
 ```json
