@@ -142,21 +142,30 @@ class TestPagesMixin:
         assert isinstance(result, list)
         assert len(result) == 0
 
-    def test_get_page_content_html(self, pages_mixin):
-        """Test getting page content in HTML format."""
+    def test_get_page_content_html_preserves_raw_storage(self, pages_mixin):
+        """Test getting page content preserves raw Confluence storage format."""
         pages_mixin.config.url = "https://example.atlassian.net/wiki"
-
-        # Mock the preprocessor to return HTML
-        pages_mixin.preprocessor.process_html_content.return_value = (
-            "<p>Processed HTML</p>",
-            "Processed Markdown",
+        raw_storage_content = (
+            '<ac:figure><ri:attachment ri:filename="diagram.png" /></ac:figure>'
         )
+        page = pages_mixin.confluence.get_page_by_id.return_value
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            **page,
+            "body": {
+                **page["body"],
+                "storage": {
+                    **page["body"]["storage"],
+                    "value": raw_storage_content,
+                },
+            },
+        }
 
         # Act
         result = pages_mixin.get_page_content("987654321", convert_to_markdown=False)
 
-        # Assert HTML processing was used
-        assert result.content == "<p>Processed HTML</p>"
+        # Assert raw storage content is returned, not processed HTML
+        assert result.content == raw_storage_content
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_by_title_success(self, pages_mixin):
         """Test getting a page by title when it exists."""
@@ -191,6 +200,31 @@ class TestPagesMixin:
         assert result.id == "987654321"
         assert result.title == title
         assert result.content == "Processed Markdown"
+
+    def test_get_page_by_title_preserves_raw_storage(self, pages_mixin):
+        """Test raw storage is preserved when a page is looked up by title."""
+        space_key = "DEMO"
+        title = "Page With Macro"
+        raw_storage_content = (
+            '<ac:structured-macro ac:name="status">'
+            '<ac:parameter ac:name="title">READY</ac:parameter>'
+            "</ac:structured-macro>"
+        )
+        pages_mixin.confluence.get_page_by_title.return_value = {
+            "id": "987654321",
+            "title": title,
+            "space": {"key": space_key},
+            "body": {"storage": {"value": raw_storage_content}},
+            "version": {"number": 1},
+        }
+
+        result = pages_mixin.get_page_by_title(
+            space_key, title, convert_to_markdown=False
+        )
+
+        assert result is not None
+        assert result.content == raw_storage_content
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_get_page_by_title_space_not_found(self, pages_mixin):
         """Test getting a page when the space doesn't exist."""
