@@ -1,9 +1,12 @@
 """Module for Jira epic operations."""
 
 import logging
+from collections import Counter
 from typing import Any
 
-from ..models.jira import JiraIssue
+from ..exceptions import MCPAtlassianAuthenticationError
+from ..models.jira import JiraIssue, JiraSearchResult
+from ..utils.pagination import clamp_limit
 from .client import JiraClient
 from .protocols import (
     FieldsOperationsProto,
@@ -13,6 +16,11 @@ from .protocols import (
 )
 
 logger = logging.getLogger("mcp-jira")
+
+# Hard ceiling on children aggregated by get_epic_summary. Enforced in the
+# library (not just the MCP parameter) so a direct call cannot fan out
+# unbounded; clamp_limit() is a no-op unless separately configured.
+_MAX_EPIC_SUMMARY_CHILDREN = 500
 
 
 class EpicsMixin(
@@ -434,6 +442,11 @@ class EpicsMixin(
         """
         Get all issues linked to a specific epic.
 
+        Thin wrapper over :meth:`_get_epic_issues_result` that preserves the
+        historical ``list[JiraIssue]`` contract. Callers that need pagination
+        metadata (``total`` / ``next_page_token``) to reason about
+        completeness should use :meth:`_get_epic_issues_result` directly.
+
         Args:
             epic_key: The key of the epic (e.g. 'PROJ-123')
             start: Starting index for pagination
@@ -445,6 +458,38 @@ class EpicsMixin(
         Raises:
             ValueError: If the issue is not an Epic
             Exception: If there is an error getting epic issues
+        """
+        result, _ = self._get_epic_issues_result(epic_key, start=start, limit=limit)
+        return result.issues if result is not None else []
+
+    def _get_epic_issues_result(
+        self, epic_key: str, start: int = 0, limit: int = 50
+    ) -> tuple[JiraSearchResult | None, str | None]:
+        """Run the cross-edition child-search chain and return the winner.
+
+        This is the metadata-preserving core behind :meth:`get_epic_issues`.
+        It tries each discovery strategy in turn and returns the *first*
+        strategy's :class:`JiraSearchResult` that actually matched issues, so
+        the caller can inspect ``total`` (Server/DC) or ``next_page_token``
+        (Cloud) to tell whether more children exist beyond ``limit``.
+
+        The winning strategy's JQL is returned alongside the result so the
+        caller can page *the same query* on Server/DC. Paging must NOT re-run
+        the whole chain: an empty later page from the winning query would
+        otherwise fall through (see the METHOD 1 empty-result comment) to a
+        different strategy and mix unrelated result sets.
+
+        Returns:
+            ``(result, jql)`` — the winning ``JiraSearchResult`` (issues
+            non-empty) and the JQL that produced it; or ``(None, None)`` when
+            every strategy that ran came back empty (a genuinely childless
+            epic).
+
+        Raises:
+            ValueError: If the issue is not an Epic.
+            MCPAtlassianAuthenticationError: If a child search fails auth.
+            Exception: If *every* attempted strategy errored (a fetch
+                failure, distinct from a childless epic).
         """
         try:
             # First, check if the issue is an Epic
@@ -474,6 +519,10 @@ class EpicsMixin(
                     verify_result = self.search_issues(verify_jql, limit=1)
                     if verify_result and len(verify_result.issues) > 0:
                         is_epic = True
+                except MCPAtlassianAuthenticationError:
+                    # An auth failure here must not be masked as "not an Epic";
+                    # propagate it so ErrorPreservingFastMCP can surface it.
+                    raise
                 except Exception as e:
                     # If JQL fails, stick with our previous determination
                     logger.debug(f"JQL verification failed: {e}")
@@ -487,7 +536,15 @@ class EpicsMixin(
 
             # Track which methods we've tried
             tried_methods = set()
-            issues = []
+            # Distinguish "every search strategy errored" from "the searches
+            # ran fine but the epic genuinely has no children": the former is
+            # a fetch failure the caller must be able to see, the latter is a
+            # legitimate empty result. `had_clean_completion` flips True as
+            # soon as any strategy's search returns without raising; if it is
+            # still False after every attempt, the chain failed rather than
+            # came up empty. `last_error` carries context for that failure.
+            had_clean_completion = False
+            last_error: Exception | None = None
 
             # Find the Epic Link field
             field_ids = self.get_field_ids_to_epic()
@@ -501,6 +558,7 @@ class EpicsMixin(
                     logger.info(f"Trying to get epic issues with issueFunction: {jql}")
 
                     search_result = self.search_issues(jql, start=start, limit=limit)
+                    had_clean_completion = True
                     # A JiraSearchResult is always truthy (a populated model),
                     # so gate on its issues: an empty result must fall through
                     # to the parent / Epic Link strategies below rather than
@@ -509,9 +567,14 @@ class EpicsMixin(
                         logger.info(
                             f"Successfully found {len(search_result.issues)} issues for epic {epic_key} using issueFunction"
                         )
-                        return search_result.issues
+                        return search_result, jql
+                except MCPAtlassianAuthenticationError:
+                    # Auth failures must propagate (see get_epic_summary); never
+                    # let them be swallowed as "just another failed strategy".
+                    raise
                 except Exception as e:
                     # Log exception but continue with fallback
+                    last_error = e
                     logger.warning(
                         f"Error searching epic issues with issueFunction: {str(e)}"
                     )
@@ -524,13 +587,19 @@ class EpicsMixin(
                     logger.info(
                         f"Trying to get epic issues with parent relationship: {jql}"
                     )
-                    issues = self._get_epic_issues_by_jql(epic_key, jql, start, limit)
-                    if issues:
+                    result = self._get_epic_issues_result_by_jql(
+                        epic_key, jql, start, limit
+                    )
+                    had_clean_completion = True
+                    if result.issues:
                         logger.info(
-                            f"Successfully found {len(issues)} issues for epic {epic_key} using parent relationship"
+                            f"Successfully found {len(result.issues)} issues for epic {epic_key} using parent relationship"
                         )
-                        return issues
+                        return result, jql
+                except MCPAtlassianAuthenticationError:
+                    raise
                 except Exception as parent_error:
+                    last_error = parent_error
                     logger.warning(
                         f"Error with parent relationship approach: {str(parent_error)}"
                     )
@@ -543,13 +612,19 @@ class EpicsMixin(
                     logger.info(
                         f"Trying to get epic issues with epic link field: {jql}"
                     )
-                    issues = self._get_epic_issues_by_jql(epic_key, jql, start, limit)
-                    if issues:
+                    result = self._get_epic_issues_result_by_jql(
+                        epic_key, jql, start, limit
+                    )
+                    had_clean_completion = True
+                    if result.issues:
                         logger.info(
-                            f"Successfully found {len(issues)} issues for epic {epic_key} using epic link field {epic_link_field}"
+                            f"Successfully found {len(result.issues)} issues for epic {epic_key} using epic link field {epic_link_field}"
                         )
-                        return issues
+                        return result, jql
+                except MCPAtlassianAuthenticationError:
+                    raise
                 except Exception as e:
+                    last_error = e
                     logger.warning(
                         f"Error using epic link field {epic_link_field}: {str(e)}"
                     )
@@ -562,13 +637,19 @@ class EpicsMixin(
                     logger.info(
                         f"Trying to get epic issues with 'Epic Link' field name: {jql}"
                     )
-                    issues = self._get_epic_issues_by_jql(epic_key, jql, start, limit)
-                    if issues:
+                    result = self._get_epic_issues_result_by_jql(
+                        epic_key, jql, start, limit
+                    )
+                    had_clean_completion = True
+                    if result.issues:
                         logger.info(
-                            f"Successfully found {len(issues)} issues for epic {epic_key} using 'Epic Link' field name"
+                            f"Successfully found {len(result.issues)} issues for epic {epic_key} using 'Epic Link' field name"
                         )
-                        return issues
+                        return result, jql
+                except MCPAtlassianAuthenticationError:
+                    raise
                 except Exception as e:
+                    last_error = e
                     logger.warning(f"Error using 'Epic Link' field name: {str(e)}")
 
             # METHOD 5: Try using issue links with a specific link type
@@ -583,18 +664,25 @@ class EpicsMixin(
                             f"Trying to get epic issues with issue links: {jql}"
                         )
                         try:
-                            issues = self._get_epic_issues_by_jql(
+                            result = self._get_epic_issues_result_by_jql(
                                 epic_key, jql, start, limit
                             )
-                            if issues:
+                            had_clean_completion = True
+                            if result.issues:
                                 logger.info(
-                                    f"Successfully found {len(issues)} issues for epic {epic_key} using issue links with type '{link_type}'"
+                                    f"Successfully found {len(result.issues)} issues for epic {epic_key} using issue links with type '{link_type}'"
                                 )
-                                return issues
-                        except Exception:
+                                return result, jql
+                        except MCPAtlassianAuthenticationError:
+                            raise
+                        except Exception as link_type_error:
                             # Just try the next link type
+                            last_error = link_type_error
                             continue
+                except MCPAtlassianAuthenticationError:
+                    raise
                 except Exception as e:
+                    last_error = e
                     logger.warning(f"Error using issue links approach: {str(e)}")
 
             # METHOD 6: Last resort - try each common Epic Link field ID directly
@@ -620,12 +708,13 @@ class EpicsMixin(
                         logger.info(
                             f"Trying to get epic issues with common field ID: {jql}"
                         )
-                        issues = self._get_epic_issues_by_jql(
+                        result = self._get_epic_issues_result_by_jql(
                             epic_key, jql, start, limit
                         )
-                        if issues:
+                        had_clean_completion = True
+                        if result.issues:
                             logger.info(
-                                f"Successfully found {len(issues)} issues for epic {epic_key} using field ID {field_id}"
+                                f"Successfully found {len(result.issues)} issues for epic {epic_key} using field ID {field_id}"
                             )
                             # Cache this successful field ID for future use
                             if self._field_ids_cache is None:
@@ -633,24 +722,326 @@ class EpicsMixin(
                             self._field_ids_cache.append(
                                 {"id": field_id, "name": "epic_link"}
                             )
-                            return issues
-                    except Exception:
+                            return result, jql
+                    except MCPAtlassianAuthenticationError:
+                        raise
+                    except Exception as field_error:
                         # Just try the next field ID
+                        last_error = field_error
                         continue
 
-            # If we've tried everything and found no issues, return an empty list
+            # Every attempted strategy erroring is a fetch failure, not an
+            # empty epic: surface it so callers (e.g. get_epic_summary) can
+            # report partial data rather than an authoritative "0 children".
+            # If at least one strategy's search *ran* (returned without
+            # raising), we treat an empty overall result as a genuinely
+            # childless epic: the strategies are ordered most-reliable-first,
+            # so a clean empty search is strong evidence there are no
+            # discoverable children. (This is a pragmatic "any clean search
+            # ⇒ empty" rule, not a guarantee that every strategy completed.)
+            if not had_clean_completion and last_error is not None:
+                # No "Error getting epic issues:" prefix here — the top-level
+                # handler below adds it when it re-wraps this exception.
+                raise Exception(
+                    f"all child-search strategies failed for epic "
+                    f"{epic_key}: {last_error}"
+                ) from last_error
+
+            # Every strategy that ran came back empty: a genuinely childless
+            # epic. Signal that with None so the caller can distinguish it
+            # from a fetch failure (which raises above).
             logger.warning(
                 f"No issues found for epic {epic_key} after trying multiple approaches"
             )
-            return []
+            return None, None
 
         except ValueError:
             # Re-raise ValueError (like "not an Epic") as is
+            raise
+        except MCPAtlassianAuthenticationError:
+            # Auth failures propagate untouched so ErrorPreservingFastMCP can
+            # expose them; never fold them into the generic wrap below.
             raise
         except Exception as e:
             # Wrap other exceptions
             logger.error(f"Error getting issues for epic {epic_key}: {str(e)}")
             raise Exception(f"Error getting epic issues: {str(e)}") from e
+
+    def _fetch_epic_children(
+        self, epic_key: str, max_children: int
+    ) -> tuple[list[JiraIssue], bool]:
+        """Fetch an epic's children plus a real "more exist" signal.
+
+        Delegates to :meth:`_get_epic_issues_result`, which tries several
+        strategies (``issuesScopedToEpic``, the ``parent`` field,
+        discovered custom fields, the Epic Link name, issue links, and
+        common field IDs) so this works across Cloud, Server/Data
+        Center, and instances with non-standard epic configurations.
+
+        On Cloud, ``search_issues`` paginates internally, so the first
+        call returns up to ``max_children``. On Server/DC each response
+        caps at 50, so we page with ``start`` until we have enough or a
+        short page signals the end.
+
+        The ``has_more`` flag is derived from the winning strategy's
+        server-reported metadata, not from an over-fetch sentinel (which a
+        pagination ceiling could clamp away): Cloud uses the v3
+        ``next_page_token`` (present iff more results exist beyond what we
+        fetched), Server/DC uses the authoritative ``total`` match count.
+
+        Args:
+            epic_key: The epic's issue key.
+            max_children: Upper bound on the number of children fetched.
+
+        Returns:
+            ``(children, has_more)`` — up to ``max_children`` child issues,
+            and whether the server reports more children beyond them.
+        """
+        page_size = 50
+        first_limit = (
+            max_children if self.config.is_cloud else min(page_size, max_children)
+        )
+        first_result, winning_jql = self._get_epic_issues_result(
+            epic_key, start=0, limit=first_limit
+        )
+        if first_result is None or winning_jql is None:
+            # Genuinely childless epic (every strategy ran and matched none).
+            # The two are returned together, so this also narrows winning_jql
+            # to a non-None str for the Server/DC paging below.
+            return [], False
+        first_page = first_result.issues
+
+        if self.config.is_cloud:
+            children = first_page[:max_children]
+            # Cloud v3 search returns next_page_token iff more results exist
+            # beyond the page we fetched — the server's own boundary signal.
+            has_more = first_result.next_page_token is not None or (
+                len(first_page) > max_children
+            )
+            return children, has_more
+
+        # Server/DC: page with an explicit row offset (not the deduped count,
+        # which would drift and re-request overlapping windows). Dedupe by
+        # key so unstable JQL ordering across pages can't double-count a
+        # child. Keep paging only while the previous page came back full — a
+        # short page means we've reached the end.
+        unique: dict[str, JiraIssue] = {}
+        for issue in first_page:
+            if issue.key and issue.key not in unique:
+                unique[issue.key] = issue
+
+        # `total` is the authoritative match count for the winning JQL
+        # (Server/DC populates it; -1 means "unknown").
+        total = first_result.total
+
+        offset = len(first_page)
+        last_page_size = len(first_page)
+        last_request = first_limit
+        while last_page_size >= last_request and len(unique) < max_children:
+            remaining = max_children - len(unique)
+            last_request = min(page_size, remaining)
+            # Page the SAME winning JQL — not the full chain. Re-running the
+            # chain would (per the METHOD 1 empty-result fall-through) switch
+            # to a different strategy on an empty later page, mixing unrelated
+            # result sets under a `total` that describes only the first query.
+            page_result = self._get_epic_issues_result_by_jql(
+                epic_key, winning_jql, offset, last_request
+            )
+            page = page_result.issues
+            last_page_size = len(page)
+            if not page:
+                break
+            offset += len(page)
+            for issue in page:
+                if issue.key and issue.key not in unique:
+                    unique[issue.key] = issue
+
+        children = list(unique.values())[:max_children]
+        if total >= 0:
+            # Authoritative: more exist iff the query matched more than we
+            # collected. This makes "exactly max_children children" correctly
+            # complete (total == collected), not a false "maybe more".
+            has_more = total > len(children)
+        else:
+            # No total reported: fall back to "we filled the cap and the last
+            # page was still full", i.e. the stream did not visibly end.
+            has_more = len(children) >= max_children and last_page_size >= last_request
+        return children, has_more
+
+    def get_epic_summary(
+        self, epic_key: str, *, max_children: int = 100, include_children: bool = False
+    ) -> dict[str, Any]:
+        """Aggregate an epic's children by status, assignee, and type.
+
+        Designed to back the ``epic_summary`` section of
+        ``jira_get_issue``. The caller is expected to have already
+        confirmed ``epic_key`` refers to an Epic (via
+        :meth:`_is_epic_issue_type`); this method does not re-fetch the
+        epic itself.
+
+        Fetching children turns a single-issue read into a fan-out, so
+        the result is bounded and never overstates completeness:
+
+        * ``truncated`` is ``True`` when the server reports more children
+          than we aggregated. The signal is the winning search's own
+          ``has_more`` (Cloud ``next_page_token`` / Server-DC ``total``),
+          so an epic with *exactly* ``max_children`` children is not a
+          false positive.
+        * ``partial`` and ``truncated`` are ``True`` (with
+          ``completion_percentage`` left ``None``) whenever the server
+          reports children beyond the fetched boundary. The ``reason`` says
+          which lever the caller has: ``"fetch_failed"`` (the children could
+          not be fetched), ``"truncated"`` (more children than
+          ``max_children`` — raise ``max_children`` to see more), or
+          ``"pagination_ceiling"`` (the configured
+          ``ATLASSIAN_MAX_PAGINATION_LIMIT`` capped the fetch; a
+          server-operator setting the caller cannot override). A completion
+          percentage is only reported when every child was counted.
+        * ``completion_percentage`` is derived from the stable ``done``
+          status *category*, not localized status names.
+        * assignees are aggregated by account id where available, with
+          an explicit ``unassigned`` bucket; ``assignee_names`` maps ids
+          back to display names for readability.
+
+        Args:
+            epic_key: The epic's issue key.
+            max_children: Upper bound on children to aggregate (1-500;
+                values above the hard cap are clamped).
+            include_children: When ``True``, add a compact ``children``
+                list (key, status, assignee) — never full issue objects.
+
+        Returns:
+            A dict with ``total_children``, ``by_status``,
+            ``by_assignee`` (+ ``assignee_names``), ``by_type``,
+            ``completion_percentage``, ``partial``, and ``truncated``;
+            plus ``children`` when requested.
+        """
+        # Enforce the hard cap in the library itself: clamp_limit() is a
+        # no-op unless configured, so a direct call must not be able to
+        # fan out unbounded above the documented ceiling.
+        max_children = clamp_limit(max_children, context="jira.get_epic_summary")
+        max_children = max(1, min(max_children, _MAX_EPIC_SUMMARY_CHILDREN))
+
+        try:
+            children, has_more = self._fetch_epic_children(epic_key, max_children)
+        except MCPAtlassianAuthenticationError:
+            # An auth failure is not a "partial summary" — re-raise it so
+            # ErrorPreservingFastMCP can surface it to the caller. Only
+            # operational child-fetch failures become reason: "fetch_failed".
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not fetch children for epic {epic_key}: {e}")
+            return {
+                "total_children": None,
+                "by_status": {},
+                "by_assignee": {},
+                "assignee_names": {},
+                "by_type": {},
+                "completion_percentage": None,
+                "partial": True,
+                "reason": "fetch_failed",
+                "truncated": False,
+            }
+
+        # `has_more` is the server's real "children exist beyond what we
+        # aggregated" signal (Cloud next_page_token / Server-DC total), so an
+        # epic with exactly max_children children is complete, not a false
+        # positive. When it *is* set, distinguish which limit was binding:
+        #   * ATLASSIAN_MAX_PAGINATION_LIMIT (a server-operator ceiling the
+        #     caller cannot raise) — reason "pagination_ceiling"; vs
+        #   * max_children (the caller's own cap — raise it to see more) —
+        #     reason "truncated".
+        # max_children is already clamped above, so the ceiling is the binding
+        # limit whenever clamp_limit() would pull a larger request back down
+        # to it (i.e. an active ceiling at or below max_children).
+        pagination_ceiling_limited = has_more and (
+            clamp_limit(max_children + 1, context="jira.get_epic_summary")
+            <= max_children
+        )
+        # A configured pagination ceiling is still a truncation boundary. The
+        # reason distinguishes it from the caller's own max_children cap, but
+        # the response must not imply that all children were aggregated.
+        truncated = has_more
+
+        by_status: Counter[str] = Counter()
+        by_assignee: Counter[str] = Counter()
+        by_type: Counter[str] = Counter()
+        assignee_names: dict[str, str] = {}
+        done_count = 0
+        children_output: list[dict[str, Any]] = []
+
+        for child in children:
+            status_name = child.status.name if child.status else "Unknown"
+            if (
+                child.status
+                and child.status.category
+                and child.status.category.key == "done"
+            ):
+                done_count += 1
+            by_status[status_name] += 1
+
+            assignee_name = (
+                child.assignee.display_name.strip() if child.assignee else ""
+            )
+            if child.assignee and child.assignee.account_id:
+                assignee_key = child.assignee.account_id
+            elif assignee_name and assignee_name.casefold() != "unassigned":
+                # Server/DC issues have no account id; fall back to name.
+                assignee_key = assignee_name
+            else:
+                # Empty assignee objects can still be returned by Jira for an
+                # unassigned issue; keep the bucket stable across editions.
+                assignee_key = "unassigned"
+            if child.assignee and assignee_key != "unassigned":
+                assignee_names[assignee_key] = assignee_name
+            by_assignee[assignee_key] += 1
+
+            type_name = child.issue_type.name if child.issue_type else "Unknown"
+            by_type[type_name] += 1
+
+            if include_children:
+                children_output.append(
+                    {
+                        "key": child.key,
+                        "status": status_name,
+                        "assignee": (
+                            child.assignee.display_name
+                            if child.assignee
+                            else "Unassigned"
+                        ),
+                    }
+                )
+
+        total = len(children)
+        # Both caller and operator pagination caps are incomplete data, so
+        # withhold the completion percentage whenever the result is truncated.
+        partial = truncated
+        completion: float | None
+        if partial:
+            completion = None
+        else:
+            completion = round(done_count / total * 100, 1) if total else 0.0
+
+        result: dict[str, Any] = {
+            "total_children": total,
+            "by_status": dict(by_status),
+            "by_assignee": dict(by_assignee),
+            "assignee_names": assignee_names,
+            "by_type": dict(by_type),
+            "completion_percentage": completion,
+            "partial": partial,
+            "truncated": truncated,
+        }
+        # A caller can page past `truncated` by raising max_children, but
+        # cannot page past `pagination_ceiling` (a server-operator setting);
+        # keep the reasons distinct so the caller knows which lever exists.
+        if pagination_ceiling_limited:
+            result["reason"] = "pagination_ceiling"
+        elif truncated:
+            result["reason"] = "truncated"
+        if include_children:
+            result["children"] = children_output
+        return result
 
     def _find_epic_link_field(self, field_ids: dict[str, str]) -> str | None:
         """
@@ -829,6 +1220,29 @@ class EpicsMixin(
             logger.warning(f"Error finding issues linked to epic {epic_key}: {str(e)}")
         return []
 
+    def _get_epic_issues_result_by_jql(
+        self, epic_key: str, jql: str, start: int, limit: int
+    ) -> JiraSearchResult:
+        """Run a JQL child search and return the full result.
+
+        Preserves the ``JiraSearchResult`` (``total`` / ``next_page_token``)
+        so the caller can reason about completeness, unlike
+        :meth:`_get_epic_issues_by_jql`, which unwraps to a bare list.
+
+        Args:
+            epic_key: The key of the epic
+            jql: JQL query to execute
+            start: Starting index for pagination
+            limit: Maximum number of issues to return
+
+        Returns:
+            The ``JiraSearchResult`` for the query.
+        """
+        search_result = self.search_issues(jql, start=start, limit=limit)
+        if not search_result.issues:
+            logger.warning(f"No issues found for epic {epic_key} with query: {jql}")
+        return search_result
+
     def _get_epic_issues_by_jql(
         self, epic_key: str, jql: str, start: int, limit: int
     ) -> list[JiraIssue]:
@@ -844,11 +1258,7 @@ class EpicsMixin(
         Returns:
             List of JiraIssue models
         """
-
-        search_result = self.search_issues(jql, start=start, limit=limit)
-        if not search_result:
-            logger.warning(f"No issues found for epic {epic_key} with query: {jql}")
-        return search_result.issues
+        return self._get_epic_issues_result_by_jql(epic_key, jql, start, limit).issues
 
     def update_epic_fields(self, issue_key: str, kwargs: dict[str, Any]) -> JiraIssue:
         """
