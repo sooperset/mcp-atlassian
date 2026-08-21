@@ -1461,6 +1461,61 @@ class TestPanelBlocks:
         result = preprocessor.jira_to_markdown("[https://example.com] more text")
         assert "https://example.com" in result, f"URL dropped: {result}"
 
+    @pytest.mark.parametrize(
+        "test_id,input_text",
+        [
+            ("user_mention", "Emailed [~jdoe] to update the owner."),
+            ("bracketed_names", "engagements ([eBay], [Netflix], etc.)"),
+            ("redaction_marker", "Cost is [redacted] for now"),
+            ("bracketed_text_at_end", "Trailing [redacted]"),
+        ],
+    )
+    def test_non_link_brackets_are_preserved(
+        self, preprocessor, test_id: str, input_text: str
+    ):
+        """Bracketed text that is not a link must survive the read path (#1566).
+
+        The bare-link unwrap used to match any `[...]`, so ordinary bracketed
+        content ([~user] mentions, product names, redaction markers) silently
+        lost its brackets on every read of a description or comment.
+        """
+        assert preprocessor.jira_to_markdown(input_text) == input_text, (
+            f"[{test_id}] brackets stripped from non-link text"
+        )
+
+    @pytest.mark.parametrize(
+        "test_id,input_text,expected",
+        [
+            (
+                "http",
+                "See [http://example.com] for details",
+                "See http://example.com for details",
+            ),
+            (
+                "https",
+                "[https://example.com] more text",
+                "https://example.com more text",
+            ),
+            (
+                "at_end",
+                "Bare at end [https://example.com]",
+                "Bare at end https://example.com",
+            ),
+            (
+                "labelled_link_untouched",
+                "Link [text|http://example.com] here",
+                "Link [text](http://example.com) here",
+            ),
+        ],
+    )
+    def test_bare_links_still_unwrapped(
+        self, preprocessor, test_id: str, input_text: str, expected: str
+    ):
+        """Real bare links must still unwrap, and labelled links still convert (#1566)."""
+        assert preprocessor.jira_to_markdown(input_text) == expected, (
+            f"[{test_id}] link conversion regressed"
+        )
+
 
 # Code block placeholder protection tests
 
