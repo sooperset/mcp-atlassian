@@ -60,6 +60,11 @@ from .sla import (
     TimeInStatusMetric,
     WorkingHoursConfig,
 )
+from .work_attribute import (
+    JiraWorkAttribute,
+    JiraWorkAttributeType,
+    JiraWorkAttributeValue,
+)
 from .workflow import JiraTransition
 from .worklog import JiraWorklog
 
@@ -107,6 +112,10 @@ __all__ = [
     "IssueDatesBatchResponse",
     "StatusChangeEntry",
     "StatusTimeSummary",
+    # Work attribute models
+    "JiraWorkAttribute",
+    "JiraWorkAttributeType",
+    "JiraWorkAttributeValue",
     # SLA models
     "IssueSLAResponse",
     "IssueSLABatchResponse",

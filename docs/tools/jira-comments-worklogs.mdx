@@ -74,6 +74,7 @@ Add a worklog entry to a Jira issue.
 | `started` | `string` | No | (Optional) Start time in ISO format. If not provided, the current time will be used. Example: '2023-08-01T12:00:00.000+0000' |
 | `original_estimate` | `string` | No | (Optional) New value for the original estimate |
 | `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |
+| `worklog_attributes` | `string` | No | (Optional) JSON string of worklog attributes for Tempo Core Work Attributes. Example: `{"_WorklogCategory_": {"value": "Bugfixing"}}`. Use jira_get_issue with include=worklog_attributes to find available attribute keys and static-list values. |
 
 ---
 
