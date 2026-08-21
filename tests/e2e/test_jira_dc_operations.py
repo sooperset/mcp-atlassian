@@ -152,6 +152,70 @@ class TestJiraDCEpicOperations:
         resource_tracker.add_jira_issue(epic.key)
         assert epic.key.startswith(dc_instance.project_key)
 
+    def test_unlink_issue_from_epic(
+        self,
+        jira_fetcher: JiraFetcher,
+        dc_instance: DCInstanceInfo,
+    ) -> None:
+        """DC clears the verified Epic Link field in a Scrum project."""
+        uid = uuid.uuid4().hex[:6].upper()
+        project_key = f"UE{uid}"
+        project_created = False
+        try:
+            response = requests.post(
+                f"{dc_instance.jira_url}/rest/api/2/project",
+                auth=(dc_instance.admin_username, dc_instance.admin_password),
+                json={
+                    "key": project_key,
+                    "name": f"E2E Epic Unlink {uid}",
+                    "projectTypeKey": "software",
+                    "projectTemplateKey": (
+                        "com.pyxis.greenhopper.jira:gh-scrum-template"
+                    ),
+                    "lead": dc_instance.admin_username,
+                    "assigneeType": "PROJECT_LEAD",
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            project_created = True
+
+            epic = jira_fetcher.create_issue(
+                project_key=project_key,
+                summary=f"E2E DC Unlink Epic {uid}",
+                issue_type="Epic",
+            )
+            issue = jira_fetcher.create_issue(
+                project_key=project_key,
+                summary=f"E2E DC Unlink Issue {uid}",
+                issue_type="Task",
+            )
+
+            epic_link_field_id = jira_fetcher._get_verified_epic_link_field_id()
+            assert epic_link_field_id is not None
+            jira_fetcher.jira.update_issue(
+                issue_key=issue.key,
+                update={"fields": {epic_link_field_id: epic.key}},
+            )
+            linked = jira_fetcher.jira.get_issue(issue.key)
+            assert linked["fields"][epic_link_field_id] == epic.key
+
+            unlinked = jira_fetcher.unlink_issue_from_epic(issue.key)
+
+            assert unlinked.key == issue.key
+            updated = jira_fetcher.jira.get_issue(issue.key)
+            assert updated["fields"].get(epic_link_field_id) is None
+        finally:
+            if project_created:
+                requests.delete(
+                    f"{dc_instance.jira_url}/rest/api/2/project/{project_key}",
+                    auth=(
+                        dc_instance.admin_username,
+                        dc_instance.admin_password,
+                    ),
+                    timeout=30,
+                ).raise_for_status()
+
 
 class TestJiraDCVersionOperations:
     """Version creation and updates on DC."""
