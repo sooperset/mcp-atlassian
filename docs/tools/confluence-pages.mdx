@@ -15,7 +15,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 | `title` | `string` | No | The exact title of the Confluence page. Use this with 'space_key' if 'page_id' is not known. |
 | `space_key` | `string` | No | The key of the Confluence space where the page resides (e.g., 'DEV', 'TEAM'). Required if using 'title'. |
 | `include_metadata` | `boolean` | No | Whether to include page metadata such as creation date, last update, version, and labels. |
-| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or keep it in raw HTML format (false). Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: using HTML significantly increases token usage in AI responses. |
+| `convert_to_markdown` | `boolean` | No | Whether to convert page to markdown (true) or return raw Confluence storage XHTML (false). Storage output preserves macros and task metadata for safe round-tripping, but CAUTION: it significantly increases token usage in AI responses. |
 **Example:**
 
 ```json
@@ -23,7 +23,7 @@ Get content of a specific Confluence page by its ID, or by its title and space k
 ```
 
 <Tip>
-Content is returned in Markdown format (auto-converted from Confluence storage format). Use `include_metadata` for labels, version info, and last modified date. When Confluence supplies version details, the response metadata includes `version_author` (the author display name) and `version_date` (the raw ISO 8601 version timestamp).
+Content is returned in Markdown format by default. Set `convert_to_markdown` to `false` to retrieve exact Confluence storage XHTML when macro preservation matters. Use `include_metadata` for labels, version info, and last modified date. When Confluence supplies version details, the response metadata includes `version_author` (the author display name) and `version_date` (the raw ISO 8601 version timestamp).
 </Tip>
 
 ---
@@ -128,7 +128,7 @@ Get child pages and folders of a specific Confluence page.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `parent_id` | `string` | Yes | The ID of the parent page whose children you want to retrieve |
-| `expand` | `string` | No | Fields to expand in the response (e.g., 'version', 'body.storage') |
+| `expand` | `string` | No | Fields to expand in the response (e.g., 'version', 'body.storage'). Defaults to 'version,history'. |
 | `limit` | `integer` | No | Maximum number of child items to return (1-50) |
 | `include_content` | `boolean` | No | Whether to include the page content in the response |
 | `convert_to_markdown` | `boolean` | No | Whether to convert page content to markdown (true) or keep it in raw HTML format (false). Only relevant if include_content is true. |
