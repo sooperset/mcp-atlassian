@@ -251,6 +251,24 @@ def test_jira_to_markdown(preprocessor_with_jira):
     assert preprocessor_with_jira.jira_to_markdown("*bold text*") == "**bold text**"
     assert preprocessor_with_jira.jira_to_markdown("_italic text_") == "*italic text*"
 
+    # Test escaped delimiters are preserved, not paired as emphasis (issue #1610)
+    assert (
+        preprocessor_with_jira.jira_to_markdown(r"QUALITY\_GATES\_LLM\_ENABLED")
+        == r"QUALITY\_GATES\_LLM\_ENABLED"
+    )
+    assert preprocessor_with_jira.jira_to_markdown(r"foo\_bar") == r"foo\_bar"
+    assert (
+        preprocessor_with_jira.jira_to_markdown(r"my\_var\_x and her\_var")
+        == r"my\_var\_x and her\_var"
+    )
+    assert "*" not in preprocessor_with_jira.jira_to_markdown(
+        r"my\_var\_x and her\_var"
+    )
+    assert (
+        preprocessor_with_jira.jira_to_markdown(r"escaped \*stars\* stay literal")
+        == r"escaped \*stars\* stay literal"
+    )
+
     # Test code blocks
     assert preprocessor_with_jira.jira_to_markdown("{{code}}") == "`code`"
 
