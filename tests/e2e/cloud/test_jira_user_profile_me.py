@@ -29,3 +29,8 @@ class TestJiraUserProfileMe:
         assert result.account_id or result.display_name, (
             "User profile missing account_id and display_name"
         )
+
+    def test_get_current_user_profile(self, jira_fetcher: JiraFetcher) -> None:
+        """get_current_user_profile returns the identity for the active token."""
+        result = jira_fetcher.get_current_user_profile()
+        assert result["account_id"] or result["display_name"]
