@@ -1126,6 +1126,36 @@ async def get_project_issues(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_statuses"},
+    annotations={"title": "Get Statuses", "readOnlyHint": True},
+)
+async def get_statuses(
+    ctx: Context,
+    name_filter: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional case-insensitive substring to filter statuses by name"
+            )
+        ),
+    ] = None,
+) -> str:
+    """Get all statuses available in Jira.
+
+    Args:
+        ctx: The FastMCP context.
+        name_filter: Optional substring to filter statuses by name.
+
+    Returns:
+        JSON string of statuses with description and status category details.
+    """
+    jira = await get_jira_fetcher(ctx)
+    return json.dumps(
+        jira.get_statuses(name_filter=name_filter), indent=2, ensure_ascii=False
+    )
+
+
+@jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_transitions"},
     annotations={"title": "Get Transitions", "readOnlyHint": True},
 )

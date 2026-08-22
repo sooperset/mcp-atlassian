@@ -1211,6 +1211,43 @@ class TestMCPProtocolIntegration:
             assert "confluence_get_page" not in tool_names
             assert len(tools) == 2
 
+    async def test_enabled_tools_all_includes_get_statuses(
+        self, atlassian_mcp_server, mock_jira_config
+    ):
+        """ENABLED_TOOLS=all exposes read tools in the MCP tools/list response."""
+        app_context = MainAppContext(
+            full_jira_config=mock_jira_config,
+            read_only=True,
+            enabled_tools=["all"],
+            enabled_toolsets={"jira_statuses"},
+        )
+        request_context = MagicMock()
+        request_context.lifespan_context = {"app_lifespan_context": app_context}
+        atlassian_mcp_server._mcp_server = MagicMock()
+        atlassian_mcp_server._mcp_server.request_context = request_context
+
+        status_tool = MagicMock(spec=FastMCPTool)
+        status_tool.name = "jira_get_statuses"
+        status_tool.tags = {
+            "jira",
+            "read",
+            "toolset:jira_statuses",
+        }
+        status_tool.to_mcp_tool.return_value = MCPTool(
+            name="jira_get_statuses",
+            description="Get all statuses available in Jira.",
+            inputSchema={"type": "object", "properties": {}},
+        )
+
+        async def mock_list_tools():
+            return [status_tool]
+
+        atlassian_mcp_server.list_tools = mock_list_tools
+
+        tools = await atlassian_mcp_server._list_tools_mcp()
+
+        assert [tool.name for tool in tools] == ["jira_get_statuses"]
+
     async def test_tool_filtering_toolsets_and_enabled_tools(
         self, atlassian_mcp_server, mock_jira_config, mock_confluence_config
     ):

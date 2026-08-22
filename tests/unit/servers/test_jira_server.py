@@ -86,6 +86,7 @@ def mock_jira_fetcher():
     mock_fetcher.get_issue_comments.side_effect = mock_get_issue_comments
     mock_fetcher.get_remote_issue_links.return_value = []
     mock_fetcher.get_available_transitions.return_value = []
+    mock_fetcher.get_statuses.return_value = []
     mock_fetcher.get_issue_watchers.return_value = {"watchCount": 0, "watchers": []}
     mock_fetcher.get_worklogs.return_value = []
 
@@ -496,6 +497,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_service_desk_queues,
         get_sprint_issues,
         get_sprints_from_board,
+        get_statuses,
         get_transitions,
         get_user_profile,
         get_worklog,
@@ -536,6 +538,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_queue_issues)
     jira_sub_mcp.add_tool(get_request_types)
     jira_sub_mcp.add_tool(get_request_type_fields)
+    jira_sub_mcp.add_tool(get_statuses)
     jira_sub_mcp.add_tool(get_transitions)
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
@@ -2525,6 +2528,31 @@ async def test_update_issue_components_with_additional_fields(
     # Explicit components param should override additional_fields
     assert call_kwargs["components"] == ["Frontend", "API"]
     assert call_kwargs["labels"] == ["urgent"]
+
+
+@pytest.mark.anyio
+async def test_get_statuses_returns_available_statuses(jira_client, mock_jira_fetcher):
+    """jira_get_statuses returns the normalized available status list."""
+    mock_jira_fetcher.get_statuses.return_value = [
+        {
+            "id": "3",
+            "name": "In Progress",
+            "description": "Work is underway.",
+            "statusCategory": {"id": 4, "name": "In Progress"},
+        }
+    ]
+
+    response = await jira_client.call_tool("jira_get_statuses", {})
+
+    assert json.loads(response.content[0].text) == [
+        {
+            "id": "3",
+            "name": "In Progress",
+            "description": "Work is underway.",
+            "statusCategory": {"id": 4, "name": "In Progress"},
+        }
+    ]
+    mock_jira_fetcher.get_statuses.assert_called_once_with(name_filter=None)
 
 
 @pytest.mark.anyio

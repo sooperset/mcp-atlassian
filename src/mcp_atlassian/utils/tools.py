@@ -36,6 +36,10 @@ def get_enabled_tools() -> list[str] | None:
     # Filter out empty strings
     tools = [tool for tool in tools if tool]
 
+    if any(tool.casefold() == "all" for tool in tools):
+        logger.debug("ENABLED_TOOLS contains 'all'; enabling all tools.")
+        return None
+
     logger.debug(f"Parsed enabled tools from environment: {tools}")
 
     return tools if tools else None
@@ -51,10 +55,10 @@ def should_include_tool(tool_name: str, enabled_tools: list[str] | None) -> bool
     Returns:
         True if the tool should be included, False otherwise.
     """
-    if enabled_tools is None:
-        logger.debug(
-            f"Including tool '{tool_name}' because enabled_tools filter is None."
-        )
+    if enabled_tools is None or any(
+        enabled_tool.casefold() == "all" for enabled_tool in enabled_tools
+    ):
+        logger.debug(f"Including tool '{tool_name}' because all tools are enabled.")
         return True
     should_include = tool_name in enabled_tools
     logger.debug(

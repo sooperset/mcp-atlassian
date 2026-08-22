@@ -56,9 +56,30 @@ def test_get_enabled_tools_with_whitespace():
         assert get_enabled_tools() == ["tool1", "tool2", "tool3"]
 
 
+def test_get_enabled_tools_all_disables_filter():
+    """The conventional 'all' value enables every registered tool."""
+    with patch.dict(os.environ, {"ENABLED_TOOLS": "all"}, clear=True):
+        assert get_enabled_tools() is None
+
+
+def test_get_enabled_tools_all_is_case_insensitive():
+    """The 'all' wildcard is case-insensitive and overrides other entries."""
+    with patch.dict(
+        os.environ,
+        {"ENABLED_TOOLS": "jira_get_issue, ALL"},
+        clear=True,
+    ):
+        assert get_enabled_tools() is None
+
+
 def test_should_include_tool_none_enabled():
     """Test should_include_tool when enabled_tools is None."""
     assert should_include_tool("any_tool", None) is True
+
+
+def test_should_include_tool_all_enabled():
+    """An explicit 'all' wildcard includes every tool."""
+    assert should_include_tool("jira_get_statuses", ["all"]) is True
 
 
 def test_should_include_tool_tool_enabled():
