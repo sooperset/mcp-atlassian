@@ -309,8 +309,9 @@ class JiraPreprocessor(BasePreprocessor):
             output,
         )
 
-        # Inserted text
-        output = re.sub(r"\+([^+]*)\+", r"<ins>\1</ins>", output)
+        # Inserted text. Delimiters glued to word characters are prose
+        # (e.g. version numbers "3.13+"), not markup.
+        output = re.sub(r"(?<!\w)\+([^+\n]+)\+(?!\w)", r"<ins>\1</ins>", output)
 
         # Superscript
         output = re.sub(r"\^([^^]*)\^", r"<sup>\1</sup>", output)
