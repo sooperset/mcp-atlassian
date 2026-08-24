@@ -2571,6 +2571,66 @@ async def test_update_issue_transition_only_resolves_name(
 
 
 @pytest.mark.anyio
+async def test_transition_issue_resolves_name_to_id(jira_client, mock_jira_fetcher):
+    """jira_transition_issue resolves a transition name to its ID before calling."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+    mock_jira_fetcher.transition_issue.return_value.to_simplified_dict.return_value = {
+        "key": "TEST-123"
+    }
+
+    await jira_client.call_tool(
+        "jira_transition_issue",
+        {"issue_key": "TEST-123", "transition_id": "done"},
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", fields={}, comment=None
+    )
+
+
+@pytest.mark.anyio
+async def test_transition_issue_still_accepts_numeric_id(
+    jira_client, mock_jira_fetcher
+):
+    """jira_transition_issue still accepts a raw numeric transition ID."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+    mock_jira_fetcher.transition_issue.return_value.to_simplified_dict.return_value = {
+        "key": "TEST-123"
+    }
+
+    await jira_client.call_tool(
+        "jira_transition_issue",
+        {"issue_key": "TEST-123", "transition_id": "31"},
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", fields={}, comment=None
+    )
+
+
+@pytest.mark.anyio
+async def test_transition_issue_unknown_name_raises_with_options(
+    jira_client, mock_jira_fetcher
+):
+    """An unmatched transition name/ID raises a clear error listing options."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    with pytest.raises(ToolError, match=r"Done \(31\)"):
+        await jira_client.call_tool(
+            "jira_transition_issue",
+            {"issue_key": "TEST-123", "transition_id": "Bogus"},
+        )
+
+    mock_jira_fetcher.transition_issue.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_update_issue_comment_only_without_fields(jira_client, mock_jira_fetcher):
     """A comment-only call works when fields is omitted."""
     response = await jira_client.call_tool(

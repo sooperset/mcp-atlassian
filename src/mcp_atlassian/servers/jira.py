@@ -1899,7 +1899,7 @@ async def batch_create_issues(
 
 
 @jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_issues"},
+    tags={"jira", "read", "cloud_only", "toolset:jira_issues"},
     annotations={"title": "Batch Get Changelogs", "readOnlyHint": True},
 )
 async def batch_get_changelogs(
@@ -2397,7 +2397,7 @@ async def delete_issue(
 
 
 @jira_mcp.tool(
-    tags={"jira", "write", "toolset:jira_issues"},
+    tags={"jira", "write", "cloud_only", "toolset:jira_issues"},
     annotations={"title": "Move Issue to Project", "destructiveHint": True},
 )
 @check_write_access
@@ -2956,8 +2956,10 @@ async def transition_issue(
         str,
         Field(
             description=(
-                "ID of the transition to perform. Use the jira_get_transitions tool first "
-                "to get the available transition IDs for the issue. Example values: '11', '21', '31'"
+                "ID or name of the transition to perform (case-insensitive name match, "
+                "e.g. 'In Progress', 'Done'). Use the jira_get_transitions tool first to "
+                "see the available transitions for the issue. Example values: '11', '21', "
+                "'31', 'In Progress'"
             )
         ),
     ],
@@ -2991,7 +2993,7 @@ async def transition_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        transition_id: ID of the transition.
+        transition_id: ID or name of the transition.
         fields: Optional JSON string of fields to update during transition.
         comment: Optional comment for the transition in Markdown format.
 
@@ -3010,9 +3012,12 @@ async def transition_issue(
     # Parse fields from JSON string
     update_fields = _parse_additional_fields(fields)
 
+    available_transitions = jira.get_available_transitions(issue_key)
+    resolved_transition_id = resolve_transition(available_transitions, transition_id)
+
     issue = jira.transition_issue(
         issue_key=issue_key,
-        transition_id=transition_id,
+        transition_id=resolved_transition_id,
         fields=update_fields,
         comment=comment,
     )

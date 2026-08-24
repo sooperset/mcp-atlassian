@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import requests
+from atlassian.errors import ApiError
 from bs4 import BeautifulSoup, Tag
 from requests.exceptions import HTTPError
 
@@ -187,7 +188,7 @@ class PagesMixin(ConfluenceClient):
         Args:
             page_id: The ID of the page to retrieve
             convert_to_markdown: When True, returns content in
-                markdown format, otherwise returns raw HTML
+                markdown format, otherwise returns raw Confluence storage XHTML
                 (keyword-only)
 
         Returns:
@@ -237,15 +238,16 @@ class PagesMixin(ConfluenceClient):
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=page_id_str,
-                attachments=page_attachments,
-            )
-
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            if convert_to_markdown:
+                _, page_content = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=page_id_str,
+                    attachments=page_attachments,
+                )
+            else:
+                page_content = content
 
             # Fetch page emoji and width from content properties
             emoji = self._get_page_emoji(page_id)
@@ -360,12 +362,37 @@ class PagesMixin(ConfluenceClient):
         """
         try:
             if value is None:
-                # Delete the property
+                # Delete the property. A property that is already absent leaves the
+                # page in the requested state, so only a 404 counts as success --
+                # anything else (denied, locked, throttled, transport failure) means
+                # the removal did not happen and must not be reported as done.
                 try:
                     self.confluence.delete_page_property(page_id, property_key)
-                except Exception as e:
-                    # Property might not exist, which is fine
-                    logger.debug(f"Could not delete property '{property_key}': {e}")
+                except (HTTPError, ApiError) as api_err:
+                    http_err = (
+                        api_err if isinstance(api_err, HTTPError) else api_err.reason
+                    )
+                    if (
+                        isinstance(http_err, HTTPError)
+                        and http_err.response is not None
+                        and http_err.response.status_code == 404
+                    ):
+                        logger.debug(
+                            f"Property '{property_key}' already absent on page "
+                            f"{page_id}"
+                        )
+                        return True
+                    logger.warning(
+                        f"Could not delete property '{property_key}' for page "
+                        f"{page_id}: {http_err}"
+                    )
+                    return False
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        f"Could not delete property '{property_key}' for page "
+                        f"{page_id}: {e}"
+                    )
+                    return False
                 return True
 
             # Check if the property already exists (need version for update)
@@ -534,7 +561,7 @@ class PagesMixin(ConfluenceClient):
             space_key: The key of the space containing the page
             title: The title of the page to retrieve
             convert_to_markdown: When True, returns content in markdown format,
-                               otherwise returns raw HTML (keyword-only)
+                otherwise returns raw Confluence storage XHTML (keyword-only)
 
         Returns:
             ConfluencePage model containing the page content and metadata, or None if not found
@@ -559,15 +586,15 @@ class PagesMixin(ConfluenceClient):
                     f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
                 )
                 content = ""
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=str(page.get("id", "")),
-            )
-
-            # Use the appropriate content format based on the convert_to_markdown flag
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            if convert_to_markdown:
+                _, page_content = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=str(page.get("id", "")),
+                )
+            else:
+                page_content = content
 
             # Fetch page emoji and width from content properties
             emoji = self._get_page_emoji(str(page.get("id", "")))
@@ -761,11 +788,23 @@ class PagesMixin(ConfluenceClient):
 
             # Set the page emoji if provided
             if emoji:
-                self._set_page_emoji(page_id, emoji)
+                emoji_updated = self._set_page_emoji(page_id, emoji)
+                if not emoji_updated:
+                    error_message = (
+                        f"Page was created, but page emoji update failed "
+                        f"for page {page_id}"
+                    )
+                    raise RuntimeError(error_message)
 
             # Set the page width if provided
             if page_width:
-                self._set_page_width(page_id, page_width)
+                width_updated = self._set_page_width(page_id, page_width)
+                if not width_updated:
+                    error_message = (
+                        f"Page was created, but page width update failed "
+                        f"for page {page_id}"
+                    )
+                    raise RuntimeError(error_message)
 
             return self.get_page_content(page_id)
         except Exception as e:
@@ -868,13 +907,25 @@ class PagesMixin(ConfluenceClient):
             if emoji is not None:
                 # Empty string means remove emoji, otherwise set it
                 emoji_to_set = emoji if emoji else None
-                self._set_page_emoji(page_id, emoji_to_set)
+                emoji_updated = self._set_page_emoji(page_id, emoji_to_set)
+                if not emoji_updated:
+                    error_message = (
+                        f"Page content was updated, but page emoji update failed "
+                        f"for page {page_id}"
+                    )
+                    raise RuntimeError(error_message)
 
             # Set or remove the page width if provided
             if page_width is not None:
                 # Empty string means reset to default, otherwise set it
                 width_to_set = page_width if page_width else None
-                self._set_page_width(page_id, width_to_set)
+                width_updated = self._set_page_width(page_id, width_to_set)
+                if not width_updated:
+                    error_message = (
+                        f"Page content was updated, but page width update failed "
+                        f"for page {page_id}"
+                    )
+                    raise RuntimeError(error_message)
 
             # After update, refresh the page data
             return self.get_page_content(page_id)
@@ -1019,7 +1070,7 @@ class PagesMixin(ConfluenceClient):
         page_id: str,
         start: int = 0,
         limit: int = 25,
-        expand: str = "version",
+        expand: str = "version,history",
         *,
         convert_to_markdown: bool = True,
         include_folders: bool = True,

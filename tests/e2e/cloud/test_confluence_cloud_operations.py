@@ -10,6 +10,7 @@ import pytest
 import requests
 
 from mcp_atlassian.confluence import ConfluenceFetcher
+from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 
 from .conftest import CloudInstanceInfo, CloudResourceTracker
 
@@ -110,7 +111,7 @@ class TestConfluenceCloudStorageFormat:
         storage_content = (
             "<h1>Cloud E2E Storage Format Test</h1>"
             "<p>This page uses <strong>storage format</strong>.</p>"
-            "<ul><li>Item 1</li><li>Item 2</li></ul>"
+            '<ac:figure><ri:attachment ri:filename="diagram.png" /></ac:figure>'
         )
         page = confluence_fetcher.create_page(
             space_key=cloud_instance.space_key,
@@ -121,6 +122,20 @@ class TestConfluenceCloudStorageFormat:
         )
         resource_tracker.add_confluence_page(page.id)
         assert page.id is not None
+
+        raw_page = confluence_fetcher.confluence.get_page_by_id(
+            page.id,
+            expand="body.storage",
+        )
+        raw_storage = raw_page["body"]["storage"]["value"]
+        fetched = confluence_fetcher.get_page_content(
+            page.id,
+            convert_to_markdown=False,
+        )
+
+        assert "<ri:attachment" in raw_storage
+        assert fetched.content == raw_storage
+        assert fetched.content_format == "storage"
 
 
 class TestConfluenceCloudPageSubtype:
@@ -346,6 +361,44 @@ class TestConfluenceCloudPageLayout:
         assert 'data-table-width="1800"' in storage_body
 
 
+class TestConfluenceCloudPagePropertyRemoval:
+    """Page property removal handling."""
+
+    def test_remove_page_emoji_and_width(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Property Removal Test {uid}",
+            body="<p>Property removal test.</p>",
+            is_markdown=False,
+            content_representation="storage",
+            emoji="📄",
+            page_width="full-width",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        assert page.emoji
+        assert page.page_width == "full-width"
+
+        updated = confluence_fetcher.update_page(
+            page.id,
+            page.title,
+            "<p>Property removal test, updated.</p>",
+            is_markdown=False,
+            content_representation="storage",
+            emoji="",
+            page_width="",
+        )
+
+        assert updated.emoji is None
+        assert updated.page_width is None
+
+
 class TestConfluenceCloudCopyAndRestrictions:
     """Page copy and restriction operations."""
 
@@ -408,6 +461,16 @@ class TestConfluenceCloudCopyAndRestrictions:
                 read_users=[account_id],
                 edit_users=[account_id],
             )
+        except MCPAtlassianAuthenticationError as exc:
+            cause_response = getattr(exc.__cause__, "response", None)
+            if getattr(cause_response, "status_code", None) != 403:
+                raise
+            # Altering content restrictions is plan-gated on Confluence Cloud
+            # (403 PermissionException on Free sites) — not a client regression.
+            # A 401 (expired/invalid credential) must still fail loudly.
+            pytest.skip(f"Page restrictions not available on this site: {exc}")
+
+        try:
             assert result["read"]["users"] == [account_id]
             assert result["update"]["users"] == [account_id]
 
