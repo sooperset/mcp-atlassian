@@ -468,12 +468,6 @@ class BasePreprocessor:
         Protects markdown code spans (fenced and inline) from being
         interpreted as HTML by BeautifulSoup before conversion.
         """
-        # Only engage the HTML converter when the source text itself had
-        # HTML. Tags our own converter emitted (e.g. <ins> from
-        # jira_to_markdown) must not trigger a whole-document markdownify
-        # pass that escapes every markdown character in prose.
-        had_html = bool(re.search(r"<[^>]+>", text))
-
         # Protect fenced code blocks and inline code from HTML parsing
         code_blocks: list[str] = []
         inline_codes: list[str] = []
@@ -493,7 +487,7 @@ class BasePreprocessor:
             "HTMLCVTINLINE",
         )
 
-        if had_html and re.search(r"<[^>]+>", text):
+        if re.search(r"<[^>]+>", text):
             try:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)

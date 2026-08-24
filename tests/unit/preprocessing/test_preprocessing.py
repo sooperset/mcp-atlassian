@@ -168,6 +168,17 @@ def test_clean_jira_text_stray_plus_no_markdown_escaping(
     assert "3.13+" in out and "2.6+" in out
 
 
+def test_clean_jira_text_generated_html_does_not_trigger_html_conversion(
+    preprocessor_with_jira,
+):
+    """Tags emitted by Jira conversion must not reprocess Markdown prose."""
+    wiki = "*Ticket:* {{<b>literal</b>}} +new note+"
+
+    assert preprocessor_with_jira.clean_jira_text(wiki) == (
+        "**Ticket:** `<b>literal</b>` <ins>new note</ins>"
+    )
+
+
 @pytest.mark.parametrize(
     ("issue_key", "expected"),
     [
