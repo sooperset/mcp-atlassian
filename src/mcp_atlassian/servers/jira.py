@@ -195,6 +195,10 @@ def _parse_request_field_values(
     request_field_values: dict[str, Any] | str,
 ) -> dict[str, Any]:
     """Parse request_field_values from dict or JSON string."""
+    if isinstance(request_field_values, str) and not request_field_values.strip():
+        raise ValueError(
+            "request_field_values is not valid JSON: value must not be blank."
+        )
     try:
         return _parse_additional_fields(request_field_values)
     except ValueError as e:

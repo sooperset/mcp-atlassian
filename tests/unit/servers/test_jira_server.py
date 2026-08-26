@@ -906,6 +906,25 @@ async def test_create_customer_request(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("request_field_values", ["", " \t\n"])
+async def test_create_customer_request_rejects_blank_field_values(
+    jira_client, mock_jira_fetcher, request_field_values
+):
+    """Customer requests require non-blank request field values."""
+    with pytest.raises(ToolError, match="request_field_values is not valid JSON"):
+        await jira_client.call_tool(
+            "jira_create_customer_request",
+            {
+                "service_desk_id": "4",
+                "request_type_id": "23",
+                "request_field_values": request_field_values,
+            },
+        )
+
+    mock_jira_fetcher.create_customer_request.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_create_customer_request_with_attachments(jira_client, mock_jira_fetcher):
     """Customer request tool should forward parsed base64 attachments."""
     mock_jira_fetcher.create_customer_request.return_value = JiraCustomerRequest(
@@ -1079,18 +1098,19 @@ async def test_create_issue_accepts_json_string(jira_client, mock_jira_fetcher):
     )
 
 
+@pytest.mark.parametrize("additional_fields", ["", " \t\n"])
 @pytest.mark.anyio
-async def test_create_issue_additional_fields_empty_string(
-    jira_client, mock_jira_fetcher
+async def test_create_issue_additional_fields_blank_string(
+    jira_client, mock_jira_fetcher, additional_fields
 ):
-    """Test that empty string additional_fields is treated as unset."""
+    """Test that blank additional_fields is treated as unset."""
     await jira_client.call_tool(
         "jira_create_issue",
         {
             "project_key": "TEST",
             "summary": "Test issue",
             "issue_type": "Task",
-            "additional_fields": "",
+            "additional_fields": additional_fields,
         },
     )
     assert "labels" not in mock_jira_fetcher.create_issue.call_args[1]
@@ -2447,17 +2467,18 @@ async def test_update_issue_additional_fields_non_dict_json(jira_client):
     assert "not a JSON object" in str(excinfo.value)
 
 
+@pytest.mark.parametrize("additional_fields", ["", " \t\n"])
 @pytest.mark.anyio
-async def test_update_issue_additional_fields_empty_string(
-    jira_client, mock_jira_fetcher
+async def test_update_issue_additional_fields_blank_string(
+    jira_client, mock_jira_fetcher, additional_fields
 ):
-    """Test that empty string additional_fields is treated as unset."""
+    """Test that blank additional_fields is treated as unset."""
     response = await jira_client.call_tool(
         "jira_update_issue",
         {
             "issue_key": "TEST-123",
             "fields": '{"summary": "Updated"}',
-            "additional_fields": "",
+            "additional_fields": additional_fields,
         },
     )
     content = json.loads(response.content[0].text)
