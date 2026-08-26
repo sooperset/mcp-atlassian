@@ -331,7 +331,11 @@ class PagesMixin(ConfluenceClient):
             if not properties:
                 return None
 
-            results = properties.get("results", [])
+            results = (
+                properties
+                if isinstance(properties, list)
+                else properties.get("results", [])
+            )
             for prop in results:
                 key = prop.get("key", "")
                 if key in ("emoji-title-published", "emoji-title-draft"):
@@ -489,7 +493,11 @@ class PagesMixin(ConfluenceClient):
             if not properties:
                 return None
 
-            results = properties.get("results", [])
+            results = (
+                properties
+                if isinstance(properties, list)
+                else properties.get("results", [])
+            )
             for prop in results:
                 key = prop.get("key", "")
                 if key in ("content-appearance-published", "content-appearance-draft"):
@@ -569,8 +577,10 @@ class PagesMixin(ConfluenceClient):
         try:
             # Directly try to find the page by title
             page = self.confluence.get_page_by_title(
-                space=space_key, title=title, expand="body.storage,version"
+                space_key, title, expand="body.storage,version"
             )
+            if isinstance(page, dict) and isinstance(page.get("results"), list):
+                page = page["results"][0] if page["results"] else None
 
             if not page:
                 logger.warning(
@@ -650,7 +660,7 @@ class PagesMixin(ConfluenceClient):
             List of ConfluencePage models containing page content and metadata
         """
         pages = self.confluence.get_all_pages_from_space(
-            space=space_key, start=start, limit=limit, expand="body.storage"
+            space_key, start=start, limit=limit, expand="body.storage"
         )
 
         page_models = []
