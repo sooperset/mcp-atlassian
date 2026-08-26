@@ -2612,6 +2612,24 @@ async def test_transition_issue_still_accepts_numeric_id(
 
 
 @pytest.mark.anyio
+async def test_transition_issue_plain_text_fields_error_names_fields(jira_client):
+    """Invalid transition fields errors name the fields argument."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_transition_issue",
+            {
+                "issue_key": "TEST-123",
+                "transition_id": "31",
+                "fields": "plain text, not JSON",
+            },
+        )
+
+    message = str(excinfo.value)
+    assert "fields is not valid JSON" in message
+    assert "additional_fields" not in message
+
+
+@pytest.mark.anyio
 async def test_transition_issue_unknown_name_raises_with_options(
     jira_client, mock_jira_fetcher
 ):
