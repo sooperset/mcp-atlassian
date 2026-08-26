@@ -193,13 +193,40 @@ class TestPagesMixin:
 
         # Verify API calls
         pages_mixin.confluence.get_page_by_title.assert_called_once_with(
-            space=space_key, title=title, expand="body.storage,version"
+            space_key, title, expand="body.storage,version"
         )
 
         # Verify result
         assert result.id == "987654321"
         assert result.title == title
         assert result.content == "Processed Markdown"
+
+    def test_get_page_by_title_supports_v5_space_key(self, pages_mixin):
+        """Use the positional space argument accepted by v4 and v5."""
+        page = {
+            "id": "987654321",
+            "title": "Example Page",
+            "space": {"key": "DEMO"},
+            "body": {"storage": {"value": "<p>Example content</p>"}},
+            "version": {"number": 1},
+        }
+
+        def get_page_by_title_v5(space_key, title, **kwargs):
+            assert space_key == "DEMO"
+            assert title == "Example Page"
+            assert kwargs == {"expand": "body.storage,version"}
+            return {"results": [page]}
+
+        pages_mixin.confluence.get_page_by_title.side_effect = get_page_by_title_v5
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed Markdown",
+        )
+
+        result = pages_mixin.get_page_by_title("DEMO", "Example Page")
+
+        assert result is not None
+        assert result.id == "987654321"
 
     def test_get_page_by_title_preserves_raw_storage(self, pages_mixin):
         """Test raw storage is preserved when a page is looked up by title."""
@@ -237,7 +264,7 @@ class TestPagesMixin:
         # Assert
         assert result is None
         pages_mixin.confluence.get_page_by_title.assert_called_once_with(
-            space="NONEXISTENT", title="Page Title", expand="body.storage,version"
+            "NONEXISTENT", "Page Title", expand="body.storage,version"
         )
 
     def test_get_page_by_title_page_not_found(self, pages_mixin):
@@ -251,7 +278,7 @@ class TestPagesMixin:
         # Assert
         assert result is None
         pages_mixin.confluence.get_page_by_title.assert_called_once_with(
-            space="PROJ", title="Nonexistent Page", expand="body.storage,version"
+            "PROJ", "Nonexistent Page", expand="body.storage,version"
         )
 
     def test_get_page_by_title_error_handling(self, pages_mixin):
@@ -278,7 +305,7 @@ class TestPagesMixin:
 
         # Assert
         pages_mixin.confluence.get_all_pages_from_space.assert_called_once_with(
-            space=space_key, start=0, limit=10, expand="body.storage"
+            space_key, start=0, limit=10, expand="body.storage"
         )
 
         # Verify results
@@ -298,6 +325,37 @@ class TestPagesMixin:
         # Verify the second page
         assert results[1].id == "987654321"  # Second page ID from mock
         assert results[1].title == "Example Meeting Notes"
+
+    def test_get_space_pages_supports_v5_space_key(self, pages_mixin):
+        """Use the positional space argument accepted by v4 and v5."""
+
+        def get_all_pages_from_space_v5(space_key, **kwargs):
+            assert space_key == "PROJ"
+            assert kwargs == {
+                "start": 0,
+                "limit": 10,
+                "expand": "body.storage",
+            }
+            return [
+                {
+                    "id": "123456789",
+                    "title": "Example Page",
+                    "body": {"storage": {"value": "<p>Example content</p>"}},
+                }
+            ]
+
+        pages_mixin.confluence.get_all_pages_from_space.side_effect = (
+            get_all_pages_from_space_v5
+        )
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Processed HTML</p>",
+            "Processed Markdown",
+        )
+
+        results = pages_mixin.get_space_pages("PROJ")
+
+        assert len(results) == 1
+        assert results[0].id == "123456789"
 
     def test_create_page_success(self, pages_mixin):
         """Test creating a new page."""
@@ -2280,6 +2338,17 @@ class TestPageEmoji:
         assert result == "🚀"
         pages_mixin.confluence.get_page_properties.assert_called_once_with("123456")
 
+    def test_get_page_emoji_supports_v5_property_list(self, pages_mixin):
+        """Read page properties when the client returns the v5 list shape."""
+        pages_mixin.confluence.get_page_properties.return_value = [
+            {
+                "key": "emoji-title-published",
+                "value": {"fallback": "🚀"},
+            }
+        ]
+
+        assert pages_mixin._get_page_emoji("123456") == "🚀"
+
     def test_get_page_emoji_draft_fallback(self, pages_mixin):
         """Test getting page emoji from draft when published not available."""
         pages_mixin.confluence.get_page_properties.return_value = {
@@ -2953,6 +3022,17 @@ class TestPageWidth:
 
             mock_get.assert_called_once_with(page_id)
             assert result == "full-width"
+
+    def test_get_page_width_supports_v5_property_list(self, pages_mixin):
+        """Read page properties when the client returns the v5 list shape."""
+        pages_mixin.confluence.get_page_properties.return_value = [
+            {
+                "key": "content-appearance-published",
+                "value": "full-width",
+            }
+        ]
+
+        assert pages_mixin._get_page_width("page_full_width_123") == "full-width"
 
     def test_get_page_width_fixed_width(self, pages_mixin):
         """Test getting max page layout."""
