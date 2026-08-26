@@ -179,6 +179,8 @@ def _parse_additional_fields(
     if isinstance(additional_fields, dict):
         return additional_fields
     if isinstance(additional_fields, str):
+        if not additional_fields.strip():
+            return {}
         try:
             parsed = json.loads(additional_fields)
             if not isinstance(parsed, dict):
