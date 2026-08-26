@@ -2399,6 +2399,24 @@ async def test_update_issue_accepts_json_string_additional_fields(
 
 
 @pytest.mark.anyio
+async def test_update_issue_plain_text_fields_error_names_fields(jira_client):
+    """Regression: invalid plain-text fields must blame fields,
+    not additional_fields — both arguments share one parser whose
+    error previously hardcoded the additional_fields name."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "plain markdown text, not JSON",
+            },
+        )
+    message = str(excinfo.value)
+    assert "fields is not valid JSON" in message
+    assert "additional_fields" not in message
+
+
+@pytest.mark.anyio
 async def test_update_issue_additional_fields_invalid_json(jira_client):
     """Test that invalid JSON additional_fields raises ToolError."""
     with pytest.raises(ToolError) as excinfo:

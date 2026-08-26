@@ -160,11 +160,13 @@ def _parse_visibility(
 
 def _parse_additional_fields(
     additional_fields: dict[str, Any] | str | None,
+    param_name: str = "additional_fields",
 ) -> dict[str, Any]:
     """Parse additional_fields from dict or JSON string.
 
     Args:
         additional_fields: Dict, JSON string, or None.
+        param_name: Argument name used in error messages.
 
     Returns:
         Parsed dict of additional fields.
@@ -180,13 +182,11 @@ def _parse_additional_fields(
         try:
             parsed = json.loads(additional_fields)
             if not isinstance(parsed, dict):
-                raise ValueError(
-                    "Parsed additional_fields is not a JSON object (dict)."
-                )
+                raise ValueError(f"{param_name} is not a JSON object (dict).")
             return parsed
         except json.JSONDecodeError as e:
-            raise ValueError(f"additional_fields is not valid JSON: {e}") from e
-    raise ValueError("additional_fields must be a dictionary or JSON string.")
+            raise ValueError(f"{param_name} is not valid JSON: {e}") from e
+    raise ValueError(f"{param_name} must be a dictionary or JSON string.")
 
 
 def _parse_request_field_values(
@@ -2121,7 +2121,7 @@ async def update_issue(
         ValueError: If in read-only mode or Jira client unavailable, or invalid input.
     """
     jira = await get_jira_fetcher(ctx)
-    update_fields = _parse_additional_fields(fields)
+    update_fields = _parse_additional_fields(fields, param_name="fields")
 
     return_fields_list: str | list[str] | None = return_fields
     if return_fields and return_fields != "*all":
@@ -2998,7 +2998,7 @@ async def transition_issue(
         raise ValueError("issue_key and transition_id are required.")
 
     # Parse fields from JSON string
-    update_fields = _parse_additional_fields(fields)
+    update_fields = _parse_additional_fields(fields, param_name="fields")
 
     available_transitions = jira.get_available_transitions(issue_key)
     resolved_transition_id = resolve_transition(available_transitions, transition_id)
