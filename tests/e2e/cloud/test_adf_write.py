@@ -250,6 +250,29 @@ class TestADFCreateIssue:
         finally:
             await _delete_issue(mcp_client, key)
 
+    async def test_create_issue_status(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Status syntax creates content accepted and returned by Jira Cloud."""
+        key = await _create_issue_with_description(
+            mcp_client,
+            cloud_instance.project_key,
+            (
+                "Rollout is {status:color=green|title=Done} "
+                "and rollback is {status:color=red|title=Blocked}."
+            ),
+        )
+        try:
+            desc = await _read_issue_description(mcp_client, key)
+            # Cloud renders status nodes, which read back as [text].
+            assert "[Done]" in desc
+            assert "[Blocked]" in desc
+            assert "Rollout is" in desc
+        finally:
+            await _delete_issue(mcp_client, key)
+
     async def test_create_issue_mixed(
         self,
         mcp_client: Client,
