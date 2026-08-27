@@ -24,9 +24,14 @@ class SpacesMixin(ConfluenceClient):
         Returns:
             Dictionary containing space information with results and metadata
         """
-        spaces = self.confluence.get_all_spaces(start=start, limit=limit)
-        # Cast the return value to the expected type
-        return cast(dict[str, object], spaces)
+        data = self.confluence.get(
+            f"{self._v1_rest_base_url()}/rest/api/space",
+            absolute=True,
+            params={"start": start, "limit": limit},
+        )
+        if not isinstance(data, dict):
+            raise ValueError("Confluence spaces response was not an object")
+        return cast(dict[str, object], data)
 
     def get_space(self, space_key: str) -> dict[str, object]:
         """Get details for one Confluence space."""

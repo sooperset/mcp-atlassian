@@ -597,9 +597,6 @@ class CommentsMixin(JiraClient):
         self._require_canonical_guarded_issue_key(issue_key)
         if not comment_id:
             raise ValueError("Comment ID is required")
-        url = self.jira.resource_url(
-            f"issue/{issue_key}/comment/{comment_id}", api_version="3"
-        )
-        response = self.jira._session.delete(url)
-        response.raise_for_status()
+        url = self.jira.resource_url(f"issue/{issue_key}/comment/{comment_id}")
+        self.jira.delete(url)
         return True

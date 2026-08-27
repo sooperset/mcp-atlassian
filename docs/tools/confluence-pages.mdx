@@ -305,3 +305,40 @@ Use `confluence_get_page_history` to discover available version numbers. The dif
 </Tip>
 
 ---
+
+### Get Spaces
+
+List Confluence spaces visible to the authenticated user.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `start` | `integer` | No |  |
+| `limit` | `integer` | No |  |
+
+---
+
+### Get Space
+
+Return details for one Confluence space.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `space_key` | `string` | Yes | Space key |
+
+---
+
+### Get Page Ancestors
+
+Return the parent chain for a Confluence page.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence page ID |
+
+---

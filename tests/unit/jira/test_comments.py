@@ -682,6 +682,27 @@ class TestCommentsMixin:
         comments_mixin.jira.post.assert_not_called()
         assert result["id"] == "10001"
 
+    def test_delete_comment(self, comments_mixin):
+        """Comment deletion uses the client's configured API edition."""
+        comments_mixin.jira.resource_url.return_value = (
+            "/rest/api/2/issue/TEST-1/comment/2"
+        )
+
+        assert comments_mixin.delete_comment("TEST-1", "2") is True
+        comments_mixin.jira.resource_url.assert_called_once_with(
+            "issue/TEST-1/comment/2"
+        )
+        comments_mixin.jira.delete.assert_called_once_with(
+            "/rest/api/2/issue/TEST-1/comment/2"
+        )
+
+    def test_delete_comment_requires_id(self, comments_mixin):
+        """Comment deletion rejects an empty ID before an API call."""
+        with pytest.raises(ValueError, match="Comment ID is required"):
+            comments_mixin.delete_comment("TEST-1", "")
+
+        comments_mixin.jira.delete.assert_not_called()
+
 
 class TestInternalCommentPublicParam:
     """Regression tests for add_comment public parameter (internal comments).

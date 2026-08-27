@@ -81,6 +81,17 @@ def mock_confluence_fetcher():
     mock_label.to_simplified_dict.return_value = {"id": "lbl1", "name": "test-label"}
     mock_fetcher.get_page_labels.return_value = [mock_label]
     mock_fetcher.add_page_label.return_value = [mock_label]
+    mock_fetcher.remove_page_label.return_value = True
+    mock_fetcher.get_spaces.return_value = {
+        "results": [{"id": "1", "key": "TEST", "name": "Test Space"}],
+        "size": 1,
+    }
+    mock_fetcher.get_space.return_value = {
+        "id": "1",
+        "key": "TEST",
+        "name": "Test Space",
+    }
+    mock_fetcher.get_page_ancestors.return_value = [mock_page]
 
     # Mock add_comment method
     mock_comment = MagicMock()
@@ -1700,3 +1711,54 @@ async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     summary = json.loads(response.content[0].text)
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
+
+
+@pytest.mark.anyio
+async def test_get_spaces_tool(client, mock_confluence_fetcher):
+    """The spaces tool preserves pagination arguments and response metadata."""
+    response = await client.call_tool(
+        "confluence_get_spaces", {"start": 5, "limit": 20}
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["results"][0]["key"] == "TEST"
+    mock_confluence_fetcher.get_spaces.assert_called_once_with(start=5, limit=20)
+
+
+@pytest.mark.anyio
+async def test_get_space_tool(client, mock_confluence_fetcher):
+    """The single-space tool returns the fetcher's space object."""
+    response = await client.call_tool("confluence_get_space", {"space_key": "TEST"})
+
+    assert json.loads(response.content[0].text)["name"] == "Test Space"
+    mock_confluence_fetcher.get_space.assert_called_once_with("TEST")
+
+
+@pytest.mark.anyio
+async def test_get_page_ancestors_tool(client, mock_confluence_fetcher):
+    """The ancestors tool serializes existing page models."""
+    response = await client.call_tool(
+        "confluence_get_page_ancestors", {"page_id": "123456"}
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["page_id"] == "123456"
+    assert content["ancestors"][0]["id"] == "123456"
+    mock_confluence_fetcher.get_page_ancestors.assert_called_once_with("123456")
+
+
+@pytest.mark.anyio
+async def test_remove_label_tool(client, mock_confluence_fetcher):
+    """The label removal tool reports the removed page and label."""
+    response = await client.call_tool(
+        "confluence_remove_label", {"page_id": "123456", "name": "release"}
+    )
+
+    assert json.loads(response.content[0].text) == {
+        "success": True,
+        "page_id": "123456",
+        "label": "release",
+    }
+    mock_confluence_fetcher.remove_page_label.assert_called_once_with(
+        "123456", "release"
+    )

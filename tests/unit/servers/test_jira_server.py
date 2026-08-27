@@ -84,6 +84,32 @@ def mock_jira_fetcher():
         return MOCK_JIRA_COMMENTS_SIMPLIFIED["comments"][:limit]
 
     mock_fetcher.get_issue_comments.side_effect = mock_get_issue_comments
+    mock_fetcher.upload_attachment.return_value = {
+        "success": True,
+        "issue_key": "TEST-1",
+        "filename": "note.txt",
+        "id": "10001",
+    }
+    mock_fetcher.delete_attachment.return_value = True
+    mock_fetcher.delete_comment.return_value = True
+    mock_fetcher.search_users.return_value = [
+        {"accountId": "abc", "displayName": "Test User"}
+    ]
+    mock_fetcher.get_current_user.return_value = {
+        "accountId": "abc",
+        "displayName": "Test User",
+        "active": True,
+    }
+    mock_fetcher.get_project.return_value = {"key": "TEST", "name": "Test"}
+    mock_fetcher.get_priorities.return_value = [{"id": "1", "name": "High"}]
+    mock_fetcher.get_resolutions.return_value = [{"id": "1", "name": "Done"}]
+    mock_fetcher.get_statuses.return_value = [{"id": "1", "name": "Open"}]
+    mock_fetcher.get_project_statuses.return_value = [{"id": "1", "name": "Open"}]
+    mock_fetcher.get_sprint.return_value = {
+        "id": 10,
+        "name": "Sprint 1",
+        "state": "active",
+    }
     mock_fetcher.get_remote_issue_links.return_value = []
     mock_fetcher.get_available_transitions.return_value = []
     mock_fetcher.get_issue_watchers.return_value = {"watchCount": 0, "watchers": []}
@@ -4912,3 +4938,146 @@ async def test_jira_analysis_tools_return_structured_errors(
 
     assert content["success"] is False
     assert content["error"] == "service unavailable"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "expected"),
+    [
+        (
+            "jira_search_users",
+            {"query": "test", "limit": 10},
+            {"users": [{"accountId": "abc", "displayName": "Test User"}]},
+        ),
+        (
+            "jira_get_project",
+            {"project_key": "TEST"},
+            {"key": "TEST", "name": "Test"},
+        ),
+        (
+            "jira_get_priorities",
+            {"limit": 10},
+            {"priorities": [{"id": "1", "name": "High"}]},
+        ),
+        (
+            "jira_get_resolutions",
+            {"limit": 10},
+            {"resolutions": [{"id": "1", "name": "Done"}]},
+        ),
+        (
+            "jira_get_statuses",
+            {"limit": 10},
+            {"statuses": [{"id": "1", "name": "Open"}]},
+        ),
+        (
+            "jira_get_project_statuses",
+            {"project_key": "TEST"},
+            {
+                "project_key": "TEST",
+                "statuses": [{"id": "1", "name": "Open"}],
+            },
+        ),
+        (
+            "jira_get_sprint",
+            {"sprint_id": "10"},
+            {"id": 10, "name": "Sprint 1", "state": "active"},
+        ),
+    ],
+)
+async def test_new_jira_read_tools(jira_client, tool_name, arguments, expected):
+    """New read tools expose their fetcher results with stable JSON shapes."""
+    response = await jira_client.call_tool(tool_name, arguments)
+
+    assert json.loads(response.content[0].text) == expected
+
+
+@pytest.mark.anyio
+async def test_get_comments_returns_processed_dicts(jira_client, mock_jira_fetcher):
+    """The comments tool returns the dictionaries produced by the fetcher."""
+    response = await jira_client.call_tool(
+        "jira_get_comments", {"issue_key": "TEST-1", "limit": 1}
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content == {
+        "issue_key": "TEST-1",
+        "comments": MOCK_JIRA_COMMENTS_SIMPLIFIED["comments"][:1],
+    }
+    mock_jira_fetcher.get_issue_comments.assert_called_once_with("TEST-1", limit=1)
+
+
+@pytest.mark.anyio
+async def test_get_current_user_filters_fields(jira_client, mock_jira_fetcher):
+    """Current-user field selection removes unrequested profile data."""
+    response = await jira_client.call_tool(
+        "jira_get_current_user", {"fields": "displayName, active"}
+    )
+
+    assert json.loads(response.content[0].text) == {
+        "displayName": "Test User",
+        "active": True,
+    }
+    mock_jira_fetcher.get_current_user.assert_called_once_with()
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_tool(jira_client, mock_jira_fetcher):
+    """The attachment upload tool delegates one workspace-relative file."""
+    response = await jira_client.call_tool(
+        "jira_upload_attachment",
+        {"issue_key": "TEST-1", "file_path": "note.txt"},
+    )
+
+    assert json.loads(response.content[0].text)["id"] == "10001"
+    mock_jira_fetcher.upload_attachment.assert_called_once_with("TEST-1", "note.txt")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "fetcher_method", "expected"),
+    [
+        (
+            "jira_delete_attachment",
+            {"attachment_id": "10"},
+            "delete_attachment",
+            {"success": True, "attachment_id": "10"},
+        ),
+        (
+            "jira_delete_comment",
+            {"issue_key": "TEST-1", "comment_id": "20"},
+            "delete_comment",
+            {"success": True, "issue_key": "TEST-1", "comment_id": "20"},
+        ),
+    ],
+)
+async def test_new_jira_delete_tools(
+    jira_client,
+    mock_jira_fetcher,
+    tool_name,
+    arguments,
+    fetcher_method,
+    expected,
+):
+    """New destructive tools report the identifiers they deleted."""
+    response = await jira_client.call_tool(tool_name, arguments)
+
+    assert json.loads(response.content[0].text) == expected
+    getattr(mock_jira_fetcher, fetcher_method).assert_called_once_with(
+        *arguments.values()
+    )
+
+
+@pytest.mark.anyio
+async def test_get_epic_issues_tool(jira_client, mock_jira_fetcher):
+    """The epic tool serializes issue models returned by the existing fetcher."""
+    response = await jira_client.call_tool(
+        "jira_get_epic_issues",
+        {"epic_key": "TEST-100", "start": 1, "limit": 1},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["epic_key"] == "TEST-100"
+    assert [issue["key"] for issue in content["issues"]] == ["TEST-2"]
+    mock_jira_fetcher.get_epic_issues.assert_called_once_with(
+        "TEST-100", start=1, limit=1
+    )

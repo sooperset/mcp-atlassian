@@ -75,7 +75,7 @@ class SprintsMixin(JiraClient):
         """Return a Jira Agile sprint by ID."""
         if not sprint_id:
             raise ValueError("Sprint ID is required")
-        data = self.jira.get(f"{self.jira.url}/rest/agile/1.0/sprint/{sprint_id}")
+        data = self.jira.get_sprint(sprint_id)
         if not isinstance(data, dict):
             raise ValueError("Jira sprint response was not an object")
         return data

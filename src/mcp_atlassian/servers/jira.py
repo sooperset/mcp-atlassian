@@ -4720,9 +4720,8 @@ async def get_comments(
     """List comments for a Jira issue."""
     jira = await get_jira_fetcher(ctx)
     comments = jira.get_issue_comments(issue_key, limit=limit)
-    simplified_comments = [comment.to_simplified_dict() for comment in comments]
     return json.dumps(
-        {"issue_key": issue_key, "comments": simplified_comments},
+        {"issue_key": issue_key, "comments": comments},
         indent=2,
         ensure_ascii=False,
     )
