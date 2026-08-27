@@ -479,3 +479,12 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             "uploaded": uploaded,
             "failed": failed,
         }
+
+    def delete_attachment(self, attachment_id: str) -> bool:
+        """Delete an attachment by ID."""
+        if not attachment_id:
+            raise ValueError("Attachment ID is required")
+        url = self.jira.resource_url(f"attachment/{attachment_id}", api_version="3")
+        response = self.jira._session.delete(url)
+        response.raise_for_status()
+        return True

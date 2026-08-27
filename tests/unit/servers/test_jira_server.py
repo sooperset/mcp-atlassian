@@ -465,14 +465,19 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         create_issue_link,
         create_remote_issue_link,
         create_sprint,
+        delete_attachment,
+        delete_comment,
         delete_issue,
         download_attachments,
         edit_comment,
         get_agile_boards,
         get_all_projects,
         get_board_issues,
+        get_comments,
         get_create_fields,
         get_cross_project_dependencies,
+        get_current_user,
+        get_epic_issues,
         get_field_options,
         get_issue,
         get_issue_dates,
@@ -482,20 +487,26 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_issue_sla,
         get_issues_development_info,
         get_link_types,
+        get_priorities,
         get_proforma_form_details,
+        get_project,
         get_project_components,
         get_project_epic_hierarchy,
         get_project_fields,
         get_project_issue_types,
         get_project_issues,
+        get_project_statuses,
         get_project_versions,
         get_queue_issues,
         get_request_type_fields,
         get_request_types,
+        get_resolutions,
         get_service_desk_for_project,
         get_service_desk_queues,
+        get_sprint,
         get_sprint_issues,
         get_sprints_from_board,
+        get_statuses,
         get_transitions,
         get_user_profile,
         get_worklog,
@@ -507,11 +518,13 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         search_assignable_users,
         search_fields,
         search_projects,
+        search_users,
         transition_issue,
         update_issue,
         update_proforma_form_answers,
         update_sprint,
         update_version,
+        upload_attachment,
     )
 
     jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
@@ -539,6 +552,19 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_transitions)
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
+    jira_sub_mcp.add_tool(upload_attachment)
+    jira_sub_mcp.add_tool(delete_attachment)
+    jira_sub_mcp.add_tool(get_comments)
+    jira_sub_mcp.add_tool(delete_comment)
+    jira_sub_mcp.add_tool(search_users)
+    jira_sub_mcp.add_tool(get_current_user)
+    jira_sub_mcp.add_tool(get_project)
+    jira_sub_mcp.add_tool(get_priorities)
+    jira_sub_mcp.add_tool(get_resolutions)
+    jira_sub_mcp.add_tool(get_statuses)
+    jira_sub_mcp.add_tool(get_project_statuses)
+    jira_sub_mcp.add_tool(get_epic_issues)
+    jira_sub_mcp.add_tool(get_sprint)
     jira_sub_mcp.add_tool(get_issue_images)
     jira_sub_mcp.add_tool(get_field_options)
     jira_sub_mcp.add_tool(get_cross_project_dependencies)

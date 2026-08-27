@@ -244,12 +244,16 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_comments,
         get_labels,
         get_page,
+        get_page_ancestors,
         get_page_children,
         get_page_images,
         get_page_template,
+        get_space,
         get_space_page_tree,
         get_space_permissions,
+        get_spaces,
         list_page_templates,
+        remove_label,
         search,
         search_user,
         update_page,
@@ -279,10 +283,14 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
     confluence_sub_mcp.add_tool(get_space_page_tree)
+    confluence_sub_mcp.add_tool(get_spaces)
+    confluence_sub_mcp.add_tool(get_space)
+    confluence_sub_mcp.add_tool(get_page_ancestors)
     confluence_sub_mcp.add_tool(get_comments)
     confluence_sub_mcp.add_tool(add_comment)
     confluence_sub_mcp.add_tool(get_labels)
     confluence_sub_mcp.add_tool(add_label)
+    confluence_sub_mcp.add_tool(remove_label)
     confluence_sub_mcp.add_tool(create_page)
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)

@@ -181,6 +181,29 @@ def test_get_project_exception(projects_mixin: ProjectsMixin):
     projects_mixin.jira.project.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("method_name", "resource", "expected"),
+    [
+        ("get_priorities", "priority", [{"id": "1", "name": "High"}]),
+        ("get_resolutions", "resolution", [{"id": "1", "name": "Done"}]),
+        ("get_statuses", "status", [{"id": "1", "name": "Open"}]),
+    ],
+)
+def test_get_jira_metadata(
+    projects_mixin: ProjectsMixin,
+    method_name: str,
+    resource: str,
+    expected: list[dict[str, Any]],
+):
+    """Metadata methods return the platform response using REST v3 URLs."""
+    projects_mixin.jira.resource_url.return_value = f"/rest/api/3/{resource}"
+    projects_mixin.jira.get.return_value = expected
+
+    assert getattr(projects_mixin, method_name)() == expected
+    projects_mixin.jira.resource_url.assert_called_with(resource, api_version="3")
+    projects_mixin.jira.get.assert_called_once()
+
+
 def test_get_project_issues(projects_mixin: ProjectsMixin):
     """Test get_project_issues method."""
     # Setup mock response

@@ -591,3 +591,15 @@ class CommentsMixin(JiraClient):
                 f"Error editing comment {comment_id} on issue {issue_key}: {str(e)}"
             )
             raise Exception(f"Error editing comment: {str(e)}") from e
+
+    def delete_comment(self, issue_key: str, comment_id: str) -> bool:
+        """Delete a comment from a Jira issue."""
+        self._require_canonical_guarded_issue_key(issue_key)
+        if not comment_id:
+            raise ValueError("Comment ID is required")
+        url = self.jira.resource_url(
+            f"issue/{issue_key}/comment/{comment_id}", api_version="3"
+        )
+        response = self.jira._session.delete(url)
+        response.raise_for_status()
+        return True

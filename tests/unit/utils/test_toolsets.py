@@ -262,10 +262,10 @@ class TestToolsetTagCompleteness:
 
     def test_jira_tool_count(self, jira_tools):
         """Verify expected number of Jira tools."""
-        assert len(jira_tools) == 63, f"Expected 63 Jira tools, got {len(jira_tools)}"
+        assert len(jira_tools) == 76, f"Expected 76 Jira tools, got {len(jira_tools)}"
 
     def test_confluence_tool_count(self, confluence_tools):
         """Verify expected number of Confluence tools."""
-        assert len(confluence_tools) == 35, (
-            f"Expected 35 Confluence tools, got {len(confluence_tools)}"
+        assert len(confluence_tools) == 39, (
+            f"Expected 39 Confluence tools, got {len(confluence_tools)}"
         )

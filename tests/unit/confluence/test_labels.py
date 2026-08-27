@@ -127,3 +127,11 @@ class TestLabelsMixin:
         # Act/Assert
         with pytest.raises(Exception, match="Failed to add label"):
             labels_mixin.add_page_label("987654321", "test")
+
+    def test_remove_page_label(self, labels_mixin):
+        """Removing a label uses the configured authenticated session."""
+        response = labels_mixin.confluence._session.delete.return_value
+
+        assert labels_mixin.remove_page_label("123", "release notes") is True
+        response.raise_for_status.assert_called_once_with()
+        labels_mixin.confluence._session.delete.assert_called_once()
