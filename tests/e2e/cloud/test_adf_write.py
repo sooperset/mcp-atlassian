@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+import requests
 from fastmcp import Client
 from fastmcp.client import FastMCPTransport
 from mcp.types import CallToolResult, TextContent
@@ -88,6 +89,20 @@ async def _read_issue_description(mcp_client: Client, issue_key: str) -> str:
     assert not result.is_error
     data = json.loads(result.content[0].text)
     return data.get("description", "")
+
+
+def _read_raw_issue_description(
+    cloud_instance: CloudInstanceInfo, issue_key: str
+) -> dict[str, Any]:
+    """Read an issue description directly from Jira as raw ADF."""
+    response = requests.get(
+        f"{cloud_instance.jira_url}/rest/api/3/issue/{issue_key}",
+        params={"fields": "description"},
+        auth=(cloud_instance.username, cloud_instance.api_token),
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()["fields"]["description"]
 
 
 async def _delete_issue(mcp_client: Client, issue_key: str) -> None:
@@ -265,11 +280,21 @@ class TestADFCreateIssue:
             ),
         )
         try:
-            desc = await _read_issue_description(mcp_client, key)
-            # Cloud renders status nodes, which read back as [text].
-            assert "[Done]" in desc
-            assert "[Blocked]" in desc
-            assert "Rollout is" in desc
+            desc = _read_raw_issue_description(cloud_instance, key)
+            statuses = [
+                node
+                for block in desc["content"]
+                for node in block.get("content", [])
+                if node.get("type") == "status"
+            ]
+            assert [status["attrs"]["text"] for status in statuses] == [
+                "Done",
+                "Blocked",
+            ]
+            assert [status["attrs"]["color"] for status in statuses] == [
+                "green",
+                "red",
+            ]
         finally:
             await _delete_issue(mcp_client, key)
 
