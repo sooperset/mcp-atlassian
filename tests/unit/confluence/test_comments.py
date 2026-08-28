@@ -131,6 +131,41 @@ class TestCommentsMixin:
         comment = result[0]
         assert comment.body == "<p>Processed HTML</p>"
 
+    def test_get_page_comments_paginates_v1_results(self, comments_mixin):
+        """All v1 comment pages are returned when Confluence provides next."""
+        first_comment = {
+            "id": "first",
+            "body": {"view": {"value": "<p>First</p>"}},
+        }
+        second_comment = {
+            "id": "second",
+            "body": {"view": {"value": "<p>Second</p>"}},
+        }
+        comments_mixin.confluence.get_page_comments.side_effect = [
+            {
+                "results": [first_comment],
+                "start": 0,
+                "limit": 1,
+                "size": 1,
+                "_links": {"next": "/rest/api/content/12345/child/comment?start=1"},
+            },
+            {
+                "results": [second_comment],
+                "start": 1,
+                "limit": 1,
+                "size": 1,
+                "_links": {},
+            },
+        ]
+
+        result = comments_mixin.get_page_comments("12345")
+
+        assert [comment.id for comment in result] == ["first", "second"]
+        assert comments_mixin.confluence.get_page_comments.call_count == 2
+        second_call = comments_mixin.confluence.get_page_comments.call_args_list[1]
+        assert second_call.kwargs["start"] == 1
+        assert second_call.kwargs["limit"] == 1
+
     def test_get_page_comments_api_error(self, comments_mixin):
         """Test handling of API errors."""
         # Mock the API to raise an exception
@@ -842,6 +877,40 @@ class TestGetInlineComments:
         mock_adapter.get_inline_comments.assert_called_once_with("12345")
         # v1 API should not be called
         comments_mixin.confluence.get_page_comments.assert_not_called()
+
+    def test_get_inline_comments_paginates_v1_results(self, comments_mixin_dc):
+        """Server/DC inline comments include matches beyond the first page."""
+        comments_mixin_dc.confluence.get_page_by_id.return_value = {
+            "space": {"key": "TEST"}
+        }
+        footer_comment = {
+            "id": "footer",
+            "body": {"view": {"value": "<p>footer</p>"}},
+            "extensions": {"location": "footer"},
+        }
+        comments_mixin_dc.confluence.get_page_comments.side_effect = [
+            {
+                "results": [footer_comment],
+                "start": 0,
+                "limit": 1,
+                "size": 1,
+                "_links": {"next": "/rest/api/content/12345/child/comment?start=1"},
+            },
+            {
+                "results": [MOCK_INLINE_COMMENT_V1_RESPONSE],
+                "start": 1,
+                "limit": 1,
+                "size": 1,
+                "_links": {},
+            },
+        ]
+
+        result = comments_mixin_dc.get_inline_comments("12345")
+
+        assert [comment.id for comment in result] == ["333444555"]
+        second_call = comments_mixin_dc.confluence.get_page_comments.call_args_list[1]
+        assert second_call.kwargs["start"] == 1
+        assert second_call.kwargs["limit"] == 1
 
     def test_get_inline_comments_empty(self, comments_mixin_dc):
         """get_inline_comments returns empty list if no inline comments (Server/DC)."""
