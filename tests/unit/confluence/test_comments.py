@@ -551,6 +551,34 @@ class TestReplyToComment:
         payload = comments_mixin_dc.confluence.post.call_args.kwargs["data"]
         assert payload["extensions"] == {"location": "inline"}
 
+    def test_cyclic_v1_reply_ancestry_is_rejected(self, comments_mixin_dc):
+        """Cyclic Server/DC ancestry must not fall back to a footer reply."""
+        comments_mixin_dc.confluence.get_page_by_id.side_effect = [
+            {
+                "id": "comment-a",
+                "type": "comment",
+                "container": {"id": "987654321", "type": "page"},
+                "ancestors": [{"id": "comment-b", "type": "comment"}],
+                "extensions": {"location": "footer"},
+            },
+            {
+                "id": "comment-b",
+                "type": "comment",
+                "container": {"id": "987654321", "type": "page"},
+                "ancestors": [{"id": "comment-a", "type": "comment"}],
+                "extensions": {"location": "footer"},
+            },
+        ]
+
+        with pytest.raises(
+            ValueError,
+            match="Cyclic comment ancestry detected for 'comment-a'",
+        ):
+            comments_mixin_dc._resolve_parent_comment_context("comment-a")
+
+        assert comments_mixin_dc.confluence.get_page_by_id.call_count == 2
+        comments_mixin_dc.confluence.post.assert_not_called()
+
     def test_reply_with_html_content(self, comments_mixin):
         """Reply with HTML content skips markdown conversion."""
         comments_mixin.confluence.get_page_by_id.side_effect = [

@@ -284,7 +284,7 @@ class CommentsMixin(ConfluenceClient):
             A tuple containing the owning page ID and ``"inline"`` or ``"footer"``.
 
         Raises:
-            ValueError: If the parent response contains no page reference.
+            ValueError: If no page reference exists or ancestry is cyclic.
         """
         current_id = comment_id
         visited: set[str] = set()
@@ -317,6 +317,9 @@ class CommentsMixin(ConfluenceClient):
             if not comment_parent_id:
                 break
             current_id = comment_parent_id
+        else:
+            message = f"Cyclic comment ancestry detected for '{comment_id}'"
+            raise ValueError(message)
 
         if not page_id:
             message = f"Could not resolve page for parent comment {comment_id}"
