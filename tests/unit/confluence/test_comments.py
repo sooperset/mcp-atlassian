@@ -330,7 +330,10 @@ class TestReplyToComment:
         assert result is not None
         assert result.parent_comment_id == "456789123"
         assert comments_mixin.confluence.get_page_by_id.call_args_list == [
-            call(page_id="456789123", expand="container,ancestors"),
+            call(
+                page_id="456789123",
+                expand="container,ancestors,extensions.location",
+            ),
             call(page_id="987654321", expand="space"),
         ]
         comments_mixin.confluence.post.assert_called_once_with(
@@ -359,6 +362,7 @@ class TestReplyToComment:
                     {"id": "parent-comment", "type": "comment"},
                 ],
             },
+            MOCK_PARENT_COMMENT_V1_RESPONSE,
             {"id": "987654321", "space": {"key": "TEST"}},
         ]
         comments_mixin.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
@@ -397,6 +401,7 @@ class TestReplyToComment:
 
         # Mock v2 adapter
         mock_adapter = MagicMock()
+        mock_adapter.get_comment_thread_location.return_value = "footer"
         mock_adapter.create_footer_comment.return_value = {
             "id": "222333444",
             "type": "comment",
@@ -434,6 +439,117 @@ class TestReplyToComment:
             parent_comment_id="456789123",
             body="<p>This is a v2 reply</p>",
         )
+
+    def test_reply_to_inline_comment_v2_cloud(self, comments_mixin):
+        """Cloud replies use the inline endpoint for an inline thread."""
+        comments_mixin.config.auth_type = "oauth"
+        mock_adapter = MagicMock()
+        mock_adapter.get_comment_thread_location.return_value = "inline"
+        mock_adapter.create_inline_comment.return_value = {
+            **MOCK_INLINE_COMMENT_V1_RESPONSE,
+            "container": {"id": "456789123", "type": "comment"},
+        }
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>This is an inline reply</p>"
+        )
+
+        with patch.object(
+            type(comments_mixin),
+            "_v2_adapter",
+            new_callable=lambda: property(lambda self: mock_adapter),
+        ):
+            result = comments_mixin.reply_to_comment(
+                "456789123", "This is an inline reply"
+            )
+
+        assert result is not None
+        assert result.location == "inline"
+        mock_adapter.create_inline_comment.assert_called_once_with(
+            parent_comment_id="456789123",
+            body="<p>This is an inline reply</p>",
+        )
+        mock_adapter.create_footer_comment.assert_not_called()
+
+    def test_reply_to_inline_comment_v1_server_dc(self, comments_mixin_dc):
+        """Server/DC replies preserve the inline thread location."""
+        comments_mixin_dc.confluence.get_page_by_id.side_effect = [
+            {
+                **MOCK_PARENT_COMMENT_V1_RESPONSE,
+                "extensions": {"location": "inline"},
+            },
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
+        comments_mixin_dc.confluence.post.return_value = {
+            **MOCK_COMMENT_REPLY_V1_RESPONSE,
+            "extensions": {"location": "inline"},
+        }
+
+        result = comments_mixin_dc.reply_to_comment(
+            "456789123", "This is an inline reply"
+        )
+
+        assert result is not None
+        assert result.location == "inline"
+        payload = comments_mixin_dc.confluence.post.call_args.kwargs["data"]
+        assert payload["extensions"] == {"location": "inline"}
+
+    def test_reply_to_inline_comment_cloud_basic_uses_v2(self, comments_mixin):
+        """Cloud Basic detects the thread via v1 and writes through v2."""
+        comments_mixin.confluence.get_page_by_id.return_value = {
+            **MOCK_PARENT_COMMENT_V1_RESPONSE,
+            "extensions": {"location": "inline"},
+        }
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>Inline reply</p>"
+        )
+        mock_adapter = MagicMock()
+        mock_adapter.create_inline_comment.return_value = {
+            **MOCK_INLINE_COMMENT_V1_RESPONSE,
+            "container": {"id": "456789123", "type": "comment"},
+        }
+
+        with patch.object(
+            type(comments_mixin),
+            "_inline_v2_adapter",
+            new_callable=lambda: property(lambda self: mock_adapter),
+        ):
+            result = comments_mixin.reply_to_comment("456789123", "Inline reply")
+
+        assert result is not None
+        mock_adapter.create_inline_comment.assert_called_once_with(
+            parent_comment_id="456789123",
+            body="<p>Inline reply</p>",
+        )
+        comments_mixin.confluence.post.assert_not_called()
+
+    def test_nested_v1_reply_inherits_inline_root(self, comments_mixin_dc):
+        """A legacy footer-typed child still inherits its inline root."""
+        comments_mixin_dc.confluence.get_page_by_id.side_effect = [
+            {
+                "id": "legacy-child",
+                "type": "comment",
+                "container": {"id": "987654321", "type": "page"},
+                "ancestors": [{"id": "inline-root", "type": "comment"}],
+                "extensions": {"location": "footer"},
+            },
+            {
+                "id": "inline-root",
+                "type": "comment",
+                "container": {"id": "987654321", "type": "page"},
+                "extensions": {"location": "inline"},
+            },
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
+        comments_mixin_dc.confluence.post.return_value = {
+            **MOCK_COMMENT_REPLY_V1_RESPONSE,
+            "extensions": {"location": "inline"},
+        }
+
+        result = comments_mixin_dc.reply_to_comment("legacy-child", "Nested reply")
+
+        assert result is not None
+        payload = comments_mixin_dc.confluence.post.call_args.kwargs["data"]
+        assert payload["extensions"] == {"location": "inline"}
 
     def test_reply_with_html_content(self, comments_mixin):
         """Reply with HTML content skips markdown conversion."""

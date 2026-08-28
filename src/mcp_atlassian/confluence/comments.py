@@ -192,32 +192,49 @@ class CommentsMixin(ConfluenceClient):
 
             v2_adapter = self._v2_adapter
             if v2_adapter:
-                response = v2_adapter.create_footer_comment(
-                    parent_comment_id=comment_id, body=content
-                )
+                location = v2_adapter.get_comment_thread_location(comment_id)
+                if location == "inline":
+                    response = v2_adapter.create_inline_comment(
+                        parent_comment_id=comment_id, body=content
+                    )
+                else:
+                    response = v2_adapter.create_footer_comment(
+                        parent_comment_id=comment_id, body=content
+                    )
                 space_key = ""
             else:
-                # v1 API: thread replies under the parent page with ancestors,
-                # not as a direct child of the parent comment.
-                page_id = self._resolve_page_id_for_parent_comment(comment_id)
-                page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
-                space_key = page.get("space", {}).get("key", "")
-                data: dict[str, Any] = {
-                    "type": "comment",
-                    "container": {
-                        "id": page_id,
-                        "type": "page",
-                    },
-                    "ancestors": [{"id": comment_id}],
-                    "body": {
-                        "storage": {
-                            "value": content,
-                            "representation": "storage",
+                page_id, location = self._resolve_parent_comment_context(comment_id)
+                inline_adapter = self._inline_v2_adapter
+                if location == "inline" and inline_adapter:
+                    response = inline_adapter.create_inline_comment(
+                        parent_comment_id=comment_id, body=content
+                    )
+                    space_key = ""
+                else:
+                    # v1 API: thread replies under the parent page with ancestors,
+                    # not as a direct child of the parent comment.
+                    page = self.confluence.get_page_by_id(
+                        page_id=page_id, expand="space"
+                    )
+                    space_key = page.get("space", {}).get("key", "")
+                    data: dict[str, Any] = {
+                        "type": "comment",
+                        "container": {
+                            "id": page_id,
+                            "type": "page",
                         },
-                    },
-                }
-                response = self.confluence.post("rest/api/content/", data=data)
-                space_key = ""
+                        "ancestors": [{"id": comment_id}],
+                        "body": {
+                            "storage": {
+                                "value": content,
+                                "representation": "storage",
+                            },
+                        },
+                    }
+                    if location == "inline":
+                        data["extensions"] = {"location": "inline"}
+                    response = self.confluence.post("rest/api/content/", data=data)
+                    space_key = ""
 
             if not response:
                 logger.error("Failed to reply to comment: empty response")
@@ -245,34 +262,66 @@ class CommentsMixin(ConfluenceClient):
         page_id = reference.get("id")
         return str(page_id) if page_id is not None else None
 
-    def _resolve_page_id_for_parent_comment(self, comment_id: str) -> str:
-        """Resolve the page containing a parent comment, including nested replies.
+    @staticmethod
+    def _comment_id_from_reference(reference: Any) -> str | None:
+        """Return a comment ID from an expanded Confluence content reference."""
+        if not isinstance(reference, dict) or reference.get("type") != "comment":
+            return None
+
+        comment_id = reference.get("id")
+        return str(comment_id) if comment_id is not None else None
+
+    def _resolve_parent_comment_context(self, comment_id: str) -> tuple[str, str]:
+        """Resolve the owning page and thread location for a v1 comment.
+
+        Older clients can create footer-typed replies beneath an inline root, so
+        parent comments are followed until the thread root is reached.
 
         Args:
             comment_id: The ID of the parent comment.
 
         Returns:
-            The page ID that owns the comment thread.
+            A tuple containing the owning page ID and ``"inline"`` or ``"footer"``.
 
         Raises:
             ValueError: If the parent response contains no page reference.
         """
-        parent = self.confluence.get_page_by_id(
-            page_id=comment_id, expand="container,ancestors"
-        )
+        current_id = comment_id
+        visited: set[str] = set()
+        page_id: str | None = None
 
-        page_id = self._page_id_from_reference(parent.get("container"))
-        if page_id:
-            return page_id
+        while current_id not in visited:
+            visited.add(current_id)
+            parent = self.confluence.get_page_by_id(
+                page_id=current_id,
+                expand="container,ancestors,extensions.location",
+            )
 
-        ancestors = parent.get("ancestors")
-        if isinstance(ancestors, list):
-            for ancestor in reversed(ancestors):
-                page_id = self._page_id_from_reference(ancestor)
-                if page_id:
-                    return page_id
+            container = parent.get("container")
+            page_id = page_id or self._page_id_from_reference(container)
+            ancestors = parent.get("ancestors")
+            comment_parent_id = self._comment_id_from_reference(container)
+            if isinstance(ancestors, list):
+                for ancestor in reversed(ancestors):
+                    page_id = page_id or self._page_id_from_reference(ancestor)
+                    comment_parent_id = (
+                        comment_parent_id or self._comment_id_from_reference(ancestor)
+                    )
 
-        raise ValueError(f"Could not resolve page for parent comment {comment_id}")
+            if parent.get("extensions", {}).get("location") == "inline":
+                if not page_id:
+                    message = f"Could not resolve page for parent comment {comment_id}"
+                    raise ValueError(message)
+                return page_id, "inline"
+
+            if not comment_parent_id:
+                break
+            current_id = comment_parent_id
+
+        if not page_id:
+            message = f"Could not resolve page for parent comment {comment_id}"
+            raise ValueError(message)
+        return page_id, "footer"
 
     def get_inline_comments(
         self, page_id: str, *, return_markdown: bool = True

@@ -522,3 +522,92 @@ class TestConfluenceV2AdapterComments:
         assert payload["pageId"] == "12345"
         assert "parentCommentId" not in payload
         assert result["id"] == "333444555"
+
+    def test_create_inline_comment_reply(self, v2_adapter, mock_session):
+        """Inline replies use parentCommentId without anchor properties."""
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "id": "444555777",
+            "status": "current",
+            "parentCommentId": "444555666",
+            "pageId": "12345",
+            "body": {
+                "storage": {
+                    "value": "<p>Inline reply</p>",
+                    "representation": "storage",
+                }
+            },
+            "version": {"number": 1},
+            "_links": {},
+        }
+        mock_session.post.return_value = mock_response
+
+        result = v2_adapter.create_inline_comment(
+            parent_comment_id="444555666", body="<p>Inline reply</p>"
+        )
+
+        mock_session.post.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/inline-comments",
+            json={
+                "parentCommentId": "444555666",
+                "body": {
+                    "representation": "storage",
+                    "value": "<p>Inline reply</p>",
+                },
+            },
+        )
+        assert result["parentCommentId"] == "444555666"
+        assert result["extensions"]["location"] == "inline"
+
+    def test_get_comment_thread_location_inline(self, v2_adapter, mock_session):
+        """An inline comment is identified with one request."""
+        inline_response = Mock()
+        inline_response.json.return_value = {"id": "inline-root"}
+        mock_session.get.return_value = inline_response
+
+        result = v2_adapter.get_comment_thread_location("inline-root")
+
+        assert result == "inline"
+        mock_session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/inline-comments/inline-root",
+            params={"body-format": "storage"},
+        )
+
+    def test_get_comment_thread_location_footer(self, v2_adapter, mock_session):
+        """A top-level footer comment resolves as a footer thread."""
+        inline_not_found = Mock(status_code=404)
+        inline_not_found.raise_for_status.side_effect = HTTPError(
+            response=inline_not_found
+        )
+        footer_response = Mock()
+        footer_response.json.return_value = {"id": "footer-root"}
+        mock_session.get.side_effect = [inline_not_found, footer_response]
+
+        result = v2_adapter.get_comment_thread_location("footer-root")
+
+        assert result == "footer"
+
+    def test_get_comment_thread_location_traces_inline_root(
+        self, v2_adapter, mock_session
+    ):
+        """A legacy footer-typed child inherits its inline root location."""
+        child_inline_not_found = Mock(status_code=404)
+        child_inline_not_found.raise_for_status.side_effect = HTTPError(
+            response=child_inline_not_found
+        )
+        child_footer = Mock()
+        child_footer.json.return_value = {
+            "id": "legacy-child",
+            "parentCommentId": "inline-root",
+        }
+        root_inline = Mock()
+        root_inline.json.return_value = {"id": "inline-root"}
+        mock_session.get.side_effect = [
+            child_inline_not_found,
+            child_footer,
+            root_inline,
+        ]
+
+        result = v2_adapter.get_comment_thread_location("legacy-child")
+
+        assert result == "inline"

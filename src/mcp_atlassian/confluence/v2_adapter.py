@@ -702,22 +702,83 @@ class ConfluenceV2Adapter:
             msg = f"Failed to get inline comments for page '{page_id}': {e}"
             raise ValueError(msg) from e
 
+    def _get_comment_if_exists(
+        self, comment_id: str, endpoint: str
+    ) -> dict[str, Any] | None:
+        """Return a v2 comment, or None when it does not exist at an endpoint."""
+        url = f"{self.base_url}/api/v2/{endpoint}/{comment_id}"
+        response = self.session.get(url, params={"body-format": "storage"})
+        try:
+            response.raise_for_status()
+        except HTTPError:
+            if response.status_code == 404:
+                return None
+            raise
+        return response.json()
+
+    def get_comment_thread_location(self, comment_id: str) -> str:
+        """Determine whether a Cloud comment thread is inline or footer.
+
+        Footer replies created under an inline thread by older clients are traced
+        through ``parentCommentId`` until the thread root is found.
+
+        Args:
+            comment_id: The comment whose thread location should be resolved.
+
+        Returns:
+            ``"inline"`` or ``"footer"``.
+
+        Raises:
+            ValueError: If the comment cannot be found or its ancestry is cyclic.
+        """
+        current_id = comment_id
+        visited: set[str] = set()
+
+        try:
+            while current_id not in visited:
+                visited.add(current_id)
+
+                if self._get_comment_if_exists(current_id, "inline-comments"):
+                    return "inline"
+
+                footer_comment = self._get_comment_if_exists(
+                    current_id, "footer-comments"
+                )
+                if not footer_comment:
+                    message = f"Comment '{current_id}' was not found"
+                    raise ValueError(message)
+
+                parent_id = footer_comment.get("parentCommentId")
+                if not parent_id:
+                    return "footer"
+                current_id = str(parent_id)
+        except (requests.RequestException, TypeError) as e:
+            message = (
+                f"Failed to determine comment thread location for '{comment_id}': {e}"
+            )
+            raise ValueError(message) from e
+
+        message = f"Cyclic comment ancestry detected for '{comment_id}'"
+        raise ValueError(message)
+
     def create_inline_comment(
         self,
         *,
-        page_id: str,
         body: str,
-        text_selection: str,
+        page_id: str | None = None,
+        parent_comment_id: str | None = None,
+        text_selection: str | None = None,
         text_selection_match_count: int = 1,
         text_selection_match_index: int = 0,
         representation: str = "storage",
     ) -> dict[str, Any]:
-        """Create an inline comment anchored to a text selection using the v2 API.
+        """Create an inline comment or reply using the v2 API.
 
         Args:
-            page_id: The ID of the page to add the inline comment to
             body: The comment content
-            text_selection: The text on the page to anchor the comment to
+            page_id: The page ID for a new inline comment
+            parent_comment_id: The parent inline comment ID for a reply
+            text_selection: The text to anchor a new inline comment to
             text_selection_match_count: Total number of times the text
                 appears on the page
             text_selection_match_index: Zero-based index of which occurrence
@@ -728,21 +789,32 @@ class ConfluenceV2Adapter:
             The created inline comment data in v1-compatible format
 
         Raises:
-            ValueError: If creation fails
+            ValueError: If arguments are invalid or creation fails
         """
+        if page_id and parent_comment_id:
+            raise ValueError("page_id and parent_comment_id are mutually exclusive")
+        if not page_id and not parent_comment_id:
+            raise ValueError("Either page_id or parent_comment_id must be provided")
+        if page_id and not text_selection:
+            raise ValueError("text_selection is required for a new inline comment")
+
         try:
             data: dict[str, Any] = {
-                "pageId": page_id,
                 "body": {
                     "representation": representation,
                     "value": body,
                 },
-                "inlineCommentProperties": {
+            }
+
+            if parent_comment_id:
+                data["parentCommentId"] = parent_comment_id
+            else:
+                data["pageId"] = page_id
+                data["inlineCommentProperties"] = {
                     "textSelection": text_selection,
                     "textSelectionMatchCount": text_selection_match_count,
                     "textSelectionMatchIndex": text_selection_match_index,
-                },
-            }
+                }
 
             url = f"{self.base_url}/api/v2/inline-comments"
             response = self.session.post(url, json=data)
@@ -804,6 +876,9 @@ class ConfluenceV2Adapter:
 
         if inline_props := v2_response.get("inlineCommentProperties"):
             v1_compatible["inlineCommentProperties"] = inline_props
+
+        if parent_id := v2_response.get("parentCommentId"):
+            v1_compatible["parentCommentId"] = parent_id
 
         return v1_compatible
 
