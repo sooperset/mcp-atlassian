@@ -566,6 +566,7 @@ class TestConfluenceCloudComments:
         cloud_instance: CloudInstanceInfo,
         resource_tracker: CloudResourceTracker,
     ) -> None:
+        """Cloud inline threads keep replies on the inline endpoint."""
         uid = uuid.uuid4().hex[:8]
         anchor = f"cloud inline anchor {uid}"
         page = confluence_fetcher.create_page(
@@ -587,6 +588,16 @@ class TestConfluenceCloudComments:
 
         comments = confluence_fetcher.get_inline_comments(page.id)
         assert any(inline_comment.id == comment.id for inline_comment in comments)
+
+        reply_content = f"Cloud E2E inline reply {uid}"
+        reply = confluence_fetcher.reply_to_comment(
+            comment_id=comment.id,
+            content=reply_content,
+        )
+        assert reply is not None
+        assert reply.location == "inline"
+        assert reply.parent_comment_id == comment.id
+        assert reply_content in reply.body
 
 
 class TestConfluenceDateLozenge:

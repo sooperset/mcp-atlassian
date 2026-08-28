@@ -422,6 +422,7 @@ class TestConfluenceDCComments:
         dc_instance: DCInstanceInfo,
         resource_tracker: DCResourceTracker,
     ) -> None:
+        """Server/DC inline threads keep replies inline and readable."""
         uid = uuid.uuid4().hex[:8]
         anchor = f"inline anchor {uid}"
         page = confluence_fetcher.create_page(
@@ -443,3 +444,15 @@ class TestConfluenceDCComments:
 
         comments = confluence_fetcher.get_inline_comments(page.id)
         assert any(inline_comment.id == comment.id for inline_comment in comments)
+
+        reply_content = f"E2E inline reply {uid}"
+        reply = confluence_fetcher.reply_to_comment(
+            comment_id=comment.id,
+            content=reply_content,
+        )
+        assert reply is not None
+        assert reply.location == "inline"
+        assert reply_content in reply.body
+
+        comments = confluence_fetcher.get_inline_comments(page.id)
+        assert any(inline_comment.id == reply.id for inline_comment in comments)
