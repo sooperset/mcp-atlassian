@@ -840,10 +840,9 @@ class TestGetInlineComments:
         mock_adapter = MagicMock()
         mock_adapter.get_inline_comments.return_value = [
             {
-                "id": "444555666",
+                "id": "333444555",
                 "type": "comment",
                 "status": "open",
-                "parentCommentId": "333444555",
                 "body": {
                     "view": {"value": "<p>v2 inline</p>", "representation": "view"}
                 },
@@ -855,7 +854,19 @@ class TestGetInlineComments:
                 "resolutionStatus": "open",
                 "version": {"number": 1},
                 "_links": {},
-            }
+            },
+            {
+                "id": "444555666",
+                "type": "comment",
+                "status": "open",
+                "parentCommentId": "333444555",
+                "body": {
+                    "view": {"value": "<p>v2 reply</p>", "representation": "view"}
+                },
+                "extensions": {"location": "inline"},
+                "version": {"number": 1},
+                "_links": {},
+            },
         ]
         comments_mixin.preprocessor.process_html_content.return_value = (
             "<p>v2 inline</p>",
@@ -869,11 +880,13 @@ class TestGetInlineComments:
         ):
             result = comments_mixin.get_inline_comments("12345")
 
-        assert len(result) == 1
-        assert result[0].parent_comment_id == "333444555"
+        assert len(result) == 2
+        assert result[0].parent_comment_id is None
         assert result[0].marker_ref == "cloud-marker-ref"
         assert result[0].original_selection == "selected cloud text"
         assert result[0].resolution_status == "open"
+        assert result[1].parent_comment_id == result[0].id
+        assert result[1].location == "inline"
         mock_adapter.get_inline_comments.assert_called_once_with("12345")
         # v1 API should not be called
         comments_mixin.confluence.get_page_comments.assert_not_called()
