@@ -127,11 +127,19 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         """
         Transition a Jira issue to a new status.
 
+        Note on Jira Cloud comments:
+            On Jira Cloud, comments bundled in the transition request (`update.comment`)
+            are only recorded if the destination status's transition screen includes
+            a Comment field. If the comment is omitted after transition, call `add_comment`
+            directly to add it (#1623).
+
         Args:
             issue_key: The key of the issue to transition
             transition_id: The ID of the transition to perform
                 (integer preferred, string accepted)
             fields: Optional fields to set during the transition
+            comment: Optional comment to add during transition (Markdown format)
+                (Note: On Jira Cloud, requires the transition screen to expose the comment field)
             comment: Optional comment to add during the transition.
                 Rejected for projects listed in
                 JIRA_INTERNAL_ONLY_PROJECTS: a transition comment is a
