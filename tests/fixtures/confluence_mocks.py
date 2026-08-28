@@ -646,7 +646,9 @@ MOCK_INLINE_COMMENT_V1_RESPONSE = {
         "location": "inline",
         "inlineProperties": {
             "originalSelection": "some text to anchor",
+            "markerRef": "marker-ref-123",
         },
+        "resolution": {"status": "open"},
     },
     "_links": {
         "webui": "/spaces/TEST/pages/12345?focusedCommentId=333444555",
