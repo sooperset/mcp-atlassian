@@ -2615,6 +2615,21 @@ async def test_transition_issue_resolves_name_to_id(jira_client, mock_jira_fetch
 
 
 @pytest.mark.anyio
+async def test_transition_issue_comment_schema_warns_about_cloud_screen():
+    """The MCP schema documents Jira Cloud's transition-screen dependency."""
+    import mcp_atlassian.servers.jira as jira_server
+
+    tools = {tool.name: tool for tool in await jira_server.jira_mcp.list_tools()}
+
+    description = tools["transition_issue"].parameters["properties"]["comment"][
+        "description"
+    ]
+
+    assert "workflow transition's screen must include a Comment field" in description
+    assert "jira_add_comment" in description
+
+
+@pytest.mark.anyio
 async def test_transition_issue_still_accepts_numeric_id(
     jira_client, mock_jira_fetcher
 ):

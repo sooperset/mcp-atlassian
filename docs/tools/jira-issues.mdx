@@ -188,7 +188,7 @@ Transition a Jira issue to a new status.
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `transition_id` | `string` | Yes | ID or name of the transition to perform (case-insensitive name match, e.g. 'In Progress', 'Done'). Use the jira_get_transitions tool first to see the available transitions for the issue. Example values: '11', '21', '31', 'In Progress' |
 | `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: '`{"resolution": {"name": "Fixed"}}`' |
-| `comment` | `string` | No | (Optional) Comment to add during the transition in Markdown format. This will be visible in the issue history. Rejected for projects listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be customer-visible on JSM and cannot be forced internal): transition without a comment, then post an internal note with jira_add_comment(public=false). |
+| `comment` | `string` | No | (Optional) Comment to add during the transition in Markdown format. This will be visible in the issue history. Rejected for projects listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be customer-visible on JSM and cannot be forced internal): transition without a comment, then post an internal note with jira_add_comment(public=false). On Jira Cloud, the workflow transition's screen must include a Comment field; if Jira omits the comment, add it separately with jira_add_comment. |
 **Example:**
 
 ```json
