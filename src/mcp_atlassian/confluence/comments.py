@@ -68,7 +68,12 @@ class CommentsMixin(ConfluenceClient):
 
             # Get comments with expanded content
             comments_response = self.confluence.get_page_comments(
-                content_id=page_id, expand="body.view.value,version", depth="all"
+                content_id=page_id,
+                expand=(
+                    "body.view.value,version,container,ancestors,"
+                    "extensions.inlineProperties,extensions.resolution"
+                ),
+                depth="all",
             )
 
             # Process each comment
@@ -298,7 +303,10 @@ class CommentsMixin(ConfluenceClient):
                 space_key = page.get("space", {}).get("key", "")
                 response = self.confluence.get_page_comments(
                     content_id=page_id,
-                    expand="body.view.value,version,extensions.inlineProperties",
+                    expand=(
+                        "body.view.value,version,container,ancestors,"
+                        "extensions.inlineProperties,extensions.resolution"
+                    ),
                     depth="all",
                 )
                 raw_comments = [

@@ -802,8 +802,14 @@ class ConfluenceV2Adapter:
         if author := v2_response.get("author"):
             v1_compatible["author"] = author
 
-        if inline_props := v2_response.get("inlineCommentProperties"):
-            v1_compatible["inlineCommentProperties"] = inline_props
+        for field in (
+            "inlineCommentProperties",
+            "properties",
+            "resolutionStatus",
+            "parentCommentId",
+        ):
+            if field in v2_response:
+                v1_compatible[field] = v2_response[field]
 
         return v1_compatible
 

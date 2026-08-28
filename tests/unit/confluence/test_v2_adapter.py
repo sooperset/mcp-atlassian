@@ -377,6 +377,44 @@ class TestConfluenceV2AdapterComments:
                 body="<p>Test</p>",
             )
 
+    def test_get_inline_comments_preserves_review_metadata(
+        self, v2_adapter, mock_session
+    ):
+        """Cloud v2 anchor, resolution, and thread fields survive conversion."""
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "results": [
+                {
+                    "id": "comment-2",
+                    "status": "current",
+                    "parentCommentId": "comment-1",
+                    "properties": {
+                        "inlineMarkerRef": "marker-ref-123",
+                        "inlineOriginalSelection": "selected text",
+                    },
+                    "resolutionStatus": "open",
+                    "body": {
+                        "storage": {
+                            "value": "<p>Review comment</p>",
+                            "representation": "storage",
+                        }
+                    },
+                    "version": {"createdAt": "2024-01-03T10:00:00.000Z"},
+                }
+            ]
+        }
+        mock_session.get.return_value = mock_response
+
+        result = v2_adapter.get_inline_comments("12345")
+
+        mock_session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/pages/12345/inline-comments",
+            params={"body-format": "storage"},
+        )
+        assert result[0]["parentCommentId"] == "comment-1"
+        assert result[0]["properties"]["inlineMarkerRef"] == "marker-ref-123"
+        assert result[0]["resolutionStatus"] == "open"
+
     def test_create_footer_comment_neither_param_raises(self, v2_adapter):
         """T11b: Passing neither page_id nor parent_comment_id raises ValueError."""
         with pytest.raises(ValueError, match="Either"):

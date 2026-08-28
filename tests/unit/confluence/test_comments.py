@@ -92,7 +92,12 @@ class TestCommentsMixin:
 
         # Verify
         comments_mixin.confluence.get_page_comments.assert_called_once_with(
-            content_id=page_id, expand="body.view.value,version", depth="all"
+            content_id=page_id,
+            expand=(
+                "body.view.value,version,container,ancestors,"
+                "extensions.inlineProperties,extensions.resolution"
+            ),
+            depth="all",
         )
         assert len(result) == 1
         assert result[0].body == "Processed Markdown"
@@ -704,6 +709,53 @@ class TestConfluenceCommentModel:
         result = comment.to_simplified_dict()
         assert "location" not in result
 
+    def test_inline_metadata_from_v1_extensions(self):
+        """Inline anchor and resolution metadata survive v1 simplification."""
+        comment = ConfluenceComment.from_api_response(MOCK_INLINE_COMMENT_V1_RESPONSE)
+
+        assert comment.marker_ref == "marker-ref-123"
+        assert comment.original_selection == "some text to anchor"
+        assert comment.resolution_status == "open"
+        assert comment.created == "2024-01-03T10:00:00.000Z"
+        assert comment.to_simplified_dict()["marker_ref"] == "marker-ref-123"
+
+    def test_inline_metadata_from_v2_properties(self):
+        """Current Cloud v2 inline properties are normalized."""
+        data = {
+            "id": "456789123",
+            "body": {"view": {"value": "<p>Inline comment</p>"}},
+            "parentCommentId": "123456789",
+            "properties": {
+                "inlineMarkerRef": "cloud-marker-ref",
+                "inlineOriginalSelection": "selected cloud text",
+            },
+            "resolutionStatus": "resolved",
+        }
+
+        result = ConfluenceComment.from_api_response(data).to_simplified_dict()
+
+        assert result["parent_comment_id"] == "123456789"
+        assert result["marker_ref"] == "cloud-marker-ref"
+        assert result["original_selection"] == "selected cloud text"
+        assert result["resolution_status"] == "resolved"
+
+    def test_parent_comment_from_v1_ancestors(self):
+        """Server/DC replies use the nearest comment ancestor as their parent."""
+        data = {
+            "id": "reply-2",
+            "body": {"view": {"value": "<p>Nested reply</p>"}},
+            "container": {"id": "page-1", "type": "page"},
+            "ancestors": [
+                {"id": "page-1", "type": "page"},
+                {"id": "root-comment", "type": "comment"},
+                {"id": "reply-1", "type": "comment"},
+            ],
+        }
+
+        comment = ConfluenceComment.from_api_response(data)
+
+        assert comment.parent_comment_id == "reply-1"
+
 
 class TestGetInlineComments:
     """Tests for get_inline_comments method."""
@@ -735,10 +787,16 @@ class TestGetInlineComments:
         assert len(result) == 1
         assert result[0].location == "inline"
         assert result[0].id == "333444555"
+        assert result[0].marker_ref == "marker-ref-123"
+        assert result[0].original_selection == "some text to anchor"
+        assert result[0].resolution_status == "open"
         # Verify expanded fields were requested
         comments_mixin_dc.confluence.get_page_comments.assert_called_once_with(
             content_id=page_id,
-            expand="body.view.value,version,extensions.inlineProperties",
+            expand=(
+                "body.view.value,version,container,ancestors,"
+                "extensions.inlineProperties,extensions.resolution"
+            ),
             depth="all",
         )
 
@@ -750,10 +808,16 @@ class TestGetInlineComments:
                 "id": "444555666",
                 "type": "comment",
                 "status": "open",
+                "parentCommentId": "333444555",
                 "body": {
                     "view": {"value": "<p>v2 inline</p>", "representation": "view"}
                 },
                 "extensions": {"location": "inline"},
+                "properties": {
+                    "inlineMarkerRef": "cloud-marker-ref",
+                    "inlineOriginalSelection": "selected cloud text",
+                },
+                "resolutionStatus": "open",
                 "version": {"number": 1},
                 "_links": {},
             }
@@ -771,6 +835,10 @@ class TestGetInlineComments:
             result = comments_mixin.get_inline_comments("12345")
 
         assert len(result) == 1
+        assert result[0].parent_comment_id == "333444555"
+        assert result[0].marker_ref == "cloud-marker-ref"
+        assert result[0].original_selection == "selected cloud text"
+        assert result[0].resolution_status == "open"
         mock_adapter.get_inline_comments.assert_called_once_with("12345")
         # v1 API should not be called
         comments_mixin.confluence.get_page_comments.assert_not_called()
