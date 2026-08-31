@@ -253,6 +253,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         download_content_attachments,
         get_attachments,
         get_comments,
+        get_inline_comments,
         get_labels,
         get_page,
         get_page_ancestors,
@@ -298,6 +299,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(get_space)
     confluence_sub_mcp.add_tool(get_page_ancestors)
     confluence_sub_mcp.add_tool(get_comments)
+    confluence_sub_mcp.add_tool(get_inline_comments)
     confluence_sub_mcp.add_tool(add_comment)
     confluence_sub_mcp.add_tool(get_labels)
     confluence_sub_mcp.add_tool(add_label)
@@ -342,6 +344,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         download_content_attachments,
         get_attachments,
         get_comments,
+        get_inline_comments,
         get_labels,
         get_page,
         get_page_children,
@@ -382,6 +385,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(get_page_children)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
+    confluence_sub_mcp.add_tool(get_inline_comments)
     confluence_sub_mcp.add_tool(add_comment)
     confluence_sub_mcp.add_tool(get_labels)
     confluence_sub_mcp.add_tool(add_label)
@@ -723,6 +727,42 @@ async def test_get_comments(client, mock_confluence_fetcher):
     assert isinstance(result_data, list)
     assert len(result_data) > 0
     assert result_data[0]["author"] == "Test User"
+
+
+@pytest.mark.anyio
+async def test_get_inline_comments_returns_complete_flat_thread(
+    client, mock_confluence_fetcher
+):
+    """The MCP response preserves every comment and its parent link."""
+    root = MagicMock()
+    root.to_simplified_dict.return_value = {
+        "id": "root",
+        "body": "Root review comment",
+        "location": "inline",
+    }
+    reply = MagicMock()
+    reply.to_simplified_dict.return_value = {
+        "id": "reply",
+        "body": "Review reply",
+        "parent_comment_id": "root",
+        "location": "inline",
+    }
+    mock_confluence_fetcher.get_inline_comments.return_value = [root, reply]
+
+    response = await client.call_tool(
+        "confluence_get_inline_comments", {"page_id": "123456"}
+    )
+
+    mock_confluence_fetcher.get_inline_comments.assert_called_once_with("123456")
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is True
+    assert result_data["page_id"] == "123456"
+    assert result_data["count"] == 2
+    assert [comment["id"] for comment in result_data["comments"]] == [
+        "root",
+        "reply",
+    ]
+    assert result_data["comments"][1]["parent_comment_id"] == "root"
 
 
 @pytest.mark.anyio

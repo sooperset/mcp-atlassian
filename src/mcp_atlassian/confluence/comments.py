@@ -17,6 +17,35 @@ logger = logging.getLogger("mcp-atlassian")
 class CommentsMixin(ConfluenceClient):
     """Mixin for Confluence comment operations."""
 
+    def _get_all_v1_page_comments(
+        self, page_id: str, *, expand: str
+    ) -> list[dict[str, Any]]:
+        """Fetch every page of comments from the Confluence v1 API."""
+        response = self.confluence.get_page_comments(
+            content_id=page_id,
+            expand=expand,
+            depth="all",
+        )
+        results = list(response.get("results", []))
+        start = int(response.get("start", 0))
+
+        while response.get("_links", {}).get("next"):
+            page_size = int(response.get("size", len(response.get("results", []))))
+            if page_size <= 0:
+                break
+            start += page_size
+            limit = int(response.get("limit", 25))
+            response = self.confluence.get_page_comments(
+                content_id=page_id,
+                expand=expand,
+                depth="all",
+                start=start,
+                limit=limit,
+            )
+            results.extend(response.get("results", []))
+
+        return results
+
     @property
     def _v2_adapter(self) -> ConfluenceV2Adapter | None:
         """Get v2 API adapter for supported Confluence Cloud authentication.
@@ -67,13 +96,17 @@ class CommentsMixin(ConfluenceClient):
             space_key = page.get("space", {}).get("key", "")
 
             # Get comments with expanded content
-            comments_response = self.confluence.get_page_comments(
-                content_id=page_id, expand="body.view.value,version", depth="all"
+            raw_comments = self._get_all_v1_page_comments(
+                page_id,
+                expand=(
+                    "body.view.value,version,container,ancestors,"
+                    "extensions.inlineProperties,extensions.resolution"
+                ),
             )
 
             # Process each comment
             comment_models = []
-            for comment_data in comments_response.get("results", []):
+            for comment_data in raw_comments:
                 # Get the content based on format
                 body = comment_data["body"]["view"]["value"]
                 processed_html, processed_markdown = (
@@ -296,14 +329,16 @@ class CommentsMixin(ConfluenceClient):
                 # v1: fetch all child comments then filter by location=inline
                 page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
                 space_key = page.get("space", {}).get("key", "")
-                response = self.confluence.get_page_comments(
-                    content_id=page_id,
-                    expand="body.view.value,version,extensions.inlineProperties",
-                    depth="all",
+                all_comments = self._get_all_v1_page_comments(
+                    page_id,
+                    expand=(
+                        "body.view.value,version,container,ancestors,"
+                        "extensions.inlineProperties,extensions.resolution"
+                    ),
                 )
                 raw_comments = [
                     c
-                    for c in response.get("results", [])
+                    for c in all_comments
                     if c.get("extensions", {}).get("location") == "inline"
                 ]
 

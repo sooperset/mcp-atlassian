@@ -582,6 +582,9 @@ async def get_comments(
 ) -> str:
     """Get comments for a specific Confluence page.
 
+    Replies include their parent comment ID when available. Inline comments also
+    include anchor selection, marker reference, and resolution status metadata.
+
     Args:
         ctx: The FastMCP context.
         page_id: Confluence page ID.
@@ -1387,6 +1390,9 @@ async def get_inline_comments(
     ],
 ) -> str:
     """Get all inline comments for a Confluence page.
+
+    Results include parent comment IDs plus anchor selection, marker reference,
+    and resolution status metadata when Confluence provides those fields.
 
     Args:
         ctx: The FastMCP context.

@@ -973,6 +973,93 @@ class TestMarkdownToAdfPanels:
         assert types == ["heading", "panel", "bulletList"]
 
 
+class TestMarkdownToAdfStatus:
+    """Tests for inline status lozenge support in markdown_to_adf."""
+
+    def _inline_nodes(self, markdown: str) -> list[dict[str, Any]]:
+        """Helper: return the inline nodes of the first paragraph."""
+        result = markdown_to_adf(markdown)
+        return result["content"][0]["content"]
+
+    @pytest.mark.parametrize(
+        "color",
+        ["neutral", "purple", "blue", "red", "yellow", "green"],
+    )
+    def test_all_valid_colors(self, color: str) -> None:
+        """Every supported color is passed through to the status node."""
+        nodes = self._inline_nodes(f"{{status:color={color}|title=Done}}")
+        assert nodes[0]["type"] == "status"
+        assert nodes[0]["attrs"] == {"text": "Done", "color": color, "style": ""}
+
+    def test_color_is_optional(self) -> None:
+        """Omitting color defaults to neutral."""
+        nodes = self._inline_nodes("{status:title=In Progress}")
+        assert nodes[0]["type"] == "status"
+        assert nodes[0]["attrs"]["color"] == "neutral"
+        assert nodes[0]["attrs"]["text"] == "In Progress"
+
+    def test_unknown_color_becomes_neutral(self) -> None:
+        """An unrecognized color does not produce an invalid ADF node."""
+        nodes = self._inline_nodes("{status:color=chartreuse|title=Blocked}")
+        assert nodes[0]["attrs"]["color"] == "neutral"
+        assert nodes[0]["attrs"]["text"] == "Blocked"
+
+    def test_color_is_case_insensitive(self) -> None:
+        """Color matching is not case sensitive."""
+        nodes = self._inline_nodes("{status:color=GREEN|title=Done}")
+        assert nodes[0]["attrs"]["color"] == "green"
+
+    def test_status_alongside_surrounding_text(self) -> None:
+        """Text before and after a lozenge is preserved."""
+        nodes = self._inline_nodes("Ticket is {status:color=green|title=Done} now")
+        assert [n["type"] for n in nodes] == ["text", "status", "text"]
+        assert nodes[0]["text"] == "Ticket is "
+        assert nodes[2]["text"] == " now"
+
+    def test_multiple_statuses_in_one_line(self) -> None:
+        """Several lozenges can appear in the same paragraph."""
+        nodes = self._inline_nodes(
+            "{status:color=red|title=Blocked} then {status:color=green|title=Done}"
+        )
+        statuses = [n for n in nodes if n["type"] == "status"]
+        assert [s["attrs"]["text"] for s in statuses] == ["Blocked", "Done"]
+        assert [s["attrs"]["color"] for s in statuses] == ["red", "green"]
+
+    def test_status_with_inline_formatting(self) -> None:
+        """Lozenges coexist with bold and inline code."""
+        nodes = self._inline_nodes("**bold** {status:color=blue|title=Review} `code`")
+        types = [n["type"] for n in nodes]
+        assert "status" in types
+        assert any(n.get("marks") == [{"type": "strong"}] for n in nodes)
+        assert any(n.get("marks") == [{"type": "code"}] for n in nodes)
+
+    def test_backticked_status_stays_literal(self) -> None:
+        """A lozenge inside inline code is not converted."""
+        nodes = self._inline_nodes("`{status:color=red|title=Blocked}`")
+        assert [n["type"] for n in nodes] == ["text"]
+        assert nodes[0]["marks"] == [{"type": "code"}]
+        assert nodes[0]["text"] == "{status:color=red|title=Blocked}"
+
+    def test_malformed_status_is_left_as_text(self) -> None:
+        """A lozenge missing its title is not converted."""
+        nodes = self._inline_nodes("{status:color=red}")
+        assert all(n["type"] != "status" for n in nodes)
+
+    def test_status_in_list_item(self) -> None:
+        """Lozenges work inside list items, not just paragraphs."""
+        result = markdown_to_adf("- item {status:color=yellow|title=WIP}")
+        item = result["content"][0]["content"][0]
+        inline = item["content"][0]["content"]
+        assert any(n["type"] == "status" for n in inline)
+
+    def test_round_trip_through_adf_to_text(self) -> None:
+        """A written lozenge is readable again via the ADF read path."""
+        adf = markdown_to_adf("Rollout is {status:color=green|title=Done} today")
+        text = adf_to_text(adf)
+        assert "[Done]" in text
+        assert "Rollout is" in text
+
+
 class TestMarkdownToJiraDispatch:
     """Tests for _markdown_to_jira Cloud/Server dispatch."""
 

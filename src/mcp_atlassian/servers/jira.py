@@ -1759,7 +1759,9 @@ async def create_issue(
         Field(
             description=(
                 "Issue description in Markdown format. On Jira Cloud, use "
-                "'{expand:Title}...{expand}' for a collapsible section."
+                "'{expand:Title}...{expand}' for a collapsible section and "
+                "'{status:color=green|title=Done}' for an inline status "
+                "lozenge."
             ),
             default=None,
         ),
@@ -2005,7 +2007,9 @@ async def update_issue(
             description=(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "For 'description', provide text in Markdown format; on Jira Cloud, "
-                "use '{expand:Title}...{expand}' for a collapsible section. "
+                "use '{expand:Title}...{expand}' for a collapsible section "
+                "and '{status:color=green|title=Done}' for an inline status "
+                "lozenge. "
                 'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             ),
             default=None,
@@ -2977,7 +2981,9 @@ async def transition_issue(
                 "listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be "
                 "customer-visible on JSM and cannot be forced internal): transition "
                 "without a comment, then post an internal note with "
-                "jira_add_comment(public=false)."
+                "jira_add_comment(public=false). On Jira Cloud, the workflow "
+                "transition's screen must include a Comment field; if Jira omits "
+                "the comment, add it separately with jira_add_comment."
             ),
         ),
     ] = None,
