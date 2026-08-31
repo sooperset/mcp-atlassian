@@ -323,6 +323,14 @@ def mock_jira_fetcher():
 
     mock_get_user_profile.side_effect = side_effect_func
     mock_fetcher.get_user_profile_by_identifier = mock_get_user_profile
+    mock_fetcher.get_current_user_profile.return_value = {
+        "account_id": "5b10ac8d82e05b22cc7d4ef5",
+        "display_name": "Current User",
+        "name": "Current User",
+        "email": "current.user@example.com",
+        "avatar_url": None,
+        "groups": {"size": 1, "items": [{"name": "jira-users"}]},
+    }
 
     mock_service_desk = MagicMock()
     mock_service_desk.to_simplified_dict.return_value = {
@@ -1219,6 +1227,24 @@ async def test_get_user_profile_tool_success(jira_client, mock_jira_fetcher):
         user_info["avatar_url"]
         == "https://test.atlassian.net/avatar/test.profile@example.com"
     )
+
+
+@pytest.mark.anyio
+async def test_get_user_profile_tool_me_uses_myself_once(
+    jira_client, mock_jira_fetcher
+):
+    """The existing profile tool returns the current user in one lookup."""
+    response = await jira_client.call_tool(
+        "jira_get_user_profile",
+        {"user_identifier": "me", "expand": "groups"},
+    )
+
+    mock_jira_fetcher.get_current_user_profile.assert_called_once_with(expand="groups")
+    mock_jira_fetcher.get_user_profile_by_identifier.assert_not_called()
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is True
+    assert result_data["user"]["account_id"] == ("5b10ac8d82e05b22cc7d4ef5")
+    assert result_data["user"]["groups"]["size"] == 1
 
 
 @pytest.mark.anyio
