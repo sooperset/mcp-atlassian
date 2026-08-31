@@ -69,7 +69,6 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_add_worklog",
         "jira_batch_get_changelogs",
         "jira_get_user_profile",
-        "jira_get_current_user",
         "jira_search_assignable_users",
         "jira_get_issue_watchers",
         "jira_add_watcher",

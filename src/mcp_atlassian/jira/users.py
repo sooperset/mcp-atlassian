@@ -568,10 +568,10 @@ class UsersMixin(JiraClient):
                 fails.
             Exception: For other API errors.
         """
-        # Handle 'me' as a special case — resolve to current user's account ID
+        # Fetch the current profile directly. Resolving the account ID first and
+        # then calling /user requires two requests and may need Browse Users.
         if identifier.lower() == "me":
-            resolved_id = self.get_current_user_account_id()
-            return self.get_user_profile_by_identifier(resolved_id)
+            return JiraUser.from_api_response(self._get_current_user_profile_data())
 
         api_kwargs = self._determine_user_api_params(identifier)
 
@@ -620,14 +620,7 @@ class UsersMixin(JiraClient):
             Exception: For other API errors or an unexpected response shape.
         """
         try:
-            logger.debug("Calling /myself to get the current user profile.")
-            params = {"expand": expand} if expand else None
-            user_data = self.jira.get(self.jira.resource_url("myself"), params=params)
-            if not isinstance(user_data, dict):
-                raise ValueError(
-                    "Current user lookup via /myself returned unexpected type: "
-                    f"{type(user_data)}."
-                )
+            user_data = self._get_current_user_profile_data(expand)
             result = JiraUser.from_api_response(user_data).to_simplified_dict()
             for section in ("groups", "applicationRoles"):
                 if section in user_data:
@@ -638,3 +631,17 @@ class UsersMixin(JiraClient):
         except Exception as e:
             logger.exception("Unexpected error getting current user profile:")
             raise Exception(f"Error processing current user profile: {str(e)}") from e
+
+    def _get_current_user_profile_data(
+        self, expand: str | None = None
+    ) -> dict[str, Any]:
+        """Fetch the current user from Jira's credential-scoped endpoint."""
+        logger.debug("Calling /myself to get the current user profile.")
+        params = {"expand": expand} if expand else None
+        user_data = self.jira.get(self.jira.resource_url("myself"), params=params)
+        if not isinstance(user_data, dict):
+            raise ValueError(
+                "Current user lookup via /myself returned unexpected type: "
+                f"{type(user_data)}."
+            )
+        return user_data

@@ -45,14 +45,6 @@ class TestJiraDCBehavior:
     def test_is_not_cloud(self, jira_fetcher: JiraFetcher) -> None:
         assert jira_fetcher.config.is_cloud is False
 
-    def test_get_current_user_profile(
-        self,
-        jsm_jira_fetcher: JiraFetcher,
-    ) -> None:
-        """get_current_user_profile returns the identity for a DC token."""
-        result = jsm_jira_fetcher.get_current_user_profile()
-        assert result["name"] or result["display_name"]
-
     def test_assignee_uses_name_field(
         self,
         jira_fetcher: JiraFetcher,

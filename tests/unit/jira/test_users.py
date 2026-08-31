@@ -1236,23 +1236,21 @@ class TestUserProfileMeIdentifier:
     """
 
     def test_me_resolves_to_current_user(self, jira_fetcher):
-        """'me' identifier resolves via get_current_user_account_id."""
+        """'me' identifier fetches the profile directly from /myself."""
         user_response = {
             "accountId": "5b10ac8d82e05b22cc7d4ef5",
             "displayName": "Test User",
             "emailAddress": "test@example.com",
             "active": True,
         }
-        with patch.object(
-            jira_fetcher,
-            "get_current_user_account_id",
-            return_value="5b10ac8d82e05b22cc7d4ef5",
-        ) as mock_get_current:
-            jira_fetcher.jira.user = MagicMock(return_value=user_response)
-            result = jira_fetcher.get_user_profile_by_identifier("me")
-            assert result is not None
-            assert result.account_id == "5b10ac8d82e05b22cc7d4ef5"
-            mock_get_current.assert_called_once()
+        jira_fetcher.jira.resource_url = MagicMock(return_value="rest/api/2/myself")
+        jira_fetcher.jira.get = MagicMock(return_value=user_response)
+
+        result = jira_fetcher.get_user_profile_by_identifier("me")
+
+        assert result.account_id == "5b10ac8d82e05b22cc7d4ef5"
+        jira_fetcher.jira.get.assert_called_once_with("rest/api/2/myself", params=None)
+        jira_fetcher.jira.user.assert_not_called()
 
     def test_me_case_insensitive(self, jira_fetcher):
         """'Me', 'ME', 'mE' all resolve to current user."""
@@ -1261,15 +1259,15 @@ class TestUserProfileMeIdentifier:
             "displayName": "Test User",
             "active": True,
         }
-        with patch.object(
-            jira_fetcher,
-            "get_current_user_account_id",
-            return_value="5b10ac8d82e05b22cc7d4ef5",
-        ):
-            jira_fetcher.jira.user = MagicMock(return_value=user_response)
-            for variant in ["Me", "ME", "mE"]:
-                result = jira_fetcher.get_user_profile_by_identifier(variant)
-                assert result is not None
+        jira_fetcher.jira.resource_url = MagicMock(return_value="rest/api/2/myself")
+        jira_fetcher.jira.get = MagicMock(return_value=user_response)
+
+        for variant in ["Me", "ME", "mE"]:
+            result = jira_fetcher.get_user_profile_by_identifier(variant)
+            assert result.account_id == "5b10ac8d82e05b22cc7d4ef5"
+
+        assert jira_fetcher.jira.get.call_count == 3
+        jira_fetcher.jira.user.assert_not_called()
 
 
 class TestGetAccountIdServerDC:

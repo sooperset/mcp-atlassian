@@ -106,25 +106,14 @@ Only available on Jira Cloud.
 
 ### Get User Profile
 
-Retrieve profile information for a specific Jira user.
+Retrieve profile information for a Jira user.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `user_identifier` | `string` | Yes | Identifier for the user (e.g., email address 'user@example.com', username 'johndoe', account ID 'accountid:...', or key for Server/DC). |
-
----
-
-### Get Current User
-
-Retrieve the profile of the user the current credentials belong to.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `expand` | `string` | No | (Optional) Comma-separated sections to expand on the returned user, e.g. 'groups' or 'groups,applicationRoles'. Recognised sections are included verbatim in the response. |
+| `expand` | `string` | No | Optional comma-separated sections to include when user_identifier is 'me', e.g. 'groups' or 'groups,applicationRoles'. |
 
 ---
 

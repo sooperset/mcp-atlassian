@@ -274,13 +274,29 @@ async def get_user_profile(
             description="Identifier for the user (e.g., email address 'user@example.com', username 'johndoe', account ID 'accountid:...', or key for Server/DC)."
         ),
     ],
+    expand: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional comma-separated sections to include when "
+                "user_identifier is 'me', e.g. 'groups' or "
+                "'groups,applicationRoles'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """
-    Retrieve profile information for a specific Jira user.
+    Retrieve profile information for a Jira user.
+
+    Use ``user_identifier="me"`` to return the account authenticated for the
+    current request directly from Jira's ``/myself`` endpoint. This path does
+    not require Browse Users permission.
 
     Args:
         ctx: The FastMCP context.
         user_identifier: User identifier (email, username, key, or account ID).
+        expand: Optional sections to include for the ``me`` lookup.
 
     Returns:
         JSON string representing the Jira user profile object, or an error object if not found.
@@ -290,8 +306,11 @@ async def get_user_profile(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        user: JiraUser = jira.get_user_profile_by_identifier(user_identifier)
-        result = user.to_simplified_dict()
+        if user_identifier.lower() == "me":
+            result = jira.get_current_user_profile(expand=expand)
+        else:
+            user: JiraUser = jira.get_user_profile_by_identifier(user_identifier)
+            result = user.to_simplified_dict()
         response_data = {"success": True, "user": result}
     except Exception as e:
         error_message = ""
@@ -320,68 +339,6 @@ async def get_user_profile(
             f"get_user_profile failed for '{user_identifier}': {error_message}",
         )
         response_data = error_result
-    return json.dumps(response_data, indent=2, ensure_ascii=False)
-
-
-@jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_users"},
-    annotations={"title": "Get Current User", "readOnlyHint": True},
-)
-async def get_current_user(
-    ctx: Context,
-    expand: Annotated[
-        str | None,
-        Field(
-            description=(
-                "(Optional) Comma-separated sections to expand on the returned "
-                "user, e.g. 'groups' or 'groups,applicationRoles'. Recognised "
-                "sections are included verbatim in the response."
-            ),
-            default=None,
-        ),
-    ] = None,
-) -> str:
-    """Retrieve the profile of the user the current credentials belong to.
-
-    Calls ``/rest/api/2/myself``, so the identity is resolved from the token
-    used for this request. Works on Jira Cloud, Server/Data Center, and Jira
-    Service Management, and needs no "Browse Users" permission.
-
-    Use this to answer "who am I?", to obtain the caller's own ``account_id``
-    (Cloud) or ``name`` / ``key`` (Server/DC) before setting assignee,
-    reporter, or watcher fields, or to confirm which account a token maps to
-    in BYOT deployments. Use ``get_user_profile`` instead when you need to
-    look up somebody else by email, username, key, or account ID.
-
-    Args:
-        ctx: The FastMCP context.
-        expand: Optional comma-separated sections to expand (e.g. 'groups').
-
-    Returns:
-        JSON string representing the current Jira user profile object, or an
-        error object.
-
-    Raises:
-        ValueError: If the Jira client is not configured or available.
-    """
-    jira = await get_jira_fetcher(ctx)
-    try:
-        user = jira.get_current_user_profile(expand=expand)
-        response_data = {"success": True, "user": user}
-    except Exception as e:
-        error_message = ""
-        log_level = logging.ERROR
-        if isinstance(e, MCPAtlassianAuthenticationError):
-            error_message = f"Authentication/Permission Error: {str(e)}"
-        elif isinstance(e, OSError | HTTPError):
-            error_message = f"Network or API Error: {str(e)}"
-        else:
-            error_message = (
-                "An unexpected error occurred while fetching the current user."
-            )
-            logger.exception("Unexpected error in get_current_user:")
-        logger.log(log_level, f"get_current_user failed: {error_message}")
-        response_data = {"success": False, "error": str(e)}
     return json.dumps(response_data, indent=2, ensure_ascii=False)
 
 
