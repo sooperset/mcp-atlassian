@@ -1,0 +1,2 @@
+notes: |
+  Replies include `parent_comment_id` when Confluence provides the parent thread. Inline comments also include `marker_ref`, `original_selection`, and `resolution_status` when available.

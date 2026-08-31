@@ -259,11 +259,25 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         )
 
         header_based_services = {"jira": False, "confluence": False}
+        service_headers: dict[str, str] = {}
         request = getattr(req_context, "request", None)
         if request is not None:
-            service_headers = getattr(request.state, "atlassian_service_headers", {})
-            if service_headers:
+            request_service_headers = getattr(
+                request.state, "atlassian_service_headers", {}
+            )
+            if isinstance(request_service_headers, dict) and request_service_headers:
+                service_headers = request_service_headers
                 header_based_services = get_available_services(service_headers)
+
+        jira_config = (
+            app_lifespan_state.full_jira_config if app_lifespan_state else None
+        )
+        jira_url_header = service_headers.get("X-Atlassian-Jira-Url")
+        jira_is_cloud: bool | None = None
+        if jira_url_header:
+            jira_is_cloud = is_atlassian_cloud_url(jira_url_header)
+        elif jira_config is not None:
+            jira_is_cloud = bool(jira_config.is_cloud)
 
         return {
             "read_only": read_only,
@@ -271,6 +285,7 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
             "enabled_toolsets_filter": enabled_toolsets_filter,
             "app_lifespan_state": app_lifespan_state,
             "header_based_services": header_based_services,
+            "jira_is_cloud": jira_is_cloud,
         }
 
     def _is_tool_authorized(
@@ -294,12 +309,24 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
             return False
         return True
 
+    @staticmethod
+    def _is_tool_supported_on_deployment(
+        tool_obj: FastMCPTool, ctx: dict[str, Any]
+    ) -> bool:
+        """Return whether a tool is supported by the configured deployment."""
+        tool_tags = tool_obj.tags
+        if "cloud_only" in tool_tags and "jira" in tool_tags:
+            return ctx["jira_is_cloud"] is not False
+        return True
+
     def _is_tool_enabled(
         self, registered_name: str, tool_obj: FastMCPTool, ctx: dict[str, Any]
     ) -> bool:
         """Listing filter: the tool is authorized AND its backing service is
         configured/available (the latter is a listing-only graceful-hide)."""
         if not self._is_tool_authorized(registered_name, tool_obj, ctx):
+            return False
+        if not self._is_tool_supported_on_deployment(tool_obj, ctx):
             return False
 
         app_lifespan_state = ctx["app_lifespan_state"]
@@ -361,14 +388,18 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
     async def _call_tool_mcp(self, key: str, arguments: dict[str, Any]) -> Any:
         # Enforce the same enablement filter at call time as at listing time, so a
         # tool hidden from the listing (read-only mode, not in ENABLED_TOOLS, toolset
-        # disabled, or service unavailable) cannot be invoked directly by name.
+        # disabled, or deployment-incompatible) cannot be invoked directly by name.
         # Under an active filter context, denials and genuinely unknown tools raise
         # byte-identical messages here (no exists-but-disabled leak), decoupled from
         # upstream's error format (FastMCP uses a repr-quoted name).
         ctx = self._tool_filter_context()
         if ctx is not None:
             tool_obj = await self.get_tool(key)
-            if tool_obj is None or not self._is_tool_authorized(key, tool_obj, ctx):
+            if (
+                tool_obj is None
+                or not self._is_tool_authorized(key, tool_obj, ctx)
+                or not self._is_tool_supported_on_deployment(tool_obj, ctx)
+            ):
                 raise NotFoundError(f"Unknown tool: {key}")
         return await super()._call_tool_mcp(key, arguments)
 

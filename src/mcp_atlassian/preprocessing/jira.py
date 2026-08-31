@@ -272,9 +272,12 @@ class JiraPreprocessor(BasePreprocessor):
         # Block quotes
         output = re.sub(r"^bq\.(.*?)$", r"> \1\n", output, flags=re.MULTILINE)
 
-        # Text formatting (bold, italic)
+        # Text formatting (bold, italic). Delimiters preceded by a backslash
+        # are wiki escapes (e.g. the intraword `\_` this module's
+        # markdown_to_jira writes), not markup, so they must neither open nor
+        # close a span.
         output = re.sub(
-            r"([*_])(.*?)\1",
+            r"(?<!\\)([*_])(.*?)(?<!\\)\1",
             lambda match: (
                 ("**" if match.group(1) == "*" else "*")
                 + match.group(2)
@@ -469,9 +472,12 @@ class JiraPreprocessor(BasePreprocessor):
             "INLINECODE",
         )
 
-        # Headers with = or - underlines
+        # Headers with = or - underlines. A setext heading needs actual text on
+        # the line above the underline, so the lookahead keeps a blank line from
+        # matching: `\n\n----\n` is a horizontal rule, which is already valid
+        # Jira markup, not an empty `h2.` (issue #1587).
         output = re.sub(
-            r"^(.*?)\n([=-])+$",
+            r"^(?=[^\n]*\S)(.*?)\n([=-])+$",
             lambda match: f"h{1 if match.group(2)[0] == '=' else 2}. {match.group(1)}",
             output,
             flags=re.MULTILINE,

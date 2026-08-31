@@ -749,6 +749,21 @@ class TestAttachmentsMixin:
             assert result["failed"][0]["filename"] == "file2.pdf"
             assert "File not found" in result["failed"][0]["error"]
 
+    def test_upload_attachments_all_fail(self, attachments_mixin: AttachmentsMixin):
+        """Report failure when no attachment is uploaded."""
+        with patch.object(
+            attachments_mixin,
+            "upload_attachment",
+            return_value={"success": False, "error": "File not found"},
+        ):
+            result = attachments_mixin.upload_attachments(
+                "TEST-123", ["/path/to/file1.txt", "/path/to/file2.txt"]
+            )
+
+        assert result["success"] is False
+        assert result["uploaded"] == []
+        assert len(result["failed"]) == 2
+
     def test_upload_attachments_empty_list(self, attachments_mixin: AttachmentsMixin):
         """Test upload with an empty list of file paths."""
         # Call the method with an empty list

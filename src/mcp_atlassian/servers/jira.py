@@ -160,11 +160,13 @@ def _parse_visibility(
 
 def _parse_additional_fields(
     additional_fields: dict[str, Any] | str | None,
+    param_name: str = "additional_fields",
 ) -> dict[str, Any]:
     """Parse additional_fields from dict or JSON string.
 
     Args:
         additional_fields: Dict, JSON string, or None.
+        param_name: Argument name used in error messages.
 
     Returns:
         Parsed dict of additional fields.
@@ -177,22 +179,26 @@ def _parse_additional_fields(
     if isinstance(additional_fields, dict):
         return additional_fields
     if isinstance(additional_fields, str):
+        if not additional_fields.strip():
+            return {}
         try:
             parsed = json.loads(additional_fields)
             if not isinstance(parsed, dict):
-                raise ValueError(
-                    "Parsed additional_fields is not a JSON object (dict)."
-                )
+                raise ValueError(f"{param_name} is not a JSON object (dict).")
             return parsed
         except json.JSONDecodeError as e:
-            raise ValueError(f"additional_fields is not valid JSON: {e}") from e
-    raise ValueError("additional_fields must be a dictionary or JSON string.")
+            raise ValueError(f"{param_name} is not valid JSON: {e}") from e
+    raise ValueError(f"{param_name} must be a dictionary or JSON string.")
 
 
 def _parse_request_field_values(
     request_field_values: dict[str, Any] | str,
 ) -> dict[str, Any]:
     """Parse request_field_values from dict or JSON string."""
+    if isinstance(request_field_values, str) and not request_field_values.strip():
+        raise ValueError(
+            "request_field_values is not valid JSON: value must not be blank."
+        )
     try:
         return _parse_additional_fields(request_field_values)
     except ValueError as e:
@@ -1815,7 +1821,9 @@ async def create_issue(
         Field(
             description=(
                 "Issue description in Markdown format. On Jira Cloud, use "
-                "'{expand:Title}...{expand}' for a collapsible section."
+                "'{expand:Title}...{expand}' for a collapsible section and "
+                "'{status:color=green|title=Done}' for an inline status "
+                "lozenge."
             ),
             default=None,
         ),
@@ -1961,7 +1969,7 @@ async def batch_create_issues(
 
 
 @jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_issues"},
+    tags={"jira", "read", "cloud_only", "toolset:jira_issues"},
     annotations={"title": "Batch Get Changelogs", "readOnlyHint": True},
 )
 async def batch_get_changelogs(
@@ -2061,7 +2069,9 @@ async def update_issue(
             description=(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "For 'description', provide text in Markdown format; on Jira Cloud, "
-                "use '{expand:Title}...{expand}' for a collapsible section. "
+                "use '{expand:Title}...{expand}' for a collapsible section "
+                "and '{status:color=green|title=Done}' for an inline status "
+                "lozenge. "
                 'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             ),
             default=None,
@@ -2183,7 +2193,7 @@ async def update_issue(
         ValueError: If in read-only mode or Jira client unavailable, or invalid input.
     """
     jira = await get_jira_fetcher(ctx)
-    update_fields = _parse_additional_fields(fields)
+    update_fields = _parse_additional_fields(fields, param_name="fields")
 
     return_fields_list: str | list[str] | None = return_fields
     if return_fields and return_fields != "*all":
@@ -2242,12 +2252,21 @@ async def update_issue(
             issue = jira.update_issue(
                 issue_key=issue_key, return_fields=return_fields_list, **all_updates
             )
-            operations_performed.append("fields_updated")
+            if any(key != "attachments" for key in all_updates):
+                operations_performed.append("fields_updated")
             if (
                 hasattr(issue, "custom_fields")
                 and "attachment_results" in issue.custom_fields
             ):
                 attachment_results = issue.custom_fields["attachment_results"]
+                if attachment_results.get("uploaded"):
+                    operations_performed.append("attachments_uploaded")
+                for failure in attachment_results.get("failed", []):
+                    operations_failed.append(
+                        "attachment: "
+                        f"{failure.get('filename', 'unknown')}: "
+                        f"{failure.get('error', 'upload failed')}"
+                    )
         except Exception as e:  # noqa: BLE001 - preserve later operations
             logger.error(
                 f"Error updating fields for issue {issue_key}: {str(e)}",
@@ -2438,7 +2457,7 @@ async def delete_issue(
 
 
 @jira_mcp.tool(
-    tags={"jira", "write", "toolset:jira_issues"},
+    tags={"jira", "write", "cloud_only", "toolset:jira_issues"},
     annotations={"title": "Move Issue to Project", "destructiveHint": True},
 )
 @check_write_access
@@ -2555,7 +2574,11 @@ async def add_comment(
                 "with visibility. If the issue's project is "
                 "listed in JIRA_INTERNAL_ONLY_PROJECTS, only "
                 "public=false is accepted — public=true or "
-                "omitting this field is rejected."
+                "omitting this field is rejected. Issues in such "
+                "a project that are not JSM customer requests "
+                "(e.g. an agent-created Task) have no portal "
+                "audience and are exempt: they post through the "
+                "ordinary comment path and ignore this field."
             )
         ),
     ] = None,
@@ -2993,8 +3016,10 @@ async def transition_issue(
         str,
         Field(
             description=(
-                "ID of the transition to perform. Use the jira_get_transitions tool first "
-                "to get the available transition IDs for the issue. Example values: '11', '21', '31'"
+                "ID or name of the transition to perform (case-insensitive name match, "
+                "e.g. 'In Progress', 'Done'). Use the jira_get_transitions tool first to "
+                "see the available transitions for the issue. Example values: '11', '21', "
+                "'31', 'In Progress'"
             )
         ),
     ],
@@ -3018,7 +3043,9 @@ async def transition_issue(
                 "listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be "
                 "customer-visible on JSM and cannot be forced internal): transition "
                 "without a comment, then post an internal note with "
-                "jira_add_comment(public=false)."
+                "jira_add_comment(public=false). On Jira Cloud, the workflow "
+                "transition's screen must include a Comment field; if Jira omits "
+                "the comment, add it separately with jira_add_comment."
             ),
         ),
     ] = None,
@@ -3028,7 +3055,7 @@ async def transition_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        transition_id: ID of the transition.
+        transition_id: ID or name of the transition.
         fields: Optional JSON string of fields to update during transition.
         comment: Optional comment for the transition in Markdown format.
 
@@ -3045,11 +3072,14 @@ async def transition_issue(
         raise ValueError("issue_key and transition_id are required.")
 
     # Parse fields from JSON string
-    update_fields = _parse_additional_fields(fields)
+    update_fields = _parse_additional_fields(fields, param_name="fields")
+
+    available_transitions = jira.get_available_transitions(issue_key)
+    resolved_transition_id = resolve_transition(available_transitions, transition_id)
 
     issue = jira.transition_issue(
         issue_key=issue_key,
-        transition_id=transition_id,
+        transition_id=resolved_transition_id,
         fields=update_fields,
         comment=comment,
     )
