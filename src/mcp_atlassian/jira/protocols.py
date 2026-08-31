@@ -185,6 +185,12 @@ class FieldsOperationsProto(Protocol):
         """
 
     @abstractmethod
+    def get_fields(self, refresh: bool = False) -> list[dict[str, Any]]:
+        """
+        Get all available fields from Jira.
+        """
+
+    @abstractmethod
     def get_field_by_id(
         self, field_id: str, refresh: bool = False
     ) -> dict[str, Any] | None:
