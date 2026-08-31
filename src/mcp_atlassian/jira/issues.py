@@ -1875,8 +1875,9 @@ class IssuesMixin(
 
         # Prepare issues for bulk creation
         issue_updates = []
-        for issue_data in issues:
+        for raw_issue in issues:
             try:
+                issue_data = dict(raw_issue)
                 # Extract and validate required fields
                 project_key = issue_data.pop("project_key", None)
                 summary = issue_data.pop("summary", None)

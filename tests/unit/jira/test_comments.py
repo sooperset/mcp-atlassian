@@ -134,6 +134,22 @@ class TestCommentsMixin:
             result[2]["author"] == "Unknown"
         )  # Should use Unknown when only name is available
 
+    def test_get_issue_comments_with_none_author(self, comments_mixin):
+        """Test get_issue_comments handles author: None without AttributeError."""
+        comments_mixin.jira.issue_get_comments.return_value = {
+            "comments": [
+                {
+                    "id": "10001",
+                    "body": "Comment from deleted user",
+                    "created": "2024-01-01T10:00:00.000+0000",
+                    "author": None,
+                }
+            ]
+        }
+        result = comments_mixin.get_issue_comments("TEST-123")
+        assert len(result) == 1
+        assert result[0]["author"] == "Unknown"
+
     def test_get_issue_comments_with_empty_response(self, comments_mixin):
         """Test get_issue_comments with an empty response."""
         # Setup mock response with no comments

@@ -131,6 +131,37 @@ class TestCommentsMixin:
         comment = result[0]
         assert comment.body == "<p>Processed HTML</p>"
 
+    def test_get_page_comments_with_missing_body(self, comments_mixin):
+        """Test get_page_comments safely parses comments missing body or view keys without dropping results."""
+        comments_mixin.confluence.get_page_comments.return_value = {
+            "results": [
+                {
+                    "id": "1",
+                    "version": {"number": 1},
+                },
+                {
+                    "id": "2",
+                    "body": {},
+                    "version": {"number": 1},
+                },
+                {
+                    "id": "3",
+                    "body": {"view": {"value": "<p>Valid</p>"}},
+                    "version": {"number": 1},
+                },
+            ]
+        }
+        comments_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Valid</p>",
+            "Valid",
+        )
+
+        result = comments_mixin.get_page_comments("12345")
+        assert len(result) == 3
+        assert result[0].id == "1"
+        assert result[1].id == "2"
+        assert result[2].id == "3"
+
     def test_get_page_comments_paginates_v1_results(self, comments_mixin):
         """All v1 comment pages are returned when Confluence provides next."""
         first_comment = {

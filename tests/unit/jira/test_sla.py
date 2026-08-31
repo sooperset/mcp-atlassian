@@ -695,3 +695,58 @@ class TestStatusCategoryCaching:
 
         # API should only be called once across all issues
         assert sla_mixin.jira.get_all_statuses.call_count == 1
+
+    def test_naive_datetime_handling_in_sla_calculations(self, sla_mixin: SLAMixin):
+        """Test SLA calculations do not raise TypeError when naive datetimes are mixed with aware."""
+        config = SLAConfig(default_metrics=["lead_time", "cycle_time"])
+        # Explicit naive created datetime (tzinfo=None)
+        naive_created = datetime(2023, 1, 1, 10, 0, tzinfo=timezone.utc).replace(
+            tzinfo=None
+        )
+        naive_resolved = datetime(2023, 1, 2, 10, 0, tzinfo=timezone.utc).replace(
+            tzinfo=None
+        )
+
+        # 1. Test _calculate_duration with naive start and aware end (calendar time)
+        aware_end = datetime(2023, 1, 2, 10, 0, tzinfo=timezone.utc)
+        duration = sla_mixin._calculate_duration(
+            naive_created, aware_end, working_hours_only=False, sla_config=config
+        )
+        assert duration == 1440
+
+        # 2. Test _calculate_duration with working hours
+        wh_config = SLAConfig(
+            default_metrics=["lead_time"],
+            working_hours_only=True,
+            working_hours_start="09:00",
+            working_hours_end="17:00",
+            timezone="UTC",
+        )
+        wh_duration = sla_mixin._calculate_duration(
+            naive_created, aware_end, working_hours_only=True, sla_config=wh_config
+        )
+        assert wh_duration >= 0
+
+        # 3. Test _calculate_lead_time when issue is unresolved (resolution_date=None, now() is aware)
+        issue_dates_unresolved = IssueDatesResponse(
+            issue_key="TEST-1",
+            created=naive_created,
+            resolution_date=None,
+        )
+        lead_time = sla_mixin._calculate_lead_time(
+            issue_dates_unresolved, working_hours_only=False, sla_config=config
+        )
+        assert lead_time.value_minutes > 0
+        assert lead_time.is_resolved is False
+
+        # 4. Test _calculate_cycle_time with naive dates
+        issue_dates_resolved = IssueDatesResponse(
+            issue_key="TEST-2",
+            created=naive_created,
+            resolution_date=naive_resolved,
+        )
+        cycle_time = sla_mixin._calculate_cycle_time(
+            issue_dates_resolved, working_hours_only=False, sla_config=config
+        )
+        assert cycle_time.calculated is True
+        assert cycle_time.value_minutes == 1440

@@ -1723,6 +1723,14 @@ class TestIssuesMixin:
         assert len(result) == 0
         assert not issues_mixin.jira.create_issues.called
 
+        # Verify input dictionaries were not mutated
+        assert issues[0]["project_key"] == "TEST"
+        assert issues[0]["summary"] == "Test Issue 1"
+        assert issues[0]["issue_type"] == "Task"
+        assert issues[1]["project_key"] == "TEST"
+        assert issues[1]["summary"] == "Test Issue 2"
+        assert issues[1]["issue_type"] == "Bug"
+
     def test_batch_create_issues_missing_required_fields(
         self, issues_mixin: IssuesMixin
     ):

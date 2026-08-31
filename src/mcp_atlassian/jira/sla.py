@@ -1,7 +1,7 @@
 """Module for Jira SLA calculations."""
 
 import logging
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from ..models.jira.metrics import IssueDatesResponse
@@ -604,6 +604,11 @@ class SLAMixin(JiraClient, MetricsOperationsProto):
         Returns:
             Duration in minutes
         """
+        if start.tzinfo is None and end.tzinfo is not None:
+            start = start.replace(tzinfo=timezone.utc)
+        elif end.tzinfo is None and start.tzinfo is not None:
+            end = end.replace(tzinfo=timezone.utc)
+
         if not working_hours_only:
             # Simple calendar time calculation
             delta = end - start
@@ -638,6 +643,11 @@ class SLAMixin(JiraClient, MetricsOperationsProto):
         Returns:
             Working minutes between start and end
         """
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+
         if end <= start:
             return 0
 

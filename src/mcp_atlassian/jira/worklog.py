@@ -149,6 +149,12 @@ class WorklogMixin(JiraClient):
                 if isinstance(comment_raw, dict)
                 else comment_raw
             )
+            author_dict = result.get("author") or {}
+            author_name = (
+                author_dict.get("displayName", "Unknown")
+                if isinstance(author_dict, dict)
+                else "Unknown"
+            )
             return {
                 "id": result.get("id"),
                 "comment": self._clean_text(comment_text or ""),
@@ -157,7 +163,7 @@ class WorklogMixin(JiraClient):
                 "started": str(parse_date(result.get("started", ""))),
                 "time_spent": result.get("timeSpent", ""),
                 "time_spent_seconds": result.get("timeSpentSeconds", 0),
-                "author": result.get("author", {}).get("displayName", "Unknown"),
+                "author": author_name,
                 "original_estimate_updated": original_estimate_updated,
                 "remaining_estimate_updated": remaining_estimate_updated,
             }
@@ -237,18 +243,28 @@ class WorklogMixin(JiraClient):
 
                 page = result.get("worklogs", [])
                 for worklog in page:
+                    comment_raw = worklog.get("comment", "")
+                    comment_text = (
+                        adf_to_text(comment_raw)
+                        if isinstance(comment_raw, dict)
+                        else comment_raw
+                    )
+                    page_author_dict = worklog.get("author") or {}
+                    page_author_name = (
+                        page_author_dict.get("displayName", "Unknown")
+                        if isinstance(page_author_dict, dict)
+                        else "Unknown"
+                    )
                     worklogs.append(
                         {
                             "id": worklog.get("id"),
-                            "comment": self._clean_text(worklog.get("comment", "")),
+                            "comment": self._clean_text(comment_text or ""),
                             "created": str(parse_date(worklog.get("created", ""))),
                             "updated": str(parse_date(worklog.get("updated", ""))),
                             "started": str(parse_date(worklog.get("started", ""))),
                             "time_spent": worklog.get("timeSpent", ""),
                             "time_spent_seconds": worklog.get("timeSpentSeconds", 0),
-                            "author": worklog.get("author", {}).get(
-                                "displayName", "Unknown"
-                            ),
+                            "author": page_author_name,
                         }
                     )
 
