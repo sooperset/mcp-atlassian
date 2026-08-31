@@ -147,10 +147,45 @@ def test_clean_jira_text_smart_links(preprocessor_with_jira):
     confluence_url = (
         f"{base_url}/wiki/spaces/PROJ/pages/987654321/Example+Meeting+Notes"
     )
-    processed_url = f"{base_url}/wiki/spaces/PROJ/pages/987654321/ExampleMeetingNotes"
+    # Literal plus signs in the URL are preserved; only the display
+    # title has them replaced with spaces.
+    processed_url = f"{base_url}/wiki/spaces/PROJ/pages/987654321/Example+Meeting+Notes"
     text = f"[Meeting Notes|{confluence_url}|smart-link]"
     cleaned = preprocessor_with_jira.clean_jira_text(text)
     assert cleaned == f"[Example Meeting Notes]({processed_url})"
+
+
+def test_clean_jira_text_stray_plus_no_markdown_escaping(
+    preprocessor_with_jira,
+):
+    """Bold prose plus unpaired plus signs must survive the read path
+    without markdownify escaping every emphasis delimiter."""
+    wiki = "*Ticket:* done\r\n\r\nPython 3.13+ and 2.6+ differ"
+    out = preprocessor_with_jira.clean_jira_text(wiki)
+    assert "**Ticket:**" in out
+    assert "\\*" not in out
+    assert "3.13+" in out and "2.6+" in out
+
+
+def test_clean_jira_text_generated_html_does_not_trigger_html_conversion(
+    preprocessor_with_jira,
+):
+    """Tags emitted by Jira conversion must not reprocess Markdown prose."""
+    wiki = "*Ticket:* {{<b>literal</b>}} +new note+"
+
+    assert preprocessor_with_jira.clean_jira_text(wiki) == (
+        "**Ticket:** `<b>literal</b>` <ins>new note</ins>"
+    )
+
+
+def test_clean_jira_text_preserves_server_dc_mentions(
+    preprocessor_with_jira,
+):
+    """Jira Server/DC [~username] mentions must not have brackets stripped."""
+    wiki = "Please review [~john.doe] and [~jane_smith]"
+    out = preprocessor_with_jira.clean_jira_text(wiki)
+    assert "[~john.doe]" in out
+    assert "[~jane_smith]" in out
 
 
 @pytest.mark.parametrize(
