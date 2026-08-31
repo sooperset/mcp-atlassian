@@ -260,6 +260,51 @@ class LinksMixin(JiraClient):
             raise Exception(msg) from e
 
     @handle_auth_errors("Jira API")
+    def delete_remote_issue_link(self, issue_key: str, link_id: str) -> dict[str, Any]:
+        """Delete a remote link (web link, Confluence link) from an issue.
+
+        Args:
+            issue_key: The issue key (e.g., 'PROJ-123')
+            link_id: The ID of the remote link to delete
+
+        Returns:
+            Dictionary confirming removal of the remote link
+
+        Raises:
+            ValueError: If issue_key or link_id is empty
+            MCPAtlassianAuthenticationError: If authentication fails (401/403)
+            Exception: If there is an error deleting the remote link
+        """
+        if not issue_key:
+            raise ValueError("Issue key is required")
+        if not link_id:
+            raise ValueError("Link ID is required")
+
+        try:
+            if self.config.is_cloud:
+                endpoint = f"rest/api/3/issue/{issue_key}/remotelink/{link_id}"
+            else:
+                endpoint = f"rest/api/2/issue/{issue_key}/remotelink/{link_id}"
+            self.jira.delete(endpoint)
+            return {
+                "success": True,
+                "message": f"Remote link {link_id} deleted from issue {issue_key}",
+                "issue_key": issue_key,
+                "link_id": link_id,
+            }
+        except HTTPError:
+            raise  # let decorator handle auth errors
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(
+                f"Error deleting remote link {link_id} from {issue_key}: {error_msg}",
+                exc_info=True,
+            )
+            raise Exception(
+                f"Error deleting remote link {link_id} from {issue_key}: {error_msg}"
+            ) from e
+
+    @handle_auth_errors("Jira API")
     def remove_issue_link(self, link_id: str) -> dict[str, Any]:
         """
         Remove a link between two issues.

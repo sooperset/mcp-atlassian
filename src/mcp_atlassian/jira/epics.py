@@ -24,6 +24,22 @@ class EpicsMixin(
 ):
     """Mixin for Jira epic operations."""
 
+    def _is_epic_issue_type(self, issue_type: str) -> bool:
+        """Check if an issue type is an Epic, handling localized names."""
+        epic_names = {
+            "epic",  # English
+            "에픽",  # Korean
+            "エピック",  # Japanese
+            "史诗",  # Chinese (Simplified)
+            "史詩",  # Chinese (Traditional)
+            "épica",  # Spanish/Portuguese
+            "épique",  # French
+            "epik",  # Turkish
+            "эпик",  # Russian
+            "епік",  # Ukrainian
+        }
+        return issue_type.lower() in epic_names or "epic" in issue_type.lower()
+
     def _try_discover_fields_from_existing_epic(
         self, field_ids: dict[str, str]
     ) -> None:
@@ -326,7 +342,7 @@ class EpicsMixin(
             fields = epic.get("fields", {})
             issue_type = fields.get("issuetype", {}).get("name", "").lower()
 
-            if issue_type != "epic":
+            if not self._is_epic_issue_type(issue_type):
                 error_msg = f"Error linking issue to epic: {epic_key} is not an Epic"
                 raise ValueError(error_msg)
 
@@ -461,12 +477,8 @@ class EpicsMixin(
             issuetype_data = fields_data.get("issuetype", {})
             issue_type_name = issuetype_data.get("name", "")
 
-            # Check if it's an Epic by looking for "epic" in the name (case-insensitive)
-            # This handles localized names like "에픽", "エピック", etc.
-            if "epic" not in issue_type_name.lower() and issue_type_name not in [
-                "에픽",
-                "エピック",
-            ]:
+            # Check if it's an Epic, handling localized names
+            if not self._is_epic_issue_type(issue_type_name):
                 # Try to verify via JQL as a fallback
                 is_epic = False
                 try:

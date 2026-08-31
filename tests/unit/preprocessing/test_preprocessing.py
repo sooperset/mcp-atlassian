@@ -347,6 +347,35 @@ For more information, see [our website|https://example.com].
     assert "[our website](https://example.com)" in converted
 
 
+def test_jira_to_markdown_callout_macros(preprocessor_with_jira):
+    """Test {info}, {note}, {warning}, {tip} macro conversions."""
+    info_text = "{info:title=Important Note}\nThis is informational.\n{info}"
+    converted_info = preprocessor_with_jira.jira_to_markdown(info_text)
+    assert "> [!NOTE]" in converted_info
+    assert "> **Important Note**" in converted_info
+    assert "> This is informational." in converted_info
+
+    warning_text = "{warning}\nBeware of dragons!\n{warning}"
+    converted_warning = preprocessor_with_jira.jira_to_markdown(warning_text)
+    assert "> [!WARNING]" in converted_warning
+    assert "> Beware of dragons!" in converted_warning
+
+    tip_text = "{tip:title=ProTip}\nUse shortcuts.\n{tip}"
+    converted_tip = preprocessor_with_jira.jira_to_markdown(tip_text)
+    assert "> [!TIP]" in converted_tip
+    assert "> **ProTip**" in converted_tip
+    assert "> Use shortcuts." in converted_tip
+
+
+def test_jira_to_markdown_expand_macro(preprocessor_with_jira):
+    """Test {expand:Title} macro conversion."""
+    expand_text = "{expand:Click to view details}\nNested detail text\n{expand}"
+    converted = preprocessor_with_jira.jira_to_markdown(expand_text)
+    assert "{expand:Click to view details}" in converted
+    assert "Nested detail text" in converted
+    assert "{expand}" in converted
+
+
 def test_jira_to_markdown_citation(preprocessor_with_jira):
     """Test citation markup conversion and that unmatched ?? does not cause ReDoS."""
     # Matched citation

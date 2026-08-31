@@ -580,6 +580,33 @@ class TestEpicsMixin:
         ):
             epics_mixin.link_issue_to_epic("TEST-123", "TEST-456")
 
+    @pytest.mark.parametrize(
+        "localized_epic_name",
+        ["épique", "эпик", "エピック", "에픽", "史诗", "epik", "Épica"],
+    )
+    def test_link_issue_to_epic_multilingual(
+        self, epics_mixin: EpicsMixin, localized_epic_name: str
+    ):
+        """Test link_issue_to_epic recognizes non-English localized epic issue types."""
+        epics_mixin.jira.get_issue.side_effect = [
+            {"key": "TEST-123"},
+            {
+                "key": "EPIC-456",
+                "fields": {"issuetype": {"name": localized_epic_name}},
+            },
+        ]
+        epics_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", id="123456")
+        )
+        epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        epics_mixin.jira.update_issue.return_value = None
+
+        result = epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
+        assert result.key == "TEST-123"
+        epics_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"parent": {"key": "EPIC-456"}}}
+        )
+
     def test_link_issue_to_epic_all_methods_fail(self, epics_mixin: EpicsMixin):
         """Test link_issue_to_epic when all linking methods fail."""
         # Setup mocks

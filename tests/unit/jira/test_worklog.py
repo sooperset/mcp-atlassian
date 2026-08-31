@@ -258,6 +258,34 @@ class TestWorklogMixin:
         assert result["original_estimate_updated"] is False
         assert result["remaining_estimate_updated"] is False
 
+    def test_add_worklog_with_attributes_and_additional_fields(self, worklog_mixin):
+        """Test add_worklog passes custom attributes and additional fields."""
+        mock_result = {
+            "id": "10001",
+            "timeSpent": "2h",
+            "timeSpentSeconds": 7200,
+        }
+        worklog_mixin.jira.post.return_value = mock_result
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+
+        custom_attrs = {"_Account_": {"value": "DEV-100"}}
+        extra_fields = {"visibility": {"type": "group", "value": "developers"}}
+
+        result = worklog_mixin.add_worklog(
+            "TEST-123",
+            "2h",
+            attributes=custom_attrs,
+            additional_fields=extra_fields,
+        )
+
+        call_data = worklog_mixin.jira.post.call_args[1]["data"]
+        assert call_data["attributes"] == custom_attrs
+        assert call_data["visibility"] == {"type": "group", "value": "developers"}
+        assert call_data["timeSpentSeconds"] == 7200
+        assert result["id"] == "10001"
+
     def test_add_worklog_with_original_estimate(self, worklog_mixin):
         """Test add_worklog with original estimate update."""
         # Setup mocks

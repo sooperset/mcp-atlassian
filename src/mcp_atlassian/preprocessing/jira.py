@@ -24,6 +24,30 @@ def _convert_panel(params: str | None, content: str) -> str:
     return f"\n{content}\n"
 
 
+def _convert_callout_macro(macro_type: str, params: str | None, content: str) -> str:
+    """Convert Jira {info}, {note}, {warning}, {tip} macros to Markdown callouts."""
+    title = ""
+    if params:
+        title_match = re.search(r"title=([^|}]+)", params)
+        if title_match:
+            title = title_match.group(1).strip()
+    content = content.strip()
+    alert_type = {
+        "info": "NOTE",
+        "note": "NOTE",
+        "tip": "TIP",
+        "warning": "WARNING",
+    }.get(macro_type.lower(), "NOTE")
+
+    lines = content.split("\n")
+    formatted_lines = [f"> [!{alert_type}]"]
+    if title:
+        formatted_lines.append(f"> **{title}**")
+    for line in lines:
+        formatted_lines.append(f"> {line}")
+    return "\n" + "\n".join(formatted_lines) + "\n"
+
+
 def _contains_html_outside_code(text: str) -> bool:
     """Return whether source text contains HTML outside protected code spans."""
     code_patterns = (
@@ -358,6 +382,27 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
+        # Macro callouts: {info}, {note}, {warning}, {tip}
+        output = re.sub(
+            r"\{(info|note|warning|tip)(?::([^}]*))?\}([\s\S]*?)\{\1\}",
+            lambda match: _convert_callout_macro(
+                match.group(1), match.group(2), match.group(3)
+            ),
+            output,
+            flags=re.MULTILINE | re.IGNORECASE,
+        )
+
+        # Expand macro: {expand:title}content{expand}
+        output = re.sub(
+            r"\{expand(?::([^}]*))?\}([\s\S]*?)\{expand\}",
+            lambda match: (
+                f"\n{{expand{(':' + match.group(1).strip()) if match.group(1) else ''}}}\n"
+                f"{match.group(2).strip()}\n{{expand}}\n"
+            ),
+            output,
+            flags=re.MULTILINE | re.IGNORECASE,
+        )
+
         # Images with alt text
         output = re.sub(
             r"!([^|\n\s]+)\|([^\n!]*)alt=([^\n!\,]+?)"
@@ -374,7 +419,7 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Links
         output = re.sub(r"\[([^|]+)\|(.+?)\]", r"[\1](\2)", output)
-        output = re.sub(r"\[(?!~)(.+?)\]([^\(])", r"\1\2", output)
+        output = re.sub(r"\[(?!~|!)(.+?)\]([^\(])", r"\1\2", output)
 
         # Colored text
         output = re.sub(

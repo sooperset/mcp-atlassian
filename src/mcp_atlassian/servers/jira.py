@@ -2708,6 +2708,20 @@ async def add_worklog(
     remaining_estimate: Annotated[
         str | None, Field(description="(Optional) New value for the remaining estimate")
     ] = None,
+    attributes: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Custom worklog attributes (e.g. Tempo attributes) as JSON string"
+            )
+        ),
+    ] = None,
+    additional_fields: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Extra fields to pass in the worklog creation payload as JSON string"
+        ),
+    ] = None,
 ) -> str:
     """Add a worklog entry to a Jira issue.
 
@@ -2719,6 +2733,8 @@ async def add_worklog(
         started: Optional start time in ISO format.
         original_estimate: Optional new original estimate.
         remaining_estimate: Optional new remaining estimate.
+        attributes: Optional worklog attributes as JSON string.
+        additional_fields: Optional additional fields as JSON string.
 
 
     Returns:
@@ -2728,6 +2744,8 @@ async def add_worklog(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
+    parsed_attributes = json.loads(attributes) if attributes else None
+    parsed_additional = json.loads(additional_fields) if additional_fields else None
     # add_worklog returns dict
     worklog_result = jira.add_worklog(
         issue_key=issue_key,
@@ -2736,6 +2754,8 @@ async def add_worklog(
         started=started,
         original_estimate=original_estimate,
         remaining_estimate=remaining_estimate,
+        attributes=parsed_attributes,
+        additional_fields=parsed_additional,
     )
     result = {"message": "Worklog added successfully", "worklog": worklog_result}
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -2882,6 +2902,43 @@ async def create_issue_link(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_links"},
+    annotations={"title": "Get Remote Issue Links", "readOnlyHint": True},
+)
+async def get_remote_issue_links(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="The key of the issue (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+) -> str:
+    """Retrieve all remote links (web links, Confluence links) for a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key (e.g., 'PROJ-123').
+
+    Returns:
+        JSON string containing the list of remote links for the issue.
+
+    Raises:
+        ValueError: If issue_key is missing or Jira client is unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    if not issue_key:
+        raise ValueError("issue_key is required.")
+    remote_links = jira.get_remote_issue_links(issue_key)
+    return json.dumps(
+        {"success": True, "issue_key": issue_key, "remote_links": remote_links},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_links"},
     annotations={"title": "Create Remote Issue Link", "destructiveHint": False},
 )
@@ -2916,6 +2973,12 @@ async def create_remote_issue_link(
             description="(Optional) Relationship description (e.g., 'causes', 'relates to', 'documentation')"
         ),
     ] = None,
+    global_id: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Unique global identifier for the remote link (e.g., Confluence globalId or external URL ID)"
+        ),
+    ] = None,
     icon_url: Annotated[
         str | None, Field(description="(Optional) URL to a 16x16 icon for the link")
     ] = None,
@@ -2932,6 +2995,7 @@ async def create_remote_issue_link(
         title: The title/name that will be displayed for the link.
         summary: Optional description of what the link is for.
         relationship: Optional relationship description.
+        global_id: Optional unique global identifier for the link.
         icon_url: Optional URL to a 16x16 icon for the link.
 
     Returns:
@@ -2960,12 +3024,58 @@ async def create_remote_issue_link(
     if icon_url:
         link_object["icon"] = {"url16x16": icon_url, "title": title}
 
-    link_data = {"object": link_object}
+    link_data: dict[str, Any] = {"object": link_object}
 
     if relationship:
         link_data["relationship"] = relationship
 
+    if global_id:
+        link_data["globalId"] = global_id
+
     result = jira.create_remote_issue_link(issue_key, link_data)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_links"},
+    annotations={"title": "Delete Remote Issue Link", "destructiveHint": True},
+)
+@check_write_access
+async def delete_remote_issue_link(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="The key of the issue containing the link (e.g., 'PROJ-123')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    link_id: Annotated[
+        str,
+        Field(
+            description="The ID of the remote link to delete (obtained from get_remote_issue_links)"
+        ),
+    ],
+) -> str:
+    """Delete a remote issue link from a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: The issue key containing the link.
+        link_id: The ID of the remote link to delete.
+
+    Returns:
+        JSON string confirming deletion.
+
+    Raises:
+        ValueError: If required parameters are missing, in read-only mode, or Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    if not issue_key:
+        raise ValueError("issue_key is required.")
+    if not link_id:
+        raise ValueError("link_id is required.")
+    result = jira.delete_remote_issue_link(issue_key, link_id)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 

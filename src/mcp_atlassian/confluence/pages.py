@@ -638,6 +638,20 @@ class PagesMixin(ConfluenceClient):
             logger.debug("Full exception details:", exc_info=True)
             return None
 
+    def _check_space_filter(self, space_key: str) -> None:
+        """Enforce CONFLUENCE_SPACES_FILTER boundary check."""
+        if self.config.spaces_filter:
+            allowed = {
+                s.strip().upper()
+                for s in self.config.spaces_filter.split(",")
+                if s.strip()
+            }
+            if space_key.upper() not in allowed:
+                raise ValueError(
+                    f"Access to space '{space_key}' is restricted by "
+                    f"CONFLUENCE_SPACES_FILTER ({self.config.spaces_filter})."
+                )
+
     def get_space_pages(
         self,
         space_key: str,
@@ -659,6 +673,7 @@ class PagesMixin(ConfluenceClient):
         Returns:
             List of ConfluencePage models containing page content and metadata
         """
+        self._check_space_filter(space_key)
         pages = self.confluence.get_all_pages_from_space(
             space_key, start=start, limit=limit, expand="body.storage"
         )
@@ -1241,6 +1256,7 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error fetching pages
         """
         try:
+            self._check_space_filter(space_key)
             limit = clamp_limit(limit, context="confluence.get_space_page_tree")
 
             # Paginate using the raw API to access _links.next for reliable

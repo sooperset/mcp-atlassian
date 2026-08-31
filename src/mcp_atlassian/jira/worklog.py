@@ -70,6 +70,8 @@ class WorklogMixin(JiraClient):
         started: str | None = None,
         original_estimate: str | None = None,
         remaining_estimate: str | None = None,
+        attributes: dict[str, Any] | None = None,
+        additional_fields: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Add a worklog entry to a Jira issue.
@@ -81,6 +83,8 @@ class WorklogMixin(JiraClient):
             started: Optional ISO8601 date time string for when work began
             original_estimate: Optional new value for the original estimate
             remaining_estimate: Optional new value for the remaining estimate
+            attributes: Optional dictionary of worklog attributes (e.g., Tempo)
+            additional_fields: Optional dictionary of additional fields
 
         Returns:
             Response data if successful
@@ -117,6 +121,10 @@ class WorklogMixin(JiraClient):
                 worklog_data["comment"] = comment
             if started:
                 worklog_data["started"] = started
+            if attributes:
+                worklog_data["attributes"] = attributes
+            if additional_fields:
+                worklog_data.update(additional_fields)
 
             # Step 3: Prepare query parameters for remaining estimate
             params = {}
