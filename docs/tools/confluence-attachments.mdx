@@ -83,7 +83,8 @@ Confluence API returns generic MIME types — use the `mediaTypeDescription` fie
 
 ### Download Attachment
 
-Download an attachment from Confluence as an embedded resource.
+Download an attachment from Confluence. Text-based files are returned as readable
+text content; binary files are returned as base64-encoded embedded resources.
 
 **Parameters:**
 
@@ -99,7 +100,9 @@ On Confluence Cloud, attachment downloads automatically use the v1 REST endpoint
 
 ### Download All Content Attachments
 
-Download all attachments for a Confluence content item as embedded resources.
+Download all attachments for a Confluence content item. Text-based files are
+returned as readable text content; binary files are returned as base64-encoded
+embedded resources.
 
 **Parameters:**
 
