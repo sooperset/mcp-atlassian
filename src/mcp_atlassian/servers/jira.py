@@ -60,6 +60,7 @@ _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
         "changelog",
         "comments",
         "worklogs",
+        "worklog_attributes",
     }
 )
 _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
@@ -69,11 +70,14 @@ _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
     "changelog": "changelogs",
     "comments": "comments",
     "worklogs": "worklogs",
+    "worklog_attributes": "worklog_attributes",
 }
 _GET_ISSUE_INCLUDE_ALIASES = {
     "comment": "comments",
     "worklog": "worklogs",
+    "work_attributes": "worklog_attributes",
 }
+_GET_ISSUE_INCLUDE_ALL_SECTIONS = _GET_ISSUE_INCLUDE_SECTIONS - {"worklog_attributes"}
 
 
 def _parse_get_issue_include(include: str | None) -> set[str]:
@@ -87,7 +91,7 @@ def _parse_get_issue_include(include: str | None) -> set[str]:
         if not section:
             continue
         if section == "all":
-            sections.update(_GET_ISSUE_INCLUDE_SECTIONS)
+            sections.update(_GET_ISSUE_INCLUDE_ALL_SECTIONS)
             continue
 
         section = _GET_ISSUE_INCLUDE_ALIASES.get(section, section)
@@ -636,7 +640,8 @@ async def get_issue(
                 "(Optional) Comma-separated sections to inline "
                 "in the response, avoiding extra tool calls. "
                 "Supported: all, remote_links, transitions, "
-                "watchers, changelog, comments, worklogs"
+                "watchers, changelog, comments, worklogs, "
+                "worklog_attributes"
             ),
             default=None,
         ),
@@ -658,8 +663,8 @@ async def get_issue(
 
     Includes Epic links and relationship information. Use the
     ``include`` parameter to inline enrichments (remote_links,
-    transitions, watchers, changelog, comments, worklogs) so that
-    separate tool calls are not needed.
+    transitions, watchers, changelog, comments, worklogs, and
+    worklog_attributes) so that separate tool calls are not needed.
 
     Args:
         ctx: The FastMCP context.
@@ -669,7 +674,9 @@ async def get_issue(
         comment_limit: Maximum number of comments.
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
-        include: Comma-separated enrichment sections to inline.
+        include: Comma-separated enrichment sections to inline. Use
+            ``worklog_attributes`` to include the Tempo Core work attribute
+            catalog and static-list values on Jira Server/Data Center.
         use_display_names: Opt into human-readable custom field keys.
 
     Returns:
@@ -746,6 +753,12 @@ async def get_issue(
             result["worklogs"] = jira.get_worklogs(issue_key)
         except Exception:  # noqa: BLE001
             result["worklogs"] = []
+
+    if "worklog_attributes" in include_sections:
+        result["worklog_attributes"] = [
+            attribute.to_simplified_dict()
+            for attribute in jira.get_work_attribute_catalog()
+        ]
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -2639,12 +2652,22 @@ async def add_worklog(
             )
         ),
     ] = None,
-    # Add original_estimate and remaining_estimate as per original tool
     original_estimate: Annotated[
         str | None, Field(description="(Optional) New value for the original estimate")
     ] = None,
     remaining_estimate: Annotated[
         str | None, Field(description="(Optional) New value for the remaining estimate")
+    ] = None,
+    worklog_attributes: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON string of worklog attributes for Tempo Core Work Attributes. "
+                'Example: {"_WorklogCategory_": {"value": "Bugfixing"}}. '
+                "Use jira_get_issue with include=worklog_attributes to find "
+                "available attribute keys and static-list values."
+            )
+        ),
     ] = None,
 ) -> str:
     """Add a worklog entry to a Jira issue.
@@ -2657,7 +2680,9 @@ async def add_worklog(
         started: Optional start time in ISO format.
         original_estimate: Optional new original estimate.
         remaining_estimate: Optional new remaining estimate.
-
+        worklog_attributes: Optional JSON object mapping Tempo attribute keys to
+            objects containing their values, for example
+            ``{"_WorklogCategory_": {"value": "Bugfixing"}}``.
 
     Returns:
         JSON string representing the added worklog object.
@@ -2666,6 +2691,16 @@ async def add_worklog(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
+    # Parse worklog_attributes from JSON string if provided.
+    parsed_attributes = None
+    if worklog_attributes:
+        try:
+            parsed_attributes = json.loads(worklog_attributes)
+            if not isinstance(parsed_attributes, dict):
+                raise ValueError("worklog_attributes must be a JSON object.")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"worklog_attributes is not valid JSON: {e}") from e
+
     # add_worklog returns dict
     worklog_result = jira.add_worklog(
         issue_key=issue_key,
@@ -2674,6 +2709,7 @@ async def add_worklog(
         started=started,
         original_estimate=original_estimate,
         remaining_estimate=remaining_estimate,
+        worklog_attributes=parsed_attributes,
     )
     result = {"message": "Worklog added successfully", "worklog": worklog_result}
     return json.dumps(result, indent=2, ensure_ascii=False)
