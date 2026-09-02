@@ -1257,7 +1257,7 @@ class PagesMixin(ConfluenceClient):
                     space=space_key,
                     start=start,
                     limit=fetch_limit,
-                    expand="ancestors",
+                    expand="ancestors,extensions.position",
                 )
                 batch = response.get("results", [])
                 all_pages.extend(batch)
