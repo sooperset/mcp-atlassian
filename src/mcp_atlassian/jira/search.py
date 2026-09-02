@@ -165,6 +165,8 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                         raise TypeError(msg)
 
                     issues = response.get("issues", [])
+                    if not issues:
+                        break
                     all_issues.extend(issues)
 
                     names = response.get("names")

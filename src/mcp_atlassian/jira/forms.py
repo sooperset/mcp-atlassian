@@ -54,7 +54,7 @@ class FormsMixin(JiraClient):
             return forms
 
         except HTTPError as e:
-            if e.response.status_code == 404:
+            if e.response is not None and e.response.status_code == 404:
                 # No forms found for this issue
                 return []
             raise handle_forms_http_error(e, "getting forms", issue_key) from e
@@ -98,7 +98,7 @@ class FormsMixin(JiraClient):
             return form
 
         except HTTPError as e:
-            if e.response.status_code == 404:
+            if e.response is not None and e.response.status_code == 404:
                 return None
             raise handle_forms_http_error(
                 e, "getting form details", f"{issue_key}/{form_id}"

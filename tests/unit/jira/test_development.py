@@ -526,3 +526,20 @@ class TestDevelopmentMixin:
         assert pr["destination"] == ""
         assert pr["author"] == ""
         assert pr["reviewers"] == []
+
+    def test_dev_info_url_uses_jira_url(self, development_mixin):
+        """Test that dev-status API calls use self.jira.url rather than config.url directly."""
+        development_mixin.jira.url = "https://api.atlassian.com/ex/jira/cloud-id-123"
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"detail": []}
+        development_mixin.jira._session.get.return_value = mock_response
+
+        development_mixin._fetch_dev_info_for_app_type(
+            "TEST-1", "1001", "stash", "pullrequest"
+        )
+        call_url = development_mixin.jira._session.get.call_args[0][0]
+        assert (
+            call_url
+            == "https://api.atlassian.com/ex/jira/cloud-id-123/rest/dev-status/1.0/issue/detail"
+        )

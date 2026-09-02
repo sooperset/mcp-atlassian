@@ -77,7 +77,35 @@ Create a remote issue link (web link or Confluence link) for a Jira issue.
 | `title` | `string` | Yes | The title/name of the link (e.g., 'Documentation Page', 'Confluence Page') |
 | `summary` | `string` | No | (Optional) Description of the link |
 | `relationship` | `string` | No | (Optional) Relationship description (e.g., 'causes', 'relates to', 'documentation') |
+| `global_id` | `string` | No | (Optional) Unique global identifier for the remote link (e.g., Confluence globalId or external URL ID) |
 | `icon_url` | `string` | No | (Optional) URL to a 16x16 icon for the link |
+
+---
+
+### Get Remote Issue Links
+
+Retrieve all remote links (web links, Confluence links) for a Jira issue.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | The key of the issue (e.g., 'PROJ-123', 'ACV2-642') |
+
+---
+
+### Delete Remote Issue Link
+
+Delete a remote issue link from a Jira issue.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | The key of the issue containing the link (e.g., 'PROJ-123') |
+| `link_id` | `string` | Yes | The ID of the remote link to delete (obtained from get_remote_issue_links) |
 
 ---
 

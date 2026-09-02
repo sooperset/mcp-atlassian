@@ -158,7 +158,12 @@ class DevelopmentMixin(JiraClient):
         # Use _session.get() directly: the dev-status endpoint is a plugin-specific
         # path (/rest/dev-status/1.0/...) not covered by the standard Jira client
         # wrappers. No higher-level wrapper method exists for this non-standard endpoint.
-        url = f"{self.config.url}/rest/dev-status/1.0/issue/detail"
+        base_url = (
+            self.jira.url.rstrip("/")
+            if hasattr(self.jira, "url") and self.jira.url
+            else self.config.url.rstrip("/")
+        )
+        url = f"{base_url}/rest/dev-status/1.0/issue/detail"
         http_response = self.jira._session.get(
             url, params=params, verify=self.config.ssl_verify
         )
@@ -391,7 +396,12 @@ class DevelopmentMixin(JiraClient):
             A deterministic list of case-sensitive application type values.
         """
         fallback_types = list(_COMMON_APPLICATION_TYPES)
-        url = f"{self.config.url}/rest/dev-status/1.0/issue/summary"
+        base_url = (
+            self.jira.url.rstrip("/")
+            if hasattr(self.jira, "url") and self.jira.url
+            else self.config.url.rstrip("/")
+        )
+        url = f"{base_url}/rest/dev-status/1.0/issue/summary"
         params = {"issueId": str(issue_id)}
 
         try:

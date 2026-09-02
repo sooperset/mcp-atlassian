@@ -70,6 +70,8 @@ class WorklogMixin(JiraClient):
         started: str | None = None,
         original_estimate: str | None = None,
         remaining_estimate: str | None = None,
+        attributes: dict[str, Any] | None = None,
+        additional_fields: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Add a worklog entry to a Jira issue.
@@ -81,6 +83,8 @@ class WorklogMixin(JiraClient):
             started: Optional ISO8601 date time string for when work began
             original_estimate: Optional new value for the original estimate
             remaining_estimate: Optional new value for the remaining estimate
+            attributes: Optional dictionary of worklog attributes (e.g., Tempo)
+            additional_fields: Optional dictionary of additional fields
 
         Returns:
             Response data if successful
@@ -117,6 +121,10 @@ class WorklogMixin(JiraClient):
                 worklog_data["comment"] = comment
             if started:
                 worklog_data["started"] = started
+            if attributes:
+                worklog_data["attributes"] = attributes
+            if additional_fields:
+                worklog_data.update(additional_fields)
 
             # Step 3: Prepare query parameters for remaining estimate
             params = {}
@@ -149,6 +157,12 @@ class WorklogMixin(JiraClient):
                 if isinstance(comment_raw, dict)
                 else comment_raw
             )
+            author_dict = result.get("author") or {}
+            author_name = (
+                author_dict.get("displayName", "Unknown")
+                if isinstance(author_dict, dict)
+                else "Unknown"
+            )
             return {
                 "id": result.get("id"),
                 "comment": self._clean_text(comment_text or ""),
@@ -157,7 +171,7 @@ class WorklogMixin(JiraClient):
                 "started": str(parse_date(result.get("started", ""))),
                 "time_spent": result.get("timeSpent", ""),
                 "time_spent_seconds": result.get("timeSpentSeconds", 0),
-                "author": result.get("author", {}).get("displayName", "Unknown"),
+                "author": author_name,
                 "original_estimate_updated": original_estimate_updated,
                 "remaining_estimate_updated": remaining_estimate_updated,
             }
@@ -237,18 +251,28 @@ class WorklogMixin(JiraClient):
 
                 page = result.get("worklogs", [])
                 for worklog in page:
+                    comment_raw = worklog.get("comment", "")
+                    comment_text = (
+                        adf_to_text(comment_raw)
+                        if isinstance(comment_raw, dict)
+                        else comment_raw
+                    )
+                    page_author_dict = worklog.get("author") or {}
+                    page_author_name = (
+                        page_author_dict.get("displayName", "Unknown")
+                        if isinstance(page_author_dict, dict)
+                        else "Unknown"
+                    )
                     worklogs.append(
                         {
                             "id": worklog.get("id"),
-                            "comment": self._clean_text(worklog.get("comment", "")),
+                            "comment": self._clean_text(comment_text or ""),
                             "created": str(parse_date(worklog.get("created", ""))),
                             "updated": str(parse_date(worklog.get("updated", ""))),
                             "started": str(parse_date(worklog.get("started", ""))),
                             "time_spent": worklog.get("timeSpent", ""),
                             "time_spent_seconds": worklog.get("timeSpentSeconds", 0),
-                            "author": worklog.get("author", {}).get(
-                                "displayName", "Unknown"
-                            ),
+                            "author": page_author_name,
                         }
                     )
 

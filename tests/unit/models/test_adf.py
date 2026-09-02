@@ -816,6 +816,20 @@ class TestMarkdownToAdf:
         # Should have 2 rows: header + 1 data (separator skipped)
         assert len(table["content"]) == 2
 
+    def test_table_with_dash_only_data_row(self):
+        """Data rows containing '-' (N/A) are not skipped as separators (#1629)."""
+        md = "| Metric | Value |\n| --- | --- |\n| Test | - |\n| - | - |"
+        result = markdown_to_adf(md)
+        table = next(n for n in result["content"] if n["type"] == "table")
+        # Should have 3 rows: 1 header row + 2 data rows
+        assert len(table["content"]) == 3
+        # Last row should contain the '-' text in its cells
+        last_row = table["content"][2]
+        assert last_row["type"] == "tableRow"
+        assert len(last_row["content"]) == 2
+        assert last_row["content"][0]["content"][0]["content"][0]["text"] == "-"
+        assert last_row["content"][1]["content"][0]["content"][0]["text"] == "-"
+
     # -- Roundtrip ----------------------------------------------------------
 
     def test_roundtrip(self):

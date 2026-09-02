@@ -108,7 +108,7 @@ class CommentsMixin(ConfluenceClient):
             comment_models = []
             for comment_data in raw_comments:
                 # Get the content based on format
-                body = comment_data["body"]["view"]["value"]
+                body = comment_data.get("body", {}).get("view", {}).get("value", "")
                 processed_html, processed_markdown = (
                     self.preprocessor.process_html_content(
                         body, space_key=space_key, confluence_client=self.confluence

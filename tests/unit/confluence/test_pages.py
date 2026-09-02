@@ -3886,3 +3886,22 @@ class TestUpdatePageSection:
             )
 
         pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+    def test_get_space_pages_respects_spaces_filter(self, pages_mixin):
+        """get_space_pages raises ValueError when space_key is not in CONFLUENCE_SPACES_FILTER."""
+        pages_mixin.config.spaces_filter = "DEV,TEAM"
+
+        with pytest.raises(ValueError, match="restricted by CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.get_space_pages("SECRET")
+
+        # Allowed space succeeds
+        pages_mixin.confluence.get_all_pages_from_space.return_value = []
+        result = pages_mixin.get_space_pages("DEV")
+        assert result == []
+
+    def test_get_space_page_tree_respects_spaces_filter(self, pages_mixin):
+        """get_space_page_tree raises Exception when space_key is not in CONFLUENCE_SPACES_FILTER."""
+        pages_mixin.config.spaces_filter = "DEV,TEAM"
+
+        with pytest.raises(Exception, match="restricted by CONFLUENCE_SPACES_FILTER"):
+            pages_mixin.get_space_page_tree("SECRET")

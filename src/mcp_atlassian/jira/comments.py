@@ -135,12 +135,18 @@ class CommentsMixin(JiraClient):
                 body_text = (
                     adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
                 )
+                author_dict = comment.get("author") or {}
+                author_name = (
+                    author_dict.get("displayName", "Unknown")
+                    if isinstance(author_dict, dict)
+                    else "Unknown"
+                )
                 processed_comment = {
                     "id": comment.get("id"),
                     "body": self._clean_text(body_text or ""),
                     "created": str(parse_date(comment.get("created"))),
                     "updated": str(parse_date(comment.get("updated"))),
-                    "author": comment.get("author", {}).get("displayName", "Unknown"),
+                    "author": author_name,
                 }
                 processed_comments.append(processed_comment)
 
@@ -425,11 +431,17 @@ class CommentsMixin(JiraClient):
             body_text = (
                 adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
             )
+            author_dict = result.get("author") or {}
+            author_name = (
+                author_dict.get("displayName", "Unknown")
+                if isinstance(author_dict, dict)
+                else "Unknown"
+            )
             return {
                 "id": result.get("id"),
                 "body": self._clean_text(body_text or ""),
                 "created": str(parse_date(result.get("created"))),
-                "author": result.get("author", {}).get("displayName", "Unknown"),
+                "author": author_name,
             }
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
@@ -580,11 +592,17 @@ class CommentsMixin(JiraClient):
             body_text = (
                 adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
             )
+            author_dict = result.get("author") or {}
+            author_name = (
+                author_dict.get("displayName", "Unknown")
+                if isinstance(author_dict, dict)
+                else "Unknown"
+            )
             return {
                 "id": result.get("id"),
                 "body": self._clean_text(body_text or ""),
                 "updated": str(parse_date(result.get("updated"))),
-                "author": result.get("author", {}).get("displayName", "Unknown"),
+                "author": author_name,
             }
         except Exception as e:
             logger.error(

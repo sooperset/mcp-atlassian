@@ -1356,3 +1356,18 @@ class TestSearchFilterAndInjectionRegression:
             "config allowlist must still be applied even when a projects_filter arg "
             f"is supplied; JQL was {sent_jql!r}"
         )
+
+    def test_search_issues_v3_pagination_terminates_on_empty_issues(
+        self, search_mixin: SearchMixin
+    ):
+        """Test v3 pagination loop safely terminates if API returns empty issues list with nextPageToken."""
+        search_mixin.config.is_cloud = True
+        search_mixin.config.projects_filter = None
+        search_mixin.jira.post.return_value = {
+            "issues": [],
+            "nextPageToken": "infinite-token-loop",
+        }
+
+        result = search_mixin.search_issues("project = TEST", limit=50)
+        assert len(result.issues) == 0
+        assert search_mixin.jira.post.call_count == 1

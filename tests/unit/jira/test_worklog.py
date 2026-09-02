@@ -258,6 +258,34 @@ class TestWorklogMixin:
         assert result["original_estimate_updated"] is False
         assert result["remaining_estimate_updated"] is False
 
+    def test_add_worklog_with_attributes_and_additional_fields(self, worklog_mixin):
+        """Test add_worklog passes custom attributes and additional fields."""
+        mock_result = {
+            "id": "10001",
+            "timeSpent": "2h",
+            "timeSpentSeconds": 7200,
+        }
+        worklog_mixin.jira.post.return_value = mock_result
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+
+        custom_attrs = {"_Account_": {"value": "DEV-100"}}
+        extra_fields = {"visibility": {"type": "group", "value": "developers"}}
+
+        result = worklog_mixin.add_worklog(
+            "TEST-123",
+            "2h",
+            attributes=custom_attrs,
+            additional_fields=extra_fields,
+        )
+
+        call_data = worklog_mixin.jira.post.call_args[1]["data"]
+        assert call_data["attributes"] == custom_attrs
+        assert call_data["visibility"] == {"type": "group", "value": "developers"}
+        assert call_data["timeSpentSeconds"] == 7200
+        assert result["id"] == "10001"
+
     def test_add_worklog_with_original_estimate(self, worklog_mixin):
         """Test add_worklog with original estimate update."""
         # Setup mocks
@@ -510,3 +538,82 @@ class TestWorklogMixin:
         server_worklog_mixin.jira.resource_url.assert_called_with("issue")
         server_worklog_mixin._post_api3.assert_not_called()
         assert result["id"] == "10003"
+
+    def test_get_worklogs_with_adf_comment(self, worklog_mixin):
+        """Test get_worklogs properly parses ADF comment dictionaries without raising TypeError."""
+        mock_result = {
+            "total": 1,
+            "worklogs": [
+                {
+                    "id": "10004",
+                    "comment": {
+                        "type": "doc",
+                        "version": 1,
+                        "content": [
+                            {
+                                "type": "paragraph",
+                                "content": [
+                                    {"type": "text", "text": "ADF logged work"}
+                                ],
+                            }
+                        ],
+                    },
+                    "created": "2024-01-01T10:00:00.000+0000",
+                    "updated": "2024-01-01T10:30:00.000+0000",
+                    "started": "2024-01-01T09:00:00.000+0000",
+                    "timeSpent": "1h",
+                    "timeSpentSeconds": 3600,
+                    "author": {"displayName": "Test User"},
+                }
+            ],
+        }
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+        worklog_mixin.jira.get.return_value = mock_result
+
+        result = worklog_mixin.get_worklogs("TEST-123")
+
+        assert len(result) == 1
+        assert result[0]["id"] == "10004"
+        assert result[0]["comment"] == "ADF logged work"
+
+    def test_worklog_with_none_author(self, worklog_mixin):
+        """Test that get_worklogs and add_worklog gracefully handle author=None."""
+        mock_get_result = {
+            "total": 1,
+            "worklogs": [
+                {
+                    "id": "10005",
+                    "comment": "Work with no author",
+                    "created": "2024-01-01T10:00:00.000+0000",
+                    "updated": "2024-01-01T10:30:00.000+0000",
+                    "started": "2024-01-01T09:00:00.000+0000",
+                    "timeSpent": "30m",
+                    "timeSpentSeconds": 1800,
+                    "author": None,
+                }
+            ],
+        }
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+        worklog_mixin.jira.get.return_value = mock_get_result
+
+        get_res = worklog_mixin.get_worklogs("TEST-123")
+        assert len(get_res) == 1
+        assert get_res[0]["author"] == "Unknown"
+
+        mock_add_result = {
+            "id": "10006",
+            "comment": "New work",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "updated": "2024-01-01T10:00:00.000+0000",
+            "started": "2024-01-01T09:00:00.000+0000",
+            "timeSpent": "1h",
+            "timeSpentSeconds": 3600,
+            "author": None,
+        }
+        worklog_mixin.jira.post.return_value = mock_add_result
+        add_res = worklog_mixin.add_worklog("TEST-123", "1h", comment="New work")
+        assert add_res["author"] == "Unknown"

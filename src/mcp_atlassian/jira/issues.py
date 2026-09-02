@@ -983,6 +983,29 @@ class IssuesMixin(
                 f"Try using the exact custom field ID (e.g., customfield_10014)."
             )
 
+    def _validate_parent_clear_supported(self, value: Any) -> None:
+        """Reject parent clearing on Jira Server/Data Center.
+
+        Jira Cloud accepts ``{"parent": null}`` for clearing a parent. Jira
+        Server/Data Center rejects the same request shape, so users must
+        update the Epic Link custom field directly instead.
+
+        Args:
+            value: The requested parent value.
+
+        Raises:
+            ValueError: If the value requests a parent clear on Server/DC.
+        """
+        if (value is None or value == "") and not self.config.is_cloud:
+            raise ValueError(
+                "Clearing an issue's parent with parent=None, parent='', or "
+                '{"parent": null} is supported only on Jira Cloud. Jira '
+                "Server/Data Center rejects this parent update format. To "
+                "clear an Epic Link on Server/DC, update its custom field "
+                'directly, for example {"customfield_10014": null}, using '
+                "the field ID returned by jira_search_fields."
+            )
+
     def _add_assignee_to_fields(self, fields: dict[str, Any], assignee: str) -> None:
         """
         Add assignee to issue fields.
@@ -1196,6 +1219,16 @@ class IssuesMixin(
             kwargs_mutable = dict(kwargs)
             self._prepare_epic_link_fields(update_fields, kwargs_mutable)
 
+            # Jira Server/Data Center rejects the Cloud parent-clearing
+            # payload. Validate before any update or follow-up REST request.
+            if "parent" in kwargs_mutable:
+                self._validate_parent_clear_supported(kwargs_mutable["parent"])
+            elif "parent" in update_fields:
+                parent_value = update_fields["parent"]
+                self._validate_parent_clear_supported(parent_value)
+                if parent_value == "":
+                    update_fields["parent"] = None
+
             # Process kwargs
             for key, value in kwargs_mutable.items():
                 if key == "status":
@@ -1238,7 +1271,10 @@ class IssuesMixin(
                                 f"Could not update assignee: {str(e)}"
                             ) from e
                 elif key == "parent":
-                    if isinstance(value, dict) and value.get("key"):
+                    # Jira Cloud accepts an explicit null to clear the parent.
+                    if value is None or value == "":
+                        update_fields["parent"] = None
+                    elif isinstance(value, dict) and value.get("key"):
                         update_fields["parent"] = {"key": str(value["key"])}
                     elif isinstance(value, str) and value:
                         update_fields["parent"] = {"key": value}
@@ -1875,8 +1911,9 @@ class IssuesMixin(
 
         # Prepare issues for bulk creation
         issue_updates = []
-        for issue_data in issues:
+        for raw_issue in issues:
             try:
+                issue_data = dict(raw_issue)
                 # Extract and validate required fields
                 project_key = issue_data.pop("project_key", None)
                 summary = issue_data.pop("summary", None)

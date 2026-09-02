@@ -35,7 +35,7 @@ def handle_forms_http_error(
         ValueError: For 404 not found errors
         Exception: For other HTTP errors
     """
-    status_code = error.response.status_code
+    status_code = error.response.status_code if error.response is not None else None
 
     if status_code == 403:
         error_msg = f"Insufficient permissions for {operation}: {resource_id}"

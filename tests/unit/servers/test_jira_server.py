@@ -3522,6 +3522,8 @@ async def test_add_worklog(jira_client, mock_jira_fetcher):
         started=None,
         original_estimate=None,
         remaining_estimate=None,
+        attributes=None,
+        additional_fields=None,
     )
 
     result = json.loads(response.content[0].text)

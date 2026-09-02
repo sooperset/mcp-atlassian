@@ -363,3 +363,34 @@ class TestLinksMixin:
 
         with pytest.raises(MCPAtlassianAuthenticationError):
             links_mixin.get_remote_issue_links("PROJ-123")
+
+    @pytest.mark.parametrize(
+        ("url", "api_version"),
+        [
+            pytest.param("https://test.atlassian.net", "3", id="cloud"),
+            pytest.param("https://jira.example.com", "2", id="server"),
+        ],
+    )
+    def test_delete_remote_issue_link_success(
+        self, jira_config_factory, mock_atlassian_jira, url: str, api_version: str
+    ):
+        """Test successful deletion of a remote issue link on Cloud and Server."""
+        config = jira_config_factory(url=url)
+        mixin = LinksMixin(config=config)
+        mixin.jira = mock_atlassian_jira
+
+        result = mixin.delete_remote_issue_link("PROJ-123", "10050")
+
+        assert result["success"] is True
+        assert result["link_id"] == "10050"
+        mixin.jira.delete.assert_called_once_with(
+            f"rest/api/{api_version}/issue/PROJ-123/remotelink/10050"
+        )
+
+    def test_delete_remote_issue_link_missing_args(self, links_mixin):
+        """Test validation when issue_key or link_id is missing."""
+        with pytest.raises(ValueError, match="Issue key is required"):
+            links_mixin.delete_remote_issue_link("", "10050")
+
+        with pytest.raises(ValueError, match="Link ID is required"):
+            links_mixin.delete_remote_issue_link("PROJ-123", "")
