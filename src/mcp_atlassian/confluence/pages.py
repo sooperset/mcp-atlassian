@@ -895,7 +895,7 @@ class PagesMixin(ConfluenceClient):
                 page_id = page.get("id")
                 title = page.get("title", "Untitled")
 
-                # Requires expand=extensions.position (not returned by default)
+                # Position is auto-included via extensions in the v1 API
                 position = page.get("extensions", {}).get("position")
 
                 # Determine parent and depth from ancestors
