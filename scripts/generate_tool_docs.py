@@ -110,15 +110,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_issues_development_info",
     ],
     "jira-assets": [
-        "jira_list_asset_schemas",
-        "jira_list_asset_object_types",
-        "jira_get_asset_object_type_attributes",
-        "jira_search_assets",
-        "jira_get_asset_object",
-        "jira_get_asset_object_history",
-        "jira_get_asset_connected_tickets",
-        "jira_create_asset_object",
-        "jira_update_asset_object",
+        "jira_discover",
     ],
     "confluence-pages": [
         "confluence_get_page",
@@ -208,8 +200,7 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     "jira-assets": {
         "title": "Jira Assets",
         "description": (
-            "Assets (Insight) schemas, object types, objects, and AQL search "
-            "on Server/Data Center"
+            "Consolidated Assets (Insight) discovery on Server/Data Center"
         ),
     },
     "confluence-pages": {

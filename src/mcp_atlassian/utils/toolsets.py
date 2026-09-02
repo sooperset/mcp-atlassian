@@ -87,7 +87,7 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
     ),
     "jira_assets": ToolsetDefinition(
         name="jira_assets",
-        description="Jira Assets (Insight) objects, schemas, and AQL search (Server/DC)",
+        description="Jira Assets (Insight) discovery (Server/DC)",
         default=False,
     ),
     "jira_forms": ToolsetDefinition(

@@ -41,15 +41,7 @@ JIRA_CLOUD_ONLY_TOOL_NAMES = {
     "move_issue",
 }
 JIRA_SERVER_ONLY_TOOL_NAMES = {
-    "list_asset_schemas",
-    "list_asset_object_types",
-    "get_asset_object_type_attributes",
-    "search_assets",
-    "get_asset_object",
-    "get_asset_object_history",
-    "get_asset_connected_tickets",
-    "create_asset_object",
-    "update_asset_object",
+    "discover",
 }
 
 

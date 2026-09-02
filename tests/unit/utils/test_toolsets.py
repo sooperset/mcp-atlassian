@@ -98,7 +98,7 @@ class TestGetEnabledToolsets:
         assert DEFAULT_TOOLSETS == expected_defaults
 
     def test_all_toolsets_count(self):
-        """Verify ALL_TOOLSETS has exactly 25 entries."""
+        """Verify ALL_TOOLSETS has exactly 26 entries."""
         assert len(ALL_TOOLSETS) == 26
 
     def test_all_toolsets_contains_jira_and_confluence(self):
@@ -262,7 +262,7 @@ class TestToolsetTagCompleteness:
 
     def test_jira_tool_count(self, jira_tools):
         """Verify expected number of Jira tools."""
-        assert len(jira_tools) == 72, f"Expected 72 Jira tools, got {len(jira_tools)}"
+        assert len(jira_tools) == 64, f"Expected 64 Jira tools, got {len(jira_tools)}"
 
     def test_confluence_tool_count(self, confluence_tools):
         """Verify expected number of Confluence tools."""

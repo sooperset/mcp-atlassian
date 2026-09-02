@@ -4,7 +4,7 @@ import asyncio
 import base64
 import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
@@ -60,6 +60,7 @@ _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
         "changelog",
         "comments",
         "worklogs",
+        "assets",
     }
 )
 _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
@@ -69,6 +70,7 @@ _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
     "changelog": "changelogs",
     "comments": "comments",
     "worklogs": "worklogs",
+    "assets": "assets",
 }
 _GET_ISSUE_INCLUDE_ALIASES = {
     "comment": "comments",
@@ -636,7 +638,8 @@ async def get_issue(
                 "(Optional) Comma-separated sections to inline "
                 "in the response, avoiding extra tool calls. "
                 "Supported: all, remote_links, transitions, "
-                "watchers, changelog, comments, worklogs"
+                "watchers, changelog, comments, worklogs, assets "
+                "(Assets is Server/Data Center only)"
             ),
             default=None,
         ),
@@ -658,7 +661,7 @@ async def get_issue(
 
     Includes Epic links and relationship information. Use the
     ``include`` parameter to inline enrichments (remote_links,
-    transitions, watchers, changelog, comments, worklogs) so that
+    transitions, watchers, changelog, comments, worklogs, assets) so that
     separate tool calls are not needed.
 
     Args:
@@ -746,6 +749,18 @@ async def get_issue(
             result["worklogs"] = jira.get_worklogs(issue_key)
         except Exception:  # noqa: BLE001
             result["worklogs"] = []
+
+    if "assets" in include_sections:
+        result["assets"] = []
+        if not jira.config.is_cloud:
+            try:
+                asset_result = jira.search_assets_aql(
+                    f'object HAVING connectedTickets(key = "{issue_key}")',
+                    results_per_page=100,
+                )
+                result["assets"] = asset_result["objects"]
+            except Exception:  # noqa: BLE001
+                result["assets"] = []
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -4686,368 +4701,104 @@ async def get_cross_project_dependencies(
 
 
 # ----------------------------------------------------------------------
-# Jira Assets (Insight) — Server/Data Center only
-# ----------------------------------------------------------------------
-
-
-# ----------------------------------------------------------------------
-# Discovery
+# Jira Assets (Insight) discovery — Server/Data Center only
 # ----------------------------------------------------------------------
 
 
 @jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_assets", "server_only"},
-    annotations={"title": "List Asset Schemas", "readOnlyHint": True},
+    annotations={"title": "Discover Jira Resources", "readOnlyHint": True},
 )
-async def list_asset_schemas(
+async def discover(
     ctx: Context,
+    resource: Annotated[
+        Literal[
+            "asset_schemas",
+            "asset_object_types",
+            "asset_attributes",
+        ],
+        Field(
+            description=(
+                "Resource to discover: asset_schemas, asset_object_types, "
+                "or asset_attributes."
+            )
+        ),
+    ],
+    schema_id: Annotated[
+        str | None,
+        Field(
+            description=("Object schema ID required when resource=asset_object_types."),
+            default=None,
+        ),
+    ] = None,
+    object_type_id: Annotated[
+        str | None,
+        Field(
+            description=("Object type ID required when resource=asset_attributes."),
+            default=None,
+        ),
+    ] = None,
     name_filter: Annotated[
         str,
         Field(
             description=(
-                "Optional case-insensitive substring to filter schemas by name. "
-                "Leave empty to list all schemas."
+                "Optional case-insensitive name filter for schemas or object types."
             ),
             default="",
         ),
     ] = "",
 ) -> str:
-    """
-    List Jira Assets (Insight) object schemas.
+    """Discover Jira Assets schemas, object types, or attributes.
 
-    Start here when exploring Assets: schemas are the top-level containers
-    that hold object types, which in turn hold objects.
-
-    Server/Data Center only.
-
-    Args:
-        ctx: The FastMCP context.
-        name_filter: Optional substring to filter schema names.
-
-    Returns:
-        JSON string with the list of object schemas.
-    """
-    jira = await get_jira_fetcher(ctx)
-    schemas = jira.list_asset_schemas()
-    if name_filter:
-        needle = name_filter.strip().lower()
-        schemas = [s for s in schemas if needle in str(s.get("name") or "").lower()]
-    return json.dumps({"schemas": schemas}, indent=2, ensure_ascii=False)
-
-
-@jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_assets", "server_only"},
-    annotations={"title": "List Asset Object Types", "readOnlyHint": True},
-)
-async def list_asset_object_types(
-    ctx: Context,
-    schema_id: Annotated[
-        str,
-        Field(description="Object schema ID (e.g., '3'), from list_asset_schemas"),
-    ],
-) -> str:
-    """
-    List the object types within an Assets object schema.
-
-    Server/Data Center only.
+    This is the consolidated discovery entry point for Assets on Jira Service
+    Management Server/Data Center. Start with asset_schemas, then use the
+    returned schema ID for asset_object_types and an object type ID for
+    asset_attributes.
 
     Args:
         ctx: The FastMCP context.
-        schema_id: The object schema ID.
+        resource: Assets resource kind to discover.
+        schema_id: Schema ID for object-type discovery.
+        object_type_id: Object type ID for attribute discovery.
+        name_filter: Optional name substring for schema or object-type results.
 
     Returns:
-        JSON string with a flat list of object types.
+        JSON string containing the requested discovery results.
     """
     jira = await get_jira_fetcher(ctx)
-    types = jira.list_asset_object_types(schema_id=schema_id)
-    return json.dumps(
-        {"schema_id": schema_id, "object_types": types}, indent=2, ensure_ascii=False
-    )
+    needle = name_filter.strip().lower()
 
+    if resource == "asset_schemas":
+        schemas = jira.list_asset_schemas()
+        if needle:
+            schemas = [
+                schema
+                for schema in schemas
+                if needle in str(schema.get("name") or "").lower()
+            ]
+        result: dict[str, Any] = {"resource": resource, "schemas": schemas}
+    elif resource == "asset_object_types":
+        if not schema_id:
+            raise ValueError("schema_id is required for asset_object_types")
+        object_types = jira.list_asset_object_types(schema_id)
+        if needle:
+            object_types = [
+                object_type
+                for object_type in object_types
+                if needle in str(object_type.get("name") or "").lower()
+            ]
+        result = {
+            "resource": resource,
+            "schema_id": schema_id,
+            "object_types": object_types,
+        }
+    else:
+        if not object_type_id:
+            raise ValueError("object_type_id is required for asset_attributes")
+        result = {
+            "resource": resource,
+            "object_type_id": object_type_id,
+            "attributes": jira.get_asset_object_type_attributes(object_type_id),
+        }
 
-@jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_assets", "server_only"},
-    annotations={"title": "Get Asset Object Type Attributes", "readOnlyHint": True},
-)
-async def get_asset_object_type_attributes(
-    ctx: Context,
-    object_type_id: Annotated[
-        str,
-        Field(description="Object type ID (e.g., '42')"),
-    ],
-) -> str:
-    """
-    Get attribute definitions for an Assets object type.
-
-    Call this before creating or updating objects: Assets writes are keyed
-    by numeric attribute ID, not by attribute name, and this tool provides
-    the name-to-ID mapping.
-
-    Server/Data Center only.
-
-    Args:
-        ctx: The FastMCP context.
-        object_type_id: The object type ID.
-
-    Returns:
-        JSON string with attribute definitions including IDs, types, and
-        whether each attribute is required or editable.
-    """
-    jira = await get_jira_fetcher(ctx)
-    attrs = jira.get_asset_object_type_attributes(object_type_id=object_type_id)
-    return json.dumps(
-        {"object_type_id": object_type_id, "attributes": attrs},
-        indent=2,
-        ensure_ascii=False,
-    )
-
-
-# ----------------------------------------------------------------------
-# Read
-# ----------------------------------------------------------------------
-
-
-@jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_assets", "server_only"},
-    annotations={"title": "Search Assets with AQL", "readOnlyHint": True},
-)
-async def search_assets(
-    ctx: Context,
-    aql: Annotated[
-        str,
-        Field(
-            description=(
-                "AQL/IQL query string. Examples: "
-                'objectType = "Person"; '
-                'objectType = "Hardware" AND "Status" = "Active"; '
-                '"Assigned To" IS EMPTY'
-            )
-        ),
-    ],
-    page: Annotated[
-        int,
-        Field(description="1-based page number", default=1, ge=1),
-    ] = 1,
-    results_per_page: Annotated[
-        int,
-        Field(description="Results per page (1-100)", default=25, ge=1, le=100),
-    ] = 25,
-    include_attributes: Annotated[
-        bool,
-        Field(description="Include attribute values in results", default=True),
-    ] = True,
-    schema_id: Annotated[
-        str,
-        Field(
-            description=(
-                "Optional object schema ID to restrict the search to "
-                "(from jira_list_asset_schemas). Leave empty to search all schemas."
-            ),
-            default="",
-        ),
-    ] = "",
-) -> str:
-    """
-    Search Jira Assets objects using AQL (Assets Query Language).
-
-    This is the primary read tool for Assets. Set include_attributes=false
-    for large result sets where only labels and IDs are needed.
-
-    Server/Data Center only.
-
-    Args:
-        ctx: The FastMCP context.
-        aql: The AQL query string.
-        page: 1-based page number.
-        results_per_page: Number of objects per page.
-        include_attributes: Whether to return full attribute values.
-        schema_id: Optional object schema ID to limit the search.
-
-    Returns:
-        JSON string with matching objects and pagination metadata.
-    """
-    jira = await get_jira_fetcher(ctx)
-    result = jira.search_assets_aql(
-        aql=aql,
-        page=page,
-        results_per_page=results_per_page,
-        include_attributes=include_attributes,
-        schema_id=schema_id or None,
-    )
     return json.dumps(result, indent=2, ensure_ascii=False)
-
-
-@jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_assets", "server_only"},
-    annotations={"title": "Get Asset Object", "readOnlyHint": True},
-)
-async def get_asset_object(
-    ctx: Context,
-    object_id: Annotated[
-        str,
-        Field(description="Object ID (e.g., '1234') or object key (e.g., 'HW-42')"),
-    ],
-) -> str:
-    """
-    Get a single Assets object with its resolved attribute values.
-
-    Server/Data Center only.
-
-    Args:
-        ctx: The FastMCP context.
-        object_id: The object ID or object key.
-
-    Returns:
-        JSON string with the object and its attributes.
-    """
-    jira = await get_jira_fetcher(ctx)
-    obj = jira.get_asset_object(object_id=object_id)
-    return json.dumps(obj, indent=2, ensure_ascii=False)
-
-
-@jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_assets", "server_only"},
-    annotations={"title": "Get Asset Object History", "readOnlyHint": True},
-)
-async def get_asset_object_history(
-    ctx: Context,
-    object_id: Annotated[
-        str,
-        Field(description="Object ID (e.g., '1234') or object key (e.g., 'HW-42')"),
-    ],
-) -> str:
-    """
-    Get the change history for an Assets object.
-
-    Useful for auditing: who changed which attribute, when,
-    and what the previous value was.
-
-    Server/Data Center only.
-
-    Args:
-        ctx: The FastMCP context.
-        object_id: The object ID or object key.
-
-    Returns:
-        JSON string with the object's change history entries.
-    """
-    jira = await get_jira_fetcher(ctx)
-    history = jira.get_asset_object_history(object_id=object_id)
-    return json.dumps(
-        {"object_id": object_id, "history": history}, indent=2, ensure_ascii=False
-    )
-
-
-@jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_assets", "server_only"},
-    annotations={"title": "Get Asset Connected Tickets", "readOnlyHint": True},
-)
-async def get_asset_connected_tickets(
-    ctx: Context,
-    object_id: Annotated[
-        str,
-        Field(description="Object ID (e.g., '1234') or object key (e.g., 'HW-42')"),
-    ],
-) -> str:
-    """
-    Get Jira issues connected to an Assets object.
-
-    Server/Data Center only.
-
-    Args:
-        ctx: The FastMCP context.
-        object_id: The object ID or object key.
-
-    Returns:
-        JSON string with connected ticket data.
-    """
-    jira = await get_jira_fetcher(ctx)
-    result = jira.get_asset_object_connected_tickets(object_id=object_id)
-    return json.dumps(result, indent=2, ensure_ascii=False)
-
-
-# ----------------------------------------------------------------------
-# Write
-# ----------------------------------------------------------------------
-
-
-@jira_mcp.tool(
-    tags={"jira", "write", "toolset:jira_assets", "server_only"},
-    annotations={"title": "Create Asset Object", "readOnlyHint": False},
-)
-@check_write_access
-async def create_asset_object(
-    ctx: Context,
-    object_type_id: Annotated[
-        str,
-        Field(description="Object type ID to create the object under"),
-    ],
-    attributes: Annotated[
-        dict,
-        Field(
-            description=(
-                "Mapping of attribute ID (as string) to value, e.g. "
-                '{"142": "Jane Doe", "143": "jane.doe@example.com"}. '
-                "Use jira_get_asset_object_type_attributes to resolve "
-                "attribute names to IDs first. Lists are accepted for "
-                "multi-value attributes."
-            )
-        ),
-    ],
-) -> str:
-    """
-    Create a new Jira Assets object.
-
-    Server/Data Center only. Requires write access (not read-only mode).
-
-    Args:
-        ctx: The FastMCP context.
-        object_type_id: The object type ID.
-        attributes: Attribute ID to value mapping.
-
-    Returns:
-        JSON string with the created object.
-    """
-    jira = await get_jira_fetcher(ctx)
-    obj = jira.create_asset_object(object_type_id=object_type_id, attributes=attributes)
-    return json.dumps(obj, indent=2, ensure_ascii=False)
-
-
-@jira_mcp.tool(
-    tags={"jira", "write", "toolset:jira_assets", "server_only"},
-    annotations={"title": "Update Asset Object", "readOnlyHint": False},
-)
-@check_write_access
-async def update_asset_object(
-    ctx: Context,
-    object_id: Annotated[
-        str,
-        Field(description="Object ID (e.g., '1234') or object key (e.g., 'HW-42')"),
-    ],
-    attributes: Annotated[
-        dict,
-        Field(
-            description=(
-                "Mapping of attribute ID (as string) to new value. "
-                "Only the supplied attributes are sent; other attributes "
-                "are not included in the request."
-            )
-        ),
-    ],
-) -> str:
-    """
-    Update an existing Jira Assets object.
-
-    Server/Data Center only. Requires write access (not read-only mode).
-
-    Args:
-        ctx: The FastMCP context.
-        object_id: The object ID or object key.
-        attributes: Attribute ID to new value mapping.
-
-    Returns:
-        JSON string with the updated object.
-    """
-    jira = await get_jira_fetcher(ctx)
-    obj = jira.update_asset_object(object_id=object_id, attributes=attributes)
-    return json.dumps(obj, indent=2, ensure_ascii=False)
