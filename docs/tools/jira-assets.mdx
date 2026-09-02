@@ -1,0 +1,122 @@
+---
+title: "Jira Assets"
+description: "Assets (Insight) schemas, object types, objects, and AQL search on Server/Data Center"
+---
+
+### List Asset Schemas
+
+List Jira Assets (Insight) object schemas.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name_filter` | `string` | No | Optional case-insensitive substring to filter schemas by name. Leave empty to list all schemas. |
+
+---
+
+### List Asset Object Types
+
+List the object types within an Assets object schema.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `schema_id` | `string` | Yes | Object schema ID (e.g., '3'), from list_asset_schemas |
+
+---
+
+### Get Asset Object Type Attributes
+
+Get attribute definitions for an Assets object type.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_type_id` | `string` | Yes | Object type ID (e.g., '42') |
+
+---
+
+### Search Assets with AQL
+
+Search Jira Assets objects using AQL (Assets Query Language).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `aql` | `string` | Yes | AQL/IQL query string. Examples: objectType = "Person"; objectType = "Hardware" AND "Status" = "Active"; "Assigned To" IS EMPTY |
+| `page` | `integer` | No | 1-based page number |
+| `results_per_page` | `integer` | No | Results per page (1-100) |
+| `include_attributes` | `boolean` | No | Include attribute values in results |
+| `schema_id` | `string` | No | Optional object schema ID to restrict the search to (from jira_list_asset_schemas). Leave empty to search all schemas. |
+
+---
+
+### Get Asset Object
+
+Get a single Assets object with its resolved attribute values.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | `string` | Yes | Object ID (e.g., '1234') or object key (e.g., 'HW-42') |
+
+---
+
+### Get Asset Object History
+
+Get the change history for an Assets object.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | `string` | Yes | Object ID (e.g., '1234') or object key (e.g., 'HW-42') |
+
+---
+
+### Get Asset Connected Tickets
+
+Get Jira issues connected to an Assets object.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | `string` | Yes | Object ID (e.g., '1234') or object key (e.g., 'HW-42') |
+
+---
+
+### Create Asset Object
+
+Create a new Jira Assets object.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_type_id` | `string` | Yes | Object type ID to create the object under |
+| `attributes` | `object` | Yes | Mapping of attribute ID (as string) to value, e.g. `{"142": "Jane Doe", "143": "jane.doe@example.com"}`. Use jira_get_asset_object_type_attributes to resolve attribute names to IDs first. Lists are accepted for multi-value attributes. |
+
+---
+
+### Update Asset Object
+
+Update an existing Jira Assets object.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | `string` | Yes | Object ID (e.g., '1234') or object key (e.g., 'HW-42') |
+| `attributes` | `object` | Yes | Mapping of attribute ID (as string) to new value. Only the supplied attributes are sent; other attributes are not included in the request. |
+
+---

@@ -85,6 +85,11 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
         description="Jira Service Management requests, queues, and service desks",
         default=False,
     ),
+    "jira_assets": ToolsetDefinition(
+        name="jira_assets",
+        description="Jira Assets (Insight) objects, schemas, and AQL search (Server/DC)",
+        default=False,
+    ),
     "jira_forms": ToolsetDefinition(
         name="jira_forms",
         description="ProForma form operations",

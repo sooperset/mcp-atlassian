@@ -109,6 +109,17 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_issue_development_info",
         "jira_get_issues_development_info",
     ],
+    "jira-assets": [
+        "jira_list_asset_schemas",
+        "jira_list_asset_object_types",
+        "jira_get_asset_object_type_attributes",
+        "jira_search_assets",
+        "jira_get_asset_object",
+        "jira_get_asset_object_history",
+        "jira_get_asset_connected_tickets",
+        "jira_create_asset_object",
+        "jira_update_asset_object",
+    ],
     "confluence-pages": [
         "confluence_get_page",
         "confluence_create_page",
@@ -193,6 +204,13 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     "jira-forms-metrics": {
         "title": "Jira Forms & Metrics",
         "description": ("ProForma forms, SLA metrics, dates, and development info"),
+    },
+    "jira-assets": {
+        "title": "Jira Assets",
+        "description": (
+            "Assets (Insight) schemas, object types, objects, and AQL search "
+            "on Server/Data Center"
+        ),
     },
     "confluence-pages": {
         "title": "Confluence Pages",
