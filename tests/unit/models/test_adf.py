@@ -796,6 +796,18 @@ class TestMarkdownToAdf:
         ]
         assert texts[2] == ["-", "-", "-"]
 
+    def test_keeps_empty_row(self):
+        """An empty row after the delimiter is data, not another delimiter."""
+        md = "| A | B |\n|---|---|\n| 1 | 2 |\n|  |  |\n| 3 | 4 |"
+        rows = next(n for n in markdown_to_adf(md)["content"] if n["type"] == "table")[
+            "content"
+        ]
+        texts = [
+            [c["content"][0]["content"][0]["text"] for c in row["content"]]
+            for row in rows
+        ]
+        assert texts == [["A", "B"], ["1", "2"], ["", ""], ["3", "4"]]
+
     def test_drops_delimiter_row(self):
         """Every delimiter spelling stays recognised at its own position."""
         for separator in ("|---|---|", "|:---|---:|", "|-|-|", "|:-:|:-:|"):
