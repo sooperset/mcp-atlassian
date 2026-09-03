@@ -80,6 +80,10 @@ class TestAttachmentsMixin:
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
             patch("os.getcwd", return_value="/tmp"),
+            patch(
+                "mcp_atlassian.jira.attachments.validate_url_for_ssrf",
+                return_value=None,
+            ),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12  # Length of "test content"
@@ -118,6 +122,10 @@ class TestAttachmentsMixin:
             patch("os.path.isabs") as mock_isabs,
             patch("os.getcwd", return_value="/absolute/path"),
             patch("mcp_atlassian.jira.attachments.validate_safe_path"),
+            patch(
+                "mcp_atlassian.jira.attachments.validate_url_for_ssrf",
+                return_value=None,
+            ),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12
@@ -146,6 +154,20 @@ class TestAttachmentsMixin:
         """Test attachment download with no URL."""
         result = attachments_mixin.download_attachment("", "/tmp/test_file.txt")
         assert result is False
+
+    def test_download_attachment_ssrf_blocked(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test attachment download is refused when the URL fails SSRF validation."""
+        with patch(
+            "mcp_atlassian.jira.attachments.validate_url_for_ssrf",
+            return_value="Blocked host",
+        ):
+            result = attachments_mixin.download_attachment(
+                "http://169.254.169.254/attachment", "/tmp/test_file.txt"
+            )
+        assert result is False
+        attachments_mixin.jira._session.get.assert_not_called()
 
     def test_download_attachment_http_error(self, attachments_mixin: AttachmentsMixin):
         """Test attachment download with an HTTP error."""
@@ -793,9 +815,13 @@ class TestAttachmentsMixin:
         mock_response.raise_for_status = MagicMock()
         attachments_mixin.jira._session.get.return_value = mock_response
 
-        result = attachments_mixin.fetch_attachment_content(
-            "https://test.url/attachment"
-        )
+        with patch(
+            "mcp_atlassian.jira.attachments.validate_url_for_ssrf",
+            return_value=None,
+        ):
+            result = attachments_mixin.fetch_attachment_content(
+                "https://test.url/attachment"
+            )
 
         assert result == b"chunk1chunk2"
         attachments_mixin.jira._session.get.assert_called_once_with(
@@ -806,6 +832,20 @@ class TestAttachmentsMixin:
         """Test fetch with no URL returns None."""
         result = attachments_mixin.fetch_attachment_content("")
         assert result is None
+
+    def test_fetch_attachment_content_ssrf_blocked(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Test fetch is refused when the URL fails SSRF validation."""
+        with patch(
+            "mcp_atlassian.jira.attachments.validate_url_for_ssrf",
+            return_value="Blocked host",
+        ):
+            result = attachments_mixin.fetch_attachment_content(
+                "http://169.254.169.254/attachment"
+            )
+        assert result is None
+        attachments_mixin.jira._session.get.assert_not_called()
 
     def test_fetch_attachment_content_http_error(
         self, attachments_mixin: AttachmentsMixin
