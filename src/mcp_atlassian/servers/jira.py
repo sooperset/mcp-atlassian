@@ -60,19 +60,22 @@ PROJECT_KEY_PATTERN = get_regex_env("JIRA_PROJECT_KEY_PATTERN", r"^[A-Z][A-Z0-9_
 _MARKUP_TRANSLATION_DISABLED = markup_translation_disabled()
 
 
-def _body_format(subject: str, *, brief: bool = False) -> str:
+def _body_format(markdown: str, subject: str, *, brief: bool = False) -> str:
     """Describe the markup format expected for a field written into Jira.
 
     Args:
-        subject: How the field is named in the schema, e.g. "Comment text".
+        markdown: The existing description, returned unchanged while markup
+            translation is on, so the default tool schemas do not shift.
+        subject: How the field is named when describing the wiki case,
+            e.g. "Comment text".
         brief: Use the shorter pass-through wording, for fields where the
             longer Cloud/ADF note would not earn its space.
 
     Returns:
-        The description sentence for the current translation setting.
+        The description for the current translation setting.
     """
     if not _MARKUP_TRANSLATION_DISABLED:
-        return f"{subject} in Markdown format."
+        return markdown
     if brief:
         return (
             f"{subject}. Server/DC: Jira wiki markup, passed through. Cloud: Markdown."
@@ -1804,7 +1807,10 @@ async def create_issue(
         str | None,
         Field(
             description=(
-                _body_format("Issue description") + " On Jira Cloud, use "
+                _body_format(
+                    "Issue description in Markdown format.", "Issue description"
+                )
+                + " On Jira Cloud, use "
                 "'{expand:Title}...{expand}' for a collapsible section and "
                 "'{status:color=green|title=Done}' for an inline status "
                 "lozenge."
@@ -1896,7 +1902,11 @@ async def batch_create_issues(
                 "- summary (required): Issue summary/title\n"
                 "- issue_type (required): Type of issue (e.g., 'Task', 'Bug')\n"
                 "- description (optional): "
-                + _body_format("Issue description", brief=True)
+                + _body_format(
+                    "Issue description in Markdown format",
+                    "Issue description",
+                    brief=True,
+                )
                 + "\n"
                 "- assignee (optional): Assignee username or email\n"
                 "- components (optional): Array of component names\n"
@@ -2054,10 +2064,12 @@ async def update_issue(
         Field(
             description=(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
-                "For 'description': "
-                + _body_format("provide text")
-                + " On Jira Cloud, "
-                "use '{expand:Title}...{expand}' for a collapsible section "
+                + _body_format(
+                    "For 'description', provide text in Markdown format; on Jira Cloud, ",
+                    "For 'description': provide text",
+                )
+                + ("" if not _MARKUP_TRANSLATION_DISABLED else " On Jira Cloud, ")
+                + "use '{expand:Title}...{expand}' for a collapsible section "
                 "and '{status:color=green|title=Done}' for an inline status "
                 "lozenge. "
                 "On Jira Cloud only, for 'parent', provide an issue key or "
@@ -2117,7 +2129,11 @@ async def update_issue(
     comment: Annotated[
         str | None,
         Field(
-            description=_body_format("(Optional) Comment text", brief=True),
+            description=_body_format(
+                "(Optional) Comment text in Markdown format.",
+                "(Optional) Comment text",
+                brief=True,
+            ),
             default=None,
         ),
     ] = None,
@@ -2545,7 +2561,9 @@ async def add_comment(
     body: Annotated[
         str,
         Field(
-            description=_body_format("Comment text", brief=True),
+            description=_body_format(
+                "Comment text in Markdown format", "Comment text", brief=True
+            ),
             validation_alias=AliasChoices("body", "comment"),
         ),
     ],
@@ -2634,7 +2652,14 @@ async def edit_comment(
     ],
     comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
     body: Annotated[
-        str, Field(description=_body_format("Updated comment text", brief=True))
+        str,
+        Field(
+            description=_body_format(
+                "Updated comment text in Markdown format",
+                "Updated comment text",
+                brief=True,
+            )
+        ),
     ],
     visibility: Annotated[
         str | None,
@@ -2692,7 +2717,13 @@ async def add_worklog(
     ],
     comment: Annotated[
         str | None,
-        Field(description=_body_format("(Optional) Worklog comment", brief=True)),
+        Field(
+            description=_body_format(
+                "(Optional) Comment for the worklog in Markdown format",
+                "(Optional) Worklog comment",
+                brief=True,
+            )
+        ),
     ] = None,
     started: Annotated[
         str | None,
@@ -3040,7 +3071,11 @@ async def transition_issue(
         str | None,
         Field(
             description=(
-                _body_format("(Optional) Transition comment", brief=True)
+                _body_format(
+                    "(Optional) Comment to add during the transition in Markdown format.",
+                    "(Optional) Transition comment",
+                    brief=True,
+                )
                 + " This will be visible in the issue history. "
                 "Rejected for projects "
                 "listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be "
