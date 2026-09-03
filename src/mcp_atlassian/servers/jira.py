@@ -12,7 +12,10 @@ from pydantic import AliasChoices, Field
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
-from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
+from mcp_atlassian.jira.constants import (
+    DEFAULT_READ_JIRA_FIELDS,
+    markup_translation_disabled,
+)
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
 from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
@@ -46,6 +49,49 @@ ISSUE_KEY_PATTERN = get_regex_env(
     "JIRA_ISSUE_KEY_PATTERN", r"^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*$"
 )
 PROJECT_KEY_PATTERN = get_regex_env("JIRA_PROJECT_KEY_PATTERN", r"^[A-Z][A-Z0-9_]+$")
+
+
+# With DISABLE_JIRA_MARKUP_TRANSLATION set, text is written to Jira exactly as
+# supplied, so on Server/DC the format Jira actually stores is wiki markup, not
+# Markdown. The schemas have to say so: the model writes whatever the description
+# asks for, and describing these fields as Markdown made it send Markdown that
+# was then stored as literal text (#1594). Read once at import time, like the key
+# patterns above, so it must be set in the environment (or .env) before start.
+_MARKUP_TRANSLATION_DISABLED = markup_translation_disabled()
+
+
+def _body_format(subject: str, *, brief: bool = False) -> str:
+    """Describe the markup format expected for a field written into Jira.
+
+    Args:
+        subject: How the field is named in the schema, e.g. "Comment text".
+        brief: Use the shorter pass-through wording, for fields where the
+            longer Cloud/ADF note would not earn its space.
+
+    Returns:
+        The description sentence for the current translation setting.
+    """
+    if not _MARKUP_TRANSLATION_DISABLED:
+        return f"{subject} in Markdown format."
+    if brief:
+        return (
+            f"{subject}. Server/DC: Jira wiki markup, passed through. Cloud: Markdown."
+        )
+    return (
+        f"{subject}. Server/DC: Jira wiki markup, passed through with no "
+        "conversion. Cloud: Markdown (converted to ADF)."
+    )
+
+
+# The worked example has to match the format the description just asked for, or
+# the model copies Markdown into a field that stores wiki markup verbatim.
+_UPDATE_FIELDS_EXAMPLE = (
+    'Example: \'{"assignee": "user@example.com", "summary": "New Summary", '
+    '"description": "h2. Updated\\nWiki text"}\''
+    if _MARKUP_TRANSLATION_DISABLED
+    else 'Example: \'{"assignee": "user@example.com", "summary": "New Summary", '
+    '"description": "## Updated\\nMarkdown text"}\''
+)
 
 jira_mcp = ErrorPreservingFastMCP(
     name="Jira MCP Service",
@@ -1758,7 +1804,7 @@ async def create_issue(
         str | None,
         Field(
             description=(
-                "Issue description in Markdown format. On Jira Cloud, use "
+                _body_format("Issue description") + " On Jira Cloud, use "
                 "'{expand:Title}...{expand}' for a collapsible section and "
                 "'{status:color=green|title=Done}' for an inline status "
                 "lozenge."
@@ -1797,7 +1843,7 @@ async def create_issue(
         summary: Summary/title of the issue.
         issue_type: Issue type (e.g., 'Task', 'Bug', 'Story', 'Epic', 'Subtask').
         assignee: Assignee's user identifier (string): Email, display name, or account ID (e.g., 'user@example.com', 'John Doe', 'accountid:...').
-        description: Issue description in Markdown format.
+        description: Issue description, in the markup format the parameter schema states.
         components: Comma-separated list of component names.
         additional_fields: JSON string of additional fields.
 
@@ -1849,7 +1895,9 @@ async def batch_create_issues(
                 "- project_key (required): The project key (e.g., 'PROJ')\n"
                 "- summary (required): Issue summary/title\n"
                 "- issue_type (required): Type of issue (e.g., 'Task', 'Bug')\n"
-                "- description (optional): Issue description in Markdown format\n"
+                "- description (optional): "
+                + _body_format("Issue description", brief=True)
+                + "\n"
                 "- assignee (optional): Assignee username or email\n"
                 "- components (optional): Array of component names\n"
                 "Example: [\n"
@@ -2006,7 +2054,9 @@ async def update_issue(
         Field(
             description=(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
-                "For 'description', provide text in Markdown format; on Jira Cloud, "
+                "For 'description': "
+                + _body_format("provide text")
+                + " On Jira Cloud, "
                 "use '{expand:Title}...{expand}' for a collapsible section "
                 "and '{status:color=green|title=Done}' for an inline status "
                 "lozenge. "
@@ -2014,7 +2064,7 @@ async def update_issue(
                 '{"key": "PROJ-123"} to set the parent, or null to clear it. '
                 "On Server/DC, clear an Epic Link by updating its custom field "
                 'directly, such as {"customfield_10014": null}. '
-                'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
+                + _UPDATE_FIELDS_EXAMPLE
             ),
             default=None,
         ),
@@ -2067,7 +2117,7 @@ async def update_issue(
     comment: Annotated[
         str | None,
         Field(
-            description="(Optional) Comment text in Markdown format.",
+            description=_body_format("(Optional) Comment text", brief=True),
             default=None,
         ),
     ] = None,
@@ -2121,7 +2171,7 @@ async def update_issue(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         fields: Optional JSON string of fields to update. Text fields like
-            'description' should use Markdown format. On Jira Cloud only, use
+            'description' use the markup format the parameter schema states. On Jira Cloud only, use
             ``{"parent": null}`` to clear an issue's parent. On Server/DC,
             update the Epic Link custom field directly, such as
             ``{"customfield_10014": null}``.
@@ -2130,7 +2180,7 @@ async def update_issue(
         components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
         transition: Optional transition name or ID.
-        comment: Optional issue comment in Markdown format.
+        comment: Optional issue comment, in the markup format the parameter schema states.
         comment_visibility: Optional JSON string restricting comment visibility.
         worklog: Optional time spent to log.
         worklog_started: Optional ISO datetime when the worklog started.
@@ -2495,7 +2545,7 @@ async def add_comment(
     body: Annotated[
         str,
         Field(
-            description="Comment text in Markdown format",
+            description=_body_format("Comment text", brief=True),
             validation_alias=AliasChoices("body", "comment"),
         ),
     ],
@@ -2538,7 +2588,7 @@ async def add_comment(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        body: Comment text in Markdown.
+        body: Comment text, in the markup format the parameter schema states.
         visibility: (Optional) Comment visibility as JSON string.
         public: (Optional) For JSM issues. True = customer-visible,
             False = internal/agent-only. Uses ServiceDesk API.
@@ -2583,7 +2633,9 @@ async def edit_comment(
         ),
     ],
     comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
-    body: Annotated[str, Field(description="Updated comment text in Markdown format")],
+    body: Annotated[
+        str, Field(description=_body_format("Updated comment text", brief=True))
+    ],
     visibility: Annotated[
         str | None,
         Field(
@@ -2597,7 +2649,7 @@ async def edit_comment(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         comment_id: The ID of the comment to edit.
-        body: Updated comment text in Markdown.
+        body: Updated comment text, in the markup format the parameter schema states.
         visibility: (Optional) Comment visibility as JSON string.
 
     Returns:
@@ -2640,7 +2692,7 @@ async def add_worklog(
     ],
     comment: Annotated[
         str | None,
-        Field(description="(Optional) Comment for the worklog in Markdown format"),
+        Field(description=_body_format("(Optional) Worklog comment", brief=True)),
     ] = None,
     started: Annotated[
         str | None,
@@ -2665,7 +2717,7 @@ async def add_worklog(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         time_spent: Time spent in Jira format.
-        comment: Optional comment in Markdown.
+        comment: Optional comment, in the markup format the parameter schema states.
         started: Optional start time in ISO format.
         original_estimate: Optional new original estimate.
         remaining_estimate: Optional new remaining estimate.
@@ -2988,8 +3040,9 @@ async def transition_issue(
         str | None,
         Field(
             description=(
-                "(Optional) Comment to add during the transition in Markdown format. "
-                "This will be visible in the issue history. Rejected for projects "
+                _body_format("(Optional) Transition comment", brief=True)
+                + " This will be visible in the issue history. "
+                "Rejected for projects "
                 "listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be "
                 "customer-visible on JSM and cannot be forced internal): transition "
                 "without a comment, then post an internal note with "
@@ -3007,7 +3060,7 @@ async def transition_issue(
         issue_key: Jira issue key.
         transition_id: ID or name of the transition.
         fields: Optional JSON string of fields to update during transition.
-        comment: Optional comment for the transition in Markdown format.
+        comment: Optional transition comment, in the markup format the parameter schema states.
 
     Returns:
         JSON string representing the updated issue object.

@@ -4920,3 +4920,98 @@ async def test_jira_analysis_tools_return_structured_errors(
 
     assert content["success"] is False
     assert content["error"] == "service unavailable"
+
+
+# Tool schemas must describe the markup format that is actually stored (#1594).
+# The env var is read at import time, so each case reloads the server module
+# under a patched environment rather than mutating a live one.
+
+_MARKUP_SCHEMA_FIELDS = [
+    ("create_issue", "description"),
+    ("batch_create_issues", "issues"),
+    ("update_issue", "fields"),
+    ("add_comment", "body"),
+    ("edit_comment", "body"),
+    ("add_worklog", "comment"),
+    ("transition_issue", "comment"),
+]
+
+
+async def _markup_descriptions(monkeypatch, value: str) -> dict[str, str]:
+    """Reload the Jira server with the flag set and return the described fields."""
+    import importlib
+
+    import mcp_atlassian.servers.jira as jira_server
+
+    monkeypatch.setenv("DISABLE_JIRA_MARKUP_TRANSLATION", value)
+    importlib.reload(jira_server)
+    try:
+        tools = {t.name: t for t in await jira_server.jira_mcp.list_tools()}
+        return {
+            f"{name}.{param}": tools[name].parameters["properties"][param][
+                "description"
+            ]
+            for name, param in _MARKUP_SCHEMA_FIELDS
+        }
+    finally:
+        monkeypatch.delenv("DISABLE_JIRA_MARKUP_TRANSLATION", raising=False)
+        importlib.reload(jira_server)
+
+
+@pytest.mark.anyio
+async def test_markup_schemas_say_markdown_by_default(monkeypatch):
+    """With translation on, every write field is still described as Markdown."""
+    described = await _markup_descriptions(monkeypatch, "false")
+
+    for field, description in described.items():
+        assert "Markdown" in description, f"{field} lost its Markdown wording"
+        assert "wiki markup" not in description, (
+            f"{field} advertises wiki markup while translation is enabled"
+        )
+
+
+@pytest.mark.anyio
+async def test_markup_schemas_say_wiki_when_translation_disabled(monkeypatch):
+    """With DISABLE_JIRA_MARKUP_TRANSLATION set, the text is stored verbatim.
+
+    On Server/DC that means wiki markup, so a schema that still says "in
+    Markdown format" tells the model to send the one format that gets stored
+    as literal text.
+    """
+    described = await _markup_descriptions(monkeypatch, "true")
+
+    for field, description in described.items():
+        assert "wiki markup" in description, (
+            f"{field} still advertises Markdown only: {description[:160]}"
+        )
+        assert "in Markdown format" not in description, (
+            f"{field} kept the misleading wording: {description[:160]}"
+        )
+
+
+@pytest.mark.anyio
+@pytest.mark.anyio
+async def test_update_issue_example_matches_advertised_format(monkeypatch):
+    """The worked example must not show Markdown for a field that stores wiki."""
+    on = await _markup_descriptions(monkeypatch, "false")
+    off = await _markup_descriptions(monkeypatch, "true")
+
+    assert "## Updated" in on["update_issue.fields"]
+    assert "h2. Updated" in off["update_issue.fields"]
+    assert "## Updated" not in off["update_issue.fields"]
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [("true", True), ("TRUE", True), ("false", False), ("", False), ("1", False)],
+)
+def test_schema_flag_matches_config_flag(monkeypatch, value, expected):
+    """The schema predicate and JiraConfig must read the flag identically.
+
+    If these ever diverge the schemas start advertising a format the
+    conversion layer does not actually use, which is the bug in #1594.
+    """
+    from mcp_atlassian.jira.constants import markup_translation_disabled
+
+    monkeypatch.setenv("DISABLE_JIRA_MARKUP_TRANSLATION", value)
+    assert markup_translation_disabled() is expected
