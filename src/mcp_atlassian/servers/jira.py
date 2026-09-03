@@ -160,11 +160,13 @@ def _parse_visibility(
 
 def _parse_additional_fields(
     additional_fields: dict[str, Any] | str | None,
+    param_name: str = "additional_fields",
 ) -> dict[str, Any]:
     """Parse additional_fields from dict or JSON string.
 
     Args:
         additional_fields: Dict, JSON string, or None.
+        param_name: Argument name used in error messages.
 
     Returns:
         Parsed dict of additional fields.
@@ -177,22 +179,26 @@ def _parse_additional_fields(
     if isinstance(additional_fields, dict):
         return additional_fields
     if isinstance(additional_fields, str):
+        if not additional_fields.strip():
+            return {}
         try:
             parsed = json.loads(additional_fields)
             if not isinstance(parsed, dict):
-                raise ValueError(
-                    "Parsed additional_fields is not a JSON object (dict)."
-                )
+                raise ValueError(f"{param_name} is not a JSON object (dict).")
             return parsed
         except json.JSONDecodeError as e:
-            raise ValueError(f"additional_fields is not valid JSON: {e}") from e
-    raise ValueError("additional_fields must be a dictionary or JSON string.")
+            raise ValueError(f"{param_name} is not valid JSON: {e}") from e
+    raise ValueError(f"{param_name} must be a dictionary or JSON string.")
 
 
 def _parse_request_field_values(
     request_field_values: dict[str, Any] | str,
 ) -> dict[str, Any]:
     """Parse request_field_values from dict or JSON string."""
+    if isinstance(request_field_values, str) and not request_field_values.strip():
+        raise ValueError(
+            "request_field_values is not valid JSON: value must not be blank."
+        )
     try:
         return _parse_additional_fields(request_field_values)
     except ValueError as e:
@@ -1753,7 +1759,9 @@ async def create_issue(
         Field(
             description=(
                 "Issue description in Markdown format. On Jira Cloud, use "
-                "'{expand:Title}...{expand}' for a collapsible section."
+                "'{expand:Title}...{expand}' for a collapsible section and "
+                "'{status:color=green|title=Done}' for an inline status "
+                "lozenge."
             ),
             default=None,
         ),
@@ -1999,7 +2007,9 @@ async def update_issue(
             description=(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "For 'description', provide text in Markdown format; on Jira Cloud, "
-                "use '{expand:Title}...{expand}' for a collapsible section. "
+                "use '{expand:Title}...{expand}' for a collapsible section "
+                "and '{status:color=green|title=Done}' for an inline status "
+                "lozenge. "
                 "On Jira Cloud only, for 'parent', provide an issue key or "
                 '{"key": "PROJ-123"} to set the parent, or null to clear it. '
                 "On Server/DC, clear an Epic Link by updating its custom field "
@@ -2133,7 +2143,7 @@ async def update_issue(
         ValueError: If in read-only mode or Jira client unavailable, or invalid input.
     """
     jira = await get_jira_fetcher(ctx)
-    update_fields = _parse_additional_fields(fields)
+    update_fields = _parse_additional_fields(fields, param_name="fields")
 
     return_fields_list: str | list[str] | None = return_fields
     if return_fields and return_fields != "*all":
@@ -2983,7 +2993,9 @@ async def transition_issue(
                 "listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be "
                 "customer-visible on JSM and cannot be forced internal): transition "
                 "without a comment, then post an internal note with "
-                "jira_add_comment(public=false)."
+                "jira_add_comment(public=false). On Jira Cloud, the workflow "
+                "transition's screen must include a Comment field; if Jira omits "
+                "the comment, add it separately with jira_add_comment."
             ),
         ),
     ] = None,
@@ -3010,7 +3022,7 @@ async def transition_issue(
         raise ValueError("issue_key and transition_id are required.")
 
     # Parse fields from JSON string
-    update_fields = _parse_additional_fields(fields)
+    update_fields = _parse_additional_fields(fields, param_name="fields")
 
     available_transitions = jira.get_available_transitions(issue_key)
     resolved_transition_id = resolve_transition(available_transitions, transition_id)
