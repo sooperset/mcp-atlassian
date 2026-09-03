@@ -715,3 +715,67 @@ class TestConfluenceV2AdapterComments:
         assert payload["pageId"] == "12345"
         assert "parentCommentId" not in payload
         assert result["id"] == "333444555"
+
+
+class TestConfluenceV2AdapterPageVersion:
+    """`get_page_by_version` must ask the page endpoint for the version (#1373)."""
+
+    @pytest.fixture
+    def mock_session(self):
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    def _page_response(self):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "id": "123456",
+            "status": "current",
+            "title": "Test Page",
+            "spaceId": "789",
+            "version": {
+                "number": 3,
+                "createdAt": "2024-01-02T10:00:00.000Z",
+                "authorId": "author-id",
+                "message": "third revision",
+            },
+            "body": {
+                "storage": {"value": "<p>v3 content</p>", "representation": "storage"}
+            },
+        }
+        return response
+
+    def _space_response(self):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {"key": "TEST"}
+        return response
+
+    def test_requests_version_from_page_endpoint(self, v2_adapter, mock_session):
+        mock_session.get.side_effect = [self._page_response(), self._space_response()]
+
+        result = v2_adapter.get_page_by_version("123456", 3)
+
+        url, kwargs = (
+            mock_session.get.call_args_list[0][0],
+            mock_session.get.call_args_list[0][1],
+        )
+        assert url[0] == "https://example.atlassian.net/wiki/api/v2/pages/123456"
+        assert kwargs["params"]["version"] == 3
+        assert kwargs["params"]["body-format"] == "storage"
+        assert result["body"]["storage"]["value"] == "<p>v3 content</p>"
+        assert result["version"]["number"] == 3
+
+    def test_does_not_call_the_versions_endpoints(self, v2_adapter, mock_session):
+        """PageVersion objects carry no id, so the two-step lookup can never work."""
+        mock_session.get.side_effect = [self._page_response(), self._space_response()]
+
+        v2_adapter.get_page_by_version("123456", 3)
+
+        requested = [call[0][0] for call in mock_session.get.call_args_list]
+        assert not any("/versions" in url for url in requested)
