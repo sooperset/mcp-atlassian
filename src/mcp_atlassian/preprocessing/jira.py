@@ -24,6 +24,20 @@ def _convert_panel(params: str | None, content: str) -> str:
     return f"\n{content}\n"
 
 
+def _contains_html_outside_code(text: str) -> bool:
+    """Return whether source text contains HTML outside protected code spans."""
+    code_patterns = (
+        r"\{code(?::[a-z]+)?\}[\s\S]*?\{code\}",
+        r"\{noformat\}[\s\S]*?\{noformat\}",
+        r"\{\{[^}]+\}\}",
+        r"```[^\n]*\n[\s\S]*?\n```",
+        r"`[^`]+`",
+    )
+    for pattern in code_patterns:
+        text = re.sub(pattern, "", text, flags=re.MULTILINE)
+    return re.search(r"<[^>]+>", text) is not None
+
+
 class JiraPreprocessor(BasePreprocessor):
     """Handles text preprocessing for Jira content."""
 
@@ -142,11 +156,15 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Convert markup only if translation is enabled
         if not self.disable_translation:
+            source_had_html = _contains_html_outside_code(text)
+
             # First convert any Jira markup to Markdown
             text = self.jira_to_markdown(text)
 
-            # Then convert any remaining HTML to markdown
-            text = self._convert_html_to_markdown(text)
+            # Then convert HTML that came from the source. Tags emitted by
+            # jira_to_markdown must not trigger whole-document conversion.
+            if source_had_html:
+                text = self._convert_html_to_markdown(text)
 
         return text.strip()
 
@@ -309,8 +327,9 @@ class JiraPreprocessor(BasePreprocessor):
             output,
         )
 
-        # Inserted text
-        output = re.sub(r"\+([^+]*)\+", r"<ins>\1</ins>", output)
+        # Inserted text. Delimiters glued to word characters are prose
+        # (e.g. version numbers "3.13+"), not markup.
+        output = re.sub(r"(?<!\w)\+([^+\n]+)\+(?!\w)", r"<ins>\1</ins>", output)
 
         # Superscript
         output = re.sub(r"\^([^^]*)\^", r"<sup>\1</sup>", output)
