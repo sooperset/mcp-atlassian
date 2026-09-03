@@ -4990,7 +4990,6 @@ async def test_markup_schemas_say_wiki_when_translation_disabled(monkeypatch):
 
 
 @pytest.mark.anyio
-@pytest.mark.anyio
 async def test_update_issue_example_matches_advertised_format(monkeypatch):
     """The worked example must not show Markdown for a field that stores wiki."""
     on = await _markup_descriptions(monkeypatch, "false")
