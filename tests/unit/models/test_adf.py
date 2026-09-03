@@ -773,6 +773,43 @@ class TestMarkdownToAdf:
         data_texts = [c["content"][0]["content"][0]["text"] for c in rows[1]["content"]]
         assert data_texts == ["Alice", "30"]
 
+    def test_keeps_dash_only_row(self):
+        """A later dash-only row is data, not a second delimiter.
+
+        A single "-" is a common way to write "not applicable", and dropping it
+        removes a row of real content with nothing logged.
+        """
+        md = (
+            "| Environment | Owner | Notes |\n"
+            "|---|---|---|\n"
+            "| prod | alice | migrated |\n"
+            "| - | - | - |\n"
+            "| dev | bob | migrated |"
+        )
+        rows = next(n for n in markdown_to_adf(md)["content"] if n["type"] == "table")[
+            "content"
+        ]
+        assert len(rows) == 4  # header + 3 data rows
+        texts = [
+            [c["content"][0]["content"][0]["text"] for c in row["content"]]
+            for row in rows
+        ]
+        assert texts[2] == ["-", "-", "-"]
+
+    def test_drops_delimiter_row(self):
+        """Every delimiter spelling stays recognised at its own position."""
+        for separator in ("|---|---|", "|:---|---:|", "|-|-|", "|:-:|:-:|"):
+            md = f"| A | B |\n{separator}\n| 1 | 2 |"
+            rows = next(
+                n for n in markdown_to_adf(md)["content"] if n["type"] == "table"
+            )["content"]
+            assert len(rows) == 2, f"{separator} was not treated as a delimiter"
+            texts = [
+                [c["content"][0]["content"][0]["text"] for c in row["content"]]
+                for row in rows
+            ]
+            assert texts == [["A", "B"], ["1", "2"]]
+
     def test_table_with_inline_formatting(self):
         """Table cells preserve inline formatting (bold, code)."""
         md = "| Feature | Status |\n|---|---|\n| **Auth** | `done` |"

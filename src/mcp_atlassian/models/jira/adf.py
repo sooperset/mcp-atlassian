@@ -430,11 +430,14 @@ def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, An
                 table_rows.append(lines[i])
                 i += 1
 
-            # Parse rows, skip separator (|---|---|)
+            # Parse rows, skip separator (|---|---|). The delimiter row is the
+            # second line of a table by definition, so only that line is
+            # eligible: a later row of dash-only cells is data, and a single
+            # "-" is a common way to write "not applicable".
             data_rows: list[list[str]] = []
-            for row_line in table_rows:
+            for row_index, row_line in enumerate(table_rows):
                 cells = [c.strip() for c in row_line.strip("|").split("|")]
-                if all(re.match(r"^:?-+:?$", c) for c in cells if c):
+                if row_index == 1 and all(re.match(r"^:?-+:?$", c) for c in cells if c):
                     continue
                 data_rows.append(cells)
 
