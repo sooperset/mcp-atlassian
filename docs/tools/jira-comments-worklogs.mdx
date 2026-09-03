@@ -14,7 +14,7 @@ Add a comment to a Jira issue.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `body` | `string` | Yes | Comment text in Markdown format. |
+| `body` | `string` | Yes | Comment text in Markdown format |
 | `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '`{"type":"group","value":"jira-users"}`') |
 | `public` | `boolean` | No | (Optional) For JSM/Service Desk issues only. Set to true for customer-visible comment, false for internal agent-only comment. Posted via the ServiceDesk API as a raw string; Jira Cloud renders it server-side and stores ADF (markdown observed to render on Cloud, without the client-side markdown-to-ADF guarantees of the regular comment path). Cannot be combined with visibility. If the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS, only public=false is accepted — public=true or omitting this field is rejected. Issues in such a project that are not JSM customer requests (e.g. an agent-created Task) have no portal audience and are exempt: they post through the ordinary comment path and ignore this field. |
 **Example:**
@@ -41,7 +41,7 @@ Edit an existing comment on a Jira issue.
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `comment_id` | `string` | Yes | The ID of the comment to edit |
-| `body` | `string` | Yes | Updated comment text in Markdown format. |
+| `body` | `string` | Yes | Updated comment text in Markdown format |
 | `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '`{"type":"group","value":"jira-users"}`') |
 
 ---
@@ -70,7 +70,7 @@ Add a worklog entry to a Jira issue.
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `time_spent` | `string` | Yes | Time spent in Jira format. Examples: '1h 30m' (1 hour and 30 minutes), '1d' (1 day), '30m' (30 minutes), '4h' (4 hours) |
-| `comment` | `string` | No | (Optional) Worklog comment in Markdown format. |
+| `comment` | `string` | No | (Optional) Comment for the worklog in Markdown format |
 | `started` | `string` | No | (Optional) Start time in ISO format. If not provided, the current time will be used. Example: '2023-08-01T12:00:00.000+0000' |
 | `original_estimate` | `string` | No | (Optional) New value for the original estimate |
 | `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |
