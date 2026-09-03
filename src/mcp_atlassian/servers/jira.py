@@ -2010,6 +2010,10 @@ async def update_issue(
                 "use '{expand:Title}...{expand}' for a collapsible section "
                 "and '{status:color=green|title=Done}' for an inline status "
                 "lozenge. "
+                "On Jira Cloud only, for 'parent', provide an issue key or "
+                '{"key": "PROJ-123"} to set the parent, or null to clear it. '
+                "On Server/DC, clear an Epic Link by updating its custom field "
+                'directly, such as {"customfield_10014": null}. '
                 'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             ),
             default=None,
@@ -2021,7 +2025,11 @@ async def update_issue(
             description=(
                 "(Optional) JSON string of additional fields to update. "
                 "Use this for custom fields or more complex updates. "
-                'Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}.'
+                'Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}. '
+                'On Jira Cloud, set a parent with {"parent": "PROJ-123"} and '
+                'clear it with {"parent": null}. On Server/DC, clear an Epic Link '
+                "by updating its custom field directly, such as "
+                '{"customfield_10014": null}.'
             ),
             default=None,
         ),
@@ -2113,8 +2121,12 @@ async def update_issue(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         fields: Optional JSON string of fields to update. Text fields like
-            'description' should use Markdown format.
-        additional_fields: Optional JSON string of additional fields.
+            'description' should use Markdown format. On Jira Cloud only, use
+            ``{"parent": null}`` to clear an issue's parent. On Server/DC,
+            update the Epic Link custom field directly, such as
+            ``{"customfield_10014": null}``.
+        additional_fields: Optional JSON string of additional fields. The same
+            Cloud-only parent clearing and Server/DC Epic Link guidance applies.
         components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
         transition: Optional transition name or ID.

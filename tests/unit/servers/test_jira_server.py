@@ -2420,6 +2420,25 @@ async def test_update_issue_accepts_json_string_additional_fields(
 
 
 @pytest.mark.anyio
+async def test_update_issue_clears_parent_with_json_null(
+    jira_client, mock_jira_fetcher
+):
+    """Regression for #1518: JSON null must reach the fetcher as None."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "additional_fields": '{"parent": null}',
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue updated successfully"
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["parent"] is None
+
+
+@pytest.mark.anyio
 async def test_update_issue_plain_text_fields_error_names_fields(jira_client):
     """Regression: invalid plain-text fields must blame fields,
     not additional_fields — both arguments share one parser whose
