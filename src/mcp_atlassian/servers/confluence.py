@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import BeforeValidator, Field
+from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluenceAttachment
@@ -262,7 +263,9 @@ async def search(
             pages = confluence_fetcher.search(
                 query, limit=limit, spaces_filter=spaces_filter
             )
-        except Exception as e:
+        except HTTPError as e:
+            if e.response is None or e.response.status_code != 400:
+                raise
             logger.warning(f"siteSearch failed ('{e}'), falling back to text search.")
             query = f'text ~ "{original_query}"'
             logger.info(f"Falling back to text search with CQL: {query}")

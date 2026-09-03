@@ -511,17 +511,26 @@ async def test_search(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
-async def test_search_returns_error_details(client, mock_confluence_fetcher):
+@pytest.mark.parametrize(
+    ("query", "expected_query"),
+    [("type=page", "type=page"), ("test search", 'siteSearch ~ "test search"')],
+)
+async def test_search_returns_error_details(
+    client, mock_confluence_fetcher, query, expected_query
+):
     """Test that search tool failures preserve the original error message."""
-    mock_confluence_fetcher.search.side_effect = RuntimeError(
+    mock_confluence_fetcher.search.side_effect = ValueError(
         "Confluence CQL rejected the query"
     )
 
     with pytest.raises(ToolError) as excinfo:
-        await client.call_tool("confluence_search", {"query": "type=page"})
+        await client.call_tool("confluence_search", {"query": query})
 
     assert "Error calling tool 'search'" in str(excinfo.value)
     assert "Confluence CQL rejected the query" in str(excinfo.value)
+    mock_confluence_fetcher.search.assert_called_once_with(
+        expected_query, limit=10, spaces_filter=None
+    )
 
 
 @pytest.mark.anyio
