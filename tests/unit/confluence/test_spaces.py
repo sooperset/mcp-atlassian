@@ -38,6 +38,21 @@ class TestSpacesMixin:
         )
         assert result == MOCK_SPACES_RESPONSE
 
+    def test_get_spaces_filters_disallowed_results(self, spaces_mixin):
+        spaces_mixin.config.spaces_filter = "TEST"
+        spaces_mixin.confluence.get_all_spaces.return_value = {
+            "results": [
+                {"key": "TEST", "name": "Allowed"},
+                {"key": "SECRET", "name": "Disallowed"},
+            ],
+            "size": 2,
+        }
+
+        result = spaces_mixin.get_spaces()
+
+        assert result["results"] == [{"key": "TEST", "name": "Allowed"}]
+        assert result["size"] == 1
+
     def test_get_user_contributed_spaces_success(self, spaces_mixin):
         """Test getting spaces that the user has contributed to."""
         # Arrange
@@ -130,6 +145,29 @@ class TestSpacesMixin:
         assert len(result) == 1
         assert "SPACE1" in result
         assert result["SPACE1"]["name"] == "Space 1"
+
+    def test_get_user_contributed_spaces_filters_disallowed_results(self, spaces_mixin):
+        spaces_mixin.config.spaces_filter = "ALLOWED"
+        spaces_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "resultGlobalContainer": {
+                        "title": "Allowed",
+                        "displayUrl": "/spaces/ALLOWED",
+                    }
+                },
+                {
+                    "resultGlobalContainer": {
+                        "title": "Secret",
+                        "displayUrl": "/spaces/SECRET",
+                    }
+                },
+            ]
+        }
+
+        result = spaces_mixin.get_user_contributed_spaces()
+
+        assert result == {"ALLOWED": {"key": "ALLOWED", "name": "Allowed"}}
 
     def test_get_user_contributed_spaces_api_error(self, spaces_mixin):
         """Test handling of API errors."""
