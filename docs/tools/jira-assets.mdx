@@ -1,0 +1,19 @@
+---
+title: "Jira Assets"
+description: "Consolidated Assets (Insight) discovery on Server/Data Center"
+---
+
+### Discover Jira Resources
+
+Discover Jira Assets schemas, object types, or attributes.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `resource` | `string` | Yes | Resource to discover: asset_schemas, asset_object_types, or asset_attributes. |
+| `schema_id` | `string` | No | Object schema ID required when resource=asset_object_types. |
+| `object_type_id` | `string` | No | Object type ID required when resource=asset_attributes. |
+| `name_filter` | `string` | No | Optional case-insensitive name filter for schemas or object types. |
+
+---

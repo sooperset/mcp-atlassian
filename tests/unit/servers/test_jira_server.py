@@ -88,6 +88,13 @@ def mock_jira_fetcher():
     mock_fetcher.get_available_transitions.return_value = []
     mock_fetcher.get_issue_watchers.return_value = {"watchCount": 0, "watchers": []}
     mock_fetcher.get_worklogs.return_value = []
+    mock_fetcher.search_assets_aql.return_value = {
+        "objects": [],
+        "total": 0,
+        "page": 1,
+        "page_size": 100,
+        "total_pages": 0,
+    }
 
     # Configure search_issues to return fixture data
     def mock_search_issues(jql, **kwargs):
@@ -630,6 +637,24 @@ async def jira_client(test_jira_mcp, mock_jira_fetcher, mock_request):
         ),
     ):
         async with Client(transport=FastMCPTransport(test_jira_mcp)) as client_instance:
+            yield client_instance
+
+
+@pytest.fixture
+async def assets_jira_client(mock_jira_fetcher):
+    """Create a client with the default-off Assets discovery tool enabled."""
+    from src.mcp_atlassian.servers.jira import discover
+
+    root_mcp = FastMCP(name="AssetsTestRoot")
+    jira_sub_mcp = FastMCP(name="AssetsTestJira")
+    jira_sub_mcp.add_tool(discover)
+    root_mcp.mount(jira_sub_mcp, namespace="jira")
+
+    with patch(
+        "src.mcp_atlassian.servers.jira.get_jira_fetcher",
+        AsyncMock(return_value=mock_jira_fetcher),
+    ):
+        async with Client(transport=FastMCPTransport(root_mcp)) as client_instance:
             yield client_instance
 
 
@@ -3938,6 +3963,63 @@ async def test_get_field_options_combined(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_discover_asset_schemas(assets_jira_client, mock_jira_fetcher):
+    """jira_discover should expose Assets schemas through one meta-tool."""
+    mock_jira_fetcher.list_asset_schemas.return_value = [
+        {"id": "1", "name": "Hardware"},
+        {"id": "2", "name": "People"},
+    ]
+
+    response = await assets_jira_client.call_tool(
+        "jira_discover",
+        {"resource": "asset_schemas", "name_filter": "hard"},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content == {
+        "resource": "asset_schemas",
+        "schemas": [{"id": "1", "name": "Hardware"}],
+    }
+
+
+@pytest.mark.anyio
+async def test_discover_asset_object_types_requires_schema_id(
+    assets_jira_client, mock_jira_fetcher
+):
+    """Object-type discovery should explain its required selector."""
+    with pytest.raises(ToolError, match="schema_id is required"):
+        await assets_jira_client.call_tool(
+            "jira_discover",
+            {"resource": "asset_object_types"},
+        )
+
+    mock_jira_fetcher.list_asset_object_types.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_discover_asset_object_type_attributes(
+    assets_jira_client, mock_jira_fetcher
+):
+    """jira_discover should route attribute discovery by object type ID."""
+    mock_jira_fetcher.get_asset_object_type_attributes.return_value = [
+        {"id": "100", "name": "Name"}
+    ]
+
+    response = await assets_jira_client.call_tool(
+        "jira_discover",
+        {"resource": "asset_attributes", "object_type_id": "10"},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content == {
+        "resource": "asset_attributes",
+        "object_type_id": "10",
+        "attributes": [{"id": "100", "name": "Name"}],
+    }
+    mock_jira_fetcher.get_asset_object_type_attributes.assert_called_once_with("10")
+
+
+@pytest.mark.anyio
 async def test_get_issue_include_remote_links(jira_client, mock_jira_fetcher):
     """get_issue with include=remote_links fetches remote links."""
     mock_jira_fetcher.get_remote_issue_links.return_value = [
@@ -4047,6 +4129,48 @@ async def test_get_issue_include_worklogs(jira_client, mock_jira_fetcher):
         {"id": "10001", "time_spent": "1h", "time_spent_seconds": 3600}
     ]
     mock_jira_fetcher.get_worklogs.assert_called_once_with("TEST-123")
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_assets(jira_client, mock_jira_fetcher):
+    """get_issue should inline Assets objects connected to the issue."""
+    mock_jira_fetcher.config.is_cloud = False
+    mock_jira_fetcher.search_assets_aql.return_value = {
+        "objects": [{"id": "501", "object_key": "HW-501"}],
+        "total": 1,
+        "page": 1,
+        "page_size": 100,
+        "total_pages": 1,
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "assets"},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["assets"] == [{"id": "501", "object_key": "HW-501"}]
+    mock_jira_fetcher.search_assets_aql.assert_called_once_with(
+        'object HAVING connectedTickets(key = "TEST-123")',
+        results_per_page=100,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_assets_is_empty_on_cloud(
+    jira_client, mock_jira_fetcher
+):
+    """The Server/DC-only Assets enrichment should not call Assets on Cloud."""
+    mock_jira_fetcher.config.is_cloud = True
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "assets"},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["assets"] == []
+    mock_jira_fetcher.search_assets_aql.assert_not_called()
 
 
 @pytest.mark.anyio

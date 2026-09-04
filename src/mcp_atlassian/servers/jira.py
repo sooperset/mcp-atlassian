@@ -4,7 +4,7 @@ import asyncio
 import base64
 import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
@@ -60,6 +60,7 @@ _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
         "changelog",
         "comments",
         "worklogs",
+        "assets",
     }
 )
 _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
@@ -69,6 +70,7 @@ _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
     "changelog": "changelogs",
     "comments": "comments",
     "worklogs": "worklogs",
+    "assets": "assets",
 }
 _GET_ISSUE_INCLUDE_ALIASES = {
     "comment": "comments",
@@ -636,7 +638,8 @@ async def get_issue(
                 "(Optional) Comma-separated sections to inline "
                 "in the response, avoiding extra tool calls. "
                 "Supported: all, remote_links, transitions, "
-                "watchers, changelog, comments, worklogs"
+                "watchers, changelog, comments, worklogs, assets "
+                "(Assets is Server/Data Center only)"
             ),
             default=None,
         ),
@@ -658,7 +661,7 @@ async def get_issue(
 
     Includes Epic links and relationship information. Use the
     ``include`` parameter to inline enrichments (remote_links,
-    transitions, watchers, changelog, comments, worklogs) so that
+    transitions, watchers, changelog, comments, worklogs, assets) so that
     separate tool calls are not needed.
 
     Args:
@@ -746,6 +749,18 @@ async def get_issue(
             result["worklogs"] = jira.get_worklogs(issue_key)
         except Exception:  # noqa: BLE001
             result["worklogs"] = []
+
+    if "assets" in include_sections:
+        result["assets"] = []
+        if not jira.config.is_cloud:
+            try:
+                asset_result = jira.search_assets_aql(
+                    f'object HAVING connectedTickets(key = "{issue_key}")',
+                    results_per_page=100,
+                )
+                result["assets"] = asset_result["objects"]
+            except Exception:  # noqa: BLE001
+                result["assets"] = []
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -4694,4 +4709,108 @@ async def get_cross_project_dependencies(
         project_key=project_key,
         max_issues=max_issues,
     )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+# ----------------------------------------------------------------------
+# Jira Assets (Insight) discovery — Server/Data Center only
+# ----------------------------------------------------------------------
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_assets", "server_only"},
+    annotations={"title": "Discover Jira Resources", "readOnlyHint": True},
+)
+async def discover(
+    ctx: Context,
+    resource: Annotated[
+        Literal[
+            "asset_schemas",
+            "asset_object_types",
+            "asset_attributes",
+        ],
+        Field(
+            description=(
+                "Resource to discover: asset_schemas, asset_object_types, "
+                "or asset_attributes."
+            )
+        ),
+    ],
+    schema_id: Annotated[
+        str | None,
+        Field(
+            description=("Object schema ID required when resource=asset_object_types."),
+            default=None,
+        ),
+    ] = None,
+    object_type_id: Annotated[
+        str | None,
+        Field(
+            description=("Object type ID required when resource=asset_attributes."),
+            default=None,
+        ),
+    ] = None,
+    name_filter: Annotated[
+        str,
+        Field(
+            description=(
+                "Optional case-insensitive name filter for schemas or object types."
+            ),
+            default="",
+        ),
+    ] = "",
+) -> str:
+    """Discover Jira Assets schemas, object types, or attributes.
+
+    This is the consolidated discovery entry point for Assets on Jira Service
+    Management Server/Data Center. Start with asset_schemas, then use the
+    returned schema ID for asset_object_types and an object type ID for
+    asset_attributes.
+
+    Args:
+        ctx: The FastMCP context.
+        resource: Assets resource kind to discover.
+        schema_id: Schema ID for object-type discovery.
+        object_type_id: Object type ID for attribute discovery.
+        name_filter: Optional name substring for schema or object-type results.
+
+    Returns:
+        JSON string containing the requested discovery results.
+    """
+    jira = await get_jira_fetcher(ctx)
+    needle = name_filter.strip().lower()
+
+    if resource == "asset_schemas":
+        schemas = jira.list_asset_schemas()
+        if needle:
+            schemas = [
+                schema
+                for schema in schemas
+                if needle in str(schema.get("name") or "").lower()
+            ]
+        result: dict[str, Any] = {"resource": resource, "schemas": schemas}
+    elif resource == "asset_object_types":
+        if not schema_id:
+            raise ValueError("schema_id is required for asset_object_types")
+        object_types = jira.list_asset_object_types(schema_id)
+        if needle:
+            object_types = [
+                object_type
+                for object_type in object_types
+                if needle in str(object_type.get("name") or "").lower()
+            ]
+        result = {
+            "resource": resource,
+            "schema_id": schema_id,
+            "object_types": object_types,
+        }
+    else:
+        if not object_type_id:
+            raise ValueError("object_type_id is required for asset_attributes")
+        result = {
+            "resource": resource,
+            "object_type_id": object_type_id,
+            "attributes": jira.get_asset_object_type_attributes(object_type_id),
+        }
+
     return json.dumps(result, indent=2, ensure_ascii=False)

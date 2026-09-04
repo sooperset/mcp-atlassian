@@ -10,14 +10,16 @@ import json
 import os
 import uuid
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastmcp import Client
+from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
-from mcp.types import CallToolResult, TextContent
+from fastmcp.client.client import CallToolResult
+from mcp.types import TextContent
 
 from mcp_atlassian.jira import JiraFetcher
+from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.servers import main_mcp
 
 from .conftest import CloudInstanceInfo, CloudResourceTracker
@@ -126,6 +128,39 @@ class TestGetIssueIncludeEnrichments:
 
         watchers = jira_fetcher.get_issue_watchers(issue.key)
         assert isinstance(watchers, dict)
+
+    @pytest.mark.anyio
+    async def test_assets_include_is_empty_on_cloud(self) -> None:
+        """Cloud issue reads should not call the Server/DC Assets API."""
+        issue_key = os.environ["CLOUD_E2E_JSM_ISSUE_KEY"]
+        config = JiraConfig(
+            url=os.environ["CLOUD_E2E_JIRA_URL"],
+            username=os.environ["CLOUD_E2E_USERNAME"],
+            api_token=os.environ["CLOUD_E2E_API_TOKEN"],
+            auth_type="basic",
+        )
+        fetcher = JiraFetcher(config=config)
+
+        from mcp_atlassian.servers.jira import get_issue
+
+        root_mcp = FastMCP(name="CloudAssetsIncludeRoot")
+        jira_mcp = FastMCP(name="CloudAssetsIncludeJira")
+        jira_mcp.add_tool(get_issue)
+        root_mcp.mount(jira_mcp, namespace="jira")
+
+        with patch(
+            "mcp_atlassian.servers.jira.get_jira_fetcher",
+            AsyncMock(return_value=fetcher),
+        ):
+            async with Client(transport=FastMCPTransport(root_mcp)) as client:
+                response = await client.call_tool(
+                    "jira_get_issue",
+                    {"issue_key": issue_key, "include": "assets"},
+                )
+
+        content = json.loads(response.content[0].text)
+        assert content["key"] == issue_key
+        assert content["assets"] == []
 
     @pytest.mark.anyio
     async def test_get_issue_include_all_tool(

@@ -317,6 +317,8 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         tool_tags = tool_obj.tags
         if "cloud_only" in tool_tags and "jira" in tool_tags:
             return ctx["jira_is_cloud"] is not False
+        if "server_only" in tool_tags and "jira" in tool_tags:
+            return ctx["jira_is_cloud"] is not True
         return True
 
     def _is_tool_enabled(
