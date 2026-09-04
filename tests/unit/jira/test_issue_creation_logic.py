@@ -40,6 +40,9 @@ class ConcreteIssuesMixin(
     def get_project_issue_types(self, project_key):
         pass
 
+    def get_create_fields(self, project_key, issue_type_id):
+        pass
+
     def get_required_fields(self, project_key, issue_type_name):
         pass
 
@@ -77,6 +80,7 @@ def issues_mixin():
         mixin.config = mock_config
         # Mock methods that are not part of the mixin but are called by it
         mixin.get_project_issue_types = MagicMock()
+        mixin.get_create_fields = MagicMock(return_value=[])
         mixin._markdown_to_jira = MagicMock(side_effect=lambda x: x)
         mixin._get_account_id = MagicMock(return_value="account_id_123")
         mixin._add_assignee_to_fields = MagicMock()
@@ -176,6 +180,28 @@ def test_find_epic_issue_type_id_prefers_exact_match(issues_mixin):
     ]
 
     epic_id = issues_mixin._find_epic_issue_type_id("PROJ")
+    assert epic_id == "10001"
+
+
+def test_find_epic_issue_type_id_uses_epic_name_schema(issues_mixin):
+    """Identify a localized Epic from its project-scoped Epic Name field."""
+    issues_mixin.get_project_issue_types.return_value = [
+        {"id": "10099", "name": "Team Epic", "subtask": False},
+        {"id": "10001", "name": "Initiative", "subtask": False},
+    ]
+    issues_mixin.get_create_fields.side_effect = lambda _project, type_id: (
+        [
+            {
+                "fieldId": "customfield_10103",
+                "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-label"},
+            }
+        ]
+        if type_id == "10001"
+        else []
+    )
+
+    epic_id = issues_mixin._find_epic_issue_type_id("PROJ")
+
     assert epic_id == "10001"
 
 

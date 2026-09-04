@@ -135,7 +135,10 @@ class EpicsMixin(
             required_fields = {}
             if project_key:
                 try:
-                    required_fields = self.get_required_fields("Epic", project_key)
+                    epic_type_id = self._find_epic_issue_type_id(project_key)
+                    required_fields = self.get_required_fields(
+                        epic_type_id or "Epic", project_key
+                    )
                     logger.debug(
                         f"Required fields for Epic in project {project_key}: {list(required_fields.keys())}"
                     )
@@ -290,6 +293,29 @@ class EpicsMixin(
         logger.debug("Could not determine Epic Color field ID")
         return None
 
+    def _is_epic_issue(self, issue: dict[str, Any]) -> bool:
+        """Return whether project metadata identifies an issue as an Epic."""
+        fields = issue.get("fields", {})
+        if not isinstance(fields, dict):
+            return False
+
+        issue_type = fields.get("issuetype", {})
+        if not isinstance(issue_type, dict):
+            return False
+
+        project = fields.get("project", {})
+        project_key = project.get("key") if isinstance(project, dict) else None
+        issue_type_id = issue_type.get("id")
+        if isinstance(project_key, str) and project_key and issue_type_id is not None:
+            epic_type_id = self._find_epic_issue_type_id(project_key)
+            if epic_type_id is not None:
+                return str(issue_type_id) == epic_type_id
+
+        issue_type_name = issue_type.get("name", "")
+        return isinstance(issue_type_name, str) and self._is_epic_issue_type(
+            issue_type_name
+        )
+
     def link_issue_to_epic(self, issue_key: str, epic_key: str) -> JiraIssue:
         """
         Link an existing issue to an epic.
@@ -323,10 +349,7 @@ class EpicsMixin(
                 raise TypeError(msg)
 
             # Check if the epic key corresponds to an actual epic
-            fields = epic.get("fields", {})
-            issue_type = fields.get("issuetype", {}).get("name", "").lower()
-
-            if issue_type != "epic":
+            if not self._is_epic_issue(epic):
                 error_msg = f"Error linking issue to epic: {epic_key} is not an Epic"
                 raise ValueError(error_msg)
 
@@ -461,12 +484,7 @@ class EpicsMixin(
             issuetype_data = fields_data.get("issuetype", {})
             issue_type_name = issuetype_data.get("name", "")
 
-            # Check if it's an Epic by looking for "epic" in the name (case-insensitive)
-            # This handles localized names like "에픽", "エピック", etc.
-            if "epic" not in issue_type_name.lower() and issue_type_name not in [
-                "에픽",
-                "エピック",
-            ]:
+            if not self._is_epic_issue(epic):
                 # Try to verify via JQL as a fallback
                 is_epic = False
                 try:
