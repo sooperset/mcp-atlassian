@@ -77,6 +77,14 @@ class IssueOperationsProto(Protocol):
     ) -> JiraIssue:
         """Get a Jira issue by key."""
 
+    @abstractmethod
+    def _find_epic_issue_type_id(self, project_key: str) -> str | None:
+        """Find the Epic issue type ID for a project."""
+
+    @abstractmethod
+    def _is_epic_issue_type(self, issue_type: str) -> bool:
+        """Return whether an issue type name is recognized as an Epic."""
+
 
 class SearchOperationsProto(Protocol):
     """Protocol defining search operations interface."""
@@ -210,7 +218,7 @@ class FieldsOperationsProto(Protocol):
         Get required fields for creating an issue of a specific type in a project.
 
         Args:
-            issue_type: The issue type (e.g., 'Bug', 'Story', 'Epic')
+            issue_type: The issue type name or ID (e.g., 'Bug' or '10001')
             project_key: The project key (e.g., 'PROJ')
 
         Returns:
@@ -233,6 +241,12 @@ class ProjectsOperationsProto(Protocol):
         Returns:
             List of issue type data dictionaries
         """
+
+    @abstractmethod
+    def get_create_fields(
+        self, project_key: str, issue_type_id: str
+    ) -> list[dict[str, Any]]:
+        """Get fields available when creating an issue of a given type."""
 
 
 @runtime_checkable
