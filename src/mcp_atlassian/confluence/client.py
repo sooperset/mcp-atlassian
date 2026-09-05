@@ -306,3 +306,14 @@ class ConfluenceClient:
         return self.preprocessor.process_html_content(
             html_content, space_key, self.confluence
         )
+
+    def _get_allowed_spaces(self) -> set[str] | None:
+        """Return the configured ``CONFLUENCE_SPACES_FILTER`` allowlist.
+
+        Returns:
+            A set of allowed space keys, or None when no filter is configured.
+        """
+        filter_to_use = getattr(self.config, "spaces_filter", None)
+        if not isinstance(filter_to_use, str) or not filter_to_use:
+            return None
+        return {s.strip().upper() for s in filter_to_use.split(",") if s.strip()}
