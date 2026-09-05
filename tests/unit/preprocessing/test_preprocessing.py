@@ -312,6 +312,26 @@ For more information, see [our website|https://example.com].
     assert "[our website](https://example.com)" in converted
 
 
+@pytest.mark.parametrize(
+    ("wiki", "expected"),
+    [
+        ("* Item with *bold text*.", "- Item with **bold text**."),
+        ("* Item with *two* bold *spans*.", "- Item with **two** bold **spans**."),
+        ("* Item with a lone * asterisk.", "- Item with a lone * asterisk."),
+        ("** Level two.", "  - Level two."),
+        ("*** Level three.", "    - Level three."),
+        ("** Nested *bold* and _italic_.", "  - Nested **bold** and *italic*."),
+        ("*# Ordered *child*.", "  1. Ordered **child**."),
+        ("#* Unordered *child*.", "  - Unordered **child**."),
+    ],
+)
+def test_jira_to_markdown_list_markers_are_not_emphasis(
+    preprocessor_with_jira, wiki, expected
+):
+    """Preserve list depth and format emphasis within the item body (#1651)."""
+    assert preprocessor_with_jira.jira_to_markdown(wiki) == expected
+
+
 def test_jira_to_markdown_citation(preprocessor_with_jira):
     """Test citation markup conversion and that unmatched ?? does not cause ReDoS."""
     # Matched citation
