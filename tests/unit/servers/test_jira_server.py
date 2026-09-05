@@ -5010,7 +5010,16 @@ def test_schema_flag_matches_config_flag(monkeypatch, value, expected):
     If these ever diverge the schemas start advertising a format the
     conversion layer does not actually use, which is the bug in #1594.
     """
+    from mcp_atlassian.jira.config import JiraConfig
     from mcp_atlassian.jira.constants import markup_translation_disabled
 
+    monkeypatch.setenv("JIRA_URL", "https://example.atlassian.net")
+    monkeypatch.setenv("JIRA_USERNAME", "user@example.com")
+    monkeypatch.setenv("JIRA_API_TOKEN", "token")
     monkeypatch.setenv("DISABLE_JIRA_MARKUP_TRANSLATION", value)
+
     assert markup_translation_disabled() is expected
+    # The point of the test: the value the schemas advertise and the value the
+    # conversion layer acts on have to come out the same, so assert the config
+    # too rather than only the predicate it is supposed to agree with.
+    assert JiraConfig.from_env().disable_jira_markup_translation is expected

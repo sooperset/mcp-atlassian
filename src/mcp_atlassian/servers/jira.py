@@ -2187,10 +2187,10 @@ async def update_issue(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         fields: Optional JSON string of fields to update. Text fields like
-            'description' use the markup format the parameter schema states. On Jira Cloud only, use
-            ``{"parent": null}`` to clear an issue's parent. On Server/DC,
-            update the Epic Link custom field directly, such as
-            ``{"customfield_10014": null}``.
+            'description' use the markup format the parameter schema states.
+            On Jira Cloud only, use ``{"parent": null}`` to clear an issue's
+            parent. On Server/DC, update the Epic Link custom field directly,
+            such as ``{"customfield_10014": null}``.
         additional_fields: Optional JSON string of additional fields. The same
             Cloud-only parent clearing and Server/DC Epic Link guidance applies.
         components: Comma-separated list of component names.
