@@ -28,15 +28,52 @@ class TestSpacesMixin:
             return mixin
 
     def test_get_spaces(self, spaces_mixin):
-        """Test that get_spaces returns spaces from the Confluence client."""
+        """Test that get_spaces uses the gateway-aware REST URL."""
+        spaces_mixin.confluence.get.return_value = MOCK_SPACES_RESPONSE
+
         # Act
         result = spaces_mixin.get_spaces(start=10, limit=20)
 
         # Assert
-        spaces_mixin.confluence.get_all_spaces.assert_called_once_with(
-            start=10, limit=20
+        spaces_mixin.confluence.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/space",
+            absolute=True,
+            params={"start": 10, "limit": 20},
         )
         assert result == MOCK_SPACES_RESPONSE
+
+    def test_get_space(self, spaces_mixin):
+        """A single-space lookup uses the gateway-aware REST URL."""
+        expected = {"id": "123", "key": "TEST", "name": "Test Space"}
+        spaces_mixin.confluence.get.return_value = expected
+
+        assert spaces_mixin.get_space("TEST") == expected
+        spaces_mixin.confluence.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/space/TEST",
+            absolute=True,
+            params={"expand": "description,homepage"},
+        )
+
+    def test_get_space_requires_key(self, spaces_mixin):
+        """A single-space lookup rejects an empty key."""
+        with pytest.raises(ValueError, match="Space key is required"):
+            spaces_mixin.get_space("")
+
+        spaces_mixin.confluence.get.assert_not_called()
+
+    def test_get_spaces_uses_oauth_gateway_prefix(self, spaces_mixin):
+        """Cloud OAuth space listing includes the required wiki product prefix."""
+        spaces_mixin.config.auth_type = "oauth"
+        spaces_mixin.confluence.url = "https://api.atlassian.com/ex/confluence/cloud-id"
+        spaces_mixin.confluence.get.return_value = MOCK_SPACES_RESPONSE
+
+        spaces_mixin.get_spaces()
+
+        spaces_mixin.confluence.get.assert_called_once_with(
+            "https://api.atlassian.com/ex/confluence/cloud-id/wiki/rest/api/space",
+            absolute=True,
+            params={"start": 0, "limit": 10},
+        )
 
     def test_get_user_contributed_spaces_success(self, spaces_mixin):
         """Test getting spaces that the user has contributed to."""

@@ -128,6 +128,21 @@ Add label to Confluence content (pages, blog posts, or attachments).
 
 ---
 
+### Remove Label
+
+Remove a label from a Confluence page.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence page ID |
+| `name` | `string` | Yes | Label name |
+
+---
+
 ### Get Page Views
 
 Get view statistics for a Confluence page.

@@ -1,6 +1,7 @@
 """Module for Confluence label operations."""
 
 import logging
+from urllib.parse import quote
 
 from ..models.confluence import ConfluenceLabel
 from .client import ConfluenceClient
@@ -77,3 +78,15 @@ class LabelsMixin(ConfluenceClient):
             raise Exception(
                 f"Failed to add label '{name}' to page {page_id}: {str(e)}"
             ) from e
+
+    def remove_page_label(self, page_id: str, name: str) -> bool:
+        """Remove a label from a Confluence page."""
+        if not page_id or not name:
+            raise ValueError("Page ID and label name are required")
+        url = (
+            f"{self._v1_rest_base_url()}/rest/api/content/{page_id}/label/"
+            f"{quote(name, safe='')}"
+        )
+        response = self.confluence._session.delete(url)
+        response.raise_for_status()
+        return True

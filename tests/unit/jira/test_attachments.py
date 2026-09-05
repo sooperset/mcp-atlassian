@@ -1331,6 +1331,23 @@ class TestAttachmentsMixin:
         # No download calls should have been made
         attachments_mixin.jira._session.get.assert_not_called()
 
+    def test_delete_attachment(self, attachments_mixin: AttachmentsMixin):
+        """Attachment deletion uses the client's configured API edition."""
+        attachments_mixin.jira.resource_url.return_value = "/rest/api/2/attachment/1"
+
+        assert attachments_mixin.delete_attachment("1") is True
+        attachments_mixin.jira.resource_url.assert_called_once_with("attachment/1")
+        attachments_mixin.jira.delete.assert_called_once_with(
+            "/rest/api/2/attachment/1"
+        )
+
+    def test_delete_attachment_requires_id(self, attachments_mixin: AttachmentsMixin):
+        """Attachment deletion rejects an empty ID before an API call."""
+        with pytest.raises(ValueError, match="Attachment ID is required"):
+            attachments_mixin.delete_attachment("")
+
+        attachments_mixin.jira.delete.assert_not_called()
+
 
 class TestUploadPathTraversalRegression:
     """Regression — upload-side attachment path traversal / arbitrary file read.

@@ -181,6 +181,42 @@ def test_get_project_exception(projects_mixin: ProjectsMixin):
     projects_mixin.jira.project.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("method_name", "client_method", "expected"),
+    [
+        ("get_priorities", "get_all_priorities", [{"id": "1", "name": "High"}]),
+        (
+            "get_resolutions",
+            "get_all_resolutions",
+            [{"id": "1", "name": "Done"}],
+        ),
+        ("get_statuses", "get_all_statuses", [{"id": "1", "name": "Open"}]),
+    ],
+)
+def test_get_jira_metadata(
+    projects_mixin: ProjectsMixin,
+    method_name: str,
+    client_method: str,
+    expected: list[dict[str, Any]],
+):
+    """Metadata methods delegate to cross-edition client methods."""
+    getattr(projects_mixin.jira, client_method).return_value = expected
+
+    assert getattr(projects_mixin, method_name)() == expected
+    getattr(projects_mixin.jira, client_method).assert_called_once_with()
+
+
+def test_get_project_statuses(projects_mixin: ProjectsMixin):
+    """Project status lookup uses the client's configured API edition."""
+    expected = [{"id": "1", "name": "Open"}]
+    projects_mixin.jira.resource_url.return_value = "/rest/api/2/project/TEST/statuses"
+    projects_mixin.jira.get.return_value = expected
+
+    assert projects_mixin.get_project_statuses("TEST") == expected
+    projects_mixin.jira.resource_url.assert_called_once_with("project/TEST/statuses")
+    projects_mixin.jira.get.assert_called_once_with("/rest/api/2/project/TEST/statuses")
+
+
 def test_get_project_issues(projects_mixin: ProjectsMixin):
     """Test get_project_issues method."""
     # Setup mock response

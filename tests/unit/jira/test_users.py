@@ -905,6 +905,42 @@ class TestUsersMixin:
         ):
             users_mixin.get_user_profile_by_identifier("error_user")
 
+    def test_get_current_user(self, users_mixin):
+        """Current-user lookup delegates to the cross-edition client method."""
+        expected = {"accountId": "abc", "displayName": "Test User"}
+        users_mixin.jira.myself.return_value = expected
+
+        assert users_mixin.get_current_user() == expected
+        users_mixin.jira.myself.assert_called_once_with()
+
+    @pytest.mark.parametrize(
+        ("is_cloud", "query_param"), [(True, "query"), (False, "username")]
+    )
+    def test_search_users_uses_edition_parameter(
+        self, users_mixin, is_cloud, query_param
+    ):
+        """User search selects the Cloud or Server/DC query parameter."""
+        users_mixin.config.url = (
+            "https://test.atlassian.net" if is_cloud else "https://jira.example.com"
+        )
+        users_mixin.jira.resource_url.return_value = "/rest/api/2/user/search"
+        users_mixin.jira.get.return_value = [{"displayName": "Test User"}]
+
+        assert users_mixin.search_users("test", limit=10) == [
+            {"displayName": "Test User"}
+        ]
+        users_mixin.jira.get.assert_called_once_with(
+            "/rest/api/2/user/search",
+            params={query_param: "test", "maxResults": 10},
+        )
+
+    def test_search_users_requires_query(self, users_mixin):
+        """User search rejects a blank query before an API call."""
+        with pytest.raises(ValueError, match="User search query is required"):
+            users_mixin.search_users("  ")
+
+        users_mixin.jira.get.assert_not_called()
+
 
 class TestNormalizeText:
     """Tests for the normalize_text helper function."""

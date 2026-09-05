@@ -46,6 +46,34 @@ Edit an existing comment on a Jira issue.
 
 ---
 
+### Get Comments
+
+List comments for a Jira issue.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes |  |
+| `limit` | `integer` | No |  |
+
+---
+
+### Delete Comment
+
+Delete a comment from a Jira issue.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes |  |
+| `comment_id` | `string` | Yes | Comment ID |
+
+---
+
 ### Get Worklog
 
 Get worklog entries for a Jira issue.
@@ -128,6 +156,31 @@ Search Jira users assignable in a given project or issue.
 | `project_key` | `string` | No | Project key to scope the search to (e.g. 'DT'). Required if issue_key is not given. |
 | `issue_key` | `string` | No | Issue key to scope the search to (e.g. 'DT-779'). Required if project_key is not given. |
 | `limit` | `integer` | No | Maximum number of users to return (default 20). |
+
+---
+
+### Search Users
+
+Search all Jira users visible to the authenticated account.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Name, email, or username fragment |
+| `limit` | `integer` | No |  |
+
+---
+
+### Get Current User
+
+Return the authenticated Jira user's profile.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `fields` | `string` | No | Optional comma-separated profile fields to return |
 
 ---
 

@@ -741,3 +741,31 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             archived=archived,
             released=released,
         )
+
+    def get_priorities(self) -> list[dict[str, Any]]:
+        """Return the Jira priorities visible to the authenticated user."""
+        data = self.jira.get_all_priorities()
+        if not isinstance(data, list):
+            raise ValueError("Jira priority response was not an array")
+        return [item for item in data if isinstance(item, dict)]
+
+    def get_resolutions(self) -> list[dict[str, Any]]:
+        """Return the Jira resolutions visible to the authenticated user."""
+        data = self.jira.get_all_resolutions()
+        if not isinstance(data, list):
+            raise ValueError("Jira resolution response was not an array")
+        return [item for item in data if isinstance(item, dict)]
+
+    def get_statuses(self) -> list[dict[str, Any]]:
+        """Return all Jira statuses visible to the authenticated user."""
+        data = self.jira.get_all_statuses()
+        if not isinstance(data, list):
+            raise ValueError("Jira status response was not an array")
+        return [item for item in data if isinstance(item, dict)]
+
+    def get_project_statuses(self, project_key: str) -> list[dict[str, Any]]:
+        """Return workflow statuses configured for a Jira project."""
+        data = self.jira.get(self.jira.resource_url(f"project/{project_key}/statuses"))
+        if not isinstance(data, list):
+            raise ValueError("Jira project-status response was not an array")
+        return [item for item in data if isinstance(item, dict)]
