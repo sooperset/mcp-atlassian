@@ -5,12 +5,14 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from atlassian.errors import ApiValueError
 from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
 from fastmcp.exceptions import ToolError
+from requests.exceptions import HTTPError
 from starlette.requests import Request
 
 from src.mcp_atlassian.confluence import ConfluenceFetcher
@@ -510,18 +512,59 @@ async def test_search(client, mock_confluence_fetcher):
     assert result_data[0]["title"] == "Test Page Mock Title"
 
 
-@pytest.mark.anyio
-async def test_search_returns_error_details(client, mock_confluence_fetcher):
-    """Test that search tool failures preserve the original error message."""
-    mock_confluence_fetcher.search.side_effect = RuntimeError(
-        "Confluence CQL rejected the query"
+def _search_runtime_error(status_code: int) -> RuntimeError:
+    """The chain handle_atlassian_api_errors produces for a cql() 400."""
+    error = RuntimeError("Unexpected error during search")
+    error.__cause__ = ApiValueError(
+        "The query cannot be parsed",
+        reason=HTTPError(str(status_code), response=MagicMock(status_code=status_code)),
     )
+    return error
+
+
+@pytest.mark.anyio
+async def test_search_falls_back_on_cql_parse_error(client, mock_confluence_fetcher):
+    """A 400 CQL parse rejection falls back to text search exactly once."""
+    mock_confluence_fetcher.search.side_effect = [_search_runtime_error(400), []]
+
+    result = await client.call_tool("confluence_search", {"query": "test search"})
+
+    assert mock_confluence_fetcher.search.call_args_list == [
+        call('siteSearch ~ "test search"', limit=10, spaces_filter=None),
+        call('text ~ "test search"', limit=10, spaces_filter=None),
+    ]
+    assert json.loads(result.content[0].text) == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("query", "expected_query", "side_effect"),
+    [
+        ("test search", 'siteSearch ~ "test search"', ValueError("read timeout")),
+        ("type=page", "type=page", ValueError("read timeout")),
+        (
+            "test search",
+            'siteSearch ~ "test search"',
+            HTTPError("500 Server Error", response=MagicMock(status_code=500)),
+        ),
+        ("test search", 'siteSearch ~ "test search"', RuntimeError("unexpected")),
+    ],
+    ids=["read-timeout", "cql-query", "http-500", "unexpected"],
+)
+async def test_search_returns_error_details(
+    client, mock_confluence_fetcher, query, expected_query, side_effect
+):
+    """Non-400 search failures surface their message once, without a fallback."""
+    mock_confluence_fetcher.search.side_effect = side_effect
 
     with pytest.raises(ToolError) as excinfo:
-        await client.call_tool("confluence_search", {"query": "type=page"})
+        await client.call_tool("confluence_search", {"query": query})
 
     assert "Error calling tool 'search'" in str(excinfo.value)
-    assert "Confluence CQL rejected the query" in str(excinfo.value)
+    assert str(side_effect) in str(excinfo.value)
+    mock_confluence_fetcher.search.assert_called_once_with(
+        expected_query, limit=10, spaces_filter=None
+    )
 
 
 @pytest.mark.anyio

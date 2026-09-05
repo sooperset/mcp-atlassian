@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import parse_qs, urlsplit
 
+from atlassian.errors import ApiError
 from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import BeforeValidator, Field
+from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluenceAttachment
@@ -262,7 +264,22 @@ async def search(
             pages = confluence_fetcher.search(
                 query, limit=limit, spaces_filter=spaces_filter
             )
-        except Exception as e:
+        except (HTTPError, RuntimeError) as e:
+            # Confluence.cql() converts an HTTP 400 (unparseable CQL) into
+            # ApiValueError, which handle_atlassian_api_errors then wraps as
+            # RuntimeError, so the 400 can arrive here as either type.
+            status_error = e
+            if isinstance(e, RuntimeError):
+                status_error = e.__cause__
+                if not isinstance(status_error, ApiError):
+                    raise
+                status_error = status_error.reason
+            if (
+                not isinstance(status_error, HTTPError)
+                or status_error.response is None
+                or status_error.response.status_code != 400
+            ):
+                raise
             logger.warning(f"siteSearch failed ('{e}'), falling back to text search.")
             query = f'text ~ "{original_query}"'
             logger.info(f"Falling back to text search with CQL: {query}")
