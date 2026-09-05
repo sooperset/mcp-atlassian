@@ -272,6 +272,15 @@ class JiraPreprocessor(BasePreprocessor):
         # Block quotes
         output = re.sub(r"^bq\.(.*?)$", r"> \1\n", output, flags=re.MULTILINE)
 
+        # Convert list markers before emphasis so leading asterisks do not
+        # pair with bold delimiters or get counted as extra nesting (#1651).
+        output = re.sub(
+            r"^((?:#|-|\+|\*)+) (.*)$",
+            lambda match: self._convert_jira_list_to_markdown(match),
+            output,
+            flags=re.MULTILINE,
+        )
+
         # Text formatting (bold, italic). Delimiters preceded by a backslash
         # are wiki escapes (e.g. the intraword `\_` this module's
         # markdown_to_jira writes), not markup, so they must neither open nor
@@ -284,14 +293,6 @@ class JiraPreprocessor(BasePreprocessor):
                 + ("**" if match.group(1) == "*" else "*")
             ),
             output,
-        )
-
-        # Multi-level numbered list
-        output = re.sub(
-            r"^((?:#|-|\+|\*)+) (.*)$",
-            lambda match: self._convert_jira_list_to_markdown(match),
-            output,
-            flags=re.MULTILINE,
         )
 
         # Headers
