@@ -4695,3 +4695,203 @@ async def get_cross_project_dependencies(
         max_issues=max_issues,
     )
     return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_attachments"},
+    annotations={"title": "Upload Attachment", "destructiveHint": False},
+)
+@check_write_access
+async def upload_attachment(
+    ctx: Context,
+    issue_key: Annotated[str, Field(pattern=ISSUE_KEY_PATTERN)],
+    file_path: Annotated[str, Field(description="Workspace-relative file path")],
+) -> str:
+    """Upload one file as an attachment to a Jira issue."""
+    jira = await get_jira_fetcher(ctx)
+    return json.dumps(jira.upload_attachment(issue_key, file_path), indent=2)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_attachments"},
+    annotations={"title": "Delete Attachment", "destructiveHint": True},
+)
+@check_write_access
+async def delete_attachment(
+    ctx: Context, attachment_id: Annotated[str, Field(description="Attachment ID")]
+) -> str:
+    """Delete a Jira attachment by ID."""
+    jira = await get_jira_fetcher(ctx)
+    jira.delete_attachment(attachment_id)
+    return json.dumps({"success": True, "attachment_id": attachment_id}, indent=2)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_comments"},
+    annotations={"title": "Get Comments", "readOnlyHint": True},
+)
+async def get_comments(
+    ctx: Context,
+    issue_key: Annotated[str, Field(pattern=ISSUE_KEY_PATTERN)],
+    limit: Annotated[int, Field(ge=1, le=1000)] = 100,
+) -> str:
+    """List comments for a Jira issue."""
+    jira = await get_jira_fetcher(ctx)
+    comments = jira.get_issue_comments(issue_key, limit=limit)
+    return json.dumps(
+        {"issue_key": issue_key, "comments": comments},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_comments"},
+    annotations={"title": "Delete Comment", "destructiveHint": True},
+)
+@check_write_access
+async def delete_comment(
+    ctx: Context,
+    issue_key: Annotated[str, Field(pattern=ISSUE_KEY_PATTERN)],
+    comment_id: Annotated[str, Field(description="Comment ID")],
+) -> str:
+    """Delete a comment from a Jira issue."""
+    jira = await get_jira_fetcher(ctx)
+    jira.delete_comment(issue_key, comment_id)
+    return json.dumps(
+        {"success": True, "issue_key": issue_key, "comment_id": comment_id}
+    )
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_users"},
+    annotations={"title": "Search Users", "readOnlyHint": True},
+)
+async def search_users(
+    ctx: Context,
+    query: Annotated[str, Field(description="Name, email, or username fragment")],
+    limit: Annotated[int, Field(ge=1, le=1000)] = 50,
+) -> str:
+    """Search all Jira users visible to the authenticated account."""
+    jira = await get_jira_fetcher(ctx)
+    return json.dumps({"users": jira.search_users(query, limit)}, indent=2)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_users"},
+    annotations={"title": "Get Current User", "readOnlyHint": True},
+)
+async def get_current_user(
+    ctx: Context,
+    fields: Annotated[
+        str | None,
+        Field(description="Optional comma-separated profile fields to return"),
+    ] = None,
+) -> str:
+    """Return the authenticated Jira user's profile."""
+    jira = await get_jira_fetcher(ctx)
+    user = jira.get_current_user()
+    if fields:
+        requested = {field.strip() for field in fields.split(",") if field.strip()}
+        user = {key: value for key, value in user.items() if key in requested}
+    return json.dumps(user, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Project", "readOnlyHint": True},
+)
+async def get_project(
+    ctx: Context, project_key: Annotated[str, Field(pattern=PROJECT_KEY_PATTERN)]
+) -> str:
+    """Return details for one Jira project."""
+    jira = await get_jira_fetcher(ctx)
+    project = jira.get_project(project_key)
+    if project is None:
+        msg = f"Project {project_key} was not found"
+        raise ValueError(msg)
+    return json.dumps(project, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Priorities", "readOnlyHint": True},
+)
+async def get_priorities(
+    ctx: Context, limit: Annotated[int, Field(ge=1, le=1000)] = 1000
+) -> str:
+    """List Jira priorities."""
+    jira = await get_jira_fetcher(ctx)
+    return json.dumps({"priorities": jira.get_priorities()[:limit]}, indent=2)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Resolutions", "readOnlyHint": True},
+)
+async def get_resolutions(
+    ctx: Context, limit: Annotated[int, Field(ge=1, le=1000)] = 1000
+) -> str:
+    """List Jira resolutions."""
+    jira = await get_jira_fetcher(ctx)
+    return json.dumps({"resolutions": jira.get_resolutions()[:limit]}, indent=2)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Statuses", "readOnlyHint": True},
+)
+async def get_statuses(
+    ctx: Context, limit: Annotated[int, Field(ge=1, le=1000)] = 1000
+) -> str:
+    """List Jira statuses."""
+    jira = await get_jira_fetcher(ctx)
+    return json.dumps({"statuses": jira.get_statuses()[:limit]}, indent=2)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "Get Project Statuses", "readOnlyHint": True},
+)
+async def get_project_statuses(
+    ctx: Context, project_key: Annotated[str, Field(pattern=PROJECT_KEY_PATTERN)]
+) -> str:
+    """List workflow statuses configured for a Jira project."""
+    jira = await get_jira_fetcher(ctx)
+    statuses = jira.get_project_statuses(project_key)
+    return json.dumps(
+        {"project_key": project_key, "statuses": statuses},
+        indent=2,
+    )
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_links"},
+    annotations={"title": "Get Epic Issues", "readOnlyHint": True},
+)
+async def get_epic_issues(
+    ctx: Context,
+    epic_key: Annotated[str, Field(pattern=ISSUE_KEY_PATTERN)],
+    start: Annotated[int, Field(ge=0)] = 0,
+    limit: Annotated[int, Field(ge=1, le=1000)] = 50,
+) -> str:
+    """List issues belonging to a Jira epic."""
+    jira = await get_jira_fetcher(ctx)
+    issues = jira.get_epic_issues(epic_key, start=start, limit=limit)
+    return json.dumps(
+        {"epic_key": epic_key, "issues": [i.to_simplified_dict() for i in issues]},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_agile"},
+    annotations={"title": "Get Sprint", "readOnlyHint": True},
+)
+async def get_sprint(
+    ctx: Context, sprint_id: Annotated[str, Field(description="Sprint ID")]
+) -> str:
+    """Return one Jira Agile sprint."""
+    jira = await get_jira_fetcher(ctx)
+    return json.dumps(jira.get_sprint(sprint_id), indent=2, ensure_ascii=False)

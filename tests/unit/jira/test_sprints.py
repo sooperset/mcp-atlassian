@@ -95,6 +95,23 @@ def test_get_all_sprints_from_board_exception(sprints_mixin):
     sprints_mixin.jira.get_all_sprints_from_board.assert_called_once()
 
 
+def test_get_sprint(sprints_mixin):
+    """A sprint lookup delegates to the Agile client method."""
+    expected = {"id": 10000, "name": "Sprint 1", "state": "active"}
+    sprints_mixin.jira.get_sprint.return_value = expected
+
+    assert sprints_mixin.get_sprint("10000") == expected
+    sprints_mixin.jira.get_sprint.assert_called_once_with("10000")
+
+
+def test_get_sprint_requires_id(sprints_mixin):
+    """A sprint lookup rejects an empty ID before an API call."""
+    with pytest.raises(ValueError, match="Sprint ID is required"):
+        sprints_mixin.get_sprint("")
+
+    sprints_mixin.jira.get_sprint.assert_not_called()
+
+
 def test_get_all_sprints_from_board_http_error(sprints_mixin):
     """Test get_all_sprints_from_board method with HTTPError."""
     sprints_mixin.jira.get_all_sprints_from_board.side_effect = requests.HTTPError(

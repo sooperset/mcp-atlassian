@@ -598,3 +598,25 @@ class UsersMixin(JiraClient):
             raise Exception(
                 f"Error processing user profile for '{identifier}': {str(e)}"
             ) from e
+
+    def get_current_user(self) -> dict[str, object]:
+        """Return the complete profile for the authenticated Jira user."""
+        data = self.jira.myself()
+        if not isinstance(data, dict):
+            raise ValueError("Jira current-user response was not an object")
+        return data
+
+    def search_users(self, query: str, limit: int = 50) -> list[dict[str, object]]:
+        """Search Jira users using the platform-wide user search endpoint."""
+        if not query.strip():
+            raise ValueError("User search query is required")
+        data = self.jira.get(
+            self.jira.resource_url("user/search"),
+            params={
+                "query" if self.config.is_cloud else "username": query,
+                "maxResults": limit,
+            },
+        )
+        if not isinstance(data, list):
+            raise ValueError("Jira user search response was not an array")
+        return [item for item in data if isinstance(item, dict)]

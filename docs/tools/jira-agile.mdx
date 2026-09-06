@@ -158,3 +158,29 @@ Move issues to the backlog, removing them from any sprint.
 | `issue_keys` | `string` | Yes | Comma-separated issue keys (e.g., 'PROJ-1,PROJ-2') |
 
 ---
+
+### Get Sprint
+
+Return one Jira Agile sprint.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sprint_id` | `string` | Yes | Sprint ID |
+
+---
+
+### Get Epic Issues
+
+List issues belonging to a Jira epic.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `epic_key` | `string` | Yes |  |
+| `start` | `integer` | No |  |
+| `limit` | `integer` | No |  |
+
+---

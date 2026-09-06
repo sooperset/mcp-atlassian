@@ -127,3 +127,34 @@ class TestLabelsMixin:
         # Act/Assert
         with pytest.raises(Exception, match="Failed to add label"):
             labels_mixin.add_page_label("987654321", "test")
+
+    def test_remove_page_label(self, labels_mixin):
+        """Removing a label uses the gateway-aware REST URL."""
+        response = labels_mixin.confluence._session.delete.return_value
+
+        assert labels_mixin.remove_page_label("123", "release notes") is True
+        labels_mixin.confluence._session.delete.assert_called_once_with(
+            "https://example.atlassian.net/wiki/rest/api/content/123/label/"
+            "release%20notes"
+        )
+        response.raise_for_status.assert_called_once_with()
+
+    def test_remove_page_label_uses_oauth_gateway_prefix(self, labels_mixin):
+        """Cloud OAuth label removal includes the required wiki product prefix."""
+        labels_mixin.config.auth_type = "oauth"
+        labels_mixin.confluence.url = "https://api.atlassian.com/ex/confluence/cloud-id"
+
+        labels_mixin.remove_page_label("123", "release")
+
+        labels_mixin.confluence._session.delete.assert_called_once_with(
+            "https://api.atlassian.com/ex/confluence/cloud-id/wiki/rest/api/"
+            "content/123/label/release"
+        )
+
+    @pytest.mark.parametrize(("page_id", "name"), [("", "label"), ("123", "")])
+    def test_remove_page_label_requires_inputs(self, labels_mixin, page_id, name):
+        """Removing a label rejects missing identifiers before an API call."""
+        with pytest.raises(ValueError, match="Page ID and label name are required"):
+            labels_mixin.remove_page_label(page_id, name)
+
+        labels_mixin.confluence._session.delete.assert_not_called()

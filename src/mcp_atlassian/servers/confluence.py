@@ -3139,3 +3139,62 @@ async def get_space_permissions(
         cursor=cursor,
     )
     return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Spaces", "readOnlyHint": True},
+)
+async def get_spaces(
+    ctx: Context,
+    start: Annotated[int, Field(ge=0)] = 0,
+    limit: Annotated[int, Field(ge=1, le=250)] = 50,
+) -> str:
+    """List Confluence spaces visible to the authenticated user."""
+    confluence = await get_confluence_fetcher(ctx)
+    return json.dumps(confluence.get_spaces(start=start, limit=limit), indent=2)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Space", "readOnlyHint": True},
+)
+async def get_space(
+    ctx: Context, space_key: Annotated[str, Field(description="Space key")]
+) -> str:
+    """Return details for one Confluence space."""
+    confluence = await get_confluence_fetcher(ctx)
+    return json.dumps(confluence.get_space(space_key), indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Page Ancestors", "readOnlyHint": True},
+)
+async def get_page_ancestors(
+    ctx: Context, page_id: Annotated[str, Field(description="Confluence page ID")]
+) -> str:
+    """Return the parent chain for a Confluence page."""
+    confluence = await get_confluence_fetcher(ctx)
+    ancestors = confluence.get_page_ancestors(page_id)
+    return json.dumps(
+        {"page_id": page_id, "ancestors": [p.to_simplified_dict() for p in ancestors]},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_labels"},
+    annotations={"title": "Remove Label", "destructiveHint": True},
+)
+@check_write_access
+async def remove_label(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="Confluence page ID")],
+    name: Annotated[str, Field(description="Label name")],
+) -> str:
+    """Remove a label from a Confluence page."""
+    confluence = await get_confluence_fetcher(ctx)
+    confluence.remove_page_label(page_id, name)
+    return json.dumps({"success": True, "page_id": page_id, "label": name})

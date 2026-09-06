@@ -35,3 +35,32 @@ Get all images attached to a Jira issue as inline image content.
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123'). Returns image attachments as inline ImageContent for LLM vision. |
 
 ---
+
+### Upload Attachment
+
+Upload one file as an attachment to a Jira issue.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes |  |
+| `file_path` | `string` | Yes | Workspace-relative file path |
+
+---
+
+### Delete Attachment
+
+Delete a Jira attachment by ID.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `attachment_id` | `string` | Yes | Attachment ID |
+
+---
