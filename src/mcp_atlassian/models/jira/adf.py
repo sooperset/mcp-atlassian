@@ -112,7 +112,8 @@ def _parse_inline_formatting(
         r"title=(?P<status_title>[^}]+)\}"
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
-        r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
+        r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+?)"
+        r"(?:\s+(?P<link_title>\"[^\"]*\"|'[^']*'|\([^)]*\)))?\)"
         r"|(?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)"
     )
 
@@ -177,16 +178,15 @@ def _parse_inline_formatting(
                 [{"type": "strike"}],
             )
         elif m.group("link_text") is not None:
+            link_attrs: dict[str, Any] = {"href": m.group("link_href")}
+            # An optional Markdown title follows the URL and is not part of it.
+            if title := m.group("link_title"):
+                link_attrs["title"] = title[1:-1]
             nodes.append(
                 {
                     "type": "text",
                     "text": m.group("link_text"),
-                    "marks": [
-                        {
-                            "type": "link",
-                            "attrs": {"href": m.group("link_href")},
-                        }
-                    ],
+                    "marks": [{"type": "link", "attrs": link_attrs}],
                 }
             )
         elif m.group("italic_inner") is not None:
