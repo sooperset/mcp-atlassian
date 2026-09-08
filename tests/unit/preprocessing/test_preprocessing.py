@@ -907,6 +907,40 @@ def test_markdown_to_jira_preserves_intraword_underscores(preprocessor_with_jira
     )
 
 
+def test_markdown_to_jira_preserves_server_dc_mentions(preprocessor_with_jira):
+    """Server/DC [~username] mentions must survive the write path (#1616).
+
+    Mentions are native Jira wiki markup and must be emitted verbatim. In
+    particular, usernames that contain underscores must not pick up the
+    intraword ``\\_`` escaping used for snake_case identifiers, or Jira will
+    not notify the user.
+    """
+    assert preprocessor_with_jira.markdown_to_jira("[~someuser]") == "[~someuser]"
+    assert (
+        preprocessor_with_jira.markdown_to_jira("Please review [~someuser]")
+        == "Please review [~someuser]"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("[~huy.vu@example.com]")
+        == "[~huy.vu@example.com]"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("Hi [~user_name]!")
+        == "Hi [~user_name]!"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "cc [~user_name] and see [docs](https://example.com)"
+        )
+        == "cc [~user_name] and see [docs|https://example.com]"
+    )
+    # Cloud-style account-id tokens on the Server wiki path stay literal too.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("[~accountid:712020:abc-def]")
+        == "[~accountid:712020:abc-def]"
+    )
+
+
 def test_markdown_to_jira_word_boundary_underscore_still_italicizes(
     preprocessor_with_jira,
 ):
