@@ -939,6 +939,17 @@ def test_markdown_to_jira_preserves_server_dc_mentions(preprocessor_with_jira):
         preprocessor_with_jira.markdown_to_jira("[~accountid:712020:abc-def]")
         == "[~accountid:712020:abc-def]"
     )
+    # A Markdown link or image can legitimately have a label beginning with ``~``.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("[~label](https://example.com)")
+        == "[~label|https://example.com]"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "![~alt](https://example.com/image.png)"
+        )
+        == "!https://example.com/image.png|alt=~alt!"
+    )
 
 
 def test_markdown_to_jira_word_boundary_underscore_still_italicizes(

@@ -479,7 +479,7 @@ class JiraPreprocessor(BasePreprocessor):
         jira_mentions: list[str] = []
         output = _extract_blocks(
             output,
-            r"\[~[^\]]+\]",
+            r"\[~[^\]\n]+\](?!\()",
             lambda match: match.group(0),
             jira_mentions,
             "JIRAMENTION",
