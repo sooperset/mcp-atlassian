@@ -31,7 +31,7 @@ from urllib3.connection import HTTPConnection, HTTPSConnection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 from urllib3.exceptions import NewConnectionError
 from urllib3.poolmanager import PoolManager
-from urllib3.util.connection import allowed_gai_family
+from urllib3.util.connection import allowed_gai_family  # type: ignore[attr-defined]
 
 from .urls import _check_ip_address, _get_domain_allowlist, _hostname_matches_allowlist
 
