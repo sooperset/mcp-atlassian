@@ -13,8 +13,8 @@ class TestDefaultReadJiraFields:
     """Test suite for DEFAULT_READ_JIRA_FIELDS constant."""
 
     def test_type_and_structure(self):
-        """Test that DEFAULT_READ_JIRA_FIELDS is a frozenset of strings."""
-        assert isinstance(DEFAULT_READ_JIRA_FIELDS, frozenset)
+        """Test that DEFAULT_READ_JIRA_FIELDS is a set of strings."""
+        assert isinstance(DEFAULT_READ_JIRA_FIELDS, set)
         assert all(isinstance(field, str) for field in DEFAULT_READ_JIRA_FIELDS)
         assert len(DEFAULT_READ_JIRA_FIELDS) == 11
 
