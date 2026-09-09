@@ -9,6 +9,7 @@ from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira import JiraFetcher
+from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS_CSV
 from mcp_atlassian.jira.issues import IssuesMixin, logger
 from mcp_atlassian.models.jira import JiraIssue
 from tests.utils.mocks import setup_api3_passthrough_mocks
@@ -47,7 +48,7 @@ class TestIssuesMixin:
         issues_mixin.jira.get_issue.assert_called_once_with(
             "TEST-123",
             expand=None,
-            fields=ANY,
+            fields=f"{DEFAULT_READ_JIRA_FIELDS_CSV},comment",
             properties=None,
             update_history=True,
         )
