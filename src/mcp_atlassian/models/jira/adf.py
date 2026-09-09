@@ -113,7 +113,7 @@ def _parse_inline_formatting(
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
         r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+?)"
-        r"(?:\s+(?P<link_title>\"[^\"]*\"|'[^']*'|\([^)]*\)))?\)"
+        r"(?:\s+(?P<link_title>\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)"
         r"|(?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)"
     )
 

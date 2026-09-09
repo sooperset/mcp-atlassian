@@ -457,6 +457,22 @@ class TestMarkdownToAdf:
                 "https://example.com/p",
                 "Docs home",
             ),
+            # CommonMark allows whitespace between the title and the paren.
+            (
+                '[docs](https://example.com/p "Docs home" )',
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p 'Docs home' )",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p (Docs home) )",
+                "https://example.com/p",
+                "Docs home",
+            ),
         ):
             para = markdown_to_adf(markdown)["content"][0]
             nodes = [n for n in para["content"] if n["type"] == "text"]
