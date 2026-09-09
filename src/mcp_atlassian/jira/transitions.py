@@ -271,6 +271,8 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             update_data: Optional update data (e.g., worklog) to send
                 alongside the transition. Example:
                 {"worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]}
+                Top-level comment operations are subject to the same
+                JIRA_INTERNAL_ONLY_PROJECTS restriction as comment.
 
         Returns:
             JiraIssue model representing the transitioned issue
@@ -278,10 +280,11 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails
                 with the Jira API (401/403)
-            ValueError: If there is an error transitioning the issue
+            ValueError: If there is an error transitioning the issue, or if
+                comment operations are provided for an internal-only project
         """
         try:
-            if comment:
+            if comment or (update_data is not None and "comment" in update_data):
                 self._enforce_internal_only_transition_comment(issue_key)
 
             # Normalize transition_id to int when possible
@@ -313,14 +316,6 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 )
                 # Continue anyway as Jira will validate
 
-            # Find the target status name for the transition ID
-            target_status_name = None
-            for transition in valid_transitions:
-                if str(transition.id) == str(normalized_transition_id):
-                    if transition.to_status and transition.to_status.name:
-                        target_status_name = transition.to_status.name
-                        break
-
             # Sanitize fields if provided
             fields_for_api = None
             if fields:
@@ -343,43 +338,22 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             )
             logger.debug(f"Fields: {fields_for_api}, Update: {update_for_api}")
 
-            # Transition using the appropriate method
-            if target_status_name:
-                logger.info(f"Using status name '{target_status_name}' for transition")
-                self.jira.set_issue_status(
-                    issue_key=issue_key,
-                    status_name=target_status_name,
-                    fields=fields_for_api,
-                    update=update_for_api,
-                )
+            payload: dict[str, Any] = {
+                "transition": {"id": str(normalized_transition_id)},
+            }
+            if fields_for_api:
+                payload["fields"] = fields_for_api
+            if update_for_api:
+                payload["update"] = update_for_api
+
+            if self.config.is_cloud:
+                # Cloud comments are ADF and require the REST v3 endpoint.
+                self._post_api3(f"issue/{issue_key}/transitions", payload)
             else:
-                logger.info(f"Using direct transition ID {normalized_transition_id}")
-                if (
-                    isinstance(normalized_transition_id, str)
-                    and normalized_transition_id.isdigit()
-                ):
-                    normalized_transition_id = int(normalized_transition_id)
-
-                # The transition payload must be sent atomically. Performing the
-                # bare transition first would make a second request with fields or
-                # update operations target an already-transitioned issue.
-                if fields_for_api or update_for_api:
-                    payload: dict[str, Any] = {
-                        "transition": {"id": str(normalized_transition_id)},
-                    }
-                    if fields_for_api:
-                        payload["fields"] = fields_for_api
-                    if update_for_api:
-                        payload["update"] = update_for_api
-
-                    base_url = self.jira.resource_url("issue")
-                    url = f"{base_url}/{issue_key}/transitions"
-                    self.jira.post(url, data=payload)
-                else:
-                    self.jira.set_issue_status_by_transition_id(
-                        issue_key=issue_key,
-                        transition_id=normalized_transition_id,
-                    )
+                # Server/DC comments use wiki markup on REST v2.
+                base_url = self.jira.resource_url("issue")
+                url = f"{base_url}/{issue_key}/transitions"
+                self.jira.post(url, data=payload)
 
             # Return the updated issue
             return self.get_issue(issue_key)

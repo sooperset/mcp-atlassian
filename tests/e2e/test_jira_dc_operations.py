@@ -331,9 +331,7 @@ class TestJiraDCTransitions:
         jira_fetcher.transition_issue(
             issue.key,
             target_id,
-            update_data={
-                "comment": [{"add": {"body": f"Data Center supplemental update {uid}"}}]
-            },
+            comment=f"Data Center transition comment {uid}",
         )
 
         updated = jira_fetcher.get_issue(issue.key)
