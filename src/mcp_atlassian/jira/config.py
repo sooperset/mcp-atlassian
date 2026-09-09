@@ -79,6 +79,60 @@ def _parse_internal_only_projects(raw: str | None) -> frozenset[str]:
     return frozenset(keys)
 
 
+InternalCommentMode = Literal["strict", "default_internal"]
+
+INTERNAL_COMMENT_MODE_STRICT: InternalCommentMode = "strict"
+INTERNAL_COMMENT_MODE_DEFAULT_INTERNAL: InternalCommentMode = "default_internal"
+
+_INTERNAL_COMMENT_MODES: frozenset[str] = frozenset(
+    {INTERNAL_COMMENT_MODE_STRICT, INTERNAL_COMMENT_MODE_DEFAULT_INTERNAL}
+)
+
+
+def _parse_internal_comment_mode(raw: str | None) -> InternalCommentMode:
+    """Parse JIRA_INTERNAL_COMMENT_MODE into a validated mode.
+
+    Selects how add_comment treats the 'public' argument on a project listed
+    in JIRA_INTERNAL_ONLY_PROJECTS:
+
+    - ``strict`` (the default): only ``public=False`` is accepted. An omitted
+      or True value is refused. This is the original behaviour of the guard
+      and stays the default so no existing deployment changes.
+    - ``default_internal``: an omitted ``public`` posts an internal note
+      instead of being refused, and ``public=True`` is accepted as an
+      explicit, per-comment opt-in to a customer-visible reply. The intent is
+      that forgetting the flag is safe rather than fatal, while a public
+      reply remains possible without unlisting the project — which would also
+      drop the edit guard.
+
+    An unrecognised value falls back to ``strict`` with a warning: the modes
+    differ in how much automation may publish, so an operator's typo must not
+    silently grant the more permissive one.
+
+    Args:
+        raw: Raw value from the environment (e.g. "default_internal").
+
+    Returns:
+        The validated mode. ``strict`` when raw is None, empty or unknown.
+    """
+    if not raw:
+        return INTERNAL_COMMENT_MODE_STRICT
+
+    value = raw.translate(_INVISIBLE_CHARS).strip().lower()
+    if value in _INTERNAL_COMMENT_MODES:
+        # The membership test above narrows this to the Literal's two members;
+        # mypy cannot see that through a frozenset[str].
+        return value  # type: ignore[return-value]
+    if value:
+        logger.warning(
+            "JIRA_INTERNAL_COMMENT_MODE value %r is not recognised; falling "
+            "back to 'strict'. Valid values: %s.",
+            raw,
+            ", ".join(sorted(_INTERNAL_COMMENT_MODES)),
+        )
+    return INTERNAL_COMMENT_MODE_STRICT
+
+
 @dataclass
 class SLAConfig:
     """SLA calculation configuration.
@@ -191,6 +245,22 @@ class JiraConfig:
     )  # Project keys where jira_add_comment/jira_edit_comment enforce
     # internal-only (non-customer-visible) comments. See
     # JIRA_INTERNAL_ONLY_PROJECTS. Empty by default (guard disabled).
+    internal_comment_mode: InternalCommentMode = INTERNAL_COMMENT_MODE_STRICT
+    # How the guard treats 'public' on a listed project. See
+    # JIRA_INTERNAL_COMMENT_MODE and _parse_internal_comment_mode.
+    # 'strict' by default, which is the guard's original behaviour.
+
+    @property
+    def internal_comment_default_applies(self) -> bool:
+        """Whether an omitted 'public' should post an internal note.
+
+        True only when a guarded project exists to apply it to and the mode
+        opts in. Reading the two settings together in one place keeps the
+        comment path from having to know the precedence.
+        """
+        return bool(self.internal_only_projects) and (
+            self.internal_comment_mode == INTERNAL_COMMENT_MODE_DEFAULT_INTERNAL
+        )
 
     @property
     def is_cloud(self) -> bool:
@@ -336,6 +406,24 @@ class JiraConfig:
             os.getenv("JIRA_INTERNAL_ONLY_PROJECTS")
         )
 
+        # How that guard treats 'public': 'strict' (only public=False) or
+        # 'default_internal' (omitted = internal, public=True allowed).
+        internal_comment_mode = _parse_internal_comment_mode(
+            os.getenv("JIRA_INTERNAL_COMMENT_MODE")
+        )
+        if (
+            internal_comment_mode == INTERNAL_COMMENT_MODE_DEFAULT_INTERNAL
+            and not internal_only_projects
+        ):
+            # Same reasoning as the unmatched-key warning above: an operator
+            # who set a mode but no project list believes comments are being
+            # defaulted to internal, and nothing is.
+            logger.warning(
+                "JIRA_INTERNAL_COMMENT_MODE is 'default_internal' but "
+                "JIRA_INTERNAL_ONLY_PROJECTS is empty, so no project is "
+                "guarded and no comment will be defaulted to internal."
+            )
+
         # Proxy settings
         proxy_settings = get_proxy_settings_from_env("JIRA")
 
@@ -381,6 +469,7 @@ class JiraConfig:
             client_key_password=client_key_password,
             timeout=timeout,
             internal_only_projects=internal_only_projects,
+            internal_comment_mode=internal_comment_mode,
         )
 
     def is_auth_configured(self) -> bool:

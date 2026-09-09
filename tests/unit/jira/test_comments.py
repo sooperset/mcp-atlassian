@@ -1277,3 +1277,209 @@ def _node_types_with_marks(adf: dict) -> list[list[str]]:
 
     walk(adf)
     return out
+
+
+class TestInternalCommentModeDefaultInternal:
+    """Tests for JIRA_INTERNAL_COMMENT_MODE=default_internal.
+
+    The strict mode covered by TestInternalOnlyProjectsGuard can never post
+    a customer-visible comment on a listed project, which locks an agent out
+    of answering the reporter at all. default_internal keeps the project
+    listed — so the edit guard stays in force — while making an omitted
+    'public' an internal note and an explicit public=True the opt-in to a
+    customer-visible reply.
+    """
+
+    @pytest.fixture
+    def default_internal_mixin(self, jira_config_factory):
+        """CommentsMixin with 'CC' guarded and the mode set."""
+        config = jira_config_factory(
+            internal_only_projects=frozenset({"CC"}),
+            internal_comment_mode="default_internal",
+        )
+        mixin = CommentsMixin(config=config)
+        mixin.jira = Mock()
+        mixin.jira.default_headers = {}
+        mixin.preprocessor = Mock()
+        mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
+        mixin._clean_text = Mock(side_effect=lambda x: x)
+        return mixin
+
+    @staticmethod
+    def _servicedesk_response(*, public: bool) -> dict:
+        return {
+            "id": 1,
+            "body": "text",
+            "public": public,
+            "created": {"iso8601": "2024-01-01T10:00:00.000+0000"},
+            "author": {"displayName": "A"},
+        }
+
+    def test_omitted_public_posts_an_internal_note(self, default_internal_mixin):
+        """The whole point: forgetting the flag is safe, not fatal."""
+        default_internal_mixin.jira.post.return_value = self._servicedesk_response(
+            public=False
+        )
+        default_internal_mixin._post_api3 = Mock()
+
+        result = default_internal_mixin.add_comment("CC-1", "Investigation note")
+
+        default_internal_mixin.jira.post.assert_called_once()
+        assert default_internal_mixin.jira.post.call_args.kwargs["data"] == {
+            "body": "Investigation note",
+            "public": False,
+        }
+        # never the ordinary comment path, which would be customer-visible
+        default_internal_mixin._post_api3.assert_not_called()
+        assert result["public"] is False
+
+    def test_explicit_public_true_is_accepted(self, default_internal_mixin):
+        """The reason the mode exists: the agent can answer the reporter."""
+        default_internal_mixin.jira.post.return_value = self._servicedesk_response(
+            public=True
+        )
+
+        result = default_internal_mixin.add_comment("CC-1", "Reply", public=True)
+
+        assert default_internal_mixin.jira.post.call_args.kwargs["data"] == {
+            "body": "Reply",
+            "public": True,
+        }
+        assert result["public"] is True
+
+    def test_explicit_public_false_still_internal(self, default_internal_mixin):
+        default_internal_mixin.jira.post.return_value = self._servicedesk_response(
+            public=False
+        )
+
+        result = default_internal_mixin.add_comment("CC-1", "Note", public=False)
+
+        assert default_internal_mixin.jira.post.call_args.kwargs["data"] == {
+            "body": "Note",
+            "public": False,
+        }
+        assert result["public"] is False
+
+    def test_unlisted_project_unaffected_by_the_mode(self, default_internal_mixin):
+        """The mode only ever applies to a guarded project."""
+        default_internal_mixin._post_api3 = Mock(
+            return_value={
+                "id": "1",
+                "body": "hi",
+                "created": "2024-01-01T10:00:00.000+0000",
+                "author": {"displayName": "A"},
+            }
+        )
+
+        default_internal_mixin.add_comment("TEST-123", "hi")
+
+        default_internal_mixin._post_api3.assert_called_once()
+        default_internal_mixin.jira.post.assert_not_called()
+
+    def test_non_request_issue_still_exempt(self, default_internal_mixin):
+        """An issue with no portal view has no ServiceDesk comment API.
+
+        Defaulting it to public=False would 404 every comment on an
+        agent-created Task in a guarded project, so the exemption must
+        survive the new mode.
+        """
+        default_internal_mixin.jira.get.side_effect = HTTPError(
+            response=Mock(status_code=404)
+        )
+        default_internal_mixin._post_api3 = Mock(
+            return_value={
+                "id": "9",
+                "body": "task note",
+                "created": "2024-01-01T10:00:00.000+0000",
+                "author": {"displayName": "A"},
+            }
+        )
+
+        result = default_internal_mixin.add_comment("CC-77", "task note")
+
+        default_internal_mixin._post_api3.assert_called_once()
+        default_internal_mixin.jira.post.assert_not_called()
+        assert result["id"] == "9"
+
+    def test_none_reaching_the_enforcer_still_fails_closed(
+        self, default_internal_mixin
+    ):
+        """add_comment resolves the default; the enforcer stays strict.
+
+        A future caller that skips the resolution step must not silently
+        publish, so the enforcer refuses an unresolved value even here.
+        """
+        with pytest.raises(ValueError, match="omitted value cannot be resolved"):
+            default_internal_mixin._enforce_internal_only_add("CC-1", None)
+
+    def test_strict_mode_is_untouched(self, jira_config_factory):
+        """Default config keeps the original lockout behaviour."""
+        config = jira_config_factory(internal_only_projects=frozenset({"CC"}))
+        mixin = CommentsMixin(config=config)
+        mixin.jira = Mock()
+        mixin.jira.default_headers = {}
+
+        assert config.internal_comment_mode == "strict"
+        with pytest.raises(ValueError, match="internal-only"):
+            mixin.add_comment("CC-1", "Reply", public=True)
+        mixin.jira.post.assert_not_called()
+
+
+class TestServiceDeskCommentVisibilityReadBack:
+    """The result must report the visibility the API observed.
+
+    Echoing the requested value back when the response carried none makes a
+    read-back that cannot fail, and a caller cannot then tell a confirmation
+    from an assumption.
+    """
+
+    @pytest.fixture
+    def mixin(self, jira_config_factory):
+        config = jira_config_factory(internal_only_projects=frozenset({"CC"}))
+        mixin = CommentsMixin(config=config)
+        mixin.jira = Mock()
+        mixin.jira.default_headers = {}
+        mixin._clean_text = Mock(side_effect=lambda x: x)
+        return mixin
+
+    def test_missing_public_field_reports_unknown(self, mixin):
+        mixin.jira.post.return_value = {
+            "id": 1,
+            "body": "note",
+            "created": {"iso8601": "2024-01-01T10:00:00.000+0000"},
+            "author": {"displayName": "A"},
+        }
+
+        result = mixin.add_comment("CC-1", "note", public=False)
+
+        assert result["public"] is None
+        assert result["requested_public"] is False
+
+    def test_non_boolean_public_field_reports_unknown(self, mixin):
+        mixin.jira.post.return_value = {
+            "id": 1,
+            "body": "note",
+            "public": "false",
+            "created": {"iso8601": "2024-01-01T10:00:00.000+0000"},
+            "author": {"displayName": "A"},
+        }
+
+        result = mixin.add_comment("CC-1", "note", public=False)
+
+        assert result["public"] is None
+        assert result["requested_public"] is False
+
+    def test_observed_value_wins_over_requested(self, mixin):
+        """If Jira disagrees with us, the caller must see Jira's answer."""
+        mixin.jira.post.return_value = {
+            "id": 1,
+            "body": "note",
+            "public": True,
+            "created": {"iso8601": "2024-01-01T10:00:00.000+0000"},
+            "author": {"displayName": "A"},
+        }
+
+        result = mixin.add_comment("CC-1", "note", public=False)
+
+        assert result["public"] is True
+        assert result["requested_public"] is False

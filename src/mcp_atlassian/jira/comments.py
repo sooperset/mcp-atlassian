@@ -18,6 +18,11 @@ Internal-only guard (JIRA_INTERNAL_ONLY_PROJECTS) coverage map:
   portal view. add_comment therefore exempts issues in a guarded project
   that are not requests (see _is_servicedesk_request), because the
   ServiceDesk comment API they would need does not exist for them.
+- Strictness: JIRA_INTERNAL_COMMENT_MODE selects what the guard accepts on
+  a listed project. 'strict' (the default) accepts only public=False.
+  'default_internal' resolves an omitted public to False and accepts an
+  explicit public=True, so a public reply does not require unlisting the
+  project — which would also drop the edit guard above.
 """
 
 import logging
@@ -226,18 +231,37 @@ class CommentsMixin(JiraClient):
         underlying API when omitted, so an absent value is treated the same
         as ``public=True`` here.
 
+        JIRA_INTERNAL_COMMENT_MODE selects how strict that is:
+
+        - ``strict`` (default): only ``public=False`` passes.
+        - ``default_internal``: ``public=True`` passes too, as an explicit
+          per-comment opt-in. An omitted value is resolved to False by
+          :meth:`add_comment` before it reaches here, so a None arriving in
+          this mode means some other caller skipped that step — it still
+          raises, which fails closed.
+
         Args:
             issue_key: The issue key (e.g. 'CC-123')
             public: The 'public' value the caller passed to add_comment
 
         Raises:
             ValueError: If the project is internal-only and public is not
-                exactly False
+                permitted by the configured mode
         """
         if not self._is_internal_only_project(issue_key):
             return
         if public is False:
             return
+        if public is True and self.config.internal_comment_default_applies:
+            return
+        if self.config.internal_comment_default_applies:
+            raise ValueError(
+                f"Issue {issue_key} belongs to a project configured as "
+                "internal-only (JIRA_INTERNAL_ONLY_PROJECTS). Pass "
+                "public=False for an internal note or public=True for a "
+                "customer-visible reply; an omitted value cannot be "
+                "resolved here."
+            )
         raise ValueError(
             f"Issue {issue_key} belongs to a project configured as "
             "internal-only (JIRA_INTERNAL_ONLY_PROJECTS). Automation may "
@@ -353,14 +377,18 @@ class CommentsMixin(JiraClient):
                 to render on Cloud, but without the client-side
                 markdown→ADF guarantees of the regular comment path).
                 Cannot be combined with visibility. If issue_key's
-                project is listed in JIRA_INTERNAL_ONLY_PROJECTS, only
-                public=False is accepted — unless issue_key is not a JSM
-                customer request, in which case it has no portal audience,
-                this argument is ignored, and the comment posts through
-                the ordinary path.
+                project is listed in JIRA_INTERNAL_ONLY_PROJECTS, what is
+                accepted depends on JIRA_INTERNAL_COMMENT_MODE: under
+                'strict' only public=False, under 'default_internal' an
+                omitted value becomes False and public=True is accepted.
+                Either way, if issue_key is not a JSM customer request it
+                has no portal audience, this argument is ignored, and the
+                comment posts through the ordinary path.
 
         Returns:
-            The created comment details
+            The created comment details. On the ServiceDesk path this
+            includes 'public' — the visibility the API reported, or None if
+            it reported none — and 'requested_public'.
 
         Raises:
             ValueError: If both public and visibility are set, or if
@@ -383,6 +411,15 @@ class CommentsMixin(JiraClient):
             if not self._is_servicedesk_request(issue_key):
                 public = None
             else:
+                # default_internal mode: an omitted flag becomes an internal
+                # note rather than a refusal. Forgetting the flag is then
+                # safe instead of fatal, which matters because a hard error
+                # invites the caller to route around it (jira_update_issue
+                # carries a comment argument and no 'public' of its own).
+                # Resolved before the enforcer so the enforcer stays a pure
+                # predicate over an explicit value.
+                if public is None and self.config.internal_comment_default_applies:
+                    public = False
                 self._enforce_internal_only_add(issue_key, public)
         else:
             self._enforce_internal_only_add(issue_key, public)
@@ -497,12 +534,30 @@ class CommentsMixin(JiraClient):
             author_data = response.get("author", {})
             author_name = author_data.get("displayName", "Unknown")
 
+            # Report what the API says the comment IS, not what we asked for.
+            # Echoing the request on a response that carried no 'public' field
+            # produces a read-back that cannot fail, which is worse than no
+            # read-back: a caller cannot tell a confirmation from an
+            # assumption. 'requested_public' keeps the intent visible
+            # alongside it.
+            observed_public = response.get("public")
+            if not isinstance(observed_public, bool):
+                logger.warning(
+                    "ServiceDesk API returned no boolean 'public' for the "
+                    "comment just posted on %s (requested public=%s); "
+                    "reporting its visibility as unknown.",
+                    issue_key,
+                    public,
+                )
+                observed_public = None
+
             return {
                 "id": str(response.get("id", "")),
                 "body": self._clean_text(body_text),
                 "created": (str(parse_date(created_str)) if created_str else ""),
                 "author": author_name,
-                "public": response.get("public", public),
+                "public": observed_public,
+                "requested_public": public,
             }
         except Exception as e:
             error_msg = str(e)
