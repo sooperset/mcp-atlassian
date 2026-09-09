@@ -350,9 +350,7 @@ class TestJiraCloudTransitions:
         jira_fetcher.transition_issue(
             issue.key,
             target_id,
-            update_data={
-                "comment": [{"add": {"body": f"Cloud supplemental update {uid}"}}]
-            },
+            comment=f"Cloud transition comment {uid}",
         )
 
         updated = jira_fetcher.get_issue(issue.key)
