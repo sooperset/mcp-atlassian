@@ -298,8 +298,9 @@ CHILD_OF_PHRASES: frozenset[str] = frozenset(_BUILTIN_CHILD_OF | _custom_child)
 HIERARCHY_LINK_PHRASES: frozenset[str] = PARENT_OF_PHRASES | CHILD_OF_PHRASES
 
 
-# Set of default fields returned by Jira read operations when no specific fields are requested.
-DEFAULT_READ_JIRA_FIELDS: set[str] = {
+# Default fields returned by Jira read operations when no specific fields are requested.
+# The tuple fixes the serialization order, which is emitted verbatim in tool schemas.
+_DEFAULT_READ_JIRA_FIELDS_ORDERED: tuple[str, ...] = (
     "summary",
     "description",
     "status",
@@ -311,4 +312,6 @@ DEFAULT_READ_JIRA_FIELDS: set[str] = {
     "created",
     "updated",
     "issuetype",
-}
+)
+DEFAULT_READ_JIRA_FIELDS_CSV: str = ",".join(_DEFAULT_READ_JIRA_FIELDS_ORDERED)
+DEFAULT_READ_JIRA_FIELDS: frozenset[str] = frozenset(_DEFAULT_READ_JIRA_FIELDS_ORDERED)

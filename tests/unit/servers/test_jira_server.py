@@ -2361,6 +2361,26 @@ async def test_key_patterns_env_override_reaches_tool_schema(
     )
 
 
+@pytest.mark.anyio
+async def test_default_jira_field_schemas_are_deterministic(reloaded_jira_server):
+    """All Jira read tools must expose the same ordered fields default."""
+    from src.mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS_CSV
+
+    jira_server = reloaded_jira_server()
+    tools = {tool.name: tool for tool in await jira_server.jira_mcp.list_tools()}
+
+    for tool_name in (
+        "get_issue",
+        "search",
+        "get_board_issues",
+        "get_sprint_issues",
+    ):
+        assert (
+            tools[tool_name].parameters["properties"]["fields"]["default"]
+            == DEFAULT_READ_JIRA_FIELDS_CSV
+        )
+
+
 def test_key_patterns_ignore_uncompilable_env_override(
     monkeypatch, reloaded_jira_server, caplog
 ):
