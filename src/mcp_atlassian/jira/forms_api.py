@@ -71,6 +71,13 @@ class FormsApiMixin(JiraClient):
             ValueError: For 404 not found errors
             Exception: For other HTTP errors
         """
+        # Government Forms support has not been verified; never leak its token
+        # to the commercial Forms endpoint.
+        from mcp_atlassian.utils.cloud import COMMERCIAL, cloud_endpoints
+
+        if cloud_endpoints(self.config.url) != COMMERCIAL:
+            raise ValueError("Jira Forms API is not supported for Government Cloud")
+
         # Validate cloud_id is available
         if not self._cloud_id:
             error_msg = (

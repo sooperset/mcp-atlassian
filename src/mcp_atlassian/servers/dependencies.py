@@ -755,6 +755,7 @@ def _create_user_config_for_fetcher(
             expires_at=None,
             cloud_id=effective_cloud_id if not is_dc_oauth else None,
             base_url=effective_base_url,
+            service_url=base_config.url,
         )
         common_args.update(
             {

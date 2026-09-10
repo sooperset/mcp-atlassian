@@ -79,6 +79,7 @@ def is_atlassian_cloud_url(url: str) -> bool:
         hostname.endswith(".atlassian.net")
         or hostname.endswith(".jira.com")
         or hostname.endswith(".jira-dev.com")
+        or hostname in {"auth.atlassian-us-gov-mod.com", "api.atlassian-us-gov-mod.com"}
         or hostname == "api.atlassian.com"
         or hostname.endswith(".atlassian.com")
         or hostname.endswith(".atlassian-us-gov-mod.net")  # US Gov Moderate (FedRAMP)

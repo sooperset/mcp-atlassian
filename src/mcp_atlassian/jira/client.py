@@ -11,6 +11,7 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
+from mcp_atlassian.utils.cloud import cloud_endpoints
 from mcp_atlassian.utils.http import (
     configure_circuit_breaker,
     configure_concurrency,
@@ -22,7 +23,7 @@ from mcp_atlassian.utils.logging import (
     log_config_param,
     mask_sensitive,
 )
-from mcp_atlassian.utils.oauth import configure_oauth_session
+from mcp_atlassian.utils.oauth import OAuthConfig, configure_oauth_session
 from mcp_atlassian.utils.proxy import apply_proxy_configuration
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 from mcp_atlassian.utils.ssrf_adapter import mount_ssrf_pinning
@@ -74,6 +75,9 @@ class JiraClient:
                 error_msg = "Cloud OAuth authentication requires a valid cloud_id"
                 raise ValueError(error_msg)
 
+            if isinstance(self.config.oauth_config, OAuthConfig):
+                self.config.oauth_config.service_url = self.config.url
+
             # Create a session for OAuth
             session = Session()
 
@@ -88,7 +92,7 @@ class JiraClient:
                 is_cloud = False
             else:
                 # Cloud: use the Atlassian Cloud API URL
-                api_url = f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
+                api_url = f"{cloud_endpoints(self.config.url).api_url}/ex/jira/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
             transport_url = api_url
 

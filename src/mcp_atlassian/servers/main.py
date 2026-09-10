@@ -23,13 +23,12 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.cloud import cloud_endpoints
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.oauth import (
-    CLOUD_AUTHORIZE_URL,
-    CLOUD_TOKEN_URL,
     DC_AUTHORIZE_PATH,
     DC_TOKEN_PATH,
 )
@@ -814,7 +813,8 @@ def _resolve_upstream_oauth_endpoints(instance_url: str) -> tuple[str, str]:
     )
 
     if is_cloud:
-        return CLOUD_AUTHORIZE_URL, CLOUD_TOKEN_URL
+        endpoints = cloud_endpoints(instance_url)
+        return endpoints.authorize_url, endpoints.token_url
 
     base_url = instance_url.rstrip("/")
     return f"{base_url}{DC_AUTHORIZE_PATH}", f"{base_url}{DC_TOKEN_PATH}"
@@ -907,7 +907,9 @@ def _build_auth_provider() -> HardenedOAuthProxy | None:
         forced_scopes=scopes or None,
         token_endpoint_auth_method="client_secret_post",  # noqa: S106
         extra_authorize_params=(
-            {"audience": "api.atlassian.com", "prompt": "consent"} if is_cloud else None
+            {"audience": cloud_endpoints(instance_url).api_host, "prompt": "consent"}
+            if is_cloud
+            else None
         ),
         client_storage=build_oauth_client_storage_from_env(),
         require_authorization_consent=require_consent,

@@ -218,3 +218,52 @@ For multi-tenant applications where users provide their own OAuth tokens:
    - `X-Atlassian-Cloud-Id: <user_cloud_id>`
 
 See [HTTP Transport](/docs/http-transport) for more details on multi-user authentication.
+
+## Atlassian Government Cloud Moderate
+
+MCP Atlassian selects Government Cloud Moderate OAuth and API endpoints from the
+configured `JIRA_URL` or `CONFLUENCE_URL` ending in `.atlassian-us-gov-mod.net`.
+Authorization and token exchange/refresh use `auth.atlassian-us-gov-mod.com`;
+site discovery and Jira/Confluence OAuth API calls use
+`api.atlassian-us-gov-mod.com`. Commercial Cloud and Data Center retain their
+existing endpoints. The legacy `.atlassian-us-gov.net` domain is rejected for
+Cloud endpoint selection because its mapping has not been verified.
+
+Register the application in the
+[Government Cloud developer console](https://developer.atlassian-us-gov-mod.com/console),
+using the application's callback and required scopes. See
+[Atlassian's Government Cloud 3LO guide](https://developer.atlassian.com/platform/framework/agc/guides/manage-3lo-apps/).
+Set the tenant URL in the environment before running the OAuth setup wizard;
+`ATLASSIAN_OAUTH_INSTANCE_URL` overrides the tenant URL for the wizard/proxy.
+Use the same environment for the OAuth provider and the target tenant.
+
+For a gateway that obtains and refreshes each user's Atlassian access token,
+configure the MCP service as follows (replace the cloud ID with the target
+site's ID):
+
+```sh
+JIRA_URL=https://your-tenant.atlassian-us-gov-mod.net
+ATLASSIAN_OAUTH_ENABLE=true
+ATLASSIAN_OAUTH_CLOUD_ID=<cloud-id>
+ATLASSIAN_OAUTH_PROXY_ENABLE=false
+STATELESS=true
+READ_ONLY_MODE=true
+```
+
+Run with `--transport streamable-http`. The gateway must send the individual
+user's Atlassian access token as `Authorization: Bearer ...` on each request.
+The gateway's own credential is not an Atlassian token. Restrict enabled tools
+and projects separately; the above is an authentication example, not a complete
+deployment. No shared access token or refresh token is needed in this mode.
+
+If the MCP OAuth proxy is used instead, its upstream endpoints and audience are
+also selected for Government Cloud. Configure `PUBLIC_BASE_URL`, client secrets,
+and redirect allowlists for the deployment. The Atlassian app callback is the
+MCP proxy callback; the downstream OAuth client has its own redirect URI.
+These are distinct. OAuth proxy storage still needs its own persistence/restart
+design even when MCP transport is stateless.
+
+Jira Forms calls are explicitly rejected for Government Cloud until that separate
+API is validated. Endpoint selection tests do not establish tenant compatibility,
+gateway interoperability, token expiry/revocation handling, or permissions
+isolation. Validate those in the target environment before rollout.

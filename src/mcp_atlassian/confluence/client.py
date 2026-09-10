@@ -7,6 +7,8 @@ from atlassian import Confluence
 from requests import Session
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
+from mcp_atlassian.utils.cloud import cloud_endpoints
+
 from ..exceptions import MCPAtlassianAuthenticationError
 from ..utils.http import (
     configure_circuit_breaker,
@@ -15,7 +17,7 @@ from ..utils.http import (
     configure_retry,
 )
 from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
-from ..utils.oauth import configure_oauth_session
+from ..utils.oauth import OAuthConfig, configure_oauth_session
 from ..utils.proxy import apply_proxy_configuration
 from ..utils.ssl import configure_ssl_verification
 from ..utils.ssrf_adapter import mount_ssrf_pinning
@@ -59,6 +61,9 @@ class ConfluenceClient:
                 error_msg = "Cloud OAuth authentication requires a valid cloud_id"
                 raise ValueError(error_msg)
 
+            if isinstance(self.config.oauth_config, OAuthConfig):
+                self.config.oauth_config.service_url = self.config.url
+
             # Create a session for OAuth
             session = Session()
 
@@ -73,7 +78,7 @@ class ConfluenceClient:
                 is_cloud = False
             else:
                 # Cloud: use the Atlassian Cloud API URL
-                api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
+                api_url = f"{cloud_endpoints(self.config.url).api_url}/ex/confluence/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
             transport_url = api_url
 
