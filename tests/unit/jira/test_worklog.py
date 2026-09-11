@@ -510,3 +510,195 @@ class TestWorklogMixin:
         server_worklog_mixin.jira.resource_url.assert_called_with("issue")
         server_worklog_mixin._post_api3.assert_not_called()
         assert result["id"] == "10003"
+
+
+class TestSearchWorklogs:
+    """Tests for `WorklogMixin.search_worklogs` (Tempo Timesheets v4)."""
+
+    @staticmethod
+    def _row(
+        issue_key: str = "SOA-11080",
+        tempo_id: int = 5961726,
+        started: str = "2026-09-10 10:00:00.000",
+        value: str = "Разработка",
+    ) -> dict:
+        """Build an entry shaped like a live Data Center response.
+
+        The live payload uses `started` and `worker` where Tempo's own OpenAPI
+        spec promises `startDate` and `workerKey`, and omits `jiraWorklogId`.
+        """
+        return {
+            "tempoWorklogId": tempo_id,
+            "started": started,
+            "dateCreated": "2026-09-10 16:02:42.000",
+            "dateUpdated": "2026-09-10 16:02:42.000",
+            "timeSpent": "6h",
+            "timeSpentSeconds": 21600,
+            "billableSeconds": 21600,
+            "worker": "JIRAUSER389717",
+            "updater": "JIRAUSER389717",
+            "comment": "анализ проблем кластера",
+            "originTaskId": 1721061,
+            "issue": {
+                "key": issue_key,
+                "summary": "Запросы падают по таймауту",
+                "projectKey": "SOA",
+                "epicKey": "SOA-10915",
+            },
+            "attributes": {
+                "_Видработ_": {
+                    "workAttributeId": 1,
+                    "value": value,
+                    "type": "STATIC_LIST",
+                    "key": "_Видработ_",
+                    "name": "Вид работ",
+                }
+            },
+        }
+
+    @classmethod
+    def _mixin(cls, *, is_cloud: bool = False, rows: object = None):
+        """Build the worklog mixin with only the Jira client mocked.
+
+        `__new__` is used because `JiraClient.__init__` builds a real session
+        from `config.url`, which a bare MagicMock cannot satisfy.
+        """
+        mixin = WorklogMixin.__new__(WorklogMixin)
+        mixin.config = MagicMock(is_cloud=is_cloud)
+        mixin.jira = MagicMock()
+        mixin.jira.myself.return_value = {"key": "JIRAUSER389717"}
+        mixin.jira.post.return_value = [cls._row()] if rows is None else rows
+        mixin._clean_text = MagicMock(side_effect=lambda text: text or "")
+        return mixin
+
+    def test_defaults_to_authenticated_worker(self):
+        """An unspecified worker narrows the search to the caller."""
+        mixin = self._mixin()
+
+        result = mixin.search_worklogs("2026-09-10", "2026-09-10")
+
+        mixin.jira.post.assert_called_once_with(
+            "rest/tempo-timesheets/4/worklogs/search",
+            data={
+                "from": "2026-09-10",
+                "to": "2026-09-10",
+                "worker": ["JIRAUSER389717"],
+            },
+        )
+        assert result["workers"] == ["JIRAUSER389717"]
+        assert result["count"] == 1
+        assert result["total_matched"] == 1
+        assert result["truncated"] is False
+
+    def test_maps_live_field_names_and_attributes(self):
+        """Live response keys map, and Tempo attributes survive the mapping."""
+        worklog = self._mixin().search_worklogs("2026-09-10", "2026-09-10")["worklogs"][
+            0
+        ]
+
+        assert worklog["id"] == "5961726"
+        assert worklog["issue_key"] == "SOA-11080"
+        assert worklog["project_key"] == "SOA"
+        assert worklog["epic_key"] == "SOA-10915"
+        assert worklog["author"] == "JIRAUSER389717"
+        assert worklog["time_spent"] == "6h"
+        assert worklog["time_spent_seconds"] == 21600
+        assert worklog["started"].startswith("2026-09-10 10:00:00")
+        assert worklog["comment"] == "анализ проблем кластера"
+        assert worklog["attributes"]["_Видработ_"]["value"] == "Разработка"
+
+    def test_maps_spec_field_names_as_fallback(self):
+        """The spec-documented names map too, so either shape works."""
+        row = {
+            "jiraWorklogId": 42,
+            "startDate": "2026-09-01 09:00:00.000",
+            "workerKey": "JIRAUSER1",
+            "timeSpent": "1h",
+            "timeSpentSeconds": "3600",
+        }
+
+        result = self._mixin(rows=[row]).search_worklogs("2026-09-01", "2026-09-01")
+        worklog = result["worklogs"][0]
+
+        assert worklog["id"] == "42"
+        assert worklog["author"] == "JIRAUSER1"
+        assert worklog["time_spent_seconds"] == 3600
+        assert worklog["issue_key"] == ""
+        assert "attributes" not in worklog
+
+    def test_all_worker_search_requires_narrowing_filter(self):
+        """Without a worker, a task or project filter is mandatory."""
+        with pytest.raises(ValueError, match="task_keys"):
+            self._mixin().search_worklogs("2026-09-10", "2026-09-10", worker_keys=[])
+
+    def test_all_worker_search_with_task_keys_omits_worker(self):
+        """Task keys narrow the search instead of the worker list."""
+        mixin = self._mixin()
+
+        result = mixin.search_worklogs(
+            "2026-09-08",
+            "2026-09-11",
+            worker_keys=[],
+            task_keys=["SOA-11069", " SOA-11080 ", ""],
+            project_keys=["SOA"],
+        )
+
+        data = mixin.jira.post.call_args.kwargs["data"]
+        assert "worker" not in data
+        assert data["taskKey"] == ["SOA-11069", "SOA-11080"]
+        assert data["projectKey"] == ["SOA"]
+        assert result["workers"] == ["*"]
+
+    @pytest.mark.parametrize("bad_date", ["2026/09/10", "20260910", "10-09-2026", ""])
+    def test_rejects_malformed_dates(self, bad_date):
+        """Tempo's opaque date errors are caught before the request."""
+        with pytest.raises(ValueError, match="yyyy-MM-dd"):
+            self._mixin().search_worklogs(bad_date, "2026-09-10")
+
+    def test_rejects_reversed_range(self):
+        """A descending range fails locally instead of returning nothing."""
+        with pytest.raises(ValueError, match="ascending"):
+            self._mixin().search_worklogs("2026-09-11", "2026-09-10")
+
+    def test_rejects_non_positive_limit(self):
+        """A zero limit would silently discard every result."""
+        with pytest.raises(ValueError, match="limit"):
+            self._mixin().search_worklogs("2026-09-10", "2026-09-10", limit=0)
+
+    def test_rejects_cloud(self):
+        """Tempo Timesheets v4 does not exist on Jira Cloud."""
+        with pytest.raises(NotImplementedError, match="Server/Data Center"):
+            self._mixin(is_cloud=True).search_worklogs("2026-09-10", "2026-09-10")
+
+    @pytest.mark.parametrize("payload", [{"worklogs": []}, ["not-a-worklog"]])
+    def test_rejects_unexpected_response_shape(self, payload):
+        """A response Tempo does not document surfaces as a TypeError."""
+        mixin = self._mixin(rows=payload)
+
+        with pytest.raises(TypeError, match="worklog search"):
+            mixin.search_worklogs("2026-09-10", "2026-09-10")
+
+    def test_results_are_sorted_and_truncated(self):
+        """Results are ordered and capped, since Tempo does not paginate."""
+        rows = [
+            self._row(tempo_id=3, started="2026-09-11 10:00:00.000"),
+            self._row(tempo_id=1, started="2026-09-09 10:00:00.000"),
+            self._row(tempo_id=2, started="2026-09-10 10:00:00.000"),
+        ]
+
+        result = self._mixin(rows=rows).search_worklogs(
+            "2026-09-09", "2026-09-11", limit=2
+        )
+
+        assert [worklog["id"] for worklog in result["worklogs"]] == ["1", "2"]
+        assert result["count"] == 2
+        assert result["total_matched"] == 3
+        assert result["truncated"] is True
+
+    def test_wraps_transport_failures(self):
+        """A failing request keeps the worklog-specific error context."""
+        mixin = self._mixin()
+        mixin.jira.post.side_effect = RuntimeError("503 Service Unavailable")
+
+        with pytest.raises(Exception, match="Error searching worklogs"):
+            mixin.search_worklogs("2026-09-10", "2026-09-10")
