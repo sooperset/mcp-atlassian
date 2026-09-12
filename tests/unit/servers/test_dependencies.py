@@ -2202,6 +2202,63 @@ class TestBasicAuthMultiUser:
         assert result.personal_token is None
         assert result.oauth_config is None
 
+    @pytest.mark.parametrize("config_type", ["jira", "confluence"])
+    def test_create_user_config_basic_auth_honours_per_request_url(
+        self, config_factory, config_type
+    ):
+        """A request may name its own site.
+
+        Without this the URL comes only from the process environment, which pins one
+        deployment to ONE Atlassian instance — fine for a single-team server, useless for
+        a multi-tenant one where every tenant has its own site and the credentials that go
+        with it. Header-based PAT auth already worked this way; basic auth had no reason
+        not to.
+        """
+        if config_type == "jira":
+            base_config = config_factory.create_jira_config(auth_type="basic")
+            expected_type = JiraConfig
+        else:
+            base_config = config_factory.create_confluence_config(auth_type="basic")
+            expected_type = ConfluenceConfig
+
+        result = _create_user_config_for_fetcher(
+            base_config=base_config,
+            auth_type="basic",
+            credentials={
+                "user_email_context": "user@example.com",
+                "user_email": "user@example.com",
+                "api_token": "user-api-token-123",
+            },
+            url="https://other-tenant.atlassian.net",
+        )
+
+        assert isinstance(result, expected_type)
+        assert result.url == "https://other-tenant.atlassian.net"
+        assert result.api_token == "user-api-token-123"
+
+    @pytest.mark.parametrize("config_type", ["jira", "confluence"])
+    def test_create_user_config_falls_back_to_the_configured_url(
+        self, config_factory, config_type
+    ):
+        """No URL named means the configured one, unchanged — every existing deployment
+        that never sends the header keeps behaving exactly as before."""
+        if config_type == "jira":
+            base_config = config_factory.create_jira_config(auth_type="basic")
+        else:
+            base_config = config_factory.create_confluence_config(auth_type="basic")
+
+        result = _create_user_config_for_fetcher(
+            base_config=base_config,
+            auth_type="basic",
+            credentials={
+                "user_email_context": "user@example.com",
+                "user_email": "user@example.com",
+                "api_token": "user-api-token-123",
+            },
+        )
+
+        assert result.url == base_config.url
+
     @pytest.mark.parametrize(
         "missing_field,credentials",
         [
