@@ -89,6 +89,32 @@ def test_process_html_content_basic(preprocessor_with_confluence):
     assert processed_markdown.strip() == "Simple text"
 
 
+def test_process_rendered_html_content_absolutizes_relative_urls(
+    preprocessor_with_confluence,
+):
+    """Rendered view links and images retain the absolute URL contract."""
+    html = (
+        '<a href="/display/DEMO/Page">Page</a>'
+        '<img src="/download/attachments/123/test.png" alt=""/>'
+    )
+
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_rendered_html_content(html)
+    )
+
+    assert 'href="https://example.atlassian.net/display/DEMO/Page"' in processed_html
+    assert (
+        'src="https://example.atlassian.net/download/attachments/123/test.png"'
+        in processed_html
+    )
+    assert "[Page](https://example.atlassian.net/display/DEMO/Page)" in (
+        processed_markdown
+    )
+    assert "![](https://example.atlassian.net/download/attachments/123/test.png)" in (
+        processed_markdown
+    )
+
+
 def test_process_html_content_preserves_confluence_date_lozenge(
     preprocessor_with_confluence,
 ):

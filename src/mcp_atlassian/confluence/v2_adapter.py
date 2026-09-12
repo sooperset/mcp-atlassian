@@ -30,6 +30,30 @@ class ConfluenceV2Adapter:
         self.base_url = base_url
 
     @staticmethod
+    def _body_format_from_expand(expand: str | None) -> str:
+        """Translate v1 body expand fields to the v2 body-format parameter."""
+        if not expand:
+            return "storage"
+
+        expand_parts = {part.strip() for part in expand.split(",")}
+        if "body.view" in expand_parts:
+            return "view"
+        return "storage"
+
+    @staticmethod
+    def _convert_body_representations(body: dict[str, Any]) -> dict[str, Any]:
+        """Convert v2 body representations to v1-compatible body fields."""
+        converted: dict[str, Any] = {}
+        for representation, body_data in body.items():
+            if not isinstance(body_data, dict):
+                continue
+            converted[representation] = {
+                "value": body_data.get("value", ""),
+                "representation": body_data.get("representation", representation),
+            }
+        return converted
+
+    @staticmethod
     def _user_ref_from_account_id(account_id: str | None) -> dict[str, str] | None:
         """Build a v1-compatible user reference from a v2 account ID."""
         if not account_id:
@@ -312,7 +336,8 @@ class ConfluenceV2Adapter:
 
         Args:
             page_id: The ID of the page to retrieve
-            expand: Fields to expand in the response (not used in v2 API, for compatibility only)
+            expand: v1-style expand string; ``body.view`` maps to
+                ``body-format=view``, otherwise storage is requested.
 
         Returns:
             The page data from the API response in v1-compatible format
@@ -324,8 +349,7 @@ class ConfluenceV2Adapter:
             # Make the v2 API call to get the page
             url = f"{self.base_url}/api/v2/pages/{page_id}"
 
-            # Convert v1 expand parameters to v2 format
-            params = {"body-format": "storage"}
+            params = {"body-format": self._body_format_from_expand(expand)}
 
             response = self.session.get(url, params=params)
             response.raise_for_status()
@@ -340,12 +364,10 @@ class ConfluenceV2Adapter:
             # Convert v2 response to v1-compatible format
             v1_compatible = self._convert_v2_to_v1_format(v2_response, space_key)
 
-            # Add body.storage structure if body content exists
-            if "body" in v2_response and v2_response["body"].get("storage"):
-                storage_value = v2_response["body"]["storage"].get("value", "")
-                v1_compatible["body"] = {
-                    "storage": {"value": storage_value, "representation": "storage"}
-                }
+            if "body" in v2_response:
+                body = self._convert_body_representations(v2_response["body"])
+                if body:
+                    v1_compatible["body"] = body
 
             # Add space information with more details
             if space_id:
@@ -1221,10 +1243,17 @@ class ConfluenceV2Adapter:
         1. List all versions to find the version ID for the given version number
         2. Fetch the specific version using its version ID
 
+        Rendered HTML (``body.view``) is only available from the v2 pages
+        endpoint via ``version`` + ``body-format=view``. The version-detail
+        endpoint accepts ``body-format=storage`` only, so storage requests
+        keep using that narrower path.
+
         Args:
             page_id: The ID of page
             version: The version number to retrieve
-            expand: Fields to expand in the response
+            expand: v1-style expand string; ``body.view`` selects the pages
+                endpoint with rendered HTML, otherwise storage is fetched
+                from the version-detail endpoint.
 
         Returns:
             The page data for the specified version in v1-compatible format
@@ -1246,11 +1275,15 @@ class ConfluenceV2Adapter:
             if not version_id:
                 raise ValueError(f"Version {version} not found for page '{page_id}'")
 
-            # Step 2: Fetch the specific version using its version ID
-            url = f"{self.base_url}/api/v2/versions/{version_id}"
-
-            # Convert v1 expand parameters to v2 format
-            params = {"body-format": "storage"}
+            body_format = self._body_format_from_expand(expand)
+            if body_format == "view":
+                # The version-detail endpoint does not accept body-format=view.
+                # Use the pages endpoint, which supports version + body-format.
+                url = f"{self.base_url}/api/v2/pages/{page_id}"
+                params = {"body-format": "view", "version": version}
+            else:
+                url = f"{self.base_url}/api/v2/versions/{version_id}"
+                params = {"body-format": "storage"}
 
             response = self.session.get(url, params=params)
             response.raise_for_status()
@@ -1265,12 +1298,10 @@ class ConfluenceV2Adapter:
             # Convert v2 response to v1-compatible format
             v1_compatible = self._convert_v2_to_v1_format(v2_response, space_key)
 
-            # Add body.storage structure if body content exists
-            if "body" in v2_response and v2_response["body"].get("storage"):
-                storage_value = v2_response["body"]["storage"].get("value", "")
-                v1_compatible["body"] = {
-                    "storage": {"value": storage_value, "representation": "storage"}
-                }
+            if "body" in v2_response:
+                body = self._convert_body_representations(v2_response["body"])
+                if body:
+                    v1_compatible["body"] = body
 
             # Add version information from version response
             # In versions API, version info is at the top level
