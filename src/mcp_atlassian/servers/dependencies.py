@@ -28,6 +28,7 @@ from mcp_atlassian.utils.env import (
 )
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.proxy import get_proxy_settings_from_env
+from mcp_atlassian.utils.rate_limiter import get_rate_limiter
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 if TYPE_CHECKING:
@@ -239,6 +240,16 @@ def _validate_with_cache(
     return validation_data
 
 
+def _register_rate_limit_user(request: Request, user_id: str) -> None:
+    """Register token→user mapping for rate limiting if enabled."""
+    rate_limiter = get_rate_limiter()
+    if not rate_limiter:
+        return
+    token = getattr(request.state, "user_atlassian_token", None)
+    if token and user_id:
+        rate_limiter.register_token_user(token, str(user_id))
+
+
 def _jira_on_validated(
     fn_name: str,
     request: Request,
@@ -258,6 +269,7 @@ def _jira_on_validated(
         )
     else:  # oauth_pat
         logger.debug(f"{fn_name}: Validated Jira token for user ID: {validation_data}")
+    _register_rate_limit_user(request, validation_data)
 
 
 def _confluence_on_validated(
@@ -306,6 +318,9 @@ def _confluence_on_validated(
             and validation_data.get("email")
         ):
             request.state.user_atlassian_email = validation_data["email"]
+    identity = derived_email or user_email or display_name
+    if identity:
+        _register_rate_limit_user(request, identity)
 
 
 def _jira_spec() -> _ServiceSpec:
