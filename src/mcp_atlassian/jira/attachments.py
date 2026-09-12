@@ -507,7 +507,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             logger.error("No filename provided for attachment upload")
             return {"success": False, "error": "No filename provided"}
 
-        if content is None:
+        if not content:
             logger.error("No file content provided for attachment upload")
             return {"success": False, "error": "No file content provided"}
 
@@ -528,7 +528,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 # The REST API answers with a list holding one entry per
                 # uploaded file; a single upload therefore yields a 1-item list.
                 if isinstance(attachment, list):
-                    attachment = attachment[0] if attachment else None
+                    attachment = attachment[0]
 
                 logger.info(
                     f"Successfully uploaded attachment {filename} to "

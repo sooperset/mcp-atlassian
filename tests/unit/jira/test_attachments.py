@@ -701,6 +701,29 @@ class TestAttachmentsMixin:
         assert result["success"] is False
         assert "No filename provided" in result["error"]
 
+    def test_upload_attachment_from_content_empty_content(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Empty bytes are rejected instead of creating a 0-byte attachment."""
+        result = attachments_mixin.upload_attachment_from_content(
+            "TEST-123", "empty.txt", b""
+        )
+
+        assert result["success"] is False
+        assert "No file content provided" in result["error"]
+
+    def test_upload_attachments_from_content_missing_content_key(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """A descriptor without 'content' fails instead of uploading b''."""
+        result = attachments_mixin.upload_attachments_from_content(
+            "TEST-123", [{"filename": "a.txt"}]
+        )
+
+        assert result["success"] is False
+        assert result["failed"][0]["filename"] == "a.txt"
+        assert "No file content provided" in result["failed"][0]["error"]
+
     def test_upload_attachment_from_content_api_error(
         self, attachments_mixin: AttachmentsMixin
     ):

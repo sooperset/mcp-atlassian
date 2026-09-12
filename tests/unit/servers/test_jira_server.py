@@ -1,5 +1,6 @@
 """Unit tests for the Jira FastMCP server implementation."""
 
+import base64
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from src.mcp_atlassian.models.jira import (
 )
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
+from src.mcp_atlassian.utils.media import ATTACHMENT_MAX_BYTES
 from src.mcp_atlassian.utils.oauth import OAuthConfig
 from tests.fixtures.jira_mocks import (
     MOCK_JIRA_COMMENTS_SIMPLIFIED,
@@ -2503,6 +2505,43 @@ async def test_update_issue_attachments_base64_invalid_base64(jira_client):
     message = str(excinfo.value)
     assert "attachments_base64[0]" in message
     assert "hello.txt" in message
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_rejects_empty_content(jira_client):
+    """Empty content must not become a 0-byte attachment."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": (
+                    '[{"filename": "empty.txt", "content_base64": ""}]'
+                ),
+            },
+        )
+
+    assert "is empty" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_enforces_size_limit(jira_client):
+    """Content over ATTACHMENT_MAX_BYTES is rejected before the request."""
+    oversized = base64.b64encode(b"x" * (ATTACHMENT_MAX_BYTES + 1)).decode()
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": json.dumps(
+                    [{"filename": "big.bin", "content_base64": oversized}]
+                ),
+            },
+        )
+
+    assert "inline limit" in str(excinfo.value)
 
 
 @pytest.mark.anyio

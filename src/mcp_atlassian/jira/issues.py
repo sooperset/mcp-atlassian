@@ -1296,16 +1296,12 @@ class IssuesMixin(
                         issue_key, update_fields, return_fields=return_fields
                     )
 
-                elif key == "attachments":
-                    # Handle attachments separately - they're not part of fields update
+                elif key in ("attachments", "attachments_base64"):
+                    # Handled separately - they're not part of fields update.
+                    # Note both are skipped entirely when a "status" kwarg
+                    # returns above via _update_issue_with_status.
                     if not value or not isinstance(value, list | tuple):
-                        logger.warning(f"Invalid attachments value: {value}")
-
-                elif key == "attachments_base64":
-                    # Same as "attachments", but the content is already in memory
-                    # and is uploaded after the field update below.
-                    if not value or not isinstance(value, list | tuple):
-                        logger.warning(f"Invalid attachments_base64 value: {value}")
+                        logger.warning(f"Invalid {key} value: {value}")
 
                 elif key == "assignee":
                     # Handle assignee updates, allow unassignment with None or empty string

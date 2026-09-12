@@ -280,12 +280,10 @@ def _parse_base64_attachments(
         nothing was supplied
 
     Raises:
-        ValueError: If the JSON, an entry, a filename or the base64 content
-            is invalid
+        ValueError: If the JSON, an entry or a filename is invalid, or if the
+            content is undecodable, empty, or over ``ATTACHMENT_MAX_BYTES``
     """
-    if attachments_base64 is None:
-        return []
-    stripped = attachments_base64.strip()
+    stripped = (attachments_base64 or "").strip()
     if not stripped:
         return []
 
@@ -326,6 +324,14 @@ def _parse_base64_attachments(
                 f"base64 content: {e}"
             )
             raise ValueError(msg) from e
+
+        if not content:
+            raise ValueError(f"attachments_base64[{index}] ({filename}) is empty.")
+        if len(content) > ATTACHMENT_MAX_BYTES:
+            raise ValueError(
+                f"attachments_base64[{index}] ({filename}) exceeds the "
+                f"{ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB inline limit."
+            )
 
         decoded.append({"filename": filename, "content": content})
 
