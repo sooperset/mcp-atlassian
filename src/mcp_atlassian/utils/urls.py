@@ -9,17 +9,32 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 
-def make_ssrf_redirect_hook() -> Callable[..., Any]:
+def make_ssrf_redirect_hook(base_url: str | None = None) -> Callable[..., Any]:
     """Return a requests ``response`` hook that blocks SSRF-unsafe redirects.
 
     Attach to any session (``session.hooks["response"].append(...)``) so that an
     open redirect cannot steer an outbound request to an internal/metadata host.
+
+    An on-prem Server/DC instance lives on a private network and redirects to
+    itself (session expiry, canonical base URL, reverse proxy). Passing the
+    session's own service URL lets those redirects through without trusting any
+    other host: the exemption is the single host this session already connects to,
+    so it grants no reach the session does not already have.
+
+    Args:
+        base_url: The session's own configured service URL, or None to trust no
+            host. Only a redirect whose hostname is exactly this host is exempt,
+            and only from the non-global-address rejections.
+
+    Returns:
+        A hook suitable for ``session.hooks["response"].append(...)``.
     """
+    trusted_host = urlparse(base_url).hostname if base_url else None
 
     def hook(response: Any, **kwargs: Any) -> Any:
         if response.is_redirect:
             redirect_url = urljoin(response.url, response.headers.get("Location", ""))
-            error = validate_url_for_ssrf(redirect_url)
+            error = _validate_url(redirect_url, trusted_host=trusted_host)
             if error:
                 response.close()
                 raise ValueError(f"Redirect blocked (SSRF): {error}")
@@ -98,6 +113,24 @@ def validate_url_for_ssrf(url: str) -> str | None:
     Returns:
         None if safe, error message string if blocked.
     """
+    return _validate_url(url)
+
+
+def _validate_url(url: str, *, trusted_host: str | None = None) -> str | None:
+    """Validate a URL for SSRF, optionally exempting one specific host.
+
+    Args:
+        url: The URL to validate.
+        trusted_host: A hostname exempt from the non-global-address rejections —
+            the blocked-hostname list, the IP-literal check and the DNS resolution
+            check. The scheme check, the backslash-authority check and the
+            ``MCP_ALLOWED_URL_DOMAINS`` restriction always apply. Matched against
+            the URL's hostname by exact equality, never by suffix, so a subdomain
+            of a trusted host is not itself trusted.
+
+    Returns:
+        None if safe, error message string if blocked.
+    """
     if not url or not url.strip():
         return "Empty URL"
 
@@ -120,15 +153,21 @@ def validate_url_for_ssrf(url: str) -> str | None:
     if not hostname:
         return "No hostname in URL"
 
-    # Check blocked hostnames
-    blocked_hostnames = {"localhost", "metadata.google.internal"}
-    if hostname.lower() in blocked_hostnames:
-        return f"Blocked hostname: {hostname}"
+    # The session's own host may legitimately be a private address, localhost or a
+    # bare IP - that is the ordinary on-prem Server/DC deployment. Exact match only:
+    # a subdomain of the trusted host is a different host and stays untrusted.
+    trusted = trusted_host is not None and hostname.lower() == trusted_host.lower()
 
-    # Check if hostname is an IP address
-    ip_error = _check_ip_address(hostname)
-    if ip_error:
-        return ip_error
+    if not trusted:
+        # Check blocked hostnames
+        blocked_hostnames = {"localhost", "metadata.google.internal"}
+        if hostname.lower() in blocked_hostnames:
+            return f"Blocked hostname: {hostname}"
+
+        # Check if hostname is an IP address
+        ip_error = _check_ip_address(hostname)
+        if ip_error:
+            return ip_error
 
     # Domain allowlist check
     allowlist = _get_domain_allowlist()
@@ -138,9 +177,10 @@ def validate_url_for_ssrf(url: str) -> str | None:
         return None  # explicitly allowlisted — skip DNS check
 
     # DNS resolution check - resolve hostname and check all IPs
-    dns_error = _check_dns_resolution(hostname)
-    if dns_error:
-        return dns_error
+    if not trusted:
+        dns_error = _check_dns_resolution(hostname)
+        if dns_error:
+            return dns_error
 
     return None
 

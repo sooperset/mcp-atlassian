@@ -28,7 +28,7 @@ from mcp_atlassian.utils.env import (
 )
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.proxy import get_proxy_settings_from_env
-from mcp_atlassian.utils.urls import validate_url_for_ssrf
+from mcp_atlassian.utils.urls import make_ssrf_redirect_hook, validate_url_for_ssrf
 
 if TYPE_CHECKING:
     from mcp_atlassian.confluence.config import (
@@ -532,9 +532,7 @@ def _create_and_validate(
         fetcher = spec.fetcher_class(config=config)
         if attach_ssrf_hook:
             session = spec.get_session(fetcher)
-            session.hooks["response"].append(
-                _make_ssrf_safe_hook(validate_url_for_ssrf)
-            )
+            session.hooks["response"].append(make_ssrf_redirect_hook(config.url))
         validation_cache = _validation_cache
         if cache_key is not None and validation_cache is not None:
             validation_data = _validate_with_cache(
@@ -584,34 +582,6 @@ def _resolve_oauth_access_token(fallback_token: str, service: str) -> str:
         return access_token.token
 
     return fallback_token
-
-
-def _make_ssrf_safe_hook(
-    validate_fn: Callable[[str], str | None],
-) -> Callable[..., Any]:
-    """Create a requests response hook that validates redirect URLs.
-
-    Blocks HTTP redirects that target internal/private IP addresses
-    to prevent SSRF via open-redirect chains.
-
-    Args:
-        validate_fn: A function that returns None if safe,
-            error string if blocked.
-
-    Returns:
-        A requests response hook function.
-    """
-
-    def hook(response: Any, **kwargs: Any) -> Any:
-        if response.is_redirect:
-            redirect_url = response.headers.get("Location", "")
-            error = validate_fn(redirect_url)
-            if error:
-                response.close()
-                raise ValueError(f"Redirect blocked (SSRF): {error}")
-        return response
-
-    return hook
 
 
 def _resolve_bearer_auth_type(

@@ -1,5 +1,6 @@
 """Tests for the URL utilities module."""
 
+import io
 import os
 import socket
 from unittest.mock import patch
@@ -31,12 +32,191 @@ def test_redirect_hook_resolves_location_before_validation(
     response.url = "https://jira.example.com/start"
     response.headers["Location"] = location
 
-    with patch(
-        "mcp_atlassian.utils.urls.validate_url_for_ssrf", return_value=None
-    ) as validate:
+    with patch("mcp_atlassian.utils.urls._validate_url", return_value=None) as validate:
         assert make_ssrf_redirect_hook()(response) is response
 
-    validate.assert_called_once_with(expected)
+    validate.assert_called_once_with(expected, trusted_host=None)
+
+
+def _run_hook(
+    base_url: str | None,
+    response_url: str,
+    location: str,
+    dns_ip: str = "10.0.0.5",
+) -> str | None:
+    """Run the redirect hook over one 302 and report why it blocked, if it did.
+
+    Args:
+        base_url: Value passed to ``make_ssrf_redirect_hook``.
+        response_url: The URL the 302 itself came from.
+        location: The raw ``Location`` header value, relative or absolute.
+        dns_ip: The address every hostname resolves to during the call.
+
+    Returns:
+        None when the redirect is allowed, otherwise the blocking message.
+    """
+    response = requests.Response()
+    response.status_code = 302
+    response.url = response_url
+    response.headers["Location"] = location
+    # The hook calls response.close() before raising; requests dereferences
+    # .raw there, so give it something closeable.
+    response.raw = io.BytesIO(b"")
+
+    with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+        mock_dns.return_value = [(2, 1, 6, "", (dns_ip, 0))]
+        try:
+            make_ssrf_redirect_hook(base_url)(response)
+        except ValueError as exc:
+            return str(exc)
+    return None
+
+
+class TestRedirectHookBaseUrlBinding:
+    """The redirect hook exempts the session's own host and nothing else."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, monkeypatch) -> None:
+        """Keep the developer environment out of these tests."""
+        for var in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+            monkeypatch.delenv(var, raising=False)
+
+    @pytest.mark.security_regression
+    def test_metadata_host_blocked_from_a_trusted_session(self) -> None:
+        """Trusting the session's own host does not trust cloud metadata."""
+        error = _run_hook(
+            "https://jira.internal",
+            "https://jira.internal/start",
+            "http://169.254.169.254/latest/meta-data/",
+        )
+        assert error is not None
+        assert "non-global" in error.lower()
+
+    @pytest.mark.security_regression
+    def test_caller_supplied_base_cannot_reach_a_private_host(self) -> None:
+        """A session based on a caller-supplied host may not bounce inward.
+
+        This is the attack that sank two earlier designs: the base URL can come
+        from a request header, so the exemption must never extend past that host.
+        """
+        error = _run_hook(
+            "https://caller.example.com",
+            "https://caller.example.com/start",
+            "http://10.0.0.5/admin",
+        )
+        assert error is not None
+
+    def test_off_base_hop_is_judged_strictly(self) -> None:
+        """Each redirect hop is validated on its own against a fixed base."""
+        error = _run_hook(
+            "https://jira.internal",
+            "https://jira.internal/start",
+            "https://other.internal/x",
+        )
+        assert error is not None
+        assert "non-global" in error.lower()
+
+    def test_session_may_redirect_to_its_own_host(self) -> None:
+        """An on-prem instance on a private network may redirect to itself.
+
+        This is the reported bug: Jira answers a relative 302 to /login.jsp and the
+        hook refused it because the host resolves to a private address.
+        """
+        assert (
+            _run_hook(
+                "https://jira.internal",
+                "https://jira.internal/secure/attachment/1/x.txt",
+                "/login.jsp?permissionViolation=true",
+            )
+            is None
+        )
+
+    def test_no_base_url_trusts_nothing(self) -> None:
+        """Constructed without a base URL, the hook behaves exactly as before."""
+        error = _run_hook(None, "https://jira.internal/start", "/login.jsp")
+        assert error is not None
+        assert "non-global" in error.lower()
+
+    @pytest.mark.security_regression
+    def test_subdomain_of_the_base_is_not_trusted(self) -> None:
+        """Matching is exact, so a subdomain of the base host stays untrusted."""
+        error = _run_hook(
+            "https://jira.internal",
+            "https://jira.internal/start",
+            "https://evil.jira.internal/x",
+        )
+        assert error is not None
+
+    @pytest.mark.security_regression
+    def test_userinfo_cannot_spoof_the_trusted_host(self) -> None:
+        """The comparison uses the parsed hostname, not the raw authority."""
+        error = _run_hook(
+            "https://jira.internal",
+            "https://jira.internal/start",
+            "https://jira.internal@caller.example.com/x",
+        )
+        assert error is not None
+
+    def test_localhost_base_may_redirect_to_itself(self) -> None:
+        """A localhost deployment's own redirects are allowed.
+
+        Pins the blocked-hostname branch of the waiver; without it the documented
+        ``JIRA_URL=http://localhost:8080`` setup stays broken.
+        """
+        assert (
+            _run_hook(
+                "http://localhost:8080",
+                "http://localhost:8080/start",
+                "/login.jsp",
+            )
+            is None
+        )
+
+    def test_ip_literal_base_may_redirect_to_itself(self) -> None:
+        """A base URL that is a bare private IP may redirect to itself.
+
+        Pins the IP-literal branch of the waiver.
+        """
+        assert (
+            _run_hook(
+                "http://10.0.0.7:8080",
+                "http://10.0.0.7:8080/start",
+                "/login.jsp",
+            )
+            is None
+        )
+
+    @pytest.mark.security_regression
+    def test_localhost_blocked_when_it_is_not_the_base(self) -> None:
+        """The blocked-hostname waiver applies only to the base host."""
+        error = _run_hook(
+            "https://jira.internal",
+            "https://jira.internal/start",
+            "http://localhost:8080/x",
+        )
+        assert error is not None
+        assert "localhost" in error
+
+    @pytest.mark.security_regression
+    def test_ip_literal_blocked_when_it_is_not_the_base(self) -> None:
+        """The IP-literal waiver applies only to the base host."""
+        error = _run_hook(
+            "https://jira.internal", "https://jira.internal/start", "http://10.0.0.5/x"
+        )
+        assert error is not None
+
+    def test_allowlist_still_restricts_the_base_host(self, monkeypatch) -> None:
+        """MCP_ALLOWED_URL_DOMAINS keeps its restrictive meaning (D3).
+
+        The waiver drops the non-global rejections only; an operator who narrowed
+        the domain set still gets that narrowing, base host included.
+        """
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "corp.com")
+        error = _run_hook(
+            "https://jira.internal", "https://jira.internal/start", "/login.jsp"
+        )
+        assert error is not None
+        assert "not in allowed domains" in error
 
 
 class TestResolveRelativeUrl:
