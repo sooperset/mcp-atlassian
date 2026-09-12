@@ -435,3 +435,33 @@ class TestJiraDCJSMComments:
         finally:
             for comment_id in comment_ids:
                 _delete_dc_comment(jsm_jira_fetcher, issue_key, comment_id)
+
+
+class TestJiraDCAssets:
+    """Verify the consolidated Assets paths against the JSM DC instance."""
+
+    @pytest.mark.parametrize(
+        "api_base",
+        ["rest/assets/1.0", "rest/insight/1.0"],
+        ids=["assets", "legacy-insight"],
+    )
+    def test_assets_discovery_and_issue_enrichment_query(
+        self,
+        jsm_jira_fetcher: JiraFetcher,
+        api_base: str,
+    ) -> None:
+        """Both supported prefixes should discover and search without errors."""
+        original_base = jsm_jira_fetcher.config.assets_api_base
+        jsm_jira_fetcher.config.assets_api_base = api_base
+        try:
+            assert isinstance(jsm_jira_fetcher.list_asset_schemas(), list)
+
+            issue_key = os.environ.get("DC_E2E_JSM_ISSUE_KEY", "JSMDC-2")
+            result = jsm_jira_fetcher.search_assets_aql(
+                f'object HAVING connectedTickets(key = "{issue_key}")',
+                results_per_page=100,
+            )
+            assert isinstance(result["objects"], list)
+            assert isinstance(result["total"], int)
+        finally:
+            jsm_jira_fetcher.config.assets_api_base = original_base

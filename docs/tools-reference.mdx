@@ -1,9 +1,9 @@
 ---
 title: "Tools Reference"
-description: "Overview of all 98 MCP tools for Jira and Confluence — organized by category with quick links"
+description: "Overview of all 99 MCP tools for Jira and Confluence — organized by category with quick links"
 ---
 
-MCP Atlassian provides **98 tools** for interacting with Jira and Confluence. Tools are organized by category below.
+MCP Atlassian provides **99 tools** for interacting with Jira and Confluence. Tools are organized by category below.
 
 ## Jira Tools
 
@@ -31,6 +31,9 @@ MCP Atlassian provides **98 tools** for interacting with Jira and Confluence. To
   </Card>
   <Card title="Forms & Metrics" icon="chart-line" href="/docs/tools/jira-forms-metrics">
     ProForma forms, SLA, dates, development info
+  </Card>
+  <Card title="Assets" icon="boxes-stacked" href="/docs/tools/jira-assets">
+    Consolidated Assets discovery (Server/DC)
   </Card>
 </CardGroup>
 
@@ -63,7 +66,7 @@ MCP Atlassian provides **98 tools** for interacting with Jira and Confluence. To
 
 Toolsets group related tools for easier management via `TOOLSETS` env var or `--toolsets` flag.
 
-**Jira Toolsets (16):**
+**Jira Toolsets (17):**
 
 | Toolset | Core | Tools |
 |---------|:----:|-------|
@@ -79,6 +82,7 @@ Toolsets group related tools for easier management via `TOOLSETS` env var or `--
 | `jira_users` | No | `jira_get_user_profile`, `jira_search_assignable_users` |
 | `jira_watchers` | No | `jira_get_issue_watchers`, `jira_add_watcher`, `jira_remove_watcher` |
 | `jira_service_desk` | No | `jira_get_service_desk_for_project`, `jira_get_service_desk_queues`, `jira_get_queue_issues`, `jira_get_request_types`, `jira_get_request_type_fields`, `jira_create_customer_request` |
+| `jira_assets` | No | `jira_discover` |
 | `jira_forms` | No | `jira_get_issue_proforma_forms`, `jira_get_proforma_form_details`, `jira_update_proforma_form_answers` |
 | `jira_metrics` | No | `jira_get_issue_dates`, `jira_get_issue_sla` |
 | `jira_development` | No | `jira_get_issue_development_info`, `jira_get_issues_development_info` |
@@ -111,7 +115,7 @@ TOOLSETS=default,jira_agile,jira_attachments
 # Enable deprecated tools only while migrating to their replacements:
 TOOLSETS=legacy
 
-# Enable all toolsets (98 tools)
+# Enable all toolsets (99 tools)
 TOOLSETS=all
 
 # Command line

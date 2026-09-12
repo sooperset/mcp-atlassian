@@ -8,6 +8,7 @@ This module provides various Jira API client implementations.
 # Re-export the Jira class for backward compatibility
 from atlassian.jira import Jira
 
+from .assets import AssetsMixin
 from .attachments import AttachmentsMixin
 from .boards import BoardsMixin
 from .client import JiraClient
@@ -37,6 +38,7 @@ from .worklog import WorklogMixin
 
 class JiraFetcher(
     ProjectsMixin,
+    AssetsMixin,
     FieldsMixin,
     FieldOptionsMixin,
     FormsApiMixin,  # Use new Forms REST API instead of FormsMixin
@@ -82,6 +84,7 @@ class JiraFetcher(
     - MetricsMixin: Issue metrics and date operations
     - QueuesMixin: Service Desk queue read operations (Server/DC)
     - SLAMixin: SLA calculations
+    - AssetsMixin: Jira Assets (Insight) operations (Server/DC)
 
     The class structure is designed to maintain backward compatibility while
     improving code organization and maintainability.
@@ -91,6 +94,7 @@ class JiraFetcher(
 
 
 __all__ = [
+    "AssetsMixin",
     "JiraFetcher",
     "JiraConfig",
     "JiraClient",

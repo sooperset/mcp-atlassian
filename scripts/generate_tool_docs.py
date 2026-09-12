@@ -109,6 +109,9 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_issue_development_info",
         "jira_get_issues_development_info",
     ],
+    "jira-assets": [
+        "jira_discover",
+    ],
     "confluence-pages": [
         "confluence_get_page",
         "confluence_create_page",
@@ -193,6 +196,12 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     "jira-forms-metrics": {
         "title": "Jira Forms & Metrics",
         "description": ("ProForma forms, SLA metrics, dates, and development info"),
+    },
+    "jira-assets": {
+        "title": "Jira Assets",
+        "description": (
+            "Consolidated Assets (Insight) discovery on Server/Data Center"
+        ),
     },
     "confluence-pages": {
         "title": "Confluence Pages",

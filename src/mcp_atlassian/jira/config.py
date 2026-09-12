@@ -39,6 +39,19 @@ def normalize_project_key(raw: str) -> str:
     return raw.translate(_INVISIBLE_CHARS).strip().upper()
 
 
+DEFAULT_ASSETS_API_BASE = "rest/assets/1.0"
+
+
+def _parse_assets_api_base(raw: str | None) -> str:
+    """Normalize JIRA_ASSETS_API_BASE to a base path without surrounding slashes.
+
+    Unset, empty, or slash-only values fall back to the default.
+    """
+    if raw is None:
+        return DEFAULT_ASSETS_API_BASE
+    return raw.strip().strip("/") or DEFAULT_ASSETS_API_BASE
+
+
 def _parse_internal_only_projects(raw: str | None) -> frozenset[str]:
     """Parse JIRA_INTERNAL_ONLY_PROJECTS into a set of normalized project keys.
 
@@ -191,6 +204,9 @@ class JiraConfig:
     )  # Project keys where jira_add_comment/jira_edit_comment enforce
     # internal-only (non-customer-visible) comments. See
     # JIRA_INTERNAL_ONLY_PROJECTS. Empty by default (guard disabled).
+    assets_api_base: str = DEFAULT_ASSETS_API_BASE  # Assets/Insight REST base
+    # path on Server/DC (rest/assets/1.0, or rest/insight/1.0 on legacy
+    # Insight installs). See JIRA_ASSETS_API_BASE.
 
     @property
     def is_cloud(self) -> bool:
@@ -337,6 +353,9 @@ class JiraConfig:
             os.getenv("JIRA_INTERNAL_ONLY_PROJECTS")
         )
 
+        # Assets (Insight) REST base path, Server/DC only
+        assets_api_base = _parse_assets_api_base(os.getenv("JIRA_ASSETS_API_BASE"))
+
         # Proxy settings
         proxy_settings = get_proxy_settings_from_env("JIRA")
 
@@ -382,6 +401,7 @@ class JiraConfig:
             client_key_password=client_key_password,
             timeout=timeout,
             internal_only_projects=internal_only_projects,
+            assets_api_base=assets_api_base,
         )
 
     def is_auth_configured(self) -> bool:
