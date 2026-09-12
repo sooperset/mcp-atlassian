@@ -723,7 +723,9 @@ def _create_user_config_for_fetcher(
         global_oauth_cfg = base_config.oauth_config
 
         # Determine if this is DC OAuth (base_url set, no cloud_id)
-        is_dc_oauth = getattr(global_oauth_cfg, "is_data_center", False) is True
+        is_dc_oauth = not cloud_id and (
+            getattr(global_oauth_cfg, "is_data_center", False) is True
+        )
 
         # Use provided cloud_id or fall back to global config cloud_id
         effective_cloud_id = cloud_id if cloud_id else global_oauth_cfg.cloud_id
