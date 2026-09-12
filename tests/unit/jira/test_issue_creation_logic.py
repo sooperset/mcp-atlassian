@@ -31,6 +31,9 @@ class ConcreteIssuesMixin(
     def _try_discover_fields_from_existing_epic(self):
         pass
 
+    def get_fields(self, refresh=False):
+        pass
+
     def get_field_by_id(self, field_id):
         pass
 

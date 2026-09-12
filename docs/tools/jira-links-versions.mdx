@@ -62,6 +62,20 @@ Link an existing issue to an epic.
 
 ---
 
+### Unlink from Epic
+
+Unlink an issue from its epic.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | The key of the issue to unlink from its epic (e.g., 'PROJ-123') |
+
+---
+
 ### Create Remote Issue Link
 
 Create a remote issue link (web link or Confluence link) for a Jira issue.
