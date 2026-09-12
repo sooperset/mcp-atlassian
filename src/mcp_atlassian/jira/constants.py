@@ -312,3 +312,13 @@ DEFAULT_READ_JIRA_FIELDS: set[str] = {
     "updated",
     "issuetype",
 }
+
+
+def markup_translation_disabled() -> bool:
+    """Return True when DISABLE_JIRA_MARKUP_TRANSLATION turns markup conversion off.
+
+    Shared by JiraConfig and by the tool schema descriptions in
+    servers/jira.py so the format the schemas advertise can never disagree with
+    what the conversion layer actually does.
+    """
+    return os.getenv("DISABLE_JIRA_MARKUP_TRANSLATION", "false").lower() == "true"

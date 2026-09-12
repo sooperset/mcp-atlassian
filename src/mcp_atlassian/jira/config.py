@@ -19,6 +19,7 @@ from ..utils.oauth import (
 )
 from ..utils.proxy import get_proxy_settings_from_env
 from ..utils.urls import is_atlassian_cloud_url
+from .constants import markup_translation_disabled
 
 logger = logging.getLogger("mcp-atlassian.jira.config")
 
@@ -345,9 +346,7 @@ class JiraConfig:
         passthrough_headers = get_header_names("JIRA_PASSTHROUGH_HEADERS")
 
         # Markup translation setting
-        disable_jira_markup_translation = (
-            os.getenv("DISABLE_JIRA_MARKUP_TRANSLATION", "false").lower() == "true"
-        )
+        disable_jira_markup_translation = markup_translation_disabled()
 
         # Client certificate settings
         client_cert = os.getenv("JIRA_CLIENT_CERT")
