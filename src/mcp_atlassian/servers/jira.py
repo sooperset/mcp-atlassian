@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import binascii
 import json
 import logging
 from typing import Annotated, Any
@@ -260,6 +261,81 @@ def _parse_attachments(
     if not all(isinstance(item, dict) for item in parsed):
         raise ValueError("attachments must be a JSON array of attachment objects.")
     return parsed
+
+
+def _parse_base64_attachments(
+    attachments_base64: str | None,
+) -> list[dict[str, Any]]:
+    """Parse and decode issue attachments supplied as base64 content.
+
+    Each entry must be an object with a ``filename`` and base64-encoded
+    ``content_base64``. Decoding happens here so the client layer only ever
+    deals with raw bytes, never with the server's filesystem.
+
+    Args:
+        attachments_base64: JSON array string of attachment objects, or None
+
+    Returns:
+        A list of ``{"filename": str, "content": bytes}`` dicts, empty if
+        nothing was supplied
+
+    Raises:
+        ValueError: If the JSON, an entry or a filename is invalid, or if the
+            content is undecodable, empty, or over ``ATTACHMENT_MAX_BYTES``
+    """
+    stripped = (attachments_base64 or "").strip()
+    if not stripped:
+        return []
+
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as e:
+        msg = f"attachments_base64 is not valid JSON: {e}"
+        raise ValueError(msg) from e
+
+    if not isinstance(parsed, list):
+        raise ValueError(
+            "attachments_base64 must be a JSON array of attachment objects."
+        )
+
+    decoded: list[dict[str, Any]] = []
+    for index, item in enumerate(parsed):
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"attachments_base64[{index}] must be an object with "
+                "'filename' and 'content_base64'."
+            )
+
+        filename = item.get("filename")
+        if not filename or not isinstance(filename, str):
+            raise ValueError(f"attachments_base64[{index}] requires a 'filename'.")
+
+        content_base64 = item.get("content_base64")
+        if not isinstance(content_base64, str):
+            raise ValueError(
+                f"attachments_base64[{index}] ({filename}) requires 'content_base64'."
+            )
+
+        try:
+            content = base64.b64decode(content_base64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            msg = (
+                f"attachments_base64[{index}] ({filename}) has invalid "
+                f"base64 content: {e}"
+            )
+            raise ValueError(msg) from e
+
+        if not content:
+            raise ValueError(f"attachments_base64[{index}] ({filename}) is empty.")
+        if len(content) > ATTACHMENT_MAX_BYTES:
+            raise ValueError(
+                f"attachments_base64[{index}] ({filename}) exceeds the "
+                f"{ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB inline limit."
+            )
+
+        decoded.append({"filename": filename, "content": content})
+
+    return decoded
 
 
 @jira_mcp.tool(
@@ -2049,7 +2125,24 @@ async def update_issue(
         Field(
             description=(
                 "(Optional) JSON string array or comma-separated list of file paths to attach to the issue. "
-                "Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt']"
+                "Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt']. "
+                "Requires the server to be able to read the paths; for remote or "
+                "containerized servers use 'attachments_base64' instead."
+            ),
+            default=None,
+        ),
+    ] = None,
+    attachments_base64: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON string array of files to attach as base64-encoded "
+                "content, without the server reading from disk. Use this when the "
+                "server cannot access host file paths (e.g. a remote or "
+                "containerized MCP server). Each entry needs 'filename' and "
+                "'content_base64'. Example: "
+                '\'[{"filename": "hello.txt", "content_base64": "SGVsbG8="}]\'. '
+                "Can be combined with 'attachments'."
             ),
             default=None,
         ),
@@ -2129,6 +2222,8 @@ async def update_issue(
             Cloud-only parent clearing and Server/DC Epic Link guidance applies.
         components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
+        attachments_base64: Optional JSON array string of {'filename',
+            'content_base64'} objects uploaded without server filesystem access.
         transition: Optional transition name or ID.
         comment: Optional issue comment in Markdown format.
         comment_visibility: Optional JSON string restricting comment visibility.
@@ -2178,12 +2273,16 @@ async def update_issue(
                 "attachments must be a JSON array string or comma-separated string."
             )
 
+    inline_attachments = _parse_base64_attachments(attachments_base64)
+
     # Combine fields and additional_fields
     all_updates = {**update_fields, **extra_fields}
     if components_list:
         all_updates["components"] = components_list
     if attachment_paths:
         all_updates["attachments"] = attachment_paths
+    if inline_attachments:
+        all_updates["attachments_base64"] = inline_attachments
 
     # Jira handles status changes through transitions. Avoid sending both a
     # status field and a requested transition, which would result in two
@@ -2202,7 +2301,9 @@ async def update_issue(
             issue = jira.update_issue(
                 issue_key=issue_key, return_fields=return_fields_list, **all_updates
             )
-            if any(key != "attachments" for key in all_updates):
+            if any(
+                key not in ("attachments", "attachments_base64") for key in all_updates
+            ):
                 operations_performed.append("fields_updated")
             if (
                 hasattr(issue, "custom_fields")
