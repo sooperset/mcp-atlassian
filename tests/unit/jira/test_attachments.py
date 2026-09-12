@@ -638,6 +638,148 @@ class TestAttachmentsMixin:
 
     # Tests for upload_attachments method
 
+    # Tests for upload_attachment_from_content method
+
+    def test_upload_attachment_from_content_success(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """In-memory upload posts multipart content without touching the disk."""
+        attachments_mixin.jira.resource_url.return_value = (
+            "https://test.atlassian.net/rest/api/2/issue"
+        )
+        attachments_mixin.jira.no_check_headers = {"X-Atlassian-Token": "no-check"}
+        attachments_mixin.jira.post.return_value = [
+            {"id": "12345", "filename": "test_file.txt", "size": 12}
+        ]
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "TEST-123", "test_file.txt", b"test content"
+        )
+
+        assert result["success"] is True
+        assert result["issue_key"] == "TEST-123"
+        assert result["filename"] == "test_file.txt"
+        assert result["size"] == 12
+        assert result["id"] == "12345"
+        attachments_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/2/issue/TEST-123/attachments",
+            headers={"X-Atlassian-Token": "no-check"},
+            files={"file": ("test_file.txt", b"test content")},
+        )
+        attachments_mixin.jira.add_attachment.assert_not_called()
+
+    def test_upload_attachment_from_content_dict_response(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """A bare dict response (not wrapped in a list) is handled."""
+        attachments_mixin.jira.resource_url.return_value = "https://test.url/issue"
+        attachments_mixin.jira.no_check_headers = {}
+        attachments_mixin.jira.post.return_value = {"id": "999"}
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "TEST-123", "a.txt", b"x"
+        )
+
+        assert result["success"] is True
+        assert result["id"] == "999"
+
+    def test_upload_attachment_from_content_no_issue_key(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Upload without an issue key fails."""
+        result = attachments_mixin.upload_attachment_from_content("", "a.txt", b"x")
+
+        assert result["success"] is False
+        assert "No issue key provided" in result["error"]
+
+    def test_upload_attachment_from_content_no_filename(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Upload without a filename fails."""
+        result = attachments_mixin.upload_attachment_from_content("TEST-123", "", b"x")
+
+        assert result["success"] is False
+        assert "No filename provided" in result["error"]
+
+    def test_upload_attachment_from_content_api_error(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """An API failure is reported, not raised."""
+        attachments_mixin.jira.resource_url.return_value = "https://test.url/issue"
+        attachments_mixin.jira.no_check_headers = {}
+        attachments_mixin.jira.post.side_effect = Exception("API error")
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "TEST-123", "a.txt", b"x"
+        )
+
+        assert result["success"] is False
+        assert "API error" in result["error"]
+
+    def test_upload_attachment_from_content_empty_response(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """An empty API response is reported as a failure."""
+        attachments_mixin.jira.resource_url.return_value = "https://test.url/issue"
+        attachments_mixin.jira.no_check_headers = {}
+        attachments_mixin.jira.post.return_value = None
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "TEST-123", "a.txt", b"x"
+        )
+
+        assert result["success"] is False
+        assert "Failed to upload attachment a.txt" in result["error"]
+
+    # Tests for upload_attachments_from_content method
+
+    def test_upload_attachments_from_content_mixed_results(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Batch upload reports successes and failures in the shared shape."""
+        attachments_mixin.jira.resource_url.return_value = "https://test.url/issue"
+        attachments_mixin.jira.no_check_headers = {}
+        attachments_mixin.jira.post.side_effect = [
+            [{"id": "1"}],
+            Exception("API error"),
+        ]
+
+        result = attachments_mixin.upload_attachments_from_content(
+            "TEST-123",
+            [
+                {"filename": "ok.txt", "content": b"ok"},
+                {"filename": "bad.txt", "content": b"bad"},
+            ],
+        )
+
+        assert result["success"] is True
+        assert result["total"] == 2
+        assert len(result["uploaded"]) == 1
+        assert result["uploaded"][0]["filename"] == "ok.txt"
+        assert len(result["failed"]) == 1
+        assert result["failed"][0]["filename"] == "bad.txt"
+        assert "API error" in result["failed"][0]["error"]
+
+    def test_upload_attachments_from_content_empty_list(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """An empty batch fails without calling the API."""
+        result = attachments_mixin.upload_attachments_from_content("TEST-123", [])
+
+        assert result["success"] is False
+        assert "No attachment content provided" in result["error"]
+
+    def test_upload_attachments_from_content_no_issue_key(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """A batch without an issue key fails."""
+        result = attachments_mixin.upload_attachments_from_content(
+            "", [{"filename": "a.txt", "content": b"x"}]
+        )
+
+        assert result["success"] is False
+        assert "No issue key provided" in result["error"]
+
     def test_upload_attachments_success(self, attachments_mixin: AttachmentsMixin):
         """Test successful upload of multiple attachments."""
         # Set up mock for upload_attachment method to simulate successful uploads

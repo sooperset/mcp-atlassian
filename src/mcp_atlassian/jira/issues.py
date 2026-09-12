@@ -1188,6 +1188,38 @@ class IssuesMixin(
             return ",".join(return_fields)
         return return_fields
 
+    @staticmethod
+    def _merge_attachment_results(
+        first: dict[str, Any] | None, second: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Merge two attachment upload reports into a single one.
+
+        Path-based and in-memory uploads are independent sources that can be
+        used in the same call, but callers read one ``attachment_results``
+        entry, so their reports are combined.
+
+        Args:
+            first: Report of the first upload batch, or None
+            second: Report of the second upload batch, or None
+
+        Returns:
+            The combined report, or whichever side is not None
+        """
+        if not first:
+            return second
+        if not second:
+            return first
+
+        uploaded = list(first.get("uploaded", [])) + list(second.get("uploaded", []))
+        failed = list(first.get("failed", [])) + list(second.get("failed", []))
+        return {
+            "success": bool(uploaded),
+            "issue_key": first.get("issue_key") or second.get("issue_key"),
+            "total": first.get("total", 0) + second.get("total", 0),
+            "uploaded": uploaded,
+            "failed": failed,
+        }
+
     def update_issue(
         self,
         issue_key: str,
@@ -1207,6 +1239,8 @@ class IssuesMixin(
                 reduces the size of the returned issue.
             **kwargs: Additional fields to update. Special fields include:
                 - attachments: List of file paths to upload as attachments
+                - attachments_base64: List of dicts with 'filename' and
+                  'content' (bytes) keys, uploaded without reading from disk
                 - status: New status for the issue (handled via transitions)
                 - assignee: New assignee for the issue
                 - parent: Parent issue key (str or {"key": "..."} dict)
@@ -1266,6 +1300,12 @@ class IssuesMixin(
                     # Handle attachments separately - they're not part of fields update
                     if not value or not isinstance(value, list | tuple):
                         logger.warning(f"Invalid attachments value: {value}")
+
+                elif key == "attachments_base64":
+                    # Same as "attachments", but the content is already in memory
+                    # and is uploaded after the field update below.
+                    if not value or not isinstance(value, list | tuple):
+                        logger.warning(f"Invalid attachments_base64 value: {value}")
 
                 elif key == "assignee":
                     # Handle assignee updates, allow unassignment with None or empty string
@@ -1349,6 +1389,27 @@ class IssuesMixin(
                 except Exception as e:
                     logger.error(
                         f"Error uploading attachments to {issue_key}: {str(e)}"
+                    )
+                    # Continue with the update even if attachments fail
+
+            # Handle in-memory attachments if provided. Both sources are
+            # additive, so their results are merged into a single report.
+            if "attachments_base64" in kwargs and kwargs["attachments_base64"]:
+                try:
+                    content_result = self.upload_attachments_from_content(
+                        issue_key, kwargs["attachments_base64"]
+                    )
+                    logger.info(
+                        f"Uploaded in-memory attachments to {issue_key}: "
+                        f"{content_result}"
+                    )
+                    attachments_result = self._merge_attachment_results(
+                        attachments_result, content_result
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error uploading in-memory attachments to "
+                        f"{issue_key}: {str(e)}"
                     )
                     # Continue with the update even if attachments fail
 
