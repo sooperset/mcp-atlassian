@@ -2617,8 +2617,7 @@ class TestSsrfHookCoverageRegression:
         The redirect exemption is the session's own host, so a session built from
         ``X-Atlassian-Jira-Url`` may only be bound to that caller-supplied host.
         Binding it to the operator's configured URL instead would let a caller
-        redirect into the operator's internal instance -- the flaw that sank two
-        earlier designs for this fix.
+        redirect into the operator's internal instance.
         """
 
         request = _header_pat_request(

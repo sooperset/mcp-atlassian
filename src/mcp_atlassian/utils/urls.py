@@ -8,6 +8,30 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(url: str) -> tuple[str, str, int] | None:
+    """Reduce a URL to its origin.
+
+    Args:
+        url: The URL to reduce.
+
+    Returns:
+        A ``(scheme, host, port)`` tuple with the default port filled in for
+        http/https and a trailing dot stripped from the host, or None when the
+        URL cannot be parsed or names no scheme or host.
+    """
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if not parsed.scheme or not host:
+        return None
+    return parsed.scheme, host, port or _DEFAULT_PORTS.get(parsed.scheme, 0)
+
 
 def make_ssrf_redirect_hook(base_url: str | None = None) -> Callable[..., Any]:
     """Return a requests ``response`` hook that blocks SSRF-unsafe redirects.
@@ -17,23 +41,46 @@ def make_ssrf_redirect_hook(base_url: str | None = None) -> Callable[..., Any]:
 
     An on-prem Server/DC instance lives on a private network and redirects to
     itself (session expiry, canonical base URL, reverse proxy). Passing the
-    session's own service URL lets those redirects through without trusting any
-    other host: the exemption is the single host this session already connects to,
-    so it grants no reach the session does not already have.
+    session's own service URL lets those redirects through without widening the
+    guard: the exemption is one origin — scheme, host and port — and it applies
+    only to a redirect that both comes from and points at that origin, so it
+    reaches nothing the session is not already talking to. Another port on the
+    same host, a scheme downgrade, and a hop through some other host and back are
+    all still validated strictly.
 
     Args:
         base_url: The session's own configured service URL, or None to trust no
-            host. Only a redirect whose hostname is exactly this host is exempt,
-            and only from the non-global-address rejections.
+            origin. Only a same-origin redirect is exempt, and only from the
+            non-global-address rejections.
 
     Returns:
         A hook suitable for ``session.hooks["response"].append(...)``.
     """
-    trusted_host = urlparse(base_url).hostname if base_url else None
+    trusted_origin = _origin(base_url) if base_url else None
 
     def hook(response: Any, **kwargs: Any) -> Any:
         if response.is_redirect:
-            redirect_url = urljoin(response.url, response.headers.get("Location", ""))
+            try:
+                redirect_url = urljoin(
+                    response.url, response.headers.get("Location", "")
+                )
+            except ValueError as e:
+                response.close()
+                raise ValueError(
+                    f"Redirect blocked (SSRF): unparsable Location: {e}"
+                ) from e
+
+            # Waive only when the hop stays inside the session's own origin.
+            # Requiring the source too stops an off-origin hop from pivoting back
+            # in with the exemption applied.
+            trusted_host = None
+            if (
+                trusted_origin is not None
+                and _origin(response.url) == trusted_origin
+                and _origin(redirect_url) == trusted_origin
+            ):
+                trusted_host = trusted_origin[1]
+
             error = _validate_url(redirect_url, trusted_host=trusted_host)
             if error:
                 response.close()
@@ -122,6 +169,7 @@ def _validate_url(url: str, *, trusted_host: str | None = None) -> str | None:
     Args:
         url: The URL to validate.
         trusted_host: A hostname exempt from the non-global-address rejections —
+            callers that care about scheme and port must check those themselves;
             the blocked-hostname list, the IP-literal check and the DNS resolution
             check. The scheme check, the backslash-authority check and the
             ``MCP_ALLOWED_URL_DOMAINS`` restriction always apply. Matched against
@@ -156,7 +204,9 @@ def _validate_url(url: str, *, trusted_host: str | None = None) -> str | None:
     # The session's own host may legitimately be a private address, localhost or a
     # bare IP - that is the ordinary on-prem Server/DC deployment. Exact match only:
     # a subdomain of the trusted host is a different host and stays untrusted.
-    trusted = trusted_host is not None and hostname.lower() == trusted_host.lower()
+    trusted = trusted_host is not None and hostname.lower().rstrip(
+        "."
+    ) == trusted_host.lower().rstrip(".")
 
     if not trusted:
         # Check blocked hostnames
