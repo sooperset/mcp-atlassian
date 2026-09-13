@@ -26,6 +26,7 @@ from mcp_atlassian.servers.main import (
     UserTokenMiddleware,
     health_check,
     main_lifespan,
+    main_mcp,
 )
 from tests.utils.factories import (
     ConfluencePageFactory,
@@ -34,6 +35,23 @@ from tests.utils.factories import (
 from tests.utils.mocks import MockEnvironment
 
 logger = logging.getLogger(__name__)
+
+JIRA_CLOUD_ONLY_TOOL_NAMES = {
+    "batch_get_changelogs",
+    "move_issue",
+}
+
+
+def _mock_tool(name, tags):
+    tool = MagicMock(spec=FastMCPTool)
+    tool.name = name
+    tool.tags = tags
+    tool.to_mcp_tool.return_value = MCPTool(
+        name=name,
+        description=f"Tool {name}",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    return tool
 
 
 @pytest.mark.anyio
@@ -100,15 +118,16 @@ class TestMCPProtocolIntegration:
         """A tool filtered out of the listing must not be invocable by name.
 
         `_list_tools_mcp` hides read-only-excluded / non-enabled / disabled-toolset
-        tools, but the call path must re-check — otherwise a client can dispatch a
-        hidden tool directly by name. Verifies denied calls never reach the
-        underlying executor and enabled calls do (GHSA-3r68).
+        / deployment-incompatible tools, but the call path must re-check — otherwise
+        a client can dispatch a hidden tool directly by name. Verifies denied calls
+        never reach the underlying executor and enabled calls do (GHSA-3r68).
         """
         from unittest.mock import AsyncMock
 
         from fastmcp import FastMCP
         from fastmcp.exceptions import NotFoundError
 
+        mock_jira_config.is_cloud = False
         app_context = MainAppContext(
             full_jira_config=mock_jira_config,
             full_confluence_config=mock_confluence_config,
@@ -125,9 +144,12 @@ class TestMCPProtocolIntegration:
         read_tool.tags = {"jira", "read"}
         write_tool = MagicMock(spec=FastMCPTool)
         write_tool.tags = {"jira", "write"}
+        cloud_only_tool = MagicMock(spec=FastMCPTool)
+        cloud_only_tool.tags = {"jira", "read", "cloud_only"}
         tools_by_name = {
             "jira_get_issue": read_tool,
             "jira_create_issue": write_tool,
+            "jira_batch_get_changelogs": cloud_only_tool,
         }
 
         async def mock_get_tool(name, version=None):
@@ -145,6 +167,13 @@ class TestMCPProtocolIntegration:
                 await atlassian_mcp_server._call_tool_mcp("jira_create_issue", {})
             mock_super.assert_not_called()
 
+            # Cloud-only tool is deployment-excluded on Server/DC -> denied.
+            with pytest.raises(NotFoundError) as deployment_exc:
+                await atlassian_mcp_server._call_tool_mcp(
+                    "jira_batch_get_changelogs", {}
+                )
+            mock_super.assert_not_called()
+
             # Genuinely unknown tool -> denied by our override too (never reaches
             # super, whose repr-quoted message would leak tool existence).
             with pytest.raises(NotFoundError) as unknown_exc:
@@ -154,12 +183,63 @@ class TestMCPProtocolIntegration:
             # Message parity: hidden-but-existing and genuinely unknown tools
             # produce the same unquoted format (no exists-but-disabled leak).
             assert str(denied_exc.value) == "Unknown tool: jira_create_issue"
+            assert (
+                str(deployment_exc.value) == "Unknown tool: jira_batch_get_changelogs"
+            )
             assert str(unknown_exc.value) == "Unknown tool: jira_no_such_tool"
 
             # Read tool is enabled -> passes the gate and reaches the executor.
             result = await atlassian_mcp_server._call_tool_mcp("jira_get_issue", {})
             assert result == "EXECUTED"
             mock_super.assert_called_once()
+
+    @pytest.mark.parametrize("is_cloud", [True, False], ids=["cloud", "server_dc"])
+    async def test_tool_filtering_by_jira_deployment(self, is_cloud):
+        """The production server advertises Cloud-only Jira tools only on Cloud."""
+        jira_config = MagicMock(spec=JiraConfig)
+        jira_config.is_cloud = is_cloud
+        app_context = MainAppContext(full_jira_config=jira_config)
+        request_context = MagicMock()
+        request_context.request = None
+        request_context.lifespan_context = {"app_lifespan_context": app_context}
+
+        with patch.object(main_mcp, "_mcp_server") as mcp_server:
+            mcp_server.request_context = request_context
+            listed_tool_names = {tool.name for tool in await main_mcp._list_tools_mcp()}
+
+        expected_cloud_only_tools = {
+            f"jira_{name}" for name in JIRA_CLOUD_ONLY_TOOL_NAMES
+        }
+        assert "jira_get_issue" in listed_tool_names
+        assert listed_tool_names & expected_cloud_only_tools == (
+            expected_cloud_only_tools if is_cloud else set()
+        )
+
+    async def test_tool_filtering_uses_header_based_jira_deployment(
+        self, atlassian_mcp_server
+    ):
+        """Per-request Jira URLs determine Cloud-only tool availability."""
+        app_context = MainAppContext()
+        request_context = MagicMock()
+        request_context.lifespan_context = {"app_lifespan_context": app_context}
+        request_context.request.state.atlassian_service_headers = {
+            "X-Atlassian-Jira-Personal-Token": "test-token",
+            "X-Atlassian-Jira-Url": "https://jira.example.com",
+        }
+        atlassian_mcp_server._mcp_server = MagicMock()
+        atlassian_mcp_server._mcp_server.request_context = request_context
+
+        tool = _mock_tool("jira_batch_get_changelogs", {"jira", "read", "cloud_only"})
+
+        async def mock_list_tools():
+            return [tool]
+
+        atlassian_mcp_server.list_tools = mock_list_tools
+
+        with MockEnvironment.clean_env():
+            tools = await atlassian_mcp_server._list_tools_mcp()
+
+        assert tools == []
 
     async def test_tool_discovery_with_full_configuration(
         self, atlassian_mcp_server, mock_jira_config, mock_confluence_config

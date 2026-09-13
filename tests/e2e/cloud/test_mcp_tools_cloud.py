@@ -182,6 +182,87 @@ class TestMCPJiraTools:
         )
 
     @pytest.mark.anyio
+    async def test_jira_update_orchestration_round_trip(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+    ) -> None:
+        """Update fields, transition, comment, and worklog in one call."""
+        uid = uuid.uuid4().hex[:8]
+        create_result = await call_tool(
+            mcp_client,
+            "jira_create_issue",
+            {
+                "project_key": cloud_instance.project_key,
+                "summary": f"Cloud MCP Orchestration Test {uid}",
+                "description": "Created for update orchestration testing.",
+                "issue_type": "Task",
+            },
+        )
+        assert not create_result.is_error
+        assert create_result.content and isinstance(
+            create_result.content[0], TextContent
+        )
+        issue_key = json.loads(create_result.content[0].text)["issue"]["key"]
+
+        try:
+            transitions_result = await call_tool(
+                mcp_client,
+                "jira_get_transitions",
+                {"issue_key": issue_key},
+            )
+            assert not transitions_result.is_error
+            transitions = json.loads(transitions_result.content[0].text)
+            assert transitions
+            target = transitions[1] if len(transitions) > 1 else transitions[0]
+
+            update_result = await call_tool(
+                mcp_client,
+                "jira_update_issue",
+                {
+                    "issue_key": issue_key,
+                    "fields": json.dumps({"summary": f"Updated {uid}"}),
+                    "transition": target["name"],
+                    "comment": f"Cloud orchestration comment {uid}",
+                    "comment_visibility": '{"type":"role","value":"Administrator"}',
+                    "worklog": "1m",
+                },
+            )
+            assert not update_result.is_error
+            update_data = json.loads(update_result.content[0].text)
+            assert update_data["operations_failed"] == []
+            assert "fields_updated" in update_data["operations_performed"]
+            assert any(
+                operation.startswith("transitioned_to:")
+                for operation in update_data["operations_performed"]
+            )
+            assert "worklog_added" in update_data["operations_performed"]
+
+            round_trip_result = await call_tool(
+                mcp_client,
+                "jira_get_issue",
+                {
+                    "issue_key": issue_key,
+                    "fields": "summary,status",
+                    "include": "comments,worklogs",
+                },
+            )
+            assert not round_trip_result.is_error
+            round_trip = json.loads(round_trip_result.content[0].text)
+            assert round_trip["key"] == issue_key
+            assert any(
+                comment["body"] == f"Cloud orchestration comment {uid}"
+                for comment in round_trip["comments"]
+            )
+            assert round_trip["worklogs"]
+        finally:
+            await call_tool(
+                mcp_client,
+                "jira_delete_issue",
+                {"issue_key": issue_key},
+            )
+
+    @pytest.mark.anyio
     async def test_jira_assign_issue(
         self,
         mcp_client: Client,

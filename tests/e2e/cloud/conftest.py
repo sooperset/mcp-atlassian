@@ -490,3 +490,38 @@ def cloud_image_page(
         pytest.skip(f"Failed to create image test page: {exc}")
     yield page_id
     _delete_page(cloud_instance, page_id)
+
+
+# Confluence v1 REST endpoints are removed (410 Gone) on the OAuth gateway
+# (api.atlassian.com/ex/confluence/{cloudId}) since ~2026-08-17, which breaks
+# every v1-backed operation in OAuth mode until the client migrates to v2.
+# CQL search and /user/current are the only survivors. See issue #1598.
+# If these tests start XPASSing (the v2 migration landed or Atlassian restored
+# the endpoints), this hook has outlived its purpose — delete it.
+_BYO_OAUTH_V1_REMOVED = {
+    "test_get_page",
+    "test_get_spaces",
+    "test_create_and_delete_page",
+    "test_update_page",
+    "test_update_page_section",
+    "test_add_comment",
+}
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    xfail_v1_removed = pytest.mark.xfail(
+        reason=(
+            "Confluence v1 REST removed on the OAuth gateway (410 Gone); "
+            "needs v2 migration — see #1598"
+        ),
+        strict=False,
+    )
+    for item in items:
+        if (
+            "test_confluence_auth_matrix" in item.nodeid
+            and "[byo_oauth]" in item.nodeid
+            and getattr(item, "originalname", item.name) in _BYO_OAUTH_V1_REMOVED
+        ):
+            item.add_marker(xfail_v1_removed)

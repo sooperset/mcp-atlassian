@@ -30,6 +30,7 @@ logger = logging.getLogger("mcp-jira")
 
 # Friendly aliases that users may pass for the epic link custom field
 _EPIC_LINK_ALIASES = frozenset({"epickey", "epic_link", "epiclink", "epic link"})
+_EPIC_NAME_FIELD_SCHEMA = "com.pyxis.greenhopper.jira:gh-epic-label"
 
 
 class IssuesMixin(
@@ -803,14 +804,13 @@ class IssuesMixin(
         return issue_type.lower() in epic_names or "epic" in issue_type.lower()
 
     def _find_epic_issue_type_id(self, project_key: str) -> str | None:
-        """
-        Find the actual Epic issue type name for a project.
+        """Find the Epic issue type ID for a project.
 
         Args:
             project_key: The project key
 
         Returns:
-            The Epic issue type name if found, None otherwise
+            The Epic issue type ID if found, None otherwise
         """
         try:
             issue_types = self.get_project_issue_types(project_key)
@@ -818,12 +818,35 @@ class IssuesMixin(
             for issue_type in issue_types:
                 type_name = issue_type.get("name", "")
                 if type_name.lower() == "epic":
-                    return issue_type.get("id")
-            # Second pass: fallback to any type containing "epic"
+                    type_id = issue_type.get("id")
+                    return str(type_id) if type_id is not None else None
+
+            # Second pass: identify the type structurally from its create fields.
+            # Jira Server/DC localizes issue type names but keeps the GreenHopper
+            # Epic Name field schema stable.
+            for issue_type in issue_types:
+                if issue_type.get("subtask") is True:
+                    continue
+                type_id = issue_type.get("id")
+                if type_id is None:
+                    continue
+                type_id_str = str(type_id)
+                create_fields = self.get_create_fields(project_key, type_id_str)
+                for field in create_fields:
+                    schema = field.get("schema", {})
+                    if (
+                        isinstance(schema, dict)
+                        and schema.get("custom") == _EPIC_NAME_FIELD_SCHEMA
+                    ):
+                        return type_id_str
+
+            # Final pass: retain the existing localized-name heuristic when
+            # create metadata is unavailable (for example, some Cloud projects).
             for issue_type in issue_types:
                 type_name = issue_type.get("name", "")
                 if self._is_epic_issue_type(type_name):
-                    return issue_type.get("id")
+                    type_id = issue_type.get("id")
+                    return str(type_id) if type_id is not None else None
             return None
         except Exception as e:
             logger.warning(f"Could not get issue types for project {project_key}: {e}")
@@ -981,6 +1004,29 @@ class IssuesMixin(
                 f"Could not resolve epic link alias '{matched_alias}'="
                 f"{epic_key_value}. No epic link custom field discovered. "
                 f"Try using the exact custom field ID (e.g., customfield_10014)."
+            )
+
+    def _validate_parent_clear_supported(self, value: Any) -> None:
+        """Reject parent clearing on Jira Server/Data Center.
+
+        Jira Cloud accepts ``{"parent": null}`` for clearing a parent. Jira
+        Server/Data Center rejects the same request shape, so users must
+        update the Epic Link custom field directly instead.
+
+        Args:
+            value: The requested parent value.
+
+        Raises:
+            ValueError: If the value requests a parent clear on Server/DC.
+        """
+        if (value is None or value == "") and not self.config.is_cloud:
+            raise ValueError(
+                "Clearing an issue's parent with parent=None, parent='', or "
+                '{"parent": null} is supported only on Jira Cloud. Jira '
+                "Server/Data Center rejects this parent update format. To "
+                "clear an Epic Link on Server/DC, update its custom field "
+                'directly, for example {"customfield_10014": null}, using '
+                "the field ID returned by jira_search_fields."
             )
 
     def _add_assignee_to_fields(self, fields: dict[str, Any], assignee: str) -> None:
@@ -1142,6 +1188,38 @@ class IssuesMixin(
             return ",".join(return_fields)
         return return_fields
 
+    @staticmethod
+    def _merge_attachment_results(
+        first: dict[str, Any] | None, second: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Merge two attachment upload reports into a single one.
+
+        Path-based and in-memory uploads are independent sources that can be
+        used in the same call, but callers read one ``attachment_results``
+        entry, so their reports are combined.
+
+        Args:
+            first: Report of the first upload batch, or None
+            second: Report of the second upload batch, or None
+
+        Returns:
+            The combined report, or whichever side is not None
+        """
+        if not first:
+            return second
+        if not second:
+            return first
+
+        uploaded = list(first.get("uploaded", [])) + list(second.get("uploaded", []))
+        failed = list(first.get("failed", [])) + list(second.get("failed", []))
+        return {
+            "success": bool(uploaded),
+            "issue_key": first.get("issue_key") or second.get("issue_key"),
+            "total": first.get("total", 0) + second.get("total", 0),
+            "uploaded": uploaded,
+            "failed": failed,
+        }
+
     def update_issue(
         self,
         issue_key: str,
@@ -1161,6 +1239,8 @@ class IssuesMixin(
                 reduces the size of the returned issue.
             **kwargs: Additional fields to update. Special fields include:
                 - attachments: List of file paths to upload as attachments
+                - attachments_base64: List of dicts with 'filename' and
+                  'content' (bytes) keys, uploaded without reading from disk
                 - status: New status for the issue (handled via transitions)
                 - assignee: New assignee for the issue
                 - parent: Parent issue key (str or {"key": "..."} dict)
@@ -1196,6 +1276,16 @@ class IssuesMixin(
             kwargs_mutable = dict(kwargs)
             self._prepare_epic_link_fields(update_fields, kwargs_mutable)
 
+            # Jira Server/Data Center rejects the Cloud parent-clearing
+            # payload. Validate before any update or follow-up REST request.
+            if "parent" in kwargs_mutable:
+                self._validate_parent_clear_supported(kwargs_mutable["parent"])
+            elif "parent" in update_fields:
+                parent_value = update_fields["parent"]
+                self._validate_parent_clear_supported(parent_value)
+                if parent_value == "":
+                    update_fields["parent"] = None
+
             # Process kwargs
             for key, value in kwargs_mutable.items():
                 if key == "status":
@@ -1206,10 +1296,12 @@ class IssuesMixin(
                         issue_key, update_fields, return_fields=return_fields
                     )
 
-                elif key == "attachments":
-                    # Handle attachments separately - they're not part of fields update
+                elif key in ("attachments", "attachments_base64"):
+                    # Handled separately - they're not part of fields update.
+                    # Note both are skipped entirely when a "status" kwarg
+                    # returns above via _update_issue_with_status.
                     if not value or not isinstance(value, list | tuple):
-                        logger.warning(f"Invalid attachments value: {value}")
+                        logger.warning(f"Invalid {key} value: {value}")
 
                 elif key == "assignee":
                     # Handle assignee updates, allow unassignment with None or empty string
@@ -1238,7 +1330,10 @@ class IssuesMixin(
                                 f"Could not update assignee: {str(e)}"
                             ) from e
                 elif key == "parent":
-                    if isinstance(value, dict) and value.get("key"):
+                    # Jira Cloud accepts an explicit null to clear the parent.
+                    if value is None or value == "":
+                        update_fields["parent"] = None
+                    elif isinstance(value, dict) and value.get("key"):
                         update_fields["parent"] = {"key": str(value["key"])}
                     elif isinstance(value, str) and value:
                         update_fields["parent"] = {"key": value}
@@ -1290,6 +1385,27 @@ class IssuesMixin(
                 except Exception as e:
                     logger.error(
                         f"Error uploading attachments to {issue_key}: {str(e)}"
+                    )
+                    # Continue with the update even if attachments fail
+
+            # Handle in-memory attachments if provided. Both sources are
+            # additive, so their results are merged into a single report.
+            if "attachments_base64" in kwargs and kwargs["attachments_base64"]:
+                try:
+                    content_result = self.upload_attachments_from_content(
+                        issue_key, kwargs["attachments_base64"]
+                    )
+                    logger.info(
+                        f"Uploaded in-memory attachments to {issue_key}: "
+                        f"{content_result}"
+                    )
+                    attachments_result = self._merge_attachment_results(
+                        attachments_result, content_result
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error uploading in-memory attachments to "
+                        f"{issue_key}: {str(e)}"
                     )
                     # Continue with the update even if attachments fail
 
@@ -1385,7 +1501,7 @@ class IssuesMixin(
                         )
                 self.jira.assign_issue(issue_key, str(assignee_identifier))
             else:
-                account_id = self._get_account_id(assignee)
+                account_id = self._get_account_id(assignee, issue_key=issue_key)
                 self.jira.assign_issue(issue_key, account_id)
 
             # Return the updated issue

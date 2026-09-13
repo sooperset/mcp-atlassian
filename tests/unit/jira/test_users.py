@@ -8,6 +8,7 @@ import requests
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira.config import JiraConfig
 from mcp_atlassian.jira.users import UsersMixin, normalize_text
+from mcp_atlassian.models.jira.common import JiraUser
 
 
 class TestUsersMixin:
@@ -302,7 +303,7 @@ class TestUsersMixin:
         assert account_id == "direct-account-id"
         # Verify API call with query parameter for Cloud
         users_mixin.jira.user_find_by_user_string.assert_called_once_with(
-            query="Test User", start=0, limit=1
+            query="Test User", start=0, limit=20
         )
 
     def test_lookup_user_directly_server_dc(self, users_mixin):
@@ -328,8 +329,29 @@ class TestUsersMixin:
         assert account_id == "server-user-name"
         # Verify API call with username parameter for Server/DC
         users_mixin.jira.user_find_by_user_string.assert_called_once_with(
-            username="Test User", start=0, limit=1
+            username="Test User", start=0, limit=20
         )
+
+    def test_lookup_user_directly_server_dc_checks_all_exact_matches(self, users_mixin):
+        """Test Server/DC lookup does not stop at a non-exact first result."""
+        users_mixin.jira.user_find_by_user_string.return_value = [
+            {
+                "key": "server-user-key-1",
+                "name": "test-user-1",
+                "displayName": "Test User One",
+            },
+            {
+                "key": "server-user-key-2",
+                "name": "test-user-2",
+                "displayName": "Test User",
+            },
+        ]
+        users_mixin.config = MagicMock()
+        users_mixin.config.is_cloud = False
+
+        result = users_mixin._lookup_user_directly("Test User")
+
+        assert result == "test-user-2"
 
     def test_lookup_user_directly_server_dc_key_fallback(self, users_mixin):
         """Test _lookup_user_directly for Server/DC falls back to key when name is not available."""
@@ -353,7 +375,7 @@ class TestUsersMixin:
         assert account_id == "server-user-key"
         # Verify API call with username parameter for Server/DC
         users_mixin.jira.user_find_by_user_string.assert_called_once_with(
-            username="Test User", start=0, limit=1
+            username="Test User", start=0, limit=20
         )
 
     def test_lookup_user_directly_not_found(self, users_mixin):
@@ -393,7 +415,7 @@ class TestUsersMixin:
         assert account_id == "data-center-key"
         # Verify API call
         users_mixin.jira.user_find_by_user_string.assert_called_once_with(
-            username="Test User", start=0, limit=1
+            username="Test User", start=0, limit=20
         )
 
     def test_lookup_user_directly_jira_data_center_name(self, users_mixin):
@@ -418,7 +440,7 @@ class TestUsersMixin:
         assert account_id == "data-center-name"
         # Verify API call
         users_mixin.jira.user_find_by_user_string.assert_called_once_with(
-            username="Test User", start=0, limit=1
+            username="Test User", start=0, limit=20
         )
 
     def test_lookup_user_directly_error(self, users_mixin):
@@ -444,7 +466,7 @@ class TestUsersMixin:
         result = users_mixin._resolve_server_dc_user_params("jnovak@firma.cz")
         assert result == {"username": "jnovak"}
         users_mixin.jira.user_find_by_user_string.assert_called_once_with(
-            username="jnovak@firma.cz", start=0, limit=1
+            username="jnovak@firma.cz", start=0, limit=20
         )
 
     def test_resolve_server_dc_user_params_returns_key(self, users_mixin):
@@ -1193,3 +1215,168 @@ class TestUserProfileMeIdentifier:
             for variant in ["Me", "ME", "mE"]:
                 result = jira_fetcher.get_user_profile_by_identifier(variant)
                 assert result is not None
+
+
+class TestGetAccountIdServerDC:
+    """Regression tests for _get_account_id on Jira Server/DC.
+
+    Covers the bug reported in issue #1535 where jira_assign_issue fails with
+    "Could not find account ID for user" while jira_get_user_profile succeeds
+    for the same identifier on Server/DC.
+    """
+
+    @pytest.fixture
+    def dc_mixin(self, jira_client):
+        """UsersMixin configured as a Server/DC instance."""
+        mixin = UsersMixin(config=jira_client.config)
+        mixin.jira = jira_client.jira
+        mixin.config = MagicMock()
+        mixin.config.is_cloud = False
+        mixin.config.url = "https://jira.example.com"
+        return mixin
+
+    def test_server_dc_key_resolves_to_login_name(self, dc_mixin):
+        """JIRAUSER key is resolved to login name via direct user fetch."""
+        dc_mixin.jira.user = MagicMock(
+            return_value={"name": "gaurav.nandan", "key": "JIRAUSER56506"}
+        )
+
+        result = dc_mixin._get_account_id("JIRAUSER56506")
+
+        assert result == "gaurav.nandan"
+        dc_mixin.jira.user.assert_called_once_with(key="JIRAUSER56506")
+
+    def test_server_dc_key_lowercase_resolves(self, dc_mixin):
+        """Key resolution is case-insensitive for the JIRAUSER prefix."""
+        dc_mixin.jira.user = MagicMock(
+            return_value={"name": "someuser", "key": "jirauser99999"}
+        )
+
+        result = dc_mixin._get_account_id("jirauser99999")
+
+        assert result == "someuser"
+
+    def test_server_dc_key_no_name_returns_key(self, dc_mixin):
+        """When user fetch returns no login name, the key itself is returned."""
+        dc_mixin.jira.user = MagicMock(return_value={"key": "JIRAUSER56506"})
+
+        result = dc_mixin._get_account_id("JIRAUSER56506")
+
+        assert result == "JIRAUSER56506"
+
+    def test_server_dc_key_fetch_fails_falls_through_to_search(self, dc_mixin):
+        """If key fetch raises, resolution falls through to search."""
+        dc_mixin.jira.user = MagicMock(side_effect=Exception("403 Forbidden"))
+        dc_mixin.jira.user_find_by_user_string = MagicMock(
+            return_value=[
+                {
+                    "key": "JIRAUSER56506",
+                    "name": "gaurav.nandan",
+                    "displayName": "JIRAUSER56506",
+                }
+            ]
+        )
+        dc_mixin.jira._session = MagicMock()
+        dc_mixin.jira._session.get.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"users": []})
+        )
+
+        result = dc_mixin._get_account_id("JIRAUSER56506")
+
+        # key matches via _lookup_user_directly key-field matching
+        assert result == "gaurav.nandan"
+
+    def test_server_dc_email_uses_resolve_server_dc_path(self, dc_mixin):
+        """Email on Server/DC goes through _resolve_server_dc_user_params."""
+        dc_mixin._resolve_server_dc_user_params = MagicMock(
+            return_value={"username": "gaurav.nandan"}
+        )
+
+        result = dc_mixin._get_account_id("gaurav.nandan@randstad.com")
+
+        assert result == "gaurav.nandan"
+        dc_mixin._resolve_server_dc_user_params.assert_called_once_with(
+            "gaurav.nandan@randstad.com"
+        )
+
+    def test_server_dc_email_resolves_to_key_when_no_name(self, dc_mixin):
+        """Email resolution returns key when _resolve_server_dc_user_params has no username."""
+        dc_mixin._resolve_server_dc_user_params = MagicMock(
+            return_value={"key": "JIRAUSER56506"}
+        )
+
+        result = dc_mixin._get_account_id("gaurav.nandan@randstad.com")
+
+        assert result == "JIRAUSER56506"
+
+    def test_server_dc_email_fallback_when_search_empty(self, dc_mixin):
+        """When email search returns nothing, try email as login name directly."""
+        dc_mixin._resolve_server_dc_user_params = MagicMock(return_value=None)
+        dc_mixin.jira.user = MagicMock(
+            return_value={"name": "gaurav.nandan@randstad.com"}
+        )
+
+        result = dc_mixin._get_account_id("gaurav.nandan@randstad.com")
+
+        assert result == "gaurav.nandan@randstad.com"
+        dc_mixin.jira.user.assert_called_once_with(
+            username="gaurav.nandan@randstad.com"
+        )
+
+    def test_server_dc_uses_issue_scoped_assignable_search_as_last_resort(
+        self, dc_mixin
+    ):
+        """Assignment can resolve users without global Browse Users permission."""
+        dc_mixin._lookup_user_directly = MagicMock(return_value=None)
+        dc_mixin._lookup_user_by_permissions = MagicMock(return_value=None)
+        dc_mixin.search_assignable_users = MagicMock(
+            return_value=[
+                JiraUser(
+                    username="gaurav.nandan",
+                    user_key="JIRAUSER56506",
+                    display_name="Gaurav Nandan",
+                )
+            ]
+        )
+
+        result = dc_mixin._get_account_id("Gaurav Nandan", issue_key="JIRA-1234")
+
+        assert result == "gaurav.nandan"
+        dc_mixin.search_assignable_users.assert_called_once_with(
+            query="Gaurav Nandan", issue_key="JIRA-1234", limit=20
+        )
+
+    def test_server_dc_profile_and_assign_agree_on_email(self, dc_mixin):
+        """Regression: profile lookup and assign resolve the same email identically."""
+        dc_mixin._resolve_server_dc_user_params = MagicMock(
+            return_value={"username": "gaurav.nandan"}
+        )
+        # Both _determine_user_api_params and _get_account_id should reach
+        # _resolve_server_dc_user_params and get the same login name.
+        assign_result = dc_mixin._get_account_id("gaurav.nandan@randstad.com")
+        profile_params = dc_mixin._determine_user_api_params(
+            "gaurav.nandan@randstad.com"
+        )
+
+        assert assign_result == "gaurav.nandan"
+        assert profile_params == {"username": "gaurav.nandan"}
+
+    def test_lookup_user_directly_matches_key_field(self, dc_mixin):
+        """_lookup_user_directly matches user whose key equals the search term."""
+        dc_mixin.jira.user_find_by_user_string = MagicMock(
+            return_value=[
+                {
+                    "key": "JIRAUSER56506",
+                    "name": "gaurav.nandan",
+                    "displayName": "Gaurav Nandan",
+                }
+            ]
+        )
+
+        result = dc_mixin._lookup_user_directly("JIRAUSER56506")
+
+        # Server/DC: returns name when available
+        assert result == "gaurav.nandan"
+        dc_mixin.jira.user_find_by_user_string.assert_called_once_with(
+            username="JIRAUSER56506", start=0, limit=20
+        )

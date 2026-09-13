@@ -32,6 +32,9 @@ class ConfluenceComment(ApiModel, TimestampMixin):
     type: str = "comment"  # "comment", "page", etc.
     parent_comment_id: str | None = None
     location: str | None = None  # "inline", "footer", or None
+    marker_ref: str | None = None
+    original_selection: str | None = None
+    resolution_status: str | None = None
 
     @classmethod
     def from_api_response(
@@ -60,6 +63,8 @@ class ConfluenceComment(ApiModel, TimestampMixin):
         # For title, try to extract from different locations
         title = data.get("title")
         container = data.get("container")
+        if not isinstance(container, dict):
+            container = {}
         if not title and container:
             title = container.get("title")
 
@@ -69,20 +74,89 @@ class ConfluenceComment(ApiModel, TimestampMixin):
             parent_comment_id = str(v2_parent)
         elif container and container.get("type") == "comment":
             parent_comment_id = str(container.get("id", ""))
+        elif isinstance(data.get("ancestors"), list):
+            for ancestor in reversed(data["ancestors"]):
+                if (
+                    isinstance(ancestor, dict)
+                    and ancestor.get("type") == "comment"
+                    and ancestor.get("id") is not None
+                ):
+                    parent_comment_id = str(ancestor["id"])
+                    break
 
-        # Extract location from extensions (v1 API)
-        location = data.get("extensions", {}).get("location")
+        extensions = data.get("extensions")
+        if not isinstance(extensions, dict):
+            extensions = {}
+
+        # Extract inline anchor metadata from Server/DC v1 and Cloud v2 shapes.
+        inline_properties = extensions.get("inlineProperties")
+        if not isinstance(inline_properties, dict):
+            inline_properties = {}
+        v2_inline_properties = data.get("inlineCommentProperties")
+        if not isinstance(v2_inline_properties, dict):
+            v2_inline_properties = {}
+        properties = data.get("properties")
+        if not isinstance(properties, dict):
+            properties = {}
+
+        marker_ref_value = (
+            inline_properties.get("markerRef")
+            or properties.get("inlineMarkerRef")
+            or properties.get("inline-marker-ref")
+        )
+        original_selection_value = (
+            inline_properties.get("originalSelection")
+            or properties.get("inlineOriginalSelection")
+            or properties.get("inline-original-selection")
+            or v2_inline_properties.get("textSelection")
+        )
+
+        resolution_status_value = data.get("resolutionStatus")
+        resolution = extensions.get("resolution")
+        if resolution_status_value is None and isinstance(resolution, dict):
+            resolution_status_value = resolution.get("status")
+        elif resolution_status_value is None and isinstance(resolution, str):
+            resolution_status_value = resolution
+        if resolution_status_value is None and isinstance(
+            v2_inline_properties.get("resolved"), bool
+        ):
+            resolution_status_value = (
+                "resolved" if v2_inline_properties["resolved"] else "open"
+            )
+
+        version = data.get("version")
+        if not isinstance(version, dict):
+            version = {}
+        created = (
+            data.get("created")
+            or version.get("createdAt")
+            or version.get("when")
+            or EMPTY_STRING
+        )
+        updated = (
+            data.get("updated")
+            or version.get("createdAt")
+            or version.get("when")
+            or EMPTY_STRING
+        )
 
         return cls(
             id=str(data.get("id", CONFLUENCE_DEFAULT_ID)),
             title=title,
             body=data.get("body", {}).get("view", {}).get("value", EMPTY_STRING),
-            created=data.get("created", EMPTY_STRING),
-            updated=data.get("updated", EMPTY_STRING),
+            created=str(created),
+            updated=str(updated),
             author=author,
             type=data.get("type", "comment"),
             parent_comment_id=parent_comment_id,
-            location=location,
+            location=extensions.get("location"),
+            marker_ref=(str(marker_ref_value) if marker_ref_value else None),
+            original_selection=(
+                str(original_selection_value) if original_selection_value else None
+            ),
+            resolution_status=(
+                str(resolution_status_value) if resolution_status_value else None
+            ),
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
@@ -105,5 +179,14 @@ class ConfluenceComment(ApiModel, TimestampMixin):
 
         if self.location:
             result["location"] = self.location
+
+        if self.marker_ref:
+            result["marker_ref"] = self.marker_ref
+
+        if self.original_selection:
+            result["original_selection"] = self.original_selection
+
+        if self.resolution_status:
+            result["resolution_status"] = self.resolution_status
 
         return result

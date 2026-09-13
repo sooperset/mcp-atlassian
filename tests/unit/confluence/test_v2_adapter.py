@@ -1,6 +1,6 @@
 """Unit tests for ConfluenceV2Adapter class."""
 
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, call
 
 import pytest
 import requests
@@ -368,6 +368,148 @@ class TestConfluenceV2AdapterComments:
             session=mock_session, base_url="https://example.atlassian.net/wiki"
         )
 
+    def test_get_inline_comments_includes_nested_replies(
+        self, v2_adapter, mock_session
+    ):
+        """Cloud inline reads traverse descendants without duplicating cycles."""
+
+        def comment(comment_id: str) -> dict:
+            return {
+                "id": comment_id,
+                "status": "current",
+                "body": {
+                    "storage": {
+                        "value": f"<p>{comment_id}</p>",
+                        "representation": "storage",
+                    }
+                },
+                "version": {"number": 1},
+                "_links": {},
+            }
+
+        root_response = Mock()
+        root_response.json.return_value = {"results": [comment("root")]}
+        child_response = Mock()
+        child_response.json.return_value = {"results": [comment("child")]}
+        grandchild_response = Mock()
+        grandchild_response.json.return_value = {"results": [comment("grandchild")]}
+        cycle_response = Mock()
+        cycle_response.json.return_value = {"results": [comment("root")]}
+        mock_session.get.side_effect = [
+            root_response,
+            child_response,
+            grandchild_response,
+            cycle_response,
+        ]
+
+        result = v2_adapter.get_inline_comments("page-1")
+
+        assert [item["id"] for item in result] == ["root", "child", "grandchild"]
+        assert result[1]["parentCommentId"] == "root"
+        assert result[2]["parentCommentId"] == "child"
+        assert mock_session.get.call_args_list == [
+            call(
+                "https://example.atlassian.net/wiki/api/v2/pages/page-1/inline-comments",
+                params={"body-format": "storage"},
+            ),
+            call(
+                "https://example.atlassian.net/wiki/api/v2/inline-comments/root/children",
+                params={"body-format": "storage"},
+            ),
+            call(
+                "https://example.atlassian.net/wiki/api/v2/inline-comments/child/children",
+                params={"body-format": "storage"},
+            ),
+            call(
+                "https://example.atlassian.net/wiki/api/v2/inline-comments/"
+                "grandchild/children",
+                params={"body-format": "storage"},
+            ),
+        ]
+
+    def test_get_inline_comments_paginates_roots_and_replies(
+        self, v2_adapter, mock_session
+    ):
+        """Cloud root and child collections follow both next-link shapes."""
+
+        def response(results: list[dict], next_url: str | None = None) -> Mock:
+            item = Mock()
+            item.links = {}
+            item.json.return_value = {
+                "results": results,
+                "_links": {"next": next_url} if next_url else {},
+            }
+            return item
+
+        def get(url: str, params: dict) -> Mock:
+            cursor = params.get("cursor")
+            if url.endswith("/pages/page-1/inline-comments"):
+                if cursor == "root-next":
+                    return response([{"id": "root-2"}])
+                return response(
+                    [{"id": "root-1"}],
+                    "/wiki/api/v2/pages/page-1/inline-comments?cursor=root-next",
+                )
+            if url.endswith("/inline-comments/root-1/children"):
+                if cursor == "child-next":
+                    return response([{"id": "child-2"}])
+                item = response([{"id": "child-1"}])
+                item.links = {
+                    "next": {
+                        "url": (
+                            "https://example.atlassian.net/wiki/api/v2/"
+                            "inline-comments/root-1/children?cursor=child-next"
+                        )
+                    }
+                }
+                return item
+            return response([])
+
+        mock_session.get.side_effect = get
+
+        result = v2_adapter.get_inline_comments("page-1", status="resolved")
+
+        assert [item["id"] for item in result] == [
+            "root-1",
+            "root-2",
+            "child-1",
+            "child-2",
+        ]
+        assert result[2]["parentCommentId"] == "root-1"
+        assert result[3]["parentCommentId"] == "root-1"
+        assert (
+            call(
+                "https://example.atlassian.net/wiki/api/v2/pages/page-1/inline-comments",
+                params={
+                    "body-format": "storage",
+                    "status": "resolved",
+                    "cursor": "root-next",
+                },
+            )
+            in mock_session.get.call_args_list
+        )
+        assert (
+            call(
+                "https://example.atlassian.net/wiki/api/v2/inline-comments/"
+                "root-1/children",
+                params={"body-format": "storage", "cursor": "child-next"},
+            )
+            in mock_session.get.call_args_list
+        )
+
+    def test_get_inline_comments_fails_when_child_read_fails(
+        self, v2_adapter, mock_session
+    ):
+        """A failed child request does not return a misleading partial tree."""
+        root_response = Mock()
+        root_response.json.return_value = {"results": [{"id": "root"}]}
+        error_response = Mock(status_code=500, text="server error")
+        error_response.raise_for_status.side_effect = HTTPError(response=error_response)
+        mock_session.get.side_effect = [root_response, error_response]
+
+        with pytest.raises(ValueError, match="Failed to get inline comments"):
+            v2_adapter.get_inline_comments("page-1")
+
     def test_create_footer_comment_both_params_raises(self, v2_adapter):
         """T11a: Passing both page_id and parent_comment_id raises ValueError."""
         with pytest.raises(ValueError, match="mutually exclusive"):
@@ -376,6 +518,57 @@ class TestConfluenceV2AdapterComments:
                 parent_comment_id="67890",
                 body="<p>Test</p>",
             )
+
+    def test_get_inline_comments_preserves_review_metadata(
+        self, v2_adapter, mock_session
+    ):
+        """Cloud v2 anchor, resolution, and thread fields survive conversion."""
+        root_response = Mock()
+        root_response.json.return_value = {
+            "results": [
+                {
+                    "id": "comment-1",
+                    "status": "current",
+                    "properties": {
+                        "inlineMarkerRef": "marker-ref-123",
+                        "inlineOriginalSelection": "selected text",
+                    },
+                    "resolutionStatus": "open",
+                    "body": {
+                        "storage": {
+                            "value": "<p>Review comment</p>",
+                            "representation": "storage",
+                        }
+                    },
+                    "version": {"createdAt": "2024-01-03T10:00:00.000Z"},
+                }
+            ]
+        }
+        child_response = Mock()
+        child_response.json.return_value = {
+            "results": [
+                {
+                    "id": "comment-2",
+                    "status": "current",
+                    "parentCommentId": "comment-1",
+                    "body": {"storage": {"value": "<p>Reply</p>"}},
+                }
+            ]
+        }
+        empty_response = Mock()
+        empty_response.json.return_value = {"results": []}
+        mock_session.get.side_effect = [
+            root_response,
+            child_response,
+            empty_response,
+        ]
+
+        result = v2_adapter.get_inline_comments("12345")
+
+        assert [comment["id"] for comment in result] == ["comment-1", "comment-2"]
+        assert result[0]["properties"]["inlineMarkerRef"] == "marker-ref-123"
+        assert result[0]["resolutionStatus"] == "open"
+        assert result[1]["parentCommentId"] == "comment-1"
 
     def test_create_footer_comment_neither_param_raises(self, v2_adapter):
         """T11b: Passing neither page_id nor parent_comment_id raises ValueError."""

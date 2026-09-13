@@ -177,6 +177,26 @@ openssl rsa -in encrypted.key -out decrypted.key
 | `ENABLED_TOOLS` | Enable only specific tools | `confluence_search,jira_get_issue` |
 | `TOOLSETS` | Enable tool groups (see [Toolset Filtering](#toolset-filtering)) | `default`, `legacy`, `all`, `default,jira_agile` |
 
+### Jira Key Validation
+
+Jira tools validate their `issue_key` / `project_key` arguments before calling the
+API. The defaults match the Cloud key format, which cannot be changed. On Server/Data
+Center the format is an instance setting (`jira.projectkey.pattern`), so widen these
+patterns if your instance allows keys the defaults reject — a leading digit, a single
+character, or lowercase. An invalid regex is ignored (a warning is logged) and the
+default is kept. Both are read once at startup.
+
+| Variable | Description |
+|----------|-------------|
+| `JIRA_ISSUE_KEY_PATTERN` | Regex accepted for `issue_key` arguments (default: `^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*$`) |
+| `JIRA_PROJECT_KEY_PATTERN` | Regex accepted for `project_key` arguments (default: `^[A-Z][A-Z0-9_]+$`) |
+
+```bash
+# Data Center instance whose project keys may start with a digit (e.g. 4ME-123)
+JIRA_ISSUE_KEY_PATTERN=^[A-Z0-9][A-Z0-9_]*-\d+(?:-\d+)*$
+JIRA_PROJECT_KEY_PATTERN=^[A-Z0-9][A-Z0-9_]*$
+```
+
 ### Server Options
 
 | Variable | Description |
@@ -209,6 +229,7 @@ instances from runaway request loops. They are disabled by default.
 | `ATLASSIAN_RETRY_TOTAL` | Enable retries for transient `429/502/503/504` responses and connection errors. `0` or unset disables retries. |
 | `ATLASSIAN_RETRY_BACKOFF` | Retry exponential backoff factor in seconds (default: `1.0` when retries are enabled). |
 | `ATLASSIAN_RETRY_INCLUDE_WRITES` | Also retry write methods (`POST`/`PUT`/`PATCH`/`DELETE`). Use only when writes are known to be idempotent. |
+| `ATLASSIAN_RETRY_IGNORE_RETRY_AFTER` | Ignore the server's `Retry-After` header and use exponential backoff instead. Enable this for gateways that emit bogus values such as `Retry-After: 0`. |
 | `ATLASSIAN_MAX_CONCURRENT_REQUESTS` | Process-wide cap for concurrent Jira and Confluence requests. `0` or unset disables the cap. |
 | `ATLASSIAN_REQUESTS_PER_SECOND` | Process-wide outbound request rate limit. `0` or unset disables the limit. |
 | `ATLASSIAN_MAX_PAGINATION_LIMIT` | Clamp user-supplied page sizes for high-fanout list/search calls. `0` or unset disables clamping. |

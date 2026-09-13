@@ -145,27 +145,22 @@ class TestAssignByEmail:
         issue_key = data["issue"]["key"]
 
         try:
-            # Assign by email
-            update_result = await call_tool(
+            # Assign by email through the dedicated assignment endpoint.
+            assign_result = await call_tool(
                 mcp_client,
-                "jira_update_issue",
+                "jira_assign_issue",
                 {
                     "issue_key": issue_key,
-                    "fields": json.dumps({"assignee": dc_instance.admin_email}),
+                    "assignee": dc_instance.admin_email,
                 },
             )
-            assert not update_result.is_error
+            assert not assign_result.is_error
 
-            # Verify assignment
-            get_result = await call_tool(
-                mcp_client,
-                "jira_get_issue",
-                {"issue_key": issue_key},
-            )
-            assert not get_result.is_error
-            issue_data = json.loads(get_result.content[0].text)
-            assignee = issue_data.get("assignee", "")
-            assert assignee, "Issue should have an assignee after update"
+            # Verify assignment in the dedicated tool response.
+            issue_data = json.loads(assign_result.content[0].text)["issue"]
+            assignee = issue_data.get("assignee")
+            assert isinstance(assignee, dict)
+            assert assignee.get("name") or assignee.get("display_name")
         finally:
             await call_tool(
                 mcp_client,

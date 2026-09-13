@@ -741,6 +741,53 @@ class TestIssuesMixin:
         assert document.key == "TEST-123"
         assert document.summary == "Updated Summary"
 
+    def test_update_issue_merges_path_and_inline_attachment_results(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Path and in-memory attachment uploads share one result report."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+        path_result = {
+            "success": True,
+            "issue_key": "TEST-123",
+            "total": 1,
+            "uploaded": [{"filename": "path.txt", "size": 4, "id": "1"}],
+            "failed": [],
+        }
+        inline_result = {
+            "success": False,
+            "issue_key": "TEST-123",
+            "total": 1,
+            "uploaded": [],
+            "failed": [{"filename": "inline.txt", "error": "upload failed"}],
+        }
+        inline_attachments = [{"filename": "inline.txt", "content": b"data"}]
+
+        with (
+            patch.object(
+                issues_mixin, "upload_attachments", return_value=path_result
+            ) as upload_paths,
+            patch.object(
+                issues_mixin,
+                "upload_attachments_from_content",
+                return_value=inline_result,
+            ) as upload_content,
+        ):
+            document = issues_mixin.update_issue(
+                issue_key="TEST-123",
+                attachments=["path.txt"],
+                attachments_base64=inline_attachments,
+            )
+
+        upload_paths.assert_called_once_with("TEST-123", ["path.txt"])
+        upload_content.assert_called_once_with("TEST-123", inline_attachments)
+        assert document.custom_fields["attachment_results"] == {
+            "success": True,
+            "issue_key": "TEST-123",
+            "total": 2,
+            "uploaded": [{"filename": "path.txt", "size": 4, "id": "1"}],
+            "failed": [{"filename": "inline.txt", "error": "upload failed"}],
+        }
+
     def test_update_issue_preserves_existing_cloud_media_nodes(
         self, issues_mixin: IssuesMixin, make_issue_data
     ):
@@ -1095,7 +1142,9 @@ class TestIssuesMixin:
             issue_key="TEST-123", assignee="user@example.com"
         )
 
-        issues_mixin._get_account_id.assert_called_once_with("user@example.com")
+        issues_mixin._get_account_id.assert_called_once_with(
+            "user@example.com", issue_key="TEST-123"
+        )
         issues_mixin.jira.assign_issue.assert_called_once_with(
             "TEST-123", "account-123"
         )
@@ -1297,6 +1346,149 @@ class TestIssuesMixin:
         fields = call_kwargs[1]["update"]["fields"]
         assert "priority" in fields
         assert fields["priority"] is None
+
+    def test_update_issue_set_parent_with_string_key(self, issues_mixin: IssuesMixin):
+        """Test setting a parent via a plain issue key string."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(issue_key="TEST-123", parent="EPIC-1")
+
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"parent": {"key": "EPIC-1"}}}
+        )
+
+    def test_update_issue_set_parent_with_dict(self, issues_mixin: IssuesMixin):
+        """Test setting a parent via an already-shaped {"key": ...} dict."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(issue_key="TEST-123", parent={"key": "EPIC-2"})
+
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"parent": {"key": "EPIC-2"}}}
+        )
+
+    @pytest.mark.parametrize("parent_value", [None, ""])
+    @pytest.mark.parametrize("input_style", ["keyword", "fields"])
+    def test_update_issue_clear_parent_on_cloud(
+        self,
+        issues_mixin: IssuesMixin,
+        parent_value: None | str,
+        input_style: str,
+    ):
+        """Cloud sends an explicit null when clearing an issue parent."""
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        if input_style == "keyword":
+            document = issues_mixin.update_issue(
+                issue_key="TEST-123", parent=parent_value
+            )
+        else:
+            document = issues_mixin.update_issue(
+                issue_key="TEST-123", fields={"parent": parent_value}
+            )
+
+        issues_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-123", update={"fields": {"parent": None}}
+        )
+        assert document.key == "TEST-123"
+
+    @pytest.mark.parametrize("parent_value", [None, ""])
+    def test_update_issue_clear_parent_on_server_dc(
+        self, issues_mixin: IssuesMixin, parent_value: None | str
+    ):
+        """Server/DC rejects parent clearing before making an update request."""
+        issues_mixin.config.url = "https://jira.example.com"
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        with pytest.raises(ValueError, match="supported only on Jira Cloud"):
+            issues_mixin.update_issue(issue_key="TEST-123", parent=parent_value)
+
+        issues_mixin.jira.update_issue.assert_not_called()
+        issues_mixin.jira.get_issue.assert_not_called()
+
+    @pytest.mark.parametrize("parent_value", [None, ""])
+    def test_update_issue_clear_parent_in_fields_on_server_dc(
+        self, issues_mixin: IssuesMixin, parent_value: None | str
+    ):
+        """Server/DC rejects a JSON ``{"parent": null}`` field update early."""
+        issues_mixin.config.url = "https://jira.example.com"
+
+        with pytest.raises(ValueError, match="customfield_10014"):
+            issues_mixin.update_issue(
+                issue_key="TEST-123", fields={"parent": parent_value}
+            )
+
+        issues_mixin.jira.update_issue.assert_not_called()
+        issues_mixin.jira.get_issue.assert_not_called()
+
+    def test_update_issue_invalid_parent_value_is_skipped(
+        self, issues_mixin: IssuesMixin, caplog
+    ):
+        """A genuinely invalid parent value (not a dict-with-key, string, or
+        None/"") is still warned about and skipped rather than sent to Jira.
+        """
+        issue_data = {
+            "id": "12345",
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": "This is a test",
+                "status": {"name": "Open"},
+                "issuetype": {"name": "Task"},
+            },
+        }
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.update_issue(issue_key="TEST-123", parent=123)
+
+        # No fields to update, so the PUT is skipped entirely.
+        issues_mixin.jira.update_issue.assert_not_called()
+        assert "Invalid parent value for issue TEST-123" in caplog.text
 
     def test_delete_issue(self, issues_mixin: IssuesMixin):
         """Test deleting an issue."""

@@ -473,9 +473,141 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 )
 
         return {
-            "success": True,
+            "success": bool(uploaded),
             "issue_key": issue_key,
             "total": len(file_paths),
+            "uploaded": uploaded,
+            "failed": failed,
+        }
+
+    def upload_attachment_from_content(
+        self, issue_key: str, filename: str, content: bytes
+    ) -> dict[str, Any]:
+        """
+        Upload a single attachment to a Jira issue from in-memory bytes.
+
+        This is the filesystem-free counterpart to ``upload_attachment``. It is
+        intended for deployments where the server cannot read host file paths
+        (for example, a remote or containerized MCP server): the caller provides
+        the raw file content directly instead of a path.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            filename: Name of the attachment (determines title and file type)
+            content: Raw file bytes to upload
+
+        Returns:
+            A dictionary with upload result information
+        """
+        if not issue_key:
+            logger.error("No issue key provided for attachment upload")
+            return {"success": False, "error": "No issue key provided"}
+
+        if not filename:
+            logger.error("No filename provided for attachment upload")
+            return {"success": False, "error": "No filename provided"}
+
+        if not content:
+            logger.error("No file content provided for attachment upload")
+            return {"success": False, "error": "No file content provided"}
+
+        try:
+            logger.info(
+                f"Uploading attachment {filename} ({len(content)} bytes) "
+                f"to issue {issue_key}"
+            )
+
+            base_url = self.jira.resource_url("issue")
+            attachment = self.jira.post(
+                f"{base_url}/{issue_key}/attachments",
+                headers=self.jira.no_check_headers,
+                files={"file": (filename, content)},
+            )
+
+            if attachment:
+                # The REST API answers with a list holding one entry per
+                # uploaded file; a single upload therefore yields a 1-item list.
+                if isinstance(attachment, list):
+                    attachment = attachment[0]
+
+                logger.info(
+                    f"Successfully uploaded attachment {filename} to "
+                    f"{issue_key} (size: {len(content)} bytes)"
+                )
+                return {
+                    "success": True,
+                    "issue_key": issue_key,
+                    "filename": filename,
+                    "size": len(content),
+                    "id": attachment.get("id")
+                    if isinstance(attachment, dict)
+                    else None,
+                }
+
+            logger.error(f"Failed to upload attachment {filename} to {issue_key}")
+            return {
+                "success": False,
+                "error": f"Failed to upload attachment {filename} to {issue_key}",
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error uploading attachment from content: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+    def upload_attachments_from_content(
+        self, issue_key: str, attachments: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """
+        Upload multiple attachments to a Jira issue from in-memory bytes.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            attachments: List of dicts with 'filename' and 'content' (bytes) keys
+
+        Returns:
+            A dictionary with upload results, in the same shape as
+            ``upload_attachments``
+        """
+        if not issue_key:
+            logger.error("No issue key provided for attachment upload")
+            return {"success": False, "error": "No issue key provided"}
+
+        if not attachments:
+            logger.error("No attachment content provided for attachment upload")
+            return {"success": False, "error": "No attachment content provided"}
+
+        logger.info(f"Uploading {len(attachments)} attachments to issue {issue_key}")
+
+        uploaded = []
+        failed = []
+
+        for attachment in attachments:
+            filename = attachment.get("filename", "")
+            result = self.upload_attachment_from_content(
+                issue_key, filename, attachment.get("content", b"")
+            )
+
+            if result.get("success"):
+                uploaded.append(
+                    {
+                        "filename": result.get("filename"),
+                        "size": result.get("size"),
+                        "id": result.get("id"),
+                    }
+                )
+            else:
+                failed.append(
+                    {
+                        "filename": filename,
+                        "error": result.get("error"),
+                    }
+                )
+
+        return {
+            "success": bool(uploaded),
+            "issue_key": issue_key,
+            "total": len(attachments),
             "uploaded": uploaded,
             "failed": failed,
         }

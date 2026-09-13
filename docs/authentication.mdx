@@ -58,6 +58,13 @@ CONFLUENCE_PERSONAL_TOKEN=your_personal_access_token
 ```
 
 <Note>
+For multi-user HTTP deployments where clients send their own PATs, follow the
+[Server/DC per-request authentication setup](/docs/http-transport#authentication-methods).
+That setup uses non-empty server-side PAT values only to initialize the service
+configuration; each request's `Authorization: Token ...` value replaces them.
+</Note>
+
+<Note>
 Enterprise CA certificates in the OS trust store (Windows Certificate Store, macOS Keychain, Linux system CAs) are trusted automatically.
 For self-signed certificates not in the OS trust store, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
 </Note>
@@ -169,6 +176,14 @@ ATLASSIAN_OAUTH_REQUIRE_CONSENT=true
 This mode is opt-in. Existing API token, PAT, and header-based OAuth flows continue
 to work without enabling the proxy.
 </Note>
+
+<Warning>
+The callback configured in `ATLASSIAN_OAUTH_REDIRECT_URI` is for the upstream
+Atlassian identity provider, not a dynamically registered MCP client. A DCR
+client's `redirect_uri` must be different from this OAuth proxy IdP callback.
+Registration is rejected with `invalid_redirect_uri` if the two callbacks collide,
+preventing a callback loop.
+</Warning>
 
 ### Bring Your Own Token (BYOT)
 

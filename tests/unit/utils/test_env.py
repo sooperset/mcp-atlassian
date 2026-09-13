@@ -1,6 +1,9 @@
 """Tests for environment variable utility functions."""
 
+import logging
+
 from mcp_atlassian.utils.env import (
+    get_regex_env,
     is_env_extended_truthy,
     is_env_ssl_verify,
     is_env_truthy,
@@ -215,3 +218,34 @@ class TestEdgeCases:
                 assert is_env_truthy("TEST_VAR") is False
                 assert is_env_extended_truthy("TEST_VAR") is False
             assert is_env_ssl_verify("TEST_VAR") is True  # Not in false values
+
+
+class TestGetRegexEnv:
+    """Test the get_regex_env function."""
+
+    def test_unset_or_empty_returns_default(self, monkeypatch):
+        """Unset and empty values both fall back to the default."""
+        monkeypatch.delenv("TEST_PATTERN", raising=False)
+        assert get_regex_env("TEST_PATTERN", "^A$") == "^A$"
+
+        monkeypatch.setenv("TEST_PATTERN", "")
+        assert get_regex_env("TEST_PATTERN", "^A$") == "^A$"
+
+    def test_valid_pattern_is_returned(self, monkeypatch):
+        """A compilable pattern is returned verbatim."""
+        monkeypatch.setenv("TEST_PATTERN", r"^[A-Z0-9][A-Z0-9_]*$")
+        assert get_regex_env("TEST_PATTERN", "^A$") == r"^[A-Z0-9][A-Z0-9_]*$"
+
+    def test_invalid_pattern_falls_back_with_warning(self, monkeypatch, caplog):
+        """An invalid regex is ignored so import-time consumers keep working."""
+        monkeypatch.setenv("TEST_PATTERN", "^[A-Z")
+        with caplog.at_level(logging.WARNING):
+            assert get_regex_env("TEST_PATTERN", "^A$") == "^A$"
+        assert "TEST_PATTERN" in caplog.text
+
+    def test_pydantic_unsupported_pattern_falls_back(self, monkeypatch, caplog):
+        """Patterns unsupported by Pydantic's regex engine must also fall back."""
+        monkeypatch.setenv("TEST_PATTERN", r"(?=A)")
+        with caplog.at_level(logging.WARNING):
+            assert get_regex_env("TEST_PATTERN", "^A$") == "^A$"
+        assert "TEST_PATTERN" in caplog.text
