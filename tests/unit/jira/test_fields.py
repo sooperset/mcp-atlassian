@@ -594,7 +594,7 @@ class TestFieldsMixin:
         with pytest.raises(ConnectionError, match="Could not reach Jira"):
             fields_mixin.search_fields("test")
 
-    def test_search_fields_type_error_propagates(self, fields_mixin: FieldsMixin):
+    def test_search_fields_type_error_is_propagated(self, fields_mixin: FieldsMixin):
         """A TypeError raised while loading fields must not become no matches."""
         fields_mixin.get_fields = MagicMock(
             side_effect=TypeError("Could not parse Jira fields")
