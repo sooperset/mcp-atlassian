@@ -23,10 +23,10 @@ uv run pytest
 uv run pytest --cov=mcp_atlassian
 
 # Run single test file
-uv run pytest tests/unit/test_preprocessing.py
+uv run pytest tests/unit/preprocessing/test_preprocessing.py
 
 # Run single test function
-uv run pytest tests/unit/test_preprocessing.py::test_specific_function
+uv run pytest tests/unit/preprocessing/test_preprocessing.py::test_init
 ```
 
 **Running the Server**:

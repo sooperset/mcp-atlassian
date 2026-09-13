@@ -75,7 +75,7 @@ Tests with actual Atlassian APIs (requires `--use-real-data` flag).
 uv run pytest tests/integration/ --integration
 
 # Run specific test file
-uv run pytest tests/integration/test_authentication.py --integration
+uv run pytest tests/integration/test_ssl_verification.py --integration
 
 # Run with coverage
 uv run pytest tests/integration/ --integration --cov=src/mcp_atlassian
