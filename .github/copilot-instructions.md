@@ -11,7 +11,7 @@ uv sync --frozen --all-extras --dev  # Install all dependencies
 
 **Code Quality** (required before commit):
 ```bash
-pre-commit run --all-files           # Run all checks: ruff, prettier, mypy
+pre-commit run --all-files           # Run ruff, mypy, and standard file checks
 ```
 
 **Testing**:
@@ -129,7 +129,6 @@ Pre-commit runs:
 - **ruff-format**: Auto-format Python code
 - **ruff**: Lint with auto-fix (select rules in pyproject.toml)
 - **mypy**: Type checking (currently lenient, see TODO comments in .pre-commit-config.yaml)
-- **prettier**: Format YAML/JSON
 - **Standard checks**: trailing whitespace, file endings, YAML/TOML validity
 
 Tests are **not** run by pre-commit hooks—run them manually with `uv run pytest`.
