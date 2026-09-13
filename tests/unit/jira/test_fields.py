@@ -108,10 +108,20 @@ class TestFieldsMixin:
         with pytest.raises(ConnectionError, match="Could not reach Jira"):
             fields_mixin.get_fields()
 
+    def test_get_fields_client_type_error_propagates(self, fields_mixin: FieldsMixin):
+        """A TypeError raised by the Jira client must not be treated as no data."""
+        fields_mixin.jira.get_all_fields.side_effect = TypeError(
+            "Jira client could not parse response"
+        )
+
+        with pytest.raises(TypeError, match="Jira client could not parse response"):
+            fields_mixin.get_fields()
+
     def test_get_fields_unexpected_type_returns_empty(self, fields_mixin: FieldsMixin):
-        """Only the explicit TypeError we raise for a malformed API response
-        is swallowed; everything else (including ConnectionError, HTTPError,
-        JSONDecodeError) propagates so callers can distinguish failure modes.
+        """A malformed non-list API response is the only case treated as no data.
+
+        Exceptions raised by the Jira client still propagate so callers can
+        distinguish failure modes.
         """
         fields_mixin.jira.get_all_fields.return_value = {"not": "a list"}
 
@@ -582,6 +592,15 @@ class TestFieldsMixin:
         )
 
         with pytest.raises(ConnectionError, match="Could not reach Jira"):
+            fields_mixin.search_fields("test")
+
+    def test_search_fields_type_error_propagates(self, fields_mixin: FieldsMixin):
+        """A TypeError raised while loading fields must not become no matches."""
+        fields_mixin.get_fields = MagicMock(
+            side_effect=TypeError("Could not parse Jira fields")
+        )
+
+        with pytest.raises(TypeError, match="Could not parse Jira fields"):
             fields_mixin.search_fields("test")
 
 

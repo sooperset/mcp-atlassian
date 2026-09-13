@@ -33,45 +33,38 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             List of field definitions
 
         Raises:
-            Exception: Any error from the Jira client (connection, auth, parsing,
-                etc.) propagates so callers can distinguish "no fields exist" from
-                "the request never reached Jira". The only exception swallowed
-                here is the explicit TypeError we raise when the API returns a
-                non-list value, which we still log and treat as no data.
+            Exception: Any error from the Jira client or field processing propagates
+                so callers can distinguish "no fields exist" from "the request never
+                reached Jira".
         """
-        try:
-            # Use cached field data if available and refresh is not requested
-            if self._field_ids_cache is not None and not refresh:
-                return self._field_ids_cache
+        # Use cached field data if available and refresh is not requested
+        if self._field_ids_cache is not None and not refresh:
+            return self._field_ids_cache
 
-            if refresh:
-                self._field_name_to_id_map = (
-                    None  # Clear name map cache if refreshing fields
-                )
+        if refresh:
+            self._field_name_to_id_map = (
+                None  # Clear name map cache if refreshing fields
+            )
 
-            # Fetch fields from Jira API
-            fields = self.jira.get_all_fields()
-            if not isinstance(fields, list):
-                msg = f"Unexpected return value type from `jira.get_all_fields`: {type(fields)}"
-                logger.error(msg)
-                raise TypeError(msg)
-
-            # Cache the fields
-            self._field_ids_cache = fields
-
-            # Regenerate the name map upon fetching new fields
-            self._generate_field_map(force_regenerate=True)
-
-            # Log available fields for debugging
-            self._log_available_fields(fields)
-
-            return fields
-
-        except TypeError as e:
-            # Our own TypeError, raised above for a malformed API response.
-            # The API legitimately returned no usable data, so report that.
-            logger.error(f"Error getting Jira fields: {e}")
+        # Fetch fields from Jira API
+        fields = self.jira.get_all_fields()
+        if not isinstance(fields, list):
+            logger.error(
+                "Unexpected return value type from `jira.get_all_fields`: %s",
+                type(fields),
+            )
             return []
+
+        # Cache the fields
+        self._field_ids_cache = fields
+
+        # Regenerate the name map upon fetching new fields
+        self._generate_field_map(force_regenerate=True)
+
+        # Log available fields for debugging
+        self._log_available_fields(fields)
+
+        return fields
 
     def _generate_field_map(self, force_regenerate: bool = False) -> dict[str, str]:
         """Generates and caches a map of lowercase field names to field IDs."""
@@ -852,43 +845,32 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
         Returns:
             List of matching field definitions, sorted by relevance
         """
-        try:
-            # Get all fields
-            fields = self.get_fields(refresh=refresh)
+        # Get all fields
+        fields = self.get_fields(refresh=refresh)
 
-            # if keyword is empty, return `limit` fields
-            if not keyword:
-                return fields[:limit]
+        # if keyword is empty, return `limit` fields
+        if not keyword:
+            return fields[:limit]
 
-            def similarity(keyword: str, field: dict) -> int:
-                """Calculate similarity score between keyword and field."""
-                name_candidates = [
-                    field.get("id", ""),
-                    field.get("key", ""),
-                    field.get("name", ""),
-                    *field.get("clauseNames", []),
-                ]
+        def similarity(keyword: str, field: dict) -> int:
+            """Calculate similarity score between keyword and field."""
+            name_candidates = [
+                field.get("id", ""),
+                field.get("key", ""),
+                field.get("name", ""),
+                *field.get("clauseNames", []),
+            ]
 
-                # Calculate the fuzzy match score
-                return max(
-                    fuzz.partial_ratio(keyword.lower(), name.lower())
-                    for name in name_candidates
-                )
-
-            # Sort by similarity
-            sorted_fields = sorted(
-                fields, key=lambda x: similarity(keyword, x), reverse=True
+            # Calculate the fuzzy match score
+            return max(
+                fuzz.partial_ratio(keyword.lower(), name.lower())
+                for name in name_candidates
             )
 
-            # Return the top limit results
-            return sorted_fields[:limit]
+        # Sort by similarity
+        sorted_fields = sorted(
+            fields, key=lambda x: similarity(keyword, x), reverse=True
+        )
 
-        except TypeError as e:
-            # A TypeError here means a malformed entry in the cached field
-            # list reached the similarity() helper. The earlier call to
-            # get_fields() already filtered out a non-list response, so
-            # only the inner similarity math can hit this. Log and report
-            # no results; let every other error (connection, auth, parsing)
-            # propagate so callers can tell "no match" from "no data".
-            logger.error(f"Error searching fields: {e}")
-            return []
+        # Return the top limit results
+        return sorted_fields[:limit]
