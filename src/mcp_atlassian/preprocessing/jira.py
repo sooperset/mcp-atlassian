@@ -473,6 +473,18 @@ class JiraPreprocessor(BasePreprocessor):
             "INLINECODE",
         )
 
+        # Protect Jira wiki mentions ([~username], [~user@email], [~accountid:...])
+        # so later transforms cannot escape underscores inside them or treat the
+        # brackets as Markdown link/image syntax (issue #1616).
+        jira_mentions: list[str] = []
+        output = _extract_blocks(
+            output,
+            r"\[~[^\]\n]+\](?!\()",
+            lambda match: match.group(0),
+            jira_mentions,
+            "JIRAMENTION",
+        )
+
         # Headers with = or - underlines. A setext heading needs actual text on
         # the line above the underline, so the lookahead keeps a blank line from
         # matching: `\n\n----\n` is a horizontal rule, which is already valid
@@ -657,6 +669,10 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Rejoin the lines
         output = "\n".join(lines)
+
+        # Restore mentions before code so placeholders cannot leak into
+        # restored fenced/inline code content.
+        output = _restore_blocks(output, jira_mentions, "JIRAMENTION")
 
         # Restore code blocks and inline code
         output = _restore_blocks(output, code_blocks, "CODEBLOCK")
