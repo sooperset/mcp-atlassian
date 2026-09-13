@@ -61,6 +61,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     key: str = JIRA_DEFAULT_KEY
     summary: str = EMPTY_STRING
     description: str | None = None
+    environment: str | None = None
     created: str = EMPTY_STRING
     updated: str = EMPTY_STRING
     status: JiraStatus | None = None
@@ -287,6 +288,14 @@ class JiraIssue(ApiModel, TimestampMixin):
         else:
             description = raw_description
 
+        # Handle environment - like description, it can be a string (Server/DC,
+        # classic editor) or an ADF dict (Jira Cloud new editor)
+        raw_environment = fields.get("environment")
+        if isinstance(raw_environment, dict):
+            environment = adf_to_text(raw_environment)
+        else:
+            environment = raw_environment
+
         # Timestamps
         created = str(fields.get("created", EMPTY_STRING))
         updated = str(fields.get("updated", EMPTY_STRING))
@@ -477,6 +486,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             key=key,
             summary=summary,
             description=description,
+            environment=environment,
             created=created,
             updated=updated,
             status=status,
@@ -538,6 +548,10 @@ class JiraIssue(ApiModel, TimestampMixin):
         # Add description if available and requested
         if self.description and should_include_field("description"):
             result["description"] = self.description
+
+        # Add environment if available and requested
+        if self.environment and should_include_field("environment"):
+            result["environment"] = self.environment
 
         # Add status if available and requested
         if self.status and should_include_field("status"):

@@ -20,7 +20,12 @@ from requests import Session
 from requests.adapters import BaseAdapter, HTTPAdapter
 from urllib3.util.retry import Retry
 
-from .env import get_float_env, get_int_env, is_env_extended_truthy
+from .env import (
+    get_float_env,
+    get_int_env,
+    is_env_extended_truthy,
+    is_env_truthy,
+)
 
 logger = logging.getLogger("mcp-atlassian.http")
 
@@ -176,9 +181,14 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
       ATLASSIAN_RETRY_INCLUDE_WRITES (bool,  default false; if true also retries
                                      POST/PUT/PATCH/DELETE — only safe when the
                                      server is known to be idempotent for them)
+      ATLASSIAN_RETRY_IGNORE_RETRY_AFTER (bool, default false; ignore the server's
+                                     Retry-After header and always use exponential
+                                     backoff — enable for gateways that emit bogus
+                                     values such as ``Retry-After: 0``)
 
-    Retries fire on 429, 502, 503, 504 and on connection errors. Retry-After
-    header is respected when present.
+    Retries fire on 429, 502, 503, 504 and on connection errors. The Retry-After
+    header is respected when present, unless ATLASSIAN_RETRY_IGNORE_RETRY_AFTER
+    is set.
     """
     total = get_int_env("ATLASSIAN_RETRY_TOTAL", DEFAULT_RETRY_TOTAL)
     if total <= 0:
@@ -197,7 +207,9 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
         backoff_factor=backoff,
         status_forcelist=list(DEFAULT_RETRY_STATUSES),
         allowed_methods=methods,
-        respect_retry_after_header=True,
+        respect_retry_after_header=not is_env_truthy(
+            "ATLASSIAN_RETRY_IGNORE_RETRY_AFTER"
+        ),
         raise_on_status=False,
     )
 

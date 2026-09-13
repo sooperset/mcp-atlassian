@@ -107,6 +107,11 @@ def test_init_with_token_auth():
             no_proxy=None,
         )
 
+        # The library's unbounded, Retry-After-driven retry is disabled so the
+        # bounded urllib3 Retry policy is the only retry layer (matters for
+        # gateways that emit ``Retry-After: 0``).
+        assert client.confluence.retry_with_header is False
+
 
 def test_init_from_env():
     """Test initializing the client from environment variables."""

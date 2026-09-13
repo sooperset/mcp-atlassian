@@ -55,6 +55,22 @@ class TestConfluencePage:
         assert page.author.account_id == "abc-123"
         assert page.author.display_name == "History Author"
 
+    def test_from_api_response_uses_version_date_without_history(self):
+        """Test updated falls back to version.when when history is absent."""
+        page = ConfluencePage.from_api_response(
+            {
+                "id": "123456",
+                "title": "Version-only Page",
+                "version": {
+                    "number": 2,
+                    "when": "2026-08-17T13:19:17.000+0200",
+                },
+            }
+        )
+
+        assert page.created == ""
+        assert page.updated == "2026-08-17T13:19:17.000+0200"
+
     def test_from_api_response_with_empty_data(self):
         """Test creating a ConfluencePage from empty data."""
         page = ConfluencePage.from_api_response({})

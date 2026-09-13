@@ -34,21 +34,16 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         return None
 
     def _rest_base_url(self) -> str:
-        """Return the REST API base URL, adding the Cloud ``/wiki`` prefix.
+        """Return the base URL for direct attachment REST API calls.
 
-        On Confluence Cloud, ``config.url`` is the bare site URL
-        (``https://site.atlassian.net``) but the REST API is served under
-        ``/wiki``. Hand-built URLs must include this prefix or requests 404.
-        The ``endswith`` guard avoids producing ``/wiki/wiki`` when the
-        configured URL already includes the prefix.
+        Cloud OAuth uses the Atlassian API gateway URL on the underlying client,
+        while other authentication methods use the configured site URL. The
+        shared helper also adds the Cloud ``/wiki`` prefix when needed.
 
         Returns:
             The base URL to use for direct REST API calls.
         """
-        base_url = self.config.url.rstrip("/")
-        if self.config.is_cloud and not base_url.endswith("/wiki"):
-            base_url = f"{base_url}/wiki"
-        return base_url
+        return self._v1_rest_base_url()
 
     def _resolve_attachment_download_url(
         self,
@@ -81,7 +76,9 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             string when ``download_url`` is falsy.
         """
         resolved = (
-            resolve_relative_url(download_url, self.config.url) if download_url else ""
+            resolve_relative_url(download_url, self._rest_base_url())
+            if download_url
+            else ""
         )
         use_v1 = self.config.attachment_download_use_v1
         if use_v1 is None:

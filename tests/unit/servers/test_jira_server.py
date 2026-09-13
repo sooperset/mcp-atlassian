@@ -1,7 +1,9 @@
 """Unit tests for the Jira FastMCP server implementation."""
 
+import base64
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -24,6 +26,7 @@ from src.mcp_atlassian.models.jira import (
 )
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
+from src.mcp_atlassian.utils.media import ATTACHMENT_MAX_BYTES
 from src.mcp_atlassian.utils.oauth import OAuthConfig
 from tests.fixtures.jira_mocks import (
     MOCK_JIRA_COMMENTS_SIMPLIFIED,
@@ -905,6 +908,25 @@ async def test_create_customer_request(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("request_field_values", ["", " \t\n"])
+async def test_create_customer_request_rejects_blank_field_values(
+    jira_client, mock_jira_fetcher, request_field_values
+):
+    """Customer requests require non-blank request field values."""
+    with pytest.raises(ToolError, match="request_field_values is not valid JSON"):
+        await jira_client.call_tool(
+            "jira_create_customer_request",
+            {
+                "service_desk_id": "4",
+                "request_type_id": "23",
+                "request_field_values": request_field_values,
+            },
+        )
+
+    mock_jira_fetcher.create_customer_request.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_create_customer_request_with_attachments(jira_client, mock_jira_fetcher):
     """Customer request tool should forward parsed base64 attachments."""
     mock_jira_fetcher.create_customer_request.return_value = JiraCustomerRequest(
@@ -1078,20 +1100,22 @@ async def test_create_issue_accepts_json_string(jira_client, mock_jira_fetcher):
     )
 
 
+@pytest.mark.parametrize("additional_fields", ["", " \t\n"])
 @pytest.mark.anyio
-async def test_create_issue_additional_fields_empty_string(jira_client):
-    """Test that empty string additional_fields raises ToolError."""
-    with pytest.raises(ToolError) as excinfo:
-        await jira_client.call_tool(
-            "jira_create_issue",
-            {
-                "project_key": "TEST",
-                "summary": "Test issue",
-                "issue_type": "Task",
-                "additional_fields": "",
-            },
-        )
-    assert "not valid JSON" in str(excinfo.value)
+async def test_create_issue_additional_fields_blank_string(
+    jira_client, mock_jira_fetcher, additional_fields
+):
+    """Test that blank additional_fields is treated as unset."""
+    await jira_client.call_tool(
+        "jira_create_issue",
+        {
+            "project_key": "TEST",
+            "summary": "Test issue",
+            "issue_type": "Task",
+            "additional_fields": additional_fields,
+        },
+    )
+    assert "labels" not in mock_jira_fetcher.create_issue.call_args[1]
 
 
 @pytest.mark.anyio
@@ -2282,6 +2306,73 @@ def test_issue_and_project_key_patterns_reject_invalid_keys():
     assert not re.match(PROJECT_KEY_PATTERN, "123")
 
 
+def _reload_jira_server_module():
+    """Re-import the Jira server module so import-time env reads run again."""
+    import importlib
+
+    import mcp_atlassian.servers.jira as jira_server
+
+    return importlib.reload(jira_server)
+
+
+@pytest.fixture
+def reloaded_jira_server():
+    """Yield a reloader, restoring the module from a clean env afterwards."""
+    try:
+        yield _reload_jira_server_module
+    finally:
+        for var in ("JIRA_ISSUE_KEY_PATTERN", "JIRA_PROJECT_KEY_PATTERN"):
+            os.environ.pop(var, None)
+        _reload_jira_server_module()
+
+
+def test_key_patterns_configurable_via_env(monkeypatch, reloaded_jira_server):
+    """Env overrides let Server/DC keys the defaults reject through.
+
+    Regression test: a Server/DC instance with a custom
+    `jira.projectkey.pattern` can have keys starting with a digit, which the
+    default patterns reject before the API is ever called.
+    """
+    import re
+
+    monkeypatch.setenv("JIRA_ISSUE_KEY_PATTERN", r"^[A-Z0-9][A-Z0-9_]*-\d+$")
+    monkeypatch.setenv("JIRA_PROJECT_KEY_PATTERN", r"^[A-Z0-9][A-Z0-9_]*$")
+    jira_server = reloaded_jira_server()
+
+    assert re.match(jira_server.ISSUE_KEY_PATTERN, "4ME-123")
+    assert re.match(jira_server.PROJECT_KEY_PATTERN, "4ME")
+    # Still validates: the override is a pattern, not an escape hatch
+    assert not re.match(jira_server.PROJECT_KEY_PATTERN, "not a key")
+
+
+@pytest.mark.anyio
+async def test_key_patterns_env_override_reaches_tool_schema(
+    monkeypatch, reloaded_jira_server
+):
+    """The override must land on the tool parameters, not just the constants."""
+    monkeypatch.setenv("JIRA_PROJECT_KEY_PATTERN", r"^[A-Z0-9][A-Z0-9_]*$")
+    jira_server = reloaded_jira_server()
+
+    tools = await jira_server.jira_mcp.list_tools()
+    tool = next(t for t in tools if t.name == "get_project_issues")
+    assert (
+        tool.parameters["properties"]["project_key"]["pattern"]
+        == r"^[A-Z0-9][A-Z0-9_]*$"
+    )
+
+
+def test_key_patterns_ignore_uncompilable_env_override(
+    monkeypatch, reloaded_jira_server, caplog
+):
+    """An invalid regex must not break server startup."""
+    monkeypatch.setenv("JIRA_PROJECT_KEY_PATTERN", "^[A-Z")
+    with caplog.at_level(logging.WARNING):
+        jira_server = reloaded_jira_server()
+
+    assert jira_server.PROJECT_KEY_PATTERN == r"^[A-Z][A-Z0-9_]+$"
+    assert "JIRA_PROJECT_KEY_PATTERN" in caplog.text
+
+
 # =============================================================================
 # update_issue additional_fields JSON string tests
 # =============================================================================
@@ -2331,6 +2422,198 @@ async def test_update_issue_accepts_json_string_additional_fields(
 
 
 @pytest.mark.anyio
+async def test_update_issue_attachments_base64_decoded(jira_client, mock_jira_fetcher):
+    """Base64 attachments reach the fetcher as decoded bytes, no paths involved."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "attachments_base64": (
+                '[{"filename": "hello.txt", "content_base64": "SGVsbG8="}]'
+            ),
+        },
+    )
+
+    assert response.content[0].type == "text"
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["attachments_base64"] == [
+        {"filename": "hello.txt", "content": b"Hello"}
+    ]
+    assert "attachments" not in call_kwargs
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_alone_is_not_a_field_update(
+    jira_client, mock_jira_fetcher
+):
+    """A base64-only call must not report 'fields_updated'."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "attachments_base64": (
+                '[{"filename": "hello.txt", "content_base64": "SGVsbG8="}]'
+            ),
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert "fields_updated" not in content["operations_performed"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_combines_with_paths(
+    jira_client, mock_jira_fetcher
+):
+    """Both attachment sources are additive and forwarded independently."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "attachments": "report.pdf",
+            "attachments_base64": (
+                '[{"filename": "hello.txt", "content_base64": "SGVsbG8="}]'
+            ),
+        },
+    )
+
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["attachments"] == ["report.pdf"]
+    assert call_kwargs["attachments_base64"] == [
+        {"filename": "hello.txt", "content": b"Hello"}
+    ]
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_invalid_base64(jira_client):
+    """Undecodable base64 is rejected with the offending entry named."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": (
+                    '[{"filename": "hello.txt", "content_base64": "not base64!"}]'
+                ),
+            },
+        )
+
+    message = str(excinfo.value)
+    assert "attachments_base64[0]" in message
+    assert "hello.txt" in message
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_rejects_empty_content(jira_client):
+    """Empty content must not become a 0-byte attachment."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": (
+                    '[{"filename": "empty.txt", "content_base64": ""}]'
+                ),
+            },
+        )
+
+    assert "is empty" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_enforces_size_limit(jira_client):
+    """Content over ATTACHMENT_MAX_BYTES is rejected before the request."""
+    oversized = base64.b64encode(b"x" * (ATTACHMENT_MAX_BYTES + 1)).decode()
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": json.dumps(
+                    [{"filename": "big.bin", "content_base64": oversized}]
+                ),
+            },
+        )
+
+    assert "inline limit" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_requires_filename(jira_client):
+    """An entry without a filename is rejected."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": '[{"content_base64": "SGVsbG8="}]',
+            },
+        )
+
+    assert "requires a 'filename'" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_invalid_json(jira_client):
+    """A non-JSON value is rejected by name."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": "hello.txt",
+            },
+        )
+
+    assert "attachments_base64 is not valid JSON" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_clears_parent_with_json_null(
+    jira_client, mock_jira_fetcher
+):
+    """Regression for #1518: JSON null must reach the fetcher as None."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "additional_fields": '{"parent": null}',
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue updated successfully"
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["parent"] is None
+
+
+@pytest.mark.anyio
+async def test_update_issue_plain_text_fields_error_names_fields(jira_client):
+    """Regression: invalid plain-text fields must blame fields,
+    not additional_fields — both arguments share one parser whose
+    error previously hardcoded the additional_fields name."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "plain markdown text, not JSON",
+            },
+        )
+    message = str(excinfo.value)
+    assert "fields is not valid JSON" in message
+    assert "additional_fields" not in message
+
+
+@pytest.mark.anyio
 async def test_update_issue_additional_fields_invalid_json(jira_client):
     """Test that invalid JSON additional_fields raises ToolError."""
     with pytest.raises(ToolError) as excinfo:
@@ -2360,19 +2643,23 @@ async def test_update_issue_additional_fields_non_dict_json(jira_client):
     assert "not a JSON object" in str(excinfo.value)
 
 
+@pytest.mark.parametrize("additional_fields", ["", " \t\n"])
 @pytest.mark.anyio
-async def test_update_issue_additional_fields_empty_string(jira_client):
-    """Test that empty string additional_fields raises ToolError."""
-    with pytest.raises(ToolError) as excinfo:
-        await jira_client.call_tool(
-            "jira_update_issue",
-            {
-                "issue_key": "TEST-123",
-                "fields": '{"summary": "Updated"}',
-                "additional_fields": "",
-            },
-        )
-    assert "not valid JSON" in str(excinfo.value)
+async def test_update_issue_additional_fields_blank_string(
+    jira_client, mock_jira_fetcher, additional_fields
+):
+    """Test that blank additional_fields is treated as unset."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary": "Updated"}',
+            "additional_fields": additional_fields,
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue updated successfully"
+    assert "labels" not in mock_jira_fetcher.update_issue.call_args[1]
 
 
 @pytest.mark.anyio
@@ -2457,6 +2744,427 @@ async def test_update_issue_components_with_additional_fields(
     # Explicit components param should override additional_fields
     assert call_kwargs["components"] == ["Frontend", "API"]
     assert call_kwargs["labels"] == ["urgent"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_transition_only_resolves_name(
+    jira_client, mock_jira_fetcher
+):
+    """A transition-only call resolves a name and re-fetches the issue."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {"issue_key": "TEST-123", "transition": "done"},
+    )
+
+    mock_jira_fetcher.update_issue.assert_not_called()
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == ["transitioned_to:done"]
+    assert result["operations_failed"] == []
+    mock_jira_fetcher.get_issue.assert_called_once_with("TEST-123", fields="*all")
+
+
+@pytest.mark.anyio
+async def test_transition_issue_resolves_name_to_id(jira_client, mock_jira_fetcher):
+    """jira_transition_issue resolves a transition name to its ID before calling."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+    mock_jira_fetcher.transition_issue.return_value.to_simplified_dict.return_value = {
+        "key": "TEST-123"
+    }
+
+    await jira_client.call_tool(
+        "jira_transition_issue",
+        {"issue_key": "TEST-123", "transition_id": "done"},
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", fields={}, comment=None
+    )
+
+
+@pytest.mark.anyio
+async def test_transition_issue_comment_schema_warns_about_cloud_screen():
+    """The MCP schema documents Jira Cloud's transition-screen dependency."""
+    import mcp_atlassian.servers.jira as jira_server
+
+    tools = {tool.name: tool for tool in await jira_server.jira_mcp.list_tools()}
+
+    description = tools["transition_issue"].parameters["properties"]["comment"][
+        "description"
+    ]
+
+    assert "workflow transition's screen must include a Comment field" in description
+    assert "jira_add_comment" in description
+
+
+@pytest.mark.anyio
+async def test_transition_issue_still_accepts_numeric_id(
+    jira_client, mock_jira_fetcher
+):
+    """jira_transition_issue still accepts a raw numeric transition ID."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+    mock_jira_fetcher.transition_issue.return_value.to_simplified_dict.return_value = {
+        "key": "TEST-123"
+    }
+
+    await jira_client.call_tool(
+        "jira_transition_issue",
+        {"issue_key": "TEST-123", "transition_id": "31"},
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", fields={}, comment=None
+    )
+
+
+@pytest.mark.anyio
+async def test_transition_issue_unknown_name_raises_with_options(
+    jira_client, mock_jira_fetcher
+):
+    """An unmatched transition name/ID raises a clear error listing options."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    with pytest.raises(ToolError, match=r"Done \(31\)"):
+        await jira_client.call_tool(
+            "jira_transition_issue",
+            {"issue_key": "TEST-123", "transition_id": "Bogus"},
+        )
+
+    mock_jira_fetcher.transition_issue.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_update_issue_comment_only_without_fields(jira_client, mock_jira_fetcher):
+    """A comment-only call works when fields is omitted."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {"issue_key": "TEST-123", "comment": "Comment from update"},
+    )
+
+    mock_jira_fetcher.update_issue.assert_not_called()
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Comment from update", None
+    )
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == ["comment_added"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_worklog_only_without_fields(jira_client, mock_jira_fetcher):
+    """A worklog-only call forwards the time and start timestamp."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "worklog": "1h 30m",
+            "worklog_started": "2026-01-01T12:00:00.000+0000",
+        },
+    )
+
+    mock_jira_fetcher.update_issue.assert_not_called()
+    mock_jira_fetcher.add_worklog.assert_called_once_with(
+        issue_key="TEST-123",
+        time_spent="1h 30m",
+        started="2026-01-01T12:00:00.000+0000",
+    )
+
+
+@pytest.mark.anyio
+async def test_update_issue_transition_comment_is_separate(
+    jira_client, mock_jira_fetcher
+):
+    """A transition and its comment are sent as separate operations."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition": "31",
+            "comment": "Transition comment",
+        },
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Transition comment", None
+    )
+
+
+@pytest.mark.anyio
+async def test_update_issue_transition_comment_is_added_once_when_refetch_fails(
+    jira_client, mock_jira_fetcher
+):
+    """A failed re-fetch does not cause transition comments to be duplicated."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+    mock_jira_fetcher.transition_issue.side_effect = RuntimeError(
+        "transition response fetch failed"
+    )
+    mock_jira_fetcher.get_issue.side_effect = RuntimeError("re-fetch failed")
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition": "Done",
+            "comment": "Transition comment",
+        },
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Transition comment", None
+    )
+    assert [call[0] for call in mock_jira_fetcher.method_calls] == [
+        "get_available_transitions",
+        "transition_issue",
+        "add_comment",
+        "get_issue",
+    ]
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == [
+        "comment_added",
+    ]
+    assert result["operations_failed"] == [
+        "transition: transition response fetch failed",
+        "refetch: re-fetch failed",
+    ]
+
+
+@pytest.mark.anyio
+async def test_update_issue_comment_visibility_uses_separate_comment(
+    jira_client, mock_jira_fetcher
+):
+    """A visible comment cannot use transition comment passthrough."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition": "Done",
+            "comment": "Restricted comment",
+            "comment_visibility": '{"type":"group","value":"jira-users"}',
+        },
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123",
+        "Restricted comment",
+        {"type": "group", "value": "jira-users"},
+    )
+
+
+@pytest.mark.anyio
+async def test_update_issue_combines_fields_transition_comment_and_worklog(
+    jira_client, mock_jira_fetcher
+):
+    """All operations run in order and status is not updated twice."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary":"Updated","status":"Open"}',
+            "transition": "Done",
+            "comment": "Completed work",
+            "worklog": "1h",
+        },
+    )
+
+    update_kwargs = mock_jira_fetcher.update_issue.call_args.kwargs
+    assert update_kwargs == {
+        "issue_key": "TEST-123",
+        "return_fields": "*all",
+        "summary": "Updated",
+    }
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123", transition_id="31", comment=None
+    )
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Completed work", None
+    )
+    mock_jira_fetcher.add_worklog.assert_called_once_with(
+        issue_key="TEST-123", time_spent="1h", started=None
+    )
+    assert [call[0] for call in mock_jira_fetcher.method_calls] == [
+        "update_issue",
+        "get_available_transitions",
+        "transition_issue",
+        "add_comment",
+        "add_worklog",
+        "get_issue",
+    ]
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == [
+        "fields_updated",
+        "transitioned_to:Done",
+        "comment_added",
+        "worklog_added",
+    ]
+
+
+@pytest.mark.anyio
+async def test_update_issue_records_operation_failure_and_continues(
+    jira_client, mock_jira_fetcher
+):
+    """A failed transition is reported while later operations still run."""
+    mock_jira_fetcher.get_available_transitions.return_value = []
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition": "Missing",
+            "comment": "Still add this comment",
+            "worklog": "30m",
+        },
+    )
+
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Still add this comment", None
+    )
+    mock_jira_fetcher.add_worklog.assert_called_once_with(
+        issue_key="TEST-123", time_spent="30m", started=None
+    )
+    result = json.loads(response.content[0].text)
+    assert result["operations_performed"] == ["comment_added", "worklog_added"]
+    assert result["operations_failed"][0].startswith("transition:")
+
+
+@pytest.mark.anyio
+async def test_update_issue_reports_failure_when_all_operations_fail(
+    jira_client, mock_jira_fetcher
+):
+    """All failed requested operations must not be reported as successful."""
+    mock_jira_fetcher.update_issue.side_effect = RuntimeError("field update failed")
+    mock_jira_fetcher.get_available_transitions.side_effect = RuntimeError(
+        "transition lookup failed"
+    )
+    mock_jira_fetcher.add_comment.side_effect = RuntimeError("comment failed")
+    mock_jira_fetcher.add_worklog.side_effect = RuntimeError("worklog failed")
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary":"Updated"}',
+            "transition": "Done",
+            "comment": "Comment",
+            "worklog": "1h",
+        },
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Issue update failed"
+    assert result["operations_performed"] == []
+    assert len(result["operations_failed"]) == 4
+
+
+@pytest.mark.anyio
+async def test_update_issue_reports_failed_attachments(jira_client, mock_jira_fetcher):
+    """Attachment-only failures must not be reported as a successful update."""
+    issue = MagicMock()
+    issue.custom_fields = {
+        "attachment_results": {
+            "success": False,
+            "issue_key": "TEST-123",
+            "total": 1,
+            "uploaded": [],
+            "failed": [{"filename": "missing.xlsx", "error": "File not found"}],
+        }
+    }
+    mock_jira_fetcher.update_issue.side_effect = None
+    mock_jira_fetcher.update_issue.return_value = issue
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {"issue_key": "TEST-123", "attachments": '["missing.xlsx"]'},
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Issue update failed"
+    assert result["operations_performed"] == []
+    assert result["operations_failed"] == ["attachment: missing.xlsx: File not found"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_reports_partial_attachment_failure(
+    jira_client, mock_jira_fetcher
+):
+    """A mixed attachment result reports both its success and failure."""
+    issue = MagicMock()
+    issue.custom_fields = {
+        "attachment_results": {
+            "success": True,
+            "issue_key": "TEST-123",
+            "total": 2,
+            "uploaded": [{"filename": "report.xlsx", "id": "1", "size": 10}],
+            "failed": [{"filename": "missing.xlsx", "error": "File not found"}],
+        }
+    }
+    mock_jira_fetcher.update_issue.side_effect = None
+    mock_jira_fetcher.update_issue.return_value = issue
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "attachments": '["report.xlsx", "missing.xlsx"]',
+        },
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Issue update completed with errors"
+    assert result["operations_performed"] == ["attachments_uploaded"]
+    assert result["operations_failed"] == ["attachment: missing.xlsx: File not found"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_reports_when_no_operations_are_requested(
+    jira_client, mock_jira_fetcher
+):
+    """A read-back without requested changes must not be reported as an update."""
+    response = await jira_client.call_tool(
+        "jira_update_issue", {"issue_key": "TEST-123"}
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "No issue updates were requested"
+    assert result["operations_performed"] == []
+    assert result["operations_failed"] == []
+    mock_jira_fetcher.update_issue.assert_not_called()
+    mock_jira_fetcher.get_available_transitions.assert_not_called()
+    mock_jira_fetcher.add_comment.assert_not_called()
+    mock_jira_fetcher.add_worklog.assert_not_called()
 
 
 @pytest.mark.anyio

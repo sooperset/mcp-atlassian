@@ -28,6 +28,21 @@ class AttachmentsOperationsProto(Protocol):
             A dictionary with upload results
         """
 
+    @abstractmethod
+    def upload_attachments_from_content(
+        self, issue_key: str, attachments: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """
+        Upload multiple attachments to a Jira issue from in-memory bytes.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            attachments: List of dicts with 'filename' and 'content' (bytes) keys
+
+        Returns:
+            A dictionary with upload results
+        """
+
 
 class FormsOperationsProto(Protocol):
     """Protocol defining ProForma forms operations interface."""
@@ -76,6 +91,14 @@ class IssueOperationsProto(Protocol):
         update_history: bool = True,
     ) -> JiraIssue:
         """Get a Jira issue by key."""
+
+    @abstractmethod
+    def _find_epic_issue_type_id(self, project_key: str) -> str | None:
+        """Find the Epic issue type ID for a project."""
+
+    @abstractmethod
+    def _is_epic_issue_type(self, issue_type: str) -> bool:
+        """Return whether an issue type name is recognized as an Epic."""
 
 
 class SearchOperationsProto(Protocol):
@@ -210,7 +233,7 @@ class FieldsOperationsProto(Protocol):
         Get required fields for creating an issue of a specific type in a project.
 
         Args:
-            issue_type: The issue type (e.g., 'Bug', 'Story', 'Epic')
+            issue_type: The issue type name or ID (e.g., 'Bug' or '10001')
             project_key: The project key (e.g., 'PROJ')
 
         Returns:
@@ -234,17 +257,24 @@ class ProjectsOperationsProto(Protocol):
             List of issue type data dictionaries
         """
 
+    @abstractmethod
+    def get_create_fields(
+        self, project_key: str, issue_type_id: str
+    ) -> list[dict[str, Any]]:
+        """Get fields available when creating an issue of a given type."""
+
 
 @runtime_checkable
 class UsersOperationsProto(Protocol):
     """Protocol defining user operations interface."""
 
     @abstractmethod
-    def _get_account_id(self, assignee: str) -> str:
+    def _get_account_id(self, assignee: str, issue_key: str | None = None) -> str:
         """Get the account ID for a username.
 
         Args:
             assignee: Username or account ID
+            issue_key: Optional issue key used to scope an assignable-user fallback
 
         Returns:
             Account ID
