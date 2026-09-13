@@ -25,6 +25,7 @@ from src.mcp_atlassian.models.jira import (
     JiraRequestTypesResult,
 )
 from src.mcp_atlassian.servers.context import MainAppContext
+from src.mcp_atlassian.servers.jira import _parse_comment_media, _parse_id_list
 from src.mcp_atlassian.servers.main import AtlassianMCP
 from src.mcp_atlassian.utils.media import ATTACHMENT_MAX_BYTES
 from src.mcp_atlassian.utils.oauth import OAuthConfig
@@ -5077,3 +5078,296 @@ async def test_jira_analysis_tools_return_structured_errors(
 
     assert content["success"] is False
     assert content["error"] == "service unavailable"
+
+
+# ============================================================================
+# Inline-media comments and attachment/comment deletion via update_issue
+# ============================================================================
+
+
+class TestParseCommentMedia:
+    """Tests for parsing the 'media' argument of jira_add_comment."""
+
+    def test_empty_input_yields_nothing(self):
+        assert _parse_comment_media(None) == []
+        assert _parse_comment_media("   ") == []
+
+    def test_base64_entry_is_decoded_to_bytes(self):
+        """Decoding happens at the server edge; the client sees only bytes."""
+        entries = _parse_comment_media(
+            '[{"filename": "shot.png", "content_base64": "SGVsbG8="}]'
+        )
+
+        assert entries == [{"filename": "shot.png", "content": b"Hello"}]
+
+    def test_file_path_entry_is_passed_through(self):
+        """Paths are resolved in the client layer, where they are confined."""
+        entries = _parse_comment_media('[{"file_path": "screens/shot.png"}]')
+
+        assert entries == [{"file_path": "screens/shot.png"}]
+
+    def test_file_path_keeps_an_explicit_filename(self):
+        entries = _parse_comment_media(
+            '[{"file_path": "screens/a.png", "filename": "before.png"}]'
+        )
+
+        assert entries == [{"file_path": "screens/a.png", "filename": "before.png"}]
+
+    def test_invalid_json_is_rejected(self):
+        with pytest.raises(ValueError, match="not valid JSON"):
+            _parse_comment_media("[{")
+
+    def test_non_array_json_is_rejected(self):
+        with pytest.raises(ValueError, match="must be a JSON array"):
+            _parse_comment_media('{"file_path": "a.png"}')
+
+    def test_both_sources_are_rejected(self):
+        with pytest.raises(ValueError, match="not both"):
+            _parse_comment_media(
+                '[{"file_path": "a.png", "content_base64": "SGVsbG8=",'
+                ' "filename": "a.png"}]'
+            )
+
+    def test_missing_source_is_rejected(self):
+        with pytest.raises(ValueError, match="requires 'file_path' or"):
+            _parse_comment_media('[{"filename": "a.png"}]')
+
+    def test_base64_without_a_filename_is_rejected(self):
+        with pytest.raises(ValueError, match="requires a 'filename'"):
+            _parse_comment_media('[{"content_base64": "SGVsbG8="}]')
+
+    def test_invalid_base64_is_rejected(self):
+        with pytest.raises(ValueError, match="invalid base64"):
+            _parse_comment_media('[{"filename": "a.png", "content_base64": "!!!"}]')
+
+    def test_empty_base64_is_rejected(self):
+        with pytest.raises(ValueError, match="is empty"):
+            _parse_comment_media('[{"filename": "a.png", "content_base64": ""}]')
+
+    def test_oversized_base64_is_rejected(self):
+        oversized = base64.b64encode(b"x" * (ATTACHMENT_MAX_BYTES + 1)).decode()
+        payload = json.dumps([{"filename": "big.png", "content_base64": oversized}])
+
+        with pytest.raises(ValueError, match="exceeds the"):
+            _parse_comment_media(payload)
+
+
+class TestParseIdList:
+    """Tests for the id-list parameters of jira_update_issue."""
+
+    def test_empty_input_yields_nothing(self):
+        assert _parse_id_list(None, "delete_attachments") == []
+        assert _parse_id_list("  ", "delete_attachments") == []
+
+    def test_comma_separated_ids(self):
+        assert _parse_id_list("10001, 10002 ,", "delete_attachments") == [
+            "10001",
+            "10002",
+        ]
+
+    def test_json_array_of_strings(self):
+        assert _parse_id_list('["10001", "10002"]', "delete_comments") == [
+            "10001",
+            "10002",
+        ]
+
+    def test_json_array_of_numbers_is_stringified(self):
+        assert _parse_id_list("[10001, 10002]", "delete_comments") == [
+            "10001",
+            "10002",
+        ]
+
+    def test_malformed_json_array_is_rejected(self):
+        with pytest.raises(ValueError, match="not valid JSON"):
+            _parse_id_list("[10001,", "delete_comments")
+
+    def test_nested_structures_are_rejected(self):
+        with pytest.raises(ValueError, match="must be a JSON array of ids"):
+            _parse_id_list('[{"id": "10001"}]', "delete_comments")
+
+
+@pytest.mark.anyio
+async def test_add_comment_with_media_calls_the_media_path(
+    jira_client, mock_jira_fetcher
+):
+    """A comment carrying 'media' posts through the inline-media flow."""
+    mock_jira_fetcher.add_comment_with_media = MagicMock(
+        return_value={
+            "comment": {"id": "10001", "body": "Look"},
+            "embedded": [
+                {
+                    "filename": "shot.png",
+                    "attachment_id": "20001",
+                    "media_id": "uuid-1",
+                }
+            ],
+        }
+    )
+
+    response = await jira_client.call_tool(
+        "jira_add_comment",
+        {
+            "issue_key": "TEST-123",
+            "body": "Before ![shot](media:0) after",
+            "media": '[{"filename": "shot.png", "content_base64": "SGVsbG8="}]',
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["embedded"][0]["media_id"] == "uuid-1"
+    mock_jira_fetcher.add_comment_with_media.assert_called_once_with(
+        "TEST-123",
+        "Before ![shot](media:0) after",
+        [{"filename": "shot.png", "content": b"Hello"}],
+        None,
+    )
+    mock_jira_fetcher.add_comment.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_add_comment_without_media_uses_the_plain_path(
+    jira_client, mock_jira_fetcher
+):
+    """Omitting 'media' leaves the ordinary comment behaviour untouched."""
+    mock_jira_fetcher.add_comment_with_media = MagicMock()
+
+    await jira_client.call_tool(
+        "jira_add_comment", {"issue_key": "TEST-123", "body": "Plain"}
+    )
+
+    mock_jira_fetcher.add_comment.assert_called_once()
+    mock_jira_fetcher.add_comment_with_media.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_add_comment_media_forwards_visibility(jira_client, mock_jira_fetcher):
+    """A visibility restriction reaches the media path too."""
+    mock_jira_fetcher.add_comment_with_media = MagicMock(
+        return_value={"comment": {}, "embedded": []}
+    )
+
+    await jira_client.call_tool(
+        "jira_add_comment",
+        {
+            "issue_key": "TEST-123",
+            "body": "Look",
+            "media": '[{"filename": "a.png", "content_base64": "SGVsbG8="}]',
+            "visibility": '{"type": "group", "value": "jira-users"}',
+        },
+    )
+
+    assert mock_jira_fetcher.add_comment_with_media.call_args.args[3] == {
+        "type": "group",
+        "value": "jira-users",
+    }
+
+
+@pytest.mark.anyio
+async def test_add_comment_media_rejects_the_public_flag(
+    jira_client, mock_jira_fetcher
+):
+    """The ServiceDesk comment API takes a raw string and cannot carry ADF
+    media, so the combination is refused rather than silently downgraded."""
+    mock_jira_fetcher.add_comment_with_media = MagicMock()
+
+    with pytest.raises(ToolError, match="cannot be combined with 'public'"):
+        await jira_client.call_tool(
+            "jira_add_comment",
+            {
+                "issue_key": "TEST-123",
+                "body": "Look",
+                "media": '[{"filename": "a.png", "content_base64": "SGVsbG8="}]',
+                "public": True,
+            },
+        )
+
+    mock_jira_fetcher.add_comment_with_media.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_update_issue_deletes_attachments(jira_client, mock_jira_fetcher):
+    """Attachment removal is folded into the issue-update outcome tool."""
+    mock_jira_fetcher.delete_attachment = MagicMock(return_value={"success": True})
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "delete_attachments": "10001,10002",
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert mock_jira_fetcher.delete_attachment.call_args_list == [
+        call("10001"),
+        call("10002"),
+    ]
+    assert "attachment_deleted:10001" in content["operations_performed"]
+    assert "attachment_deleted:10002" in content["operations_performed"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_reports_a_failed_attachment_deletion(
+    jira_client, mock_jira_fetcher
+):
+    """A refused deletion is reported without aborting the rest of the update."""
+    mock_jira_fetcher.delete_attachment = MagicMock(
+        return_value={"success": False, "error": "403 Forbidden"}
+    )
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "delete_attachments": "10001",
+            "comment": "still posted",
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert any("403 Forbidden" in item for item in content["operations_failed"])
+    assert "comment_added" in content["operations_performed"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_deletes_comments(jira_client, mock_jira_fetcher):
+    """Comment removal lives beside comment creation on the same tool."""
+    mock_jira_fetcher.delete_comment = MagicMock(return_value=True)
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "delete_comments": '["10001", "10002"]',
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert mock_jira_fetcher.delete_comment.call_args_list == [
+        call("TEST-123", "10001"),
+        call("TEST-123", "10002"),
+    ]
+    assert "comment_deleted:10001" in content["operations_performed"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_reports_a_failed_comment_deletion(
+    jira_client, mock_jira_fetcher
+):
+    """A failing deletion is collected, not raised, like the other operations."""
+    mock_jira_fetcher.delete_comment = MagicMock(side_effect=Exception("404 Not Found"))
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "delete_comments": "10001",
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert any("404 Not Found" in item for item in content["operations_failed"])

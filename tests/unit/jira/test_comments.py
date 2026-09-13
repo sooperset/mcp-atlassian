@@ -1,11 +1,13 @@
 """Tests for the Jira Comments mixin."""
 
+import struct
 from unittest.mock import Mock
 
 import pytest
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.jira.comments import CommentsMixin
+from mcp_atlassian.utils.media import ATTACHMENT_MAX_BYTES
 
 
 class TestCommentsMixin:
@@ -1277,3 +1279,439 @@ def _node_types_with_marks(adf: dict) -> list[list[str]]:
 
     walk(adf)
     return out
+
+
+def _media_comments_mixin(jira_client, config):
+    """Build a CommentsMixin for the media/deletion tests.
+
+    ``JiraConfig.is_cloud`` is derived from the URL, so Cloud and Server/DC
+    variants are selected by passing a differently-hosted config rather than
+    by assigning to the read-only property.
+    """
+    mixin = CommentsMixin(config=config)
+    mixin.jira = jira_client.jira
+    mixin._clean_text = Mock(side_effect=lambda x: x)
+    return mixin
+
+
+@pytest.fixture
+def cloud_comments_mixin(jira_client, jira_config_factory):
+    """A CommentsMixin pointed at a Jira Cloud instance."""
+    return _media_comments_mixin(
+        jira_client, jira_config_factory(url="https://test.atlassian.net")
+    )
+
+
+@pytest.fixture
+def server_comments_mixin(jira_client, jira_config_factory):
+    """A CommentsMixin pointed at a Jira Server/DC instance."""
+    return _media_comments_mixin(
+        jira_client, jira_config_factory(url="https://jira.example.com")
+    )
+
+
+class TestDeleteComment:
+    """Tests for deleting a comment."""
+
+    def test_delete_comment_on_cloud_uses_v3(self, cloud_comments_mixin):
+        """Cloud deletions go through the v3 endpoint, like the other writes."""
+        cloud_comments_mixin._delete_api3 = Mock(return_value=None)
+
+        assert cloud_comments_mixin.delete_comment("PROJ-123", "10001") is True
+        cloud_comments_mixin._delete_api3.assert_called_once_with(
+            "issue/PROJ-123/comment/10001"
+        )
+
+    def test_delete_comment_on_server_uses_v2(self, server_comments_mixin):
+        """Server/DC has no v3 API, so the default resource URL is used."""
+        server_comments_mixin.jira.resource_url = Mock(
+            return_value="https://jira.local/rest/api/2/issue/PROJ-123/comment/10001"
+        )
+
+        assert server_comments_mixin.delete_comment("PROJ-123", "10001") is True
+        server_comments_mixin.jira.delete.assert_called_once_with(
+            "https://jira.local/rest/api/2/issue/PROJ-123/comment/10001"
+        )
+
+    def test_delete_comment_error_is_raised(self, cloud_comments_mixin):
+        """A failed deletion raises rather than reporting a silent success."""
+        cloud_comments_mixin._delete_api3 = Mock(side_effect=Exception("404 Not Found"))
+
+        with pytest.raises(Exception, match="Error deleting comment"):
+            cloud_comments_mixin.delete_comment("PROJ-123", "10001")
+
+
+class TestAddCommentAdf:
+    """Tests for posting a pre-built ADF comment body."""
+
+    @pytest.fixture
+    def comments_mixin(self, cloud_comments_mixin):
+        return cloud_comments_mixin
+
+    def test_posts_adf_body_to_v3(self, comments_mixin):
+        """The ADF document is sent verbatim as the comment body."""
+        adf = {"version": 1, "type": "doc", "content": []}
+        comments_mixin._post_api3 = Mock(
+            return_value={
+                "id": "10001",
+                "body": {"version": 1, "type": "doc", "content": []},
+                "created": "2024-01-01T10:00:00.000+0000",
+                "author": {"displayName": "Tester"},
+            }
+        )
+
+        result = comments_mixin.add_comment_adf("PROJ-123", adf)
+
+        comments_mixin._post_api3.assert_called_once_with(
+            "issue/PROJ-123/comment", {"body": adf}
+        )
+        assert result["id"] == "10001"
+        assert result["author"] == "Tester"
+
+    def test_visibility_is_forwarded(self, comments_mixin):
+        """A visibility restriction accompanies the ADF body."""
+        adf = {"version": 1, "type": "doc", "content": []}
+        comments_mixin._post_api3 = Mock(
+            return_value={"id": "1", "body": "", "created": None, "author": {}}
+        )
+
+        comments_mixin.add_comment_adf(
+            "PROJ-123", adf, {"type": "group", "value": "jira-users"}
+        )
+
+        payload = comments_mixin._post_api3.call_args.args[1]
+        assert payload["visibility"] == {"type": "group", "value": "jira-users"}
+
+    def test_rejected_on_server_dc(self, server_comments_mixin):
+        """ADF is a Cloud-only payload, so Server/DC is refused up front."""
+        server_comments_mixin._post_api3 = Mock()
+
+        with pytest.raises(ValueError, match="Jira Cloud only"):
+            server_comments_mixin.add_comment_adf("PROJ-123", {"version": 1})
+
+        server_comments_mixin._post_api3.assert_not_called()
+
+
+class TestResolveMediaSources:
+    """Tests for validating and reading the images of a media comment."""
+
+    def test_inline_content_passes_through(self):
+        resolved = CommentsMixin._resolve_media_sources(
+            [{"filename": "shot.png", "content": b"bytes"}]
+        )
+
+        assert resolved == [{"filename": "shot.png", "content": b"bytes"}]
+
+    def test_file_path_inside_the_workspace_is_read(self, tmp_path, monkeypatch):
+        """A path within the server workspace is read and named by its basename."""
+        monkeypatch.chdir(tmp_path)
+        image = tmp_path / "screens" / "shot.png"
+        image.parent.mkdir()
+        image.write_bytes(b"image-bytes")
+
+        resolved = CommentsMixin._resolve_media_sources(
+            [{"file_path": "screens/shot.png"}]
+        )
+
+        assert resolved == [{"filename": "shot.png", "content": b"image-bytes"}]
+
+    def test_absolute_path_outside_the_workspace_is_rejected(
+        self, tmp_path, monkeypatch
+    ):
+        """An absolute path outside the workspace cannot be attached: that is
+        the arbitrary-file-read/exfiltration boundary the upload path enforces."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        monkeypatch.chdir(workspace)
+        secret = tmp_path / "secret.png"
+        secret.write_bytes(b"not yours")
+
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            CommentsMixin._resolve_media_sources([{"file_path": str(secret)}])
+
+    def test_traversing_relative_path_is_rejected(self, tmp_path, monkeypatch):
+        """`../` cannot be used to climb out of the workspace either."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        monkeypatch.chdir(workspace)
+        (tmp_path / "secret.png").write_bytes(b"not yours")
+
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            CommentsMixin._resolve_media_sources([{"file_path": "../secret.png"}])
+
+    def test_missing_file_is_reported(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(ValueError, match="file not found"):
+            CommentsMixin._resolve_media_sources([{"file_path": "absent.png"}])
+
+    def test_both_sources_is_rejected(self):
+        with pytest.raises(ValueError, match="not both"):
+            CommentsMixin._resolve_media_sources(
+                [{"file_path": "a.png", "content": b"x"}]
+            )
+
+    def test_no_source_is_rejected(self):
+        with pytest.raises(ValueError, match="needs 'file_path' or content"):
+            CommentsMixin._resolve_media_sources([{"filename": "a.png"}])
+
+    def test_inline_content_requires_a_filename(self):
+        with pytest.raises(ValueError, match="'filename' is required"):
+            CommentsMixin._resolve_media_sources([{"content": b"x"}])
+
+    def test_empty_content_is_rejected(self):
+        with pytest.raises(ValueError, match="content is empty"):
+            CommentsMixin._resolve_media_sources(
+                [{"filename": "a.png", "content": b""}]
+            )
+
+    def test_oversized_content_is_rejected(self):
+        with pytest.raises(ValueError, match="exceeds"):
+            CommentsMixin._resolve_media_sources(
+                [
+                    {
+                        "filename": "big.png",
+                        "content": b"x" * (ATTACHMENT_MAX_BYTES + 1),
+                    }
+                ]
+            )
+
+    def test_non_object_entry_is_rejected(self):
+        with pytest.raises(ValueError, match="must be a JSON object"):
+            CommentsMixin._resolve_media_sources(["shot.png"])
+
+
+class TestPlanMediaComment:
+    """Tests for positioning images inside the comment body."""
+
+    def test_index_placeholders_interleave_text_and_media(self):
+        plan = CommentsMixin._plan_media_comment(
+            "Before\n\n![one](media:0)\n\nAfter\n\n![two](media:1)",
+            ["one.png", "two.png"],
+        )
+
+        assert [segment["type"] for segment in plan] == [
+            "text",
+            "media",
+            "text",
+            "media",
+            "text",
+        ]
+        assert [s["index"] for s in plan if s["type"] == "media"] == [0, 1]
+        assert plan[0]["text"].strip() == "Before"
+        assert plan[2]["text"].strip() == "After"
+
+    def test_filename_placeholders_are_matched(self):
+        plan = CommentsMixin._plan_media_comment(
+            "See ![shot](shot.png) here", ["shot.png"]
+        )
+
+        assert [segment["type"] for segment in plan] == ["text", "media", "text"]
+        assert plan[1]["index"] == 0
+
+    def test_placeholders_may_reorder_the_media(self):
+        """The body, not the upload order, decides where each image lands."""
+        plan = CommentsMixin._plan_media_comment(
+            "![b](media:1) then ![a](media:0)", ["a.png", "b.png"]
+        )
+
+        assert [s["index"] for s in plan if s["type"] == "media"] == [1, 0]
+
+    def test_unreferenced_media_is_appended_in_order(self):
+        plan = CommentsMixin._plan_media_comment("Just text", ["a.png", "b.png"])
+
+        assert [segment["type"] for segment in plan] == ["text", "media", "media"]
+        assert [s["index"] for s in plan if s["type"] == "media"] == [0, 1]
+
+    def test_foreign_image_markdown_is_left_in_the_text(self):
+        """An image that is not one of ours stays in the Markdown body."""
+        plan = CommentsMixin._plan_media_comment(
+            "![logo](https://example.com/logo.png)", ["shot.png"]
+        )
+
+        assert plan[0]["text"] == "![logo](https://example.com/logo.png)"
+        assert plan[1] == {"type": "media", "index": 0}
+
+    def test_out_of_range_index_is_rejected(self):
+        with pytest.raises(ValueError, match="only 1 media entries"):
+            CommentsMixin._plan_media_comment("![x](media:3)", ["a.png"])
+
+    def test_malformed_index_is_rejected(self):
+        with pytest.raises(ValueError, match="expected 'media:<index>'"):
+            CommentsMixin._plan_media_comment("![x](media:first)", ["a.png"])
+
+    def test_duplicate_filenames_resolve_to_the_first_entry(self):
+        plan = CommentsMixin._plan_media_comment(
+            "![x](shot.png)", ["shot.png", "shot.png"]
+        )
+
+        assert [s["index"] for s in plan if s["type"] == "media"] == [0, 1]
+
+
+class TestAddCommentWithMedia:
+    """Tests for the inline-media comment flow end to end."""
+
+    @staticmethod
+    def _with_attachment_mocks(mixin):
+        """Stand in for the AttachmentsMixin half of the composed fetcher."""
+        mixin.upload_attachment_from_content = Mock(
+            side_effect=lambda key, filename, content: {
+                "success": True,
+                "id": f"att-{filename}",
+                "filename": filename,
+            }
+        )
+        mixin.get_attachment_media_id = Mock(
+            side_effect=lambda attachment_id: f"uuid-{attachment_id}"
+        )
+        mixin.delete_attachment = Mock(return_value={"success": True})
+        mixin.add_comment_adf = Mock(return_value={"id": "10001", "body": ""})
+        return mixin
+
+    @pytest.fixture
+    def comments_mixin(self, cloud_comments_mixin):
+        return self._with_attachment_mocks(cloud_comments_mixin)
+
+    @pytest.fixture
+    def server_mixin(self, server_comments_mixin):
+        return self._with_attachment_mocks(server_comments_mixin)
+
+    def test_body_and_images_are_interleaved_in_order(self, comments_mixin):
+        """text -> image -> text -> image is what reaches the ADF builder."""
+        result = comments_mixin.add_comment_with_media(
+            "PROJ-123",
+            "Before\n\n![one](media:0)\n\nAfter\n\n![two](media:1)",
+            [
+                {"filename": "one.png", "content": b"one"},
+                {"filename": "two.png", "content": b"two"},
+            ],
+        )
+
+        adf = comments_mixin.add_comment_adf.call_args.args[1]
+        assert [node["type"] for node in adf["content"]] == [
+            "paragraph",
+            "mediaSingle",
+            "paragraph",
+            "mediaSingle",
+        ]
+        assert result["comment"]["id"] == "10001"
+        assert [item["media_id"] for item in result["embedded"]] == [
+            "uuid-att-one.png",
+            "uuid-att-two.png",
+        ]
+
+    def test_image_dimensions_reach_the_media_node(self, comments_mixin):
+        """Dimensions are parsed from the bytes, so Cloud renders the image."""
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 800, 600)
+            + b"\x08\x06\x00\x00\x00"
+        )
+
+        comments_mixin.add_comment_with_media(
+            "PROJ-123", "Look", [{"filename": "shot.png", "content": png}]
+        )
+
+        adf = comments_mixin.add_comment_adf.call_args.args[1]
+        attrs = adf["content"][1]["content"][0]["attrs"]
+        assert (attrs["width"], attrs["height"]) == (800, 600)
+
+    def test_visibility_is_forwarded(self, comments_mixin):
+        comments_mixin.add_comment_with_media(
+            "PROJ-123",
+            "Look",
+            [{"filename": "a.png", "content": b"a"}],
+            {"type": "group", "value": "jira-users"},
+        )
+
+        assert comments_mixin.add_comment_adf.call_args.args[2] == {
+            "type": "group",
+            "value": "jira-users",
+        }
+
+    def test_rejected_on_server_dc(self, server_mixin):
+        """Inline ADF media is unavailable on Server/DC; nothing is uploaded."""
+        with pytest.raises(ValueError, match="Jira Cloud only"):
+            server_mixin.add_comment_with_media(
+                "PROJ-123", "Look", [{"filename": "a.png", "content": b"a"}]
+            )
+
+        server_mixin.upload_attachment_from_content.assert_not_called()
+
+    def test_empty_media_is_rejected(self, comments_mixin):
+        with pytest.raises(ValueError, match="At least one media entry"):
+            comments_mixin.add_comment_with_media("PROJ-123", "Look", [])
+
+    def test_invalid_input_uploads_nothing(self, comments_mixin):
+        """Sources are validated before any upload, so bad input leaves no
+        partially-attached issue behind."""
+        with pytest.raises(ValueError, match="only 1 media entries"):
+            comments_mixin.add_comment_with_media(
+                "PROJ-123",
+                "![x](media:5)",
+                [{"filename": "a.png", "content": b"a"}],
+            )
+
+        comments_mixin.upload_attachment_from_content.assert_not_called()
+
+    def test_failed_comment_rolls_back_every_upload(self, comments_mixin):
+        """A failure after upload must not leave orphan attachments."""
+        comments_mixin.add_comment_adf = Mock(side_effect=Exception("500 error"))
+
+        with pytest.raises(Exception, match="500 error"):
+            comments_mixin.add_comment_with_media(
+                "PROJ-123",
+                "Look",
+                [
+                    {"filename": "a.png", "content": b"a"},
+                    {"filename": "b.png", "content": b"b"},
+                ],
+            )
+
+        assert [
+            call.args[0] for call in comments_mixin.delete_attachment.call_args_list
+        ] == ["att-a.png", "att-b.png"]
+
+    def test_unresolvable_media_id_rolls_back_the_upload(self, comments_mixin):
+        """The attachment already uploaded is removed before the error surfaces."""
+        comments_mixin.get_attachment_media_id = Mock(return_value=None)
+
+        with pytest.raises(ValueError, match="could not resolve the Media Services"):
+            comments_mixin.add_comment_with_media(
+                "PROJ-123", "Look", [{"filename": "a.png", "content": b"a"}]
+            )
+
+        comments_mixin.delete_attachment.assert_called_once_with("att-a.png")
+
+    def test_failed_upload_rolls_back_earlier_uploads(self, comments_mixin):
+        """A mid-sequence upload failure still cleans up its predecessors."""
+        comments_mixin.upload_attachment_from_content = Mock(
+            side_effect=[
+                {"success": True, "id": "att-1", "filename": "a.png"},
+                {"success": False, "error": "413 Payload Too Large"},
+            ]
+        )
+
+        with pytest.raises(ValueError, match="413 Payload Too Large"):
+            comments_mixin.add_comment_with_media(
+                "PROJ-123",
+                "Look",
+                [
+                    {"filename": "a.png", "content": b"a"},
+                    {"filename": "b.png", "content": b"b"},
+                ],
+            )
+
+        comments_mixin.delete_attachment.assert_called_once_with("att-1")
+
+    def test_rollback_failure_does_not_mask_the_original_error(self, comments_mixin):
+        """Cleanup is best-effort: the cause of the failure still surfaces."""
+        comments_mixin.add_comment_adf = Mock(side_effect=Exception("500 error"))
+        comments_mixin.delete_attachment = Mock(side_effect=Exception("cleanup failed"))
+
+        with pytest.raises(Exception, match="500 error"):
+            comments_mixin.add_comment_with_media(
+                "PROJ-123", "Look", [{"filename": "a.png", "content": b"a"}]
+            )

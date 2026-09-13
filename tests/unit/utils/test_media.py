@@ -1,12 +1,14 @@
 """Tests for the shared MIME detection and attachment download utilities."""
 
 import base64
+import struct
 
 import pytest
 
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
+    get_image_dimensions,
     is_image_attachment,
 )
 
@@ -239,3 +241,108 @@ class TestFetchAndEncodeAttachment:
         assert encoded is None
         assert mime is None
         assert size == 150
+
+
+class TestGetImageDimensions:
+    """Tests for the stdlib image-header dimension parser."""
+
+    @staticmethod
+    def _png(width: int, height: int) -> bytes:
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", width, height)
+            + b"\x08\x06\x00\x00\x00"
+        )
+
+    @staticmethod
+    def _gif(width: int, height: int) -> bytes:
+        return b"GIF89a" + struct.pack("<HH", width, height) + b"\x00" * 20
+
+    @staticmethod
+    def _bmp(width: int, height: int) -> bytes:
+        return b"BM" + b"\x00" * 16 + struct.pack("<ii", width, height) + b"\x00" * 10
+
+    @staticmethod
+    def _jpeg(width: int, height: int) -> bytes:
+        # SOI, a skippable APP0 segment, then SOF0 carrying the frame size.
+        app0 = b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00" + b"\x00" * 9
+        sof0 = (
+            b"\xff\xc0"
+            + struct.pack(">H", 17)
+            + b"\x08"
+            + struct.pack(">HH", height, width)
+            + b"\x03"
+            + b"\x00" * 9
+        )
+        return b"\xff\xd8" + app0 + sof0 + b"\xff\xd9"
+
+    def test_png(self) -> None:
+        assert get_image_dimensions(self._png(1280, 720)) == (1280, 720)
+
+    def test_gif(self) -> None:
+        assert get_image_dimensions(self._gif(64, 48)) == (64, 48)
+
+    def test_bmp_bottom_up(self) -> None:
+        assert get_image_dimensions(self._bmp(100, 200)) == (100, 200)
+
+    def test_bmp_top_down_height_is_negative(self) -> None:
+        """A top-down BMP stores a negative height; the magnitude is returned."""
+        assert get_image_dimensions(self._bmp(100, -200)) == (100, 200)
+
+    def test_jpeg(self) -> None:
+        assert get_image_dimensions(self._jpeg(800, 600)) == (800, 600)
+
+    def test_webp_lossy(self) -> None:
+        data = (
+            b"RIFF"
+            + struct.pack("<I", 30)
+            + b"WEBPVP8 "
+            + b"\x00" * 10
+            + struct.pack("<HH", 320, 240)
+            + b"\x00" * 4
+        )
+        assert get_image_dimensions(data) == (320, 240)
+
+    def test_webp_lossless(self) -> None:
+        bits = (640 - 1) | ((480 - 1) << 14)
+        data = (
+            b"RIFF"
+            + struct.pack("<I", 25)
+            + b"WEBPVP8L"
+            + b"\x00" * 5
+            + struct.pack("<I", bits)
+            + b"\x00" * 4
+        )
+        assert get_image_dimensions(data) == (640, 480)
+
+    def test_webp_extended(self) -> None:
+        data = (
+            b"RIFF"
+            + struct.pack("<I", 30)
+            + b"WEBPVP8X"
+            + b"\x00" * 8
+            + (1023).to_bytes(3, "little")
+            + (767).to_bytes(3, "little")
+            + b"\x00" * 4
+        )
+        assert get_image_dimensions(data) == (1024, 768)
+
+    def test_empty_input(self) -> None:
+        assert get_image_dimensions(b"") is None
+
+    def test_too_short_to_parse(self) -> None:
+        assert get_image_dimensions(b"\x89PNG\r\n\x1a\n") is None
+
+    def test_unrecognised_format(self) -> None:
+        assert get_image_dimensions(b"%PDF-1.7" + b"\x00" * 40) is None
+
+    def test_truncated_png_header(self) -> None:
+        """A PNG signature with a truncated IHDR must not raise."""
+        assert get_image_dimensions(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16) == (0, 0)
+
+    def test_jpeg_without_sof_marker(self) -> None:
+        """A JPEG carrying no frame header resolves to None, not an exception."""
+        data = b"\xff\xd8" + b"\xff\xe0" + struct.pack(">H", 4) + b"\x00\x00\xff\xd9"
+        assert get_image_dimensions(data) is None

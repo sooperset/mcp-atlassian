@@ -86,6 +86,8 @@ Update an issue and optionally transition, comment, and log work.
 | `components` | `string` | No | (Optional) Comma-separated list of component names (e.g., 'Frontend,API') |
 | `attachments` | `string` | No | (Optional) JSON string array or comma-separated list of file paths to attach to the issue. Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt']. Requires the server to be able to read the paths; for remote or containerized servers use 'attachments_base64' instead. |
 | `attachments_base64` | `string` | No | (Optional) JSON string array of files to attach as base64-encoded content, without the server reading from disk. Use this when the server cannot access host file paths (e.g. a remote or containerized MCP server). Each entry needs 'filename' and 'content_base64'. Example: '[`{"filename": "hello.txt", "content_base64": "SGVsbG8="}`]'. Can be combined with 'attachments'. |
+| `delete_attachments` | `string` | No | (Optional) JSON array or comma-separated list of attachment IDs to delete from the issue. IDs come from the issue's attachment metadata (e.g. jira_get_issue). Example: '10001,10002'. |
+| `delete_comments` | `string` | No | (Optional) JSON array or comma-separated list of comment IDs to delete from the issue. IDs come from the issue's comments (e.g. jira_get_issue with comments included). |
 | `transition` | `string` | No | (Optional) Transition name or ID. Transition names are resolved case-insensitively. |
 | `comment` | `string` | No | (Optional) Comment text in Markdown format. |
 | `comment_visibility` | `string` | No | (Optional) Comment visibility as a JSON string, for example '`{"type":"group","value":"jira-users"}`'. |
