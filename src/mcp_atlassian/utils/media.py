@@ -99,7 +99,12 @@ def get_image_dimensions(data: bytes) -> tuple[int, int] | None:
         # BMP: 'BM', BITMAPINFOHEADER width/height as LE int32. Height is
         # negative for a top-down bitmap, so take the magnitude.
         if data[:2] == b"BM":
-            width, height = struct.unpack("<ii", data[18:26])
+            # The legacy BITMAPCOREHEADER (size 12) stores 16-bit dimensions
+            # instead, so read the DIB header size before unpacking.
+            if struct.unpack("<I", data[14:18])[0] == 12:
+                width, height = struct.unpack("<hh", data[18:22])
+            else:
+                width, height = struct.unpack("<ii", data[18:26])
             return int(width), abs(int(height))
 
         # WebP: 'RIFF'....'WEBP' followed by a VP8/VP8L/VP8X chunk.
@@ -149,6 +154,12 @@ def _jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
             pos += 1
             continue
         marker = data[pos + 1]
+        # Any number of 0xFF fill bytes may precede a marker id. Step over one
+        # and re-examine, rather than mistaking the fill byte for the marker
+        # and then reading a segment length out of the real marker's bytes.
+        if marker == 0xFF:
+            pos += 1
+            continue
         pos += 2
         # Padding bytes / markers without a length payload.
         if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7 or marker == 0x01:

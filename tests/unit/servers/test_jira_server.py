@@ -6,6 +6,7 @@ import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -5288,6 +5289,9 @@ async def test_add_comment_media_rejects_the_public_flag(
 async def test_update_issue_deletes_attachments(jira_client, mock_jira_fetcher):
     """Attachment removal is folded into the issue-update outcome tool."""
     mock_jira_fetcher.delete_attachment = MagicMock(return_value={"success": True})
+    mock_jira_fetcher.get_issue_attachments = MagicMock(
+        return_value=[SimpleNamespace(id="10001"), SimpleNamespace(id="10002")]
+    )
 
     response = await jira_client.call_tool(
         "jira_update_issue",
@@ -5315,6 +5319,9 @@ async def test_update_issue_reports_a_failed_attachment_deletion(
     mock_jira_fetcher.delete_attachment = MagicMock(
         return_value={"success": False, "error": "403 Forbidden"}
     )
+    mock_jira_fetcher.get_issue_attachments = MagicMock(
+        return_value=[SimpleNamespace(id="10001")]
+    )
 
     response = await jira_client.call_tool(
         "jira_update_issue",
@@ -5329,6 +5336,34 @@ async def test_update_issue_reports_a_failed_attachment_deletion(
     content = json.loads(response.content[0].text)
     assert any("403 Forbidden" in item for item in content["operations_failed"])
     assert "comment_added" in content["operations_performed"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_refuses_a_foreign_attachment_id(
+    jira_client, mock_jira_fetcher
+):
+    """Deletion is instance-wide, so an id from another issue must be refused."""
+    mock_jira_fetcher.delete_attachment = MagicMock(return_value={"success": True})
+    mock_jira_fetcher.get_issue_attachments = MagicMock(
+        return_value=[SimpleNamespace(id="10001")]
+    )
+
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "delete_attachments": "10001,99999",
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert mock_jira_fetcher.delete_attachment.call_args_list == [call("10001")]
+    assert "attachment_deleted:10001" in content["operations_performed"]
+    assert any(
+        "99999" in item and "not an attachment" in item
+        for item in content["operations_failed"]
+    )
 
 
 @pytest.mark.anyio

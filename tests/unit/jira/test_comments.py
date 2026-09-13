@@ -975,6 +975,60 @@ class TestInternalOnlyProjectsGuard:
         with pytest.raises(ValueError, match="PUBLIC"):
             guarded_mixin.edit_comment("CC-1", "5", "Updated text")
 
+    # --- delete_comment ---
+
+    def test_delete_comment_internal_only_rejects_public_comment(self, guarded_mixin):
+        """Removing a customer-visible comment changes the portal view too."""
+        guarded_mixin.jira.get.return_value = {"id": "5", "public": True}
+        guarded_mixin._delete_api3 = Mock()
+        with pytest.raises(ValueError, match="PUBLIC"):
+            guarded_mixin.delete_comment("CC-1", "5")
+        guarded_mixin._delete_api3.assert_not_called()
+
+    def test_delete_comment_internal_only_accepts_internal_comment(self, guarded_mixin):
+        """An internal note in a guarded project may still be deleted."""
+        guarded_mixin.jira.get.return_value = {"id": "5", "public": False}
+        guarded_mixin._delete_api3 = Mock(return_value=None)
+        assert guarded_mixin.delete_comment("CC-1", "5") is True
+        guarded_mixin._delete_api3.assert_called_once_with("issue/CC-1/comment/5")
+
+    def test_delete_comment_unlisted_project_unaffected(self, guarded_mixin):
+        """An unlisted project pays no ServiceDesk round-trip and deletes."""
+        guarded_mixin._delete_api3 = Mock(return_value=None)
+        assert guarded_mixin.delete_comment("TEST-1", "5") is True
+        guarded_mixin.jira.get.assert_not_called()
+
+    # --- add_comment_with_media ---
+
+    def test_media_comment_internal_only_is_rejected(self, guarded_mixin):
+        """Inline-media comments post as customer-visible ADF, so the guard
+        must block them on a listed project before anything is uploaded."""
+        guarded_mixin.upload_attachment_from_content = Mock()
+        with pytest.raises(ValueError, match="internal-only"):
+            guarded_mixin.add_comment_with_media(
+                "CC-1", "see ![shot](media:0)", [{"filename": "s.png", "content": b"x"}]
+            )
+        guarded_mixin.upload_attachment_from_content.assert_not_called()
+
+    def test_media_comment_unlisted_project_unaffected(self, guarded_mixin):
+        """An unlisted project keeps working exactly as before."""
+        guarded_mixin.upload_attachment_from_content = Mock(
+            return_value={"success": True, "id": "42"}
+        )
+        guarded_mixin.get_attachment_media_id = Mock(return_value="uuid-1")
+        guarded_mixin._post_api3 = Mock(
+            return_value={
+                "id": "1",
+                "body": {"version": 1, "type": "doc", "content": []},
+                "created": "2024-01-01T10:00:00.000+0000",
+                "author": {"displayName": "A"},
+            }
+        )
+        result = guarded_mixin.add_comment_with_media(
+            "TEST-1", "see ![shot](media:0)", [{"filename": "s.png", "content": b"x"}]
+        )
+        assert result["embedded"][0]["media_id"] == "uuid-1"
+
 
 class TestInternalOnlyNonRequestIssues:
     """A guarded project may also hold issues that are not JSM requests.

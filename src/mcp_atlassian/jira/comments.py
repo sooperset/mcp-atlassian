@@ -2,9 +2,10 @@
 
 Internal-only guard (JIRA_INTERNAL_ONLY_PROJECTS) coverage map:
 
-- Guarded routes: add_comment (here), edit_comment (here),
-  transition_issue's comment argument (transitions.py), and
-  create_issue_link's comment payload (links.py).
+- Guarded routes: add_comment (here), add_comment_with_media (here),
+  edit_comment (here), delete_comment (here), transition_issue's comment
+  argument (transitions.py), and create_issue_link's comment payload
+  (links.py).
 - Known non-covered route: add_worklog's comment (worklog.py) is left
   unguarded by design — worklog entries are not portal-visible to JSM
   customers by default, so a worklog comment does not carry the
@@ -310,8 +311,10 @@ class CommentsMixin(JiraClient):
                 f"{issue_key} is in an internal-only project): {e}"
             ) from e
 
-    def _enforce_internal_only_edit(self, issue_key: str, comment_id: str) -> None:
-        """Reject edit_comment calls that would modify a public comment on a
+    def _enforce_internal_only_edit(
+        self, issue_key: str, comment_id: str, action: str = "edit"
+    ) -> None:
+        """Reject edit/delete calls that would modify a public comment on a
         project listed in JIRA_INTERNAL_ONLY_PROJECTS.
 
         This closes the gap the client-side PreToolUse hook cannot cover:
@@ -322,6 +325,7 @@ class CommentsMixin(JiraClient):
         Args:
             issue_key: The issue key (e.g. 'CC-123')
             comment_id: The ID of the comment being edited
+            action: The verb used in the rejection message ('edit'/'delete')
 
         Raises:
             ValueError: If the project is internal-only and the target
@@ -334,8 +338,8 @@ class CommentsMixin(JiraClient):
                 f"Comment {comment_id} on issue {issue_key} is PUBLIC "
                 f"(customer-visible). {issue_key}'s project is configured "
                 "as internal-only (JIRA_INTERNAL_ONLY_PROJECTS), so "
-                "automation may not edit public comments there — a human "
-                "must edit client-facing content directly in Jira. Post a "
+                f"automation may not {action} public comments there — a human "
+                f"must {action} client-facing content directly in Jira. Post a "
                 "new internal note (public=False) instead if you need to "
                 "add information."
             )
@@ -612,8 +616,15 @@ class CommentsMixin(JiraClient):
             True if the comment was deleted successfully
 
         Raises:
+            ValueError: If issue_key's project is listed in
+                JIRA_INTERNAL_ONLY_PROJECTS and the target comment is
+                currently public (customer-visible)
             Exception: If there is an error deleting the comment
         """
+        # Removing a customer-visible comment changes what the portal shows
+        # just as editing one does, so the guard covers this route too.
+        self._enforce_internal_only_edit(issue_key, comment_id, action="delete")
+
         try:
             resource = f"issue/{issue_key}/comment/{comment_id}"
             # Use v3 on Cloud for consistency with the other comment writes;
@@ -847,8 +858,10 @@ class CommentsMixin(JiraClient):
             attachments (filename, attachment id, media id)
 
         Raises:
-            ValueError: If the instance is not Cloud, or the media entries or
-                placeholders are invalid
+            ValueError: If the instance is not Cloud, the media entries or
+                placeholders are invalid, or issue_key's project is listed in
+                JIRA_INTERNAL_ONLY_PROJECTS (an inline-media comment is always
+                customer-visible, so it cannot satisfy that guard)
             Exception: If an upload, media-id resolution, or the comment post
                 fails
         """
@@ -856,6 +869,15 @@ class CommentsMixin(JiraClient):
             raise ValueError("Inline media comments are supported on Jira Cloud only.")
         if not media:
             raise ValueError("At least one media entry is required.")
+
+        # Inline-media comments post through the ordinary (customer-visible)
+        # comment API, so the internal-only guard applies here exactly as it
+        # does to add_comment. Issues in a guarded project that are not JSM
+        # customer requests have no portal audience and stay exempt.
+        if self._is_internal_only_project(issue_key):
+            issue_key = self._require_canonical_guarded_issue_key(issue_key)
+            if self._is_servicedesk_request(issue_key):
+                self._enforce_internal_only_add(issue_key, None)
 
         # Validate and read every source before anything is uploaded, so bad
         # input never leaves a partial upload behind.

@@ -2472,7 +2472,35 @@ async def update_issue(
             )
             operations_failed.append(f"fields_updated: {e}")
 
+    # The REST deletion endpoint is instance-wide: an id that belongs to some
+    # other issue would be deleted just the same, and reported as if it had
+    # been an attachment of issue_key. Scope it to this issue first, failing
+    # closed if the issue's attachments cannot be listed.
+    issue_attachment_ids: set[str] | None = None
+    if attachment_ids_to_delete:
+        try:
+            issue_attachment_ids = {
+                str(attachment.id)
+                for attachment in jira.get_issue_attachments(issue_key)
+            }
+        except Exception as e:  # noqa: BLE001 - preserve later operations
+            logger.error(
+                f"Could not list attachments of {issue_key}: {str(e)}",
+                exc_info=True,
+            )
+
     for attachment_id in attachment_ids_to_delete:
+        if issue_attachment_ids is None:
+            operations_failed.append(
+                f"delete_attachment {attachment_id}: could not verify that it "
+                f"belongs to {issue_key}"
+            )
+            continue
+        if attachment_id not in issue_attachment_ids:
+            operations_failed.append(
+                f"delete_attachment {attachment_id}: not an attachment of {issue_key}"
+            )
+            continue
         deletion = jira.delete_attachment(attachment_id)
         if deletion.get("success"):
             operations_performed.append(f"attachment_deleted:{attachment_id}")

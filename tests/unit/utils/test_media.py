@@ -294,6 +294,23 @@ class TestGetImageDimensions:
     def test_jpeg(self) -> None:
         assert get_image_dimensions(self._jpeg(800, 600)) == (800, 600)
 
+    def test_jpeg_with_fill_bytes_before_the_frame_header(self) -> None:
+        """Encoders may pad with extra 0xFF bytes ahead of a marker id."""
+        data = self._jpeg(800, 600)
+        padded = data[:20] + b"\xff\xff" + data[20:]
+        assert get_image_dimensions(padded) == (800, 600)
+
+    def test_bmp_with_a_core_header(self) -> None:
+        """The legacy BITMAPCOREHEADER stores 16-bit dimensions."""
+        data = (
+            b"BM"
+            + b"\x00" * 12
+            + struct.pack("<I", 12)
+            + struct.pack("<hh", 120, 90)
+            + b"\x00" * 10
+        )
+        assert get_image_dimensions(data) == (120, 90)
+
     def test_webp_lossy(self) -> None:
         data = (
             b"RIFF"
