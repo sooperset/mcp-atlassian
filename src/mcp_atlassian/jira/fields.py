@@ -31,6 +31,13 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
 
         Returns:
             List of field definitions
+
+        Raises:
+            Exception: Any error from the Jira client (connection, auth, parsing,
+                etc.) propagates so callers can distinguish "no fields exist" from
+                "the request never reached Jira". The only exception swallowed
+                here is the explicit TypeError we raise when the API returns a
+                non-list value, which we still log and treat as no data.
         """
         try:
             # Use cached field data if available and refresh is not requested
@@ -60,8 +67,10 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
 
             return fields
 
-        except Exception as e:
-            logger.error(f"Error getting Jira fields: {str(e)}")
+        except TypeError as e:
+            # Our own TypeError, raised above for a malformed API response.
+            # The API legitimately returned no usable data, so report that.
+            logger.error(f"Error getting Jira fields: {e}")
             return []
 
     def _generate_field_map(self, force_regenerate: bool = False) -> dict[str, str]:
@@ -874,6 +883,12 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             # Return the top limit results
             return sorted_fields[:limit]
 
-        except Exception as e:
-            logger.error(f"Error searching fields: {str(e)}")
+        except TypeError as e:
+            # A TypeError here means a malformed entry in the cached field
+            # list reached the similarity() helper. The earlier call to
+            # get_fields() already filtered out a non-list response, so
+            # only the inner similarity math can hit this. Log and report
+            # no results; let every other error (connection, auth, parsing)
+            # propagate so callers can tell "no match" from "no data".
+            logger.error(f"Error searching fields: {e}")
             return []
