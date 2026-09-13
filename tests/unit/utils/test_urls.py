@@ -73,7 +73,7 @@ def _run_hook(
 
 
 class TestRedirectHookBaseUrlBinding:
-    """The redirect hook exempts the session's own host and nothing else."""
+    """Redirect exemptions are limited to the base and its HTTPS counterpart."""
 
     @pytest.fixture(autouse=True)
     def _clean_env(self, monkeypatch) -> None:
@@ -130,6 +130,26 @@ class TestRedirectHookBaseUrlBinding:
             )
             is None
         )
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize(
+        ("source", "target", "allowed"),
+        [
+            ("http://jira.internal:8080", "https://jira.internal", True),
+            ("https://jira.internal", "/next", True),
+            ("https://jira.internal", "http://jira.internal:8080", False),
+            ("http://jira.internal:8080", "https://jira.internal:8443", False),
+            ("http://jira.internal:9090", "https://jira.internal", False),
+            ("https://other.internal", "https://jira.internal", False),
+            ("http://jira.internal:8080", "https://evil.jira.internal", False),
+        ],
+    )
+    def test_https_upgrade_boundaries(
+        self, source: str, target: str, allowed: bool
+    ) -> None:
+        """Allow the HTTPS counterpart without trusting downgrades or other origins."""
+        error = _run_hook("http://jira.internal:8080", source, target)
+        assert (error is None) is allowed
 
     def test_no_base_url_trusts_nothing(self) -> None:
         """Constructed without a base URL, the hook behaves exactly as before."""
@@ -298,16 +318,23 @@ class TestRedirectHookBaseUrlBinding:
         assert error is not None
         assert "Redirect blocked (SSRF)" in error
 
-    def test_allowlist_still_restricts_the_base_host(self, monkeypatch) -> None:
+    @pytest.mark.parametrize(
+        ("base", "location"),
+        [
+            ("https://jira.internal", "/login.jsp"),
+            ("http://jira.internal:8080", "https://jira.internal/login.jsp"),
+        ],
+    )
+    def test_allowlist_still_restricts_the_base_host(
+        self, monkeypatch, base: str, location: str
+    ) -> None:
         """MCP_ALLOWED_URL_DOMAINS keeps its restrictive meaning.
 
         The waiver drops the non-global rejections only; an operator who narrowed
         the domain set still gets that narrowing, base host included.
         """
         monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "corp.com")
-        error = _run_hook(
-            "https://jira.internal", "https://jira.internal/start", "/login.jsp"
-        )
+        error = _run_hook(base, f"{base}/start", location)
         assert error is not None
         assert "not in allowed domains" in error
 

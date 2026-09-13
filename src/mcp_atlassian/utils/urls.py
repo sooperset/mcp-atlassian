@@ -34,24 +34,14 @@ def _origin(url: str) -> tuple[str, str, int] | None:
 
 
 def make_ssrf_redirect_hook(base_url: str | None = None) -> Callable[..., Any]:
-    """Return a requests ``response`` hook that blocks SSRF-unsafe redirects.
+    """Block SSRF-unsafe redirects, exempting the session's configured origin.
 
-    Attach to any session (``session.hooks["response"].append(...)``) so that an
-    open redirect cannot steer an outbound request to an internal/metadata host.
-
-    An on-prem Server/DC instance lives on a private network and redirects to
-    itself (session expiry, canonical base URL, reverse proxy). Passing the
-    session's own service URL lets those redirects through without widening the
-    guard: the exemption is one origin — scheme, host and port — and it applies
-    only to a redirect that both comes from and points at that origin, so it
-    reaches nothing the session is not already talking to. Another port on the
-    same host, a scheme downgrade, and a hop through some other host and back are
-    all still validated strictly.
+    An HTTP base also trusts HTTPS:443 on the same host, including redirects
+    within that HTTPS origin. Other transitions use strict validation. Scheme,
+    backslash-authority and domain-allowlist checks always apply.
 
     Args:
-        base_url: The session's own configured service URL, or None to trust no
-            origin. Only a same-origin redirect is exempt, and only from the
-            non-global-address rejections.
+        base_url: Configured service URL, or None to grant no exemption.
 
     Returns:
         A hook suitable for ``session.hooks["response"].append(...)``.
@@ -70,14 +60,18 @@ def make_ssrf_redirect_hook(base_url: str | None = None) -> Callable[..., Any]:
                     f"Redirect blocked (SSRF): unparsable Location: {e}"
                 ) from e
 
-            # Waive only when the hop stays inside the session's own origin.
-            # Requiring the source too stops an off-origin hop from pivoting back
-            # in with the exemption applied.
+            # Exempt the base and one-way upgrade to its HTTPS:443 counterpart.
+            # Check both origins so external sources cannot borrow this exemption.
             trusted_host = None
-            if (
-                trusted_origin is not None
-                and _origin(response.url) == trusted_origin
-                and _origin(redirect_url) == trusted_origin
+            source_origin = _origin(response.url)
+            target_origin = _origin(redirect_url)
+            if trusted_origin is not None and (
+                source_origin == target_origin == trusted_origin
+                or (
+                    trusted_origin[0] == "http"
+                    and target_origin == ("https", trusted_origin[1], 443)
+                    and source_origin in (trusted_origin, target_origin)
+                )
             ):
                 trusted_host = trusted_origin[1]
 
