@@ -1,0 +1,27 @@
+{
+  "name": "mcp-atlassian",
+  "version": "0.1.0",
+  "description": "MCP server for Atlassian tools (Confluence, Jira) - access from Codex",
+  "author": {
+    "name": "sooperset",
+    "url": "https://github.com/sooperset"
+  },
+  "homepage": "https://github.com/sooperset/mcp-atlassian",
+  "repository": "https://github.com/sooperset/mcp-atlassian",
+  "keywords": [
+    "mcp",
+    "atlassian",
+    "confluence",
+    "jira",
+    "codex"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "MCP Atlassian",
+    "shortDescription": "Access Confluence and Jira from Codex",
+    "longDescription": "MCP server for Atlassian tools. Search and read Confluence pages, manage Jira issues, and integrate Atlassian knowledge into your Codex workflow.",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/sooperset/mcp-atlassian"
+  },
+  "skills": "./skills/"
+}
