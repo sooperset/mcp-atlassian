@@ -239,7 +239,7 @@ def configure_ssl_verification(
     client_key: str | None = None,
     client_key_password: str | None = None,
     no_proxy: str | None = None,
-) -> None:
+) -> bool | str:
     """Configure SSL verification and client certificates for a specific service.
 
     If SSL verification is disabled, this function will configure the session
@@ -262,6 +262,13 @@ def configure_ssl_verification(
         client_key_password: Password for encrypted private key (optional)
         no_proxy: The no-proxy list to honor on the mounted adapter. Defaults to
             the ``NO_PROXY`` environment variable when not provided.
+
+    Returns:
+        The effective requests ``verify`` value for this service: ``False``
+        when verification is disabled, the operator's CA bundle path when one
+        is configured, else ``True``. Callers must propagate this to wrappers
+        that pass ``verify=`` per request (atlassian-python-api does), because
+        a per-request value overrides ``session.verify``.
     """
     no_proxy = no_proxy or os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
     # Configure client certificate if provided (must be actual string paths).
@@ -290,6 +297,45 @@ def configure_ssl_verification(
             key_configured,
         )
 
+    effective_verify: bool | str = ssl_verify
+    if ssl_verify:
+        # PAT and OAuth sessions run with trust_env=False (so .netrc cannot
+        # override explicit credentials), which also stops requests from
+        # honoring REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE. Resolve the bundle
+        # explicitly so a private CA keeps working on those sessions — e.g.
+        # when the OS trust store injection is disabled for the in-app TLS
+        # listener.
+        # These env vars are operator-only process configuration; nothing in
+        # the per-request (multi-tenant) path may write them.
+        ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get(
+            "CURL_CA_BUNDLE"
+        )
+        if ca_bundle:
+            # requests accepts a CA bundle file or an OpenSSL-style hashed
+            # CA directory here; accept both (including symlinks to either),
+            # but reject special files — a FIFO would block the TLS layer
+            # instead of failing fast.
+            if not (os.path.isfile(ca_bundle) or os.path.isdir(ca_bundle)):
+                # Log the path server-side only; the raised message can reach
+                # the MCP client via tool errors.
+                logger.error(
+                    "%s CA bundle from REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE is "
+                    "not a regular file or directory: %r",
+                    service_name,
+                    ca_bundle,
+                )
+                raise ValueError(
+                    f"{service_name} CA bundle configuration is invalid; "
+                    "see server logs."
+                )
+            session.verify = ca_bundle
+            effective_verify = ca_bundle
+            logger.debug(
+                "%s outbound SSL verification uses CA bundle: %s",
+                service_name,
+                ca_bundle,
+            )
+
     if not ssl_verify:
         logger.warning(
             f"{service_name} SSL verification disabled. This is insecure and "
@@ -311,3 +357,5 @@ def configure_ssl_verification(
             adapter = NoProxyAdapter(no_proxy=no_proxy)
             session.mount(f"https://{domain}", adapter)
             session.mount(f"http://{domain}", adapter)
+
+    return effective_verify
