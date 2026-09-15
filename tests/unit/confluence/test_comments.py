@@ -1147,12 +1147,40 @@ class TestAddInlineComment:
 
         assert result is None
 
-    def test_delete_comment_success(self, comments_mixin):
-        """delete_comment issues DELETE /rest/api/content/{id} and returns True."""
+    def test_delete_comment_success_v1(self, comments_mixin):
+        """Basic auth deletion uses the v1 content endpoint."""
         comments_mixin.confluence.remove_content = MagicMock(return_value=None)
 
         assert comments_mixin.delete_comment("987654") is True
         comments_mixin.confluence.remove_content.assert_called_once_with("987654")
+
+    @pytest.mark.parametrize("auth_type", ["oauth", "pat"])
+    def test_delete_comment_uses_v2_for_supported_cloud_auth(
+        self, comments_mixin, auth_type
+    ):
+        """Cloud OAuth and PAT deletion avoid the unavailable v1 endpoint."""
+        comments_mixin.config.auth_type = auth_type
+        comments_mixin.config.url = "https://test.atlassian.net/wiki"
+        mock_adapter = MagicMock()
+
+        with patch.object(
+            type(comments_mixin),
+            "_v2_adapter",
+            new_callable=lambda: property(lambda self: mock_adapter),
+        ):
+            assert comments_mixin.delete_comment("987654") is True
+
+        mock_adapter.delete_comment.assert_called_once_with("987654")
+        comments_mixin.confluence.remove_content.assert_not_called()
+
+    def test_delete_comment_uses_v1_for_server_dc_pat(self, comments_mixin_dc):
+        """Server/DC PAT deletion continues to use the v1 content endpoint."""
+        comments_mixin_dc.config.auth_type = "pat"
+        comments_mixin_dc.confluence.remove_content.return_value = None
+
+        assert comments_mixin_dc.delete_comment("987654") is True
+
+        comments_mixin_dc.confluence.remove_content.assert_called_once_with("987654")
 
     def test_delete_comment_network_error(self, comments_mixin):
         """delete_comment returns False on network error."""

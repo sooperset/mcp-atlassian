@@ -496,8 +496,8 @@ class CommentsMixin(ConfluenceClient):
     def delete_comment(self, comment_id: str) -> bool:
         """Delete a footer or inline comment.
 
-        Comments are content on both Cloud and Server/DC, so the v1
-        ``DELETE /rest/api/content/{id}`` endpoint handles every case.
+        Cloud OAuth/PAT uses the v2 comment endpoints. Cloud basic auth and
+        Server/DC use the v1 content endpoint.
 
         Args:
             comment_id: The ID of the comment to delete
@@ -506,7 +506,11 @@ class CommentsMixin(ConfluenceClient):
             True if the comment was deleted, False otherwise
         """
         try:
-            self.confluence.remove_content(comment_id)
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                v2_adapter.delete_comment(comment_id)
+            else:
+                self.confluence.remove_content(comment_id)
             return True
         except requests.RequestException as e:
             logger.error(f"Network error when deleting comment {comment_id}: {e}")
