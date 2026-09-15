@@ -3,7 +3,10 @@
 Focused tests for Jira constants, validating correct values and business logic.
 """
 
-from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
+from mcp_atlassian.jira.constants import (
+    DEFAULT_READ_JIRA_FIELDS,
+    DEFAULT_READ_JIRA_FIELDS_CSV,
+)
 
 
 class TestDefaultReadJiraFields:
@@ -14,6 +17,13 @@ class TestDefaultReadJiraFields:
         assert isinstance(DEFAULT_READ_JIRA_FIELDS, set)
         assert all(isinstance(field, str) for field in DEFAULT_READ_JIRA_FIELDS)
         assert len(DEFAULT_READ_JIRA_FIELDS) == 11
+
+    def test_csv_preserves_field_order(self):
+        """Test that the precomputed CSV has a fixed field order."""
+        assert DEFAULT_READ_JIRA_FIELDS_CSV == (
+            "summary,description,status,assignee,reporter,labels,versions,"
+            "priority,created,updated,issuetype"
+        )
 
     def test_contains_expected_jira_fields(self):
         """Test that DEFAULT_READ_JIRA_FIELDS contains the correct Jira fields."""

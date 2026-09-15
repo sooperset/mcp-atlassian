@@ -11,7 +11,7 @@ from ..models.jira import JiraSearchResult
 from ..utils.decorators import handle_auth_errors
 from ..utils.pagination import clamp_limit
 from .client import JiraClient
-from .constants import DEFAULT_READ_JIRA_FIELDS
+from .constants import DEFAULT_READ_JIRA_FIELDS_CSV
 from .protocols import IssueOperationsProto
 from .utils import quote_jql_identifier_if_needed, sanitize_jql_reserved_words
 
@@ -119,7 +119,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             # Convert fields to proper format if it's a list/tuple/set
             fields_param: str | None
             if fields is None:  # Use default if None
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+                fields_param = DEFAULT_READ_JIRA_FIELDS_CSV
             elif isinstance(fields, list | tuple | set):
                 fields_param = ",".join(fields)
             else:
@@ -258,7 +258,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             # Determine fields_param
             fields_param = fields
             if fields_param is None:
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+                fields_param = DEFAULT_READ_JIRA_FIELDS_CSV
 
             response = self.jira.get_issues_for_board(
                 board_id=board_id,

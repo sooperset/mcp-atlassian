@@ -13,7 +13,7 @@ from pydantic import AliasChoices, Field
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
-from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
+from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS_CSV
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
 from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
@@ -667,9 +667,9 @@ async def get_issue(
                 "You may also provide a single field as a string (e.g., 'duedate'). "
                 "Use '*all' for all fields (including custom fields), or omit for essential fields only."
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=DEFAULT_READ_JIRA_FIELDS_CSV,
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = DEFAULT_READ_JIRA_FIELDS_CSV,
     expand: Annotated[
         str | None,
         Field(
@@ -854,9 +854,9 @@ async def search(
                 "(Optional) Comma-separated fields to return in the results. "
                 "Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=DEFAULT_READ_JIRA_FIELDS_CSV,
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = DEFAULT_READ_JIRA_FIELDS_CSV,
     limit: Annotated[
         int,
         Field(description="Maximum number of results (1-50)", default=10, ge=1),
@@ -1618,9 +1618,9 @@ async def get_board_issues(
                 "Use '*all' for all fields, or specify individual "
                 "fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=DEFAULT_READ_JIRA_FIELDS_CSV,
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = DEFAULT_READ_JIRA_FIELDS_CSV,
     start_at: Annotated[
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),
@@ -1723,9 +1723,9 @@ async def get_sprint_issues(
                 "Use '*all' for all fields, or specify individual "
                 "fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=DEFAULT_READ_JIRA_FIELDS_CSV,
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = DEFAULT_READ_JIRA_FIELDS_CSV,
     start_at: Annotated[
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),
