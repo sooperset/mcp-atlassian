@@ -600,3 +600,24 @@ def test_is_auth_configured_cert_missing():
         auth_type="cert",
     )
     assert config.is_auth_configured() is False
+
+
+@pytest.mark.parametrize("method_name", ["from_env", "is_auth_configured"])
+def test_config_methods_do_not_shadow_module_logger(method_name):
+    """No method may rebind `logger` as a local.
+
+    The module already binds `logger` to the same logger name, so a local
+    `logger = logging.getLogger(...)` inside a method is redundant — and it
+    makes the name local to the *entire* method, so any `logger` call that
+    executes before the rebind raises UnboundLocalError. That stayed
+    invisible only because the single call sat on the line right after the
+    rebind; adding a second one anywhere earlier in the method broke it
+    immediately.
+    """
+    method = getattr(JiraConfig, method_name)
+    code = getattr(method, "__func__", method).__code__
+    assert "logger" not in code.co_varnames, (
+        f"JiraConfig.{method_name} rebinds `logger` as a local; use the "
+        "module-level logger so earlier calls in the method cannot raise "
+        "UnboundLocalError"
+    )
