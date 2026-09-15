@@ -258,13 +258,87 @@ class TestSearchMixin:
         be silently treated as an empty result set. Only a genuine
         ``{"results": []}`` response should return an empty list.
         """
-        # Mock a response missing the required "results" key
+        # Mock a response missing the required "results" key from both
+        # the primary endpoint and the fallback
         search_mixin.confluence.cql.return_value = {"incomplete": "data"}
+        search_mixin.confluence.get.return_value = {"incomplete": "data"}
 
         with pytest.raises(
             ValueError, match="Error processing search results.*malformed response"
         ):
             search_mixin.search("invalid query")
+
+    def test_search_falls_back_to_content_search_on_html_response(self, search_mixin):
+        """Test fallback to /rest/api/content/search when cql() returns HTML.
+
+        Some Confluence Cloud instances return HTTP 400 with an HTML body
+        from /rest/api/search. When the library surfaces this as a raw
+        string, the search method should transparently retry against
+        /rest/api/content/search.
+        """
+        # Primary endpoint returns raw HTML (non-dict)
+        search_mixin.confluence.cql.return_value = "<!DOCTYPE html><html>...</html>"
+
+        # Fallback endpoint returns /rest/api/content/search format
+        # (id, title, space at top level, no "content" wrapper)
+        search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "id": "999",
+                    "title": "Fallback Page",
+                    "type": "page",
+                    "space": {"key": "TEST", "name": "Test Space"},
+                    "version": {"number": 1},
+                }
+            ]
+        }
+
+        result = search_mixin.search("test query")
+
+        # Verify fallback was called
+        search_mixin.confluence.get.assert_called_once_with(
+            "rest/api/content/search",
+            params={
+                "cql": "test query",
+                "limit": 10,
+                "expand": "history,version",
+            },
+        )
+        assert len(result) == 1
+        assert result[0].id == "999"
+        assert result[0].title == "Fallback Page"
+
+    def test_search_falls_back_on_dict_without_results_key(self, search_mixin):
+        """Test fallback when cql() returns a dict missing 'results'.
+
+        This covers cases where the primary endpoint returns a JSON error
+        object (e.g. {"statusCode": 400, "message": "..."}) instead of
+        search results.
+        """
+        # Primary endpoint returns a JSON error (dict but no "results")
+        search_mixin.confluence.cql.return_value = {
+            "statusCode": 400,
+            "message": "siteSearch is not supported",
+        }
+
+        # Fallback endpoint returns valid results
+        search_mixin.confluence.get.return_value = {
+            "results": [
+                {
+                    "id": "888",
+                    "title": "Another Page",
+                    "type": "page",
+                    "space": {"key": "DEV", "name": "Dev Space"},
+                    "version": {"number": 2},
+                }
+            ]
+        }
+
+        result = search_mixin.search("my query")
+
+        search_mixin.confluence.get.assert_called_once()
+        assert len(result) == 1
+        assert result[0].id == "888"
 
     def test_search_request_exception(self, search_mixin):
         """Test handling of RequestException during search."""
