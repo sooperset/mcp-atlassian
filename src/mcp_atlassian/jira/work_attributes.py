@@ -15,7 +15,7 @@ class WorkAttributeMixin(JiraClient):
     with the Tempo Timesheets plugin installed.
     """
 
-    def _ensure_server_mode(self) -> None:
+    def _ensure_work_attribute_server_mode(self) -> None:
         """Ensure Tempo Core endpoints are used only on Jira Server/DC."""
         if self.config.is_cloud:
             raise NotImplementedError(
@@ -34,7 +34,7 @@ class WorkAttributeMixin(JiraClient):
             NotImplementedError: If connected to Jira Cloud.
             TypeError: If Tempo returns a response with an unexpected shape.
         """
-        self._ensure_server_mode()
+        self._ensure_work_attribute_server_mode()
         result = self.jira.get(  # type: ignore[attr-defined]
             "rest/tempo-core/1/work-attribute"
         )
@@ -70,7 +70,7 @@ class WorkAttributeMixin(JiraClient):
         if attribute_id <= 0:
             raise ValueError("attribute_id must be greater than zero")
 
-        self._ensure_server_mode()
+        self._ensure_work_attribute_server_mode()
         result = self.jira.get(  # type: ignore[attr-defined]
             f"rest/tempo-core/1/work-attribute/{attribute_id}/static-list-value"
         )
