@@ -55,7 +55,8 @@ class CommentsMixin(ConfluenceClient):
         """
         if self.config.is_cloud and self.config.auth_type in ("oauth", "pat"):
             return ConfluenceV2Adapter(
-                session=self.confluence._session, base_url=self.confluence.url
+                session=self.confluence._session,
+                base_url=self._v1_rest_base_url(),
             )
         return None
 

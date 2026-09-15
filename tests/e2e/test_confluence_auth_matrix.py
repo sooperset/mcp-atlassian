@@ -166,13 +166,14 @@ class TestConfluenceWriteOperations:
     def test_delete_footer_and_inline_comments(
         self,
         authed_confluence: ConfluenceFetcher,
+        confluence_fetcher: ConfluenceFetcher,
         dc_instance: DCInstanceInfo,
         resource_tracker: DCResourceTracker,
     ) -> None:
         """Both Server/DC comment types can be deleted with each auth method."""
         uid = uuid.uuid4().hex[:8]
         anchor = f"DC auth delete anchor {uid}"
-        page = authed_confluence.create_page(
+        page = confluence_fetcher.create_page(
             space_key=dc_instance.space_key,
             title=f"E2E Delete Comment Test {uid}",
             body=f"<p>{anchor}</p>",
@@ -181,8 +182,8 @@ class TestConfluenceWriteOperations:
         )
         resource_tracker.add_confluence_page(page.id)
 
-        footer = authed_confluence.add_comment(page.id, f"Footer comment {uid}")
-        inline = authed_confluence.add_inline_comment(
+        footer = confluence_fetcher.add_comment(page.id, f"Footer comment {uid}")
+        inline = confluence_fetcher.add_inline_comment(
             page.id,
             f"Inline comment {uid}",
             anchor,

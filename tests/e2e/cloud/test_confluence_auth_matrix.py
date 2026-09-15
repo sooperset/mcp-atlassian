@@ -166,13 +166,14 @@ class TestConfluenceWriteOperations:
     def test_delete_footer_and_inline_comments(
         self,
         authed_confluence: ConfluenceFetcher,
+        confluence_fetcher: ConfluenceFetcher,
         cloud_instance: CloudInstanceInfo,
         resource_tracker: CloudResourceTracker,
     ) -> None:
         """Both Cloud comment types can be deleted with each auth method."""
         uid = uuid.uuid4().hex[:8]
         anchor = f"Cloud auth delete anchor {uid}"
-        page = authed_confluence.create_page(
+        page = confluence_fetcher.create_page(
             space_key=cloud_instance.space_key,
             title=f"Cloud E2E Delete Comment Test {uid}",
             body=f"<p>{anchor}</p>",
@@ -181,8 +182,8 @@ class TestConfluenceWriteOperations:
         )
         resource_tracker.add_confluence_page(page.id)
 
-        footer = authed_confluence.add_comment(page.id, f"Footer comment {uid}")
-        inline = authed_confluence.add_inline_comment(
+        footer = confluence_fetcher.add_comment(page.id, f"Footer comment {uid}")
+        inline = confluence_fetcher.add_inline_comment(
             page.id,
             f"Inline comment {uid}",
             anchor,

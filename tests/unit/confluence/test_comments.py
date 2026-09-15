@@ -611,6 +611,22 @@ class TestAddCommentV2Routing:
             assert result is None
             adapter.assert_not_called()
 
+    def test_v2_adapter_uses_gateway_wiki_path_for_cloud_oauth(self, comments_mixin):
+        """Cloud OAuth v2 comment calls include the gateway product prefix."""
+        comments_mixin.config.auth_type = "oauth"
+        comments_mixin.confluence.url = (
+            "https://api.atlassian.com/ex/confluence/cloud-1"
+        )
+
+        with patch("mcp_atlassian.confluence.comments.ConfluenceV2Adapter") as adapter:
+            result = comments_mixin._v2_adapter
+
+        assert result is adapter.return_value
+        adapter.assert_called_once_with(
+            session=comments_mixin.confluence._session,
+            base_url="https://api.atlassian.com/ex/confluence/cloud-1/wiki",
+        )
+
     def test_add_comment_v2_routing_for_oauth_cloud(self, comments_mixin):
         """T10: add_comment routes through v2 adapter for OAuth Cloud."""
         comments_mixin.config.auth_type = "oauth"
