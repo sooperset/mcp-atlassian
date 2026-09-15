@@ -16,6 +16,7 @@ from pydantic import BeforeValidator, Field
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluenceAttachment
+from mcp_atlassian.servers.async_utils import run_confluence_fetcher_call
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.utils.decorators import (
@@ -259,19 +260,25 @@ async def search(
             logger.info(
                 f"Converting simple search term to CQL using siteSearch: {query}"
             )
-            pages = confluence_fetcher.search(
-                query, limit=limit, spaces_filter=spaces_filter
+            pages = await run_confluence_fetcher_call(
+                confluence_fetcher.search,
+                query,
+                limit=limit,
+                spaces_filter=spaces_filter,
             )
         except Exception as e:
             logger.warning(f"siteSearch failed ('{e}'), falling back to text search.")
             query = f'text ~ "{original_query}"'
             logger.info(f"Falling back to text search with CQL: {query}")
-            pages = confluence_fetcher.search(
-                query, limit=limit, spaces_filter=spaces_filter
+            pages = await run_confluence_fetcher_call(
+                confluence_fetcher.search,
+                query,
+                limit=limit,
+                spaces_filter=spaces_filter,
             )
     else:
-        pages = confluence_fetcher.search(
-            query, limit=limit, spaces_filter=spaces_filter
+        pages = await run_confluence_fetcher_call(
+            confluence_fetcher.search, query, limit=limit, spaces_filter=spaces_filter
         )
     search_results = [page.to_simplified_dict() for page in pages]
     return json.dumps(search_results, indent=2, ensure_ascii=False)
@@ -366,8 +373,10 @@ async def get_page(
             # Resolve page ID from URL or tiny link
             page_id_str = _resolve_page_id(page_id_str)
 
-            page_object = confluence_fetcher.get_page_content(
-                page_id_str, convert_to_markdown=convert_to_markdown
+            page_object = await run_confluence_fetcher_call(
+                confluence_fetcher.get_page_content,
+                page_id_str,
+                convert_to_markdown=convert_to_markdown,
             )
         except Exception as e:
             logger.error(f"Error fetching page by ID '{page_id}': {e}")
@@ -377,8 +386,11 @@ async def get_page(
                 ensure_ascii=False,
             )
     elif title and space_key:
-        page_object = confluence_fetcher.get_page_by_title(
-            space_key, title, convert_to_markdown=convert_to_markdown
+        page_object = await run_confluence_fetcher_call(
+            confluence_fetcher.get_page_by_title,
+            space_key,
+            title,
+            convert_to_markdown=convert_to_markdown,
         )
         if not page_object:
             return json.dumps(
@@ -485,7 +497,8 @@ async def get_page_children(
         expand = f"{expand},body.storage" if expand else "body.storage"
 
     try:
-        pages = confluence_fetcher.get_page_children(
+        pages = await run_confluence_fetcher_call(
+            confluence_fetcher.get_page_children,
             page_id=parent_id,
             start=start,
             limit=limit,
@@ -550,7 +563,11 @@ async def get_space_page_tree(
         Root pages have parent_id: null and depth: 0.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    tree_data = confluence_fetcher.get_space_page_tree(space_key=space_key, limit=limit)
+    tree_data = await run_confluence_fetcher_call(
+        confluence_fetcher.get_space_page_tree,
+        space_key=space_key,
+        limit=limit,
+    )
 
     result: dict[str, object] = dict(tree_data)
 
@@ -593,7 +610,9 @@ async def get_comments(
         JSON string representing a list of comment objects.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    comments = confluence_fetcher.get_page_comments(page_id)
+    comments = await run_confluence_fetcher_call(
+        confluence_fetcher.get_page_comments, page_id
+    )
     formatted_comments = [comment.to_simplified_dict() for comment in comments]
     return json.dumps(formatted_comments, indent=2, ensure_ascii=False)
 
@@ -626,7 +645,9 @@ async def get_labels(
         JSON string representing a list of label objects.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    labels = confluence_fetcher.get_page_labels(page_id)
+    labels = await run_confluence_fetcher_call(
+        confluence_fetcher.get_page_labels, page_id
+    )
     formatted_labels = [label.to_simplified_dict() for label in labels]
     return json.dumps(formatted_labels, indent=2, ensure_ascii=False)
 
@@ -679,7 +700,9 @@ async def add_label(
         ValueError: If in read-only mode or Confluence client is unavailable.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    labels = confluence_fetcher.add_page_label(page_id, name)
+    labels = await run_confluence_fetcher_call(
+        confluence_fetcher.add_page_label, page_id, name
+    )
     formatted_labels = [label.to_simplified_dict() for label in labels]
     return json.dumps(formatted_labels, indent=2, ensure_ascii=False)
 
@@ -846,7 +869,8 @@ async def create_page(
             "storage" if content_format == "xhtml" else content_format
         )
 
-    page = confluence_fetcher.create_page(
+    page = await run_confluence_fetcher_call(
+        confluence_fetcher.create_page,
         space_key=space_key,
         title=title,
         body=resolved_content,
@@ -1023,7 +1047,8 @@ async def update_page(
             "storage" if content_format == "xhtml" else content_format
         )
 
-    updated_page = confluence_fetcher.update_page(
+    updated_page = await run_confluence_fetcher_call(
+        confluence_fetcher.update_page,
         page_id=page_id,
         title=title,
         body=resolved_content,
@@ -1130,7 +1155,8 @@ async def update_page_section(
         )
         raise ValueError(error_msg)
 
-    updated_page = confluence_fetcher.update_page_section(
+    updated_page = await run_confluence_fetcher_call(
+        confluence_fetcher.update_page_section,
         page_id=page_id,
         heading_text=heading_text,
         new_content=new_content,
@@ -1174,7 +1200,9 @@ async def delete_page(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        result = confluence_fetcher.delete_page(page_id=page_id)
+        result = await run_confluence_fetcher_call(
+            confluence_fetcher.delete_page, page_id=page_id
+        )
         if result:
             response = {
                 "success": True,
@@ -1251,7 +1279,8 @@ async def move_page(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        moved_page = confluence_fetcher.move_page(
+        moved_page = await run_confluence_fetcher_call(
+            confluence_fetcher.move_page,
             page_id=page_id,
             target_parent_id=target_parent_id,
             target_space_key=target_space_key,
@@ -1302,7 +1331,9 @@ async def add_comment(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        comment = confluence_fetcher.add_comment(page_id=page_id, content=body)
+        comment = await run_confluence_fetcher_call(
+            confluence_fetcher.add_comment, page_id=page_id, content=body
+        )
         if comment:
             comment_data = comment.to_simplified_dict()
             response = {
@@ -1353,8 +1384,8 @@ async def reply_to_comment(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        comment = confluence_fetcher.reply_to_comment(
-            comment_id=comment_id, content=body
+        comment = await run_confluence_fetcher_call(
+            confluence_fetcher.reply_to_comment, comment_id=comment_id, content=body
         )
         if comment:
             comment_data = comment.to_simplified_dict()
@@ -1406,7 +1437,9 @@ async def get_inline_comments(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        comments = confluence_fetcher.get_inline_comments(page_id)
+        comments = await run_confluence_fetcher_call(
+            confluence_fetcher.get_inline_comments, page_id
+        )
         response = {
             "success": True,
             "page_id": page_id,
@@ -1487,7 +1520,8 @@ async def add_inline_comment(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        comment = confluence_fetcher.add_inline_comment(
+        comment = await run_confluence_fetcher_call(
+            confluence_fetcher.add_inline_comment,
             page_id=page_id,
             content=body,
             text_selection=text_selection,
@@ -1582,8 +1616,8 @@ async def search_user(
         logger.info(f"Converting simple search term to user CQL: {query}")
 
     try:
-        user_results = confluence_fetcher.search_user(
-            query, limit=limit, group_name=group_name
+        user_results = await run_confluence_fetcher_call(
+            confluence_fetcher.search_user, query, limit=limit, group_name=group_name
         )
         search_results = [user.to_simplified_dict() for user in user_results]
         return json.dumps(search_results, indent=2, ensure_ascii=False)
@@ -1656,7 +1690,8 @@ async def get_page_history(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        page = confluence_fetcher.get_page_history(
+        page = await run_confluence_fetcher_call(
+            confluence_fetcher.get_page_history,
             page_id=page_id,
             version=version,
             convert_to_markdown=convert_to_markdown,
@@ -1732,7 +1767,8 @@ async def get_page_diff(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        result = confluence_fetcher.get_page_version_diff(
+        result = await run_confluence_fetcher_call(
+            confluence_fetcher.get_page_version_diff,
             page_id=page_id,
             from_version=from_version,
             to_version=to_version,
@@ -1801,7 +1837,8 @@ async def get_page_views(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
-        result = confluence_fetcher.get_page_views(
+        result = await run_confluence_fetcher_call(
+            confluence_fetcher.get_page_views,
             page_id=page_id,
             include_title=include_title,
         )
@@ -1953,7 +1990,8 @@ async def upload_attachment(
         except (binascii.Error, ValueError) as exc:
             raise ValueError(f"Invalid base64 content: {exc}") from exc
 
-        result = confluence_fetcher.upload_attachment_from_content(
+        result = await run_confluence_fetcher_call(
+            confluence_fetcher.upload_attachment_from_content,
             content_id=content_id,
             filename=filename,
             content=content,
@@ -1963,7 +2001,8 @@ async def upload_attachment(
     else:
         if not file_path:
             raise ValueError("Provide exactly one of 'file_path' or 'content_base64'.")
-        result = confluence_fetcher.upload_attachment(
+        result = await run_confluence_fetcher_call(
+            confluence_fetcher.upload_attachment,
             content_id=content_id,
             file_path=file_path,
             comment=comment,
@@ -2049,7 +2088,8 @@ async def upload_attachments(
 
     paths_list = [p.strip() for p in file_paths.split(",") if p.strip()]
 
-    results = confluence_fetcher.upload_attachments(
+    results = await run_confluence_fetcher_call(
+        confluence_fetcher.upload_attachments,
         content_id=content_id,
         file_paths=paths_list,
         comment=comment,
@@ -2160,7 +2200,8 @@ async def get_attachments(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
-    result = confluence_fetcher.get_content_attachments(
+    result = await run_confluence_fetcher_call(
+        confluence_fetcher.get_content_attachments,
         content_id=content_id,
         start=start,
         limit=limit,
@@ -2210,11 +2251,15 @@ async def download_attachment(
         v2_adapter = confluence_fetcher._v2_adapter
 
         if v2_adapter:
-            attachment_data = v2_adapter.get_attachment_by_id(attachment_id)
+            attachment_data = await run_confluence_fetcher_call(
+                v2_adapter.get_attachment_by_id, attachment_id
+            )
         else:
             base_url = confluence_fetcher.config.url.rstrip("/")
             url = f"{base_url}/rest/api/content/{attachment_id}"
-            resp_meta = confluence_fetcher.confluence._session.get(url)
+            resp_meta = await run_confluence_fetcher_call(
+                confluence_fetcher.confluence._session.get, url
+            )
             resp_meta.raise_for_status()
             attachment_data = resp_meta.json()
 
@@ -2265,7 +2310,9 @@ async def download_attachment(
                 ),
             )
 
-        data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
+        data_bytes = await run_confluence_fetcher_call(
+            confluence_fetcher.fetch_attachment_content, download_url
+        )
         if data_bytes is None:
             return TextContent(
                 type="text",
@@ -2358,7 +2405,9 @@ async def download_content_attachments(
     confluence_fetcher = await get_confluence_fetcher(ctx)
     contents: list[TextContent | EmbeddedResource] = []
 
-    attachments_result = confluence_fetcher.get_content_attachments(content_id)
+    attachments_result = await run_confluence_fetcher_call(
+        confluence_fetcher.get_content_attachments, content_id
+    )
 
     if not attachments_result.get("success"):
         contents.append(
@@ -2430,7 +2479,8 @@ async def download_content_attachments(
             content_id=content_id,
         )
 
-        encoded, mime_type, fetched_bytes = fetch_and_encode_attachment(
+        encoded, mime_type, fetched_bytes = await run_confluence_fetcher_call(
+            fetch_and_encode_attachment,
             fetch_fn=confluence_fetcher.fetch_attachment_content,
             url=download_url,
             filename=filename,
@@ -2567,7 +2617,9 @@ async def get_page_images(
     confluence_fetcher = await get_confluence_fetcher(ctx)
     contents: list[TextContent | ImageContent] = []
 
-    attachments_result = confluence_fetcher.get_content_attachments(content_id)
+    attachments_result = await run_confluence_fetcher_call(
+        confluence_fetcher.get_content_attachments, content_id
+    )
 
     if not attachments_result.get("success"):
         contents.append(
@@ -2646,7 +2698,8 @@ async def get_page_images(
             content_id=content_id,
         )
 
-        encoded, _, fetched_bytes = fetch_and_encode_attachment(
+        encoded, _, fetched_bytes = await run_confluence_fetcher_call(
+            fetch_and_encode_attachment,
             fetch_fn=confluence_fetcher.fetch_attachment_content,
             url=download_url,
             filename=filename,
@@ -2729,7 +2782,8 @@ async def list_page_templates(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     try:
-        results = confluence_fetcher.list_page_templates(
+        results = await run_confluence_fetcher_call(
+            confluence_fetcher.list_page_templates,
             space_key=space_key,
             limit=limit,
         )
@@ -2770,7 +2824,9 @@ async def get_page_template(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     try:
-        template = confluence_fetcher.get_page_template(template_id)
+        template = await run_confluence_fetcher_call(
+            confluence_fetcher.get_page_template, template_id
+        )
         return json.dumps(
             {
                 "templateId": template.get("templateId", ""),
@@ -2827,7 +2883,8 @@ async def create_page_from_template(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     try:
-        result = confluence_fetcher.create_page_from_template(
+        result = await run_confluence_fetcher_call(
+            confluence_fetcher.create_page_from_template,
             space_key=space_key,
             title=title,
             template_id=template_id,
@@ -2867,7 +2924,9 @@ async def get_page_restrictions(
         ValueError: If Confluence client is not configured or available.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    restrictions = confluence_fetcher.get_page_restrictions(page_id=page_id)
+    restrictions = await run_confluence_fetcher_call(
+        confluence_fetcher.get_page_restrictions, page_id=page_id
+    )
     return json.dumps(restrictions, indent=2, ensure_ascii=False)
 
 
@@ -2938,7 +2997,8 @@ async def set_page_restrictions(
         ValueError: If Confluence client is not configured or available.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    result = confluence_fetcher.set_page_restrictions(
+    result = await run_confluence_fetcher_call(
+        confluence_fetcher.set_page_restrictions,
         page_id=page_id,
         read_users=read_users,
         read_groups=read_groups,
@@ -3008,7 +3068,8 @@ async def copy_page(
         ValueError: If Confluence client is not configured or available.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    page = confluence_fetcher.copy_page(
+    page = await run_confluence_fetcher_call(
+        confluence_fetcher.copy_page,
         source_page_id=source_page_id,
         destination_space_key=destination_space_key,
         new_title=new_title,
@@ -3077,7 +3138,8 @@ async def check_content_permissions(
     the subject has the requested permission on the content.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    result = confluence_fetcher.check_content_permissions(
+    result = await run_confluence_fetcher_call(
+        confluence_fetcher.check_content_permissions,
         content_id=content_id,
         user_identifier=user_identifier,
         operation=operation,
@@ -3133,7 +3195,8 @@ async def get_space_permissions(
     and the target. Use this to audit who has access to a space.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    result = confluence_fetcher.get_space_permissions(
+    result = await run_confluence_fetcher_call(
+        confluence_fetcher.get_space_permissions,
         space_id=space_id,
         limit=limit,
         cursor=cursor,
