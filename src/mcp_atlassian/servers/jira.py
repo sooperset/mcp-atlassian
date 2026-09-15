@@ -61,6 +61,7 @@ _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
         "changelog",
         "comments",
         "worklogs",
+        "worklog_attributes",
     }
 )
 _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
@@ -70,11 +71,14 @@ _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
     "changelog": "changelogs",
     "comments": "comments",
     "worklogs": "worklogs",
+    "worklog_attributes": "worklog_attributes",
 }
 _GET_ISSUE_INCLUDE_ALIASES = {
     "comment": "comments",
     "worklog": "worklogs",
+    "work_attributes": "worklog_attributes",
 }
+_GET_ISSUE_INCLUDE_ALL_SECTIONS = _GET_ISSUE_INCLUDE_SECTIONS - {"worklog_attributes"}
 
 
 def _parse_get_issue_include(include: str | None) -> set[str]:
@@ -88,7 +92,7 @@ def _parse_get_issue_include(include: str | None) -> set[str]:
         if not section:
             continue
         if section == "all":
-            sections.update(_GET_ISSUE_INCLUDE_SECTIONS)
+            sections.update(_GET_ISSUE_INCLUDE_ALL_SECTIONS)
             continue
 
         section = _GET_ISSUE_INCLUDE_ALIASES.get(section, section)
@@ -712,7 +716,8 @@ async def get_issue(
                 "(Optional) Comma-separated sections to inline "
                 "in the response, avoiding extra tool calls. "
                 "Supported: all, remote_links, transitions, "
-                "watchers, changelog, comments, worklogs"
+                "watchers, changelog, comments, worklogs, "
+                "worklog_attributes"
             ),
             default=None,
         ),
@@ -734,8 +739,8 @@ async def get_issue(
 
     Includes Epic links and relationship information. Use the
     ``include`` parameter to inline enrichments (remote_links,
-    transitions, watchers, changelog, comments, worklogs) so that
-    separate tool calls are not needed.
+    transitions, watchers, changelog, comments, worklogs, and
+    worklog_attributes) so that separate tool calls are not needed.
 
     Args:
         ctx: The FastMCP context.
@@ -745,7 +750,9 @@ async def get_issue(
         comment_limit: Maximum number of comments.
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
-        include: Comma-separated enrichment sections to inline.
+        include: Comma-separated enrichment sections to inline. Use
+            ``worklog_attributes`` to include the Tempo Core work attribute
+            catalog and static-list values on Jira Server/Data Center.
         use_display_names: Opt into human-readable custom field keys.
 
     Returns:
@@ -822,6 +829,12 @@ async def get_issue(
             result["worklogs"] = jira.get_worklogs(issue_key)
         except Exception:  # noqa: BLE001
             result["worklogs"] = []
+
+    if "worklog_attributes" in include_sections:
+        result["worklog_attributes"] = [
+            attribute.to_simplified_dict()
+            for attribute in jira.get_work_attribute_catalog()
+        ]
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -1262,6 +1275,126 @@ async def get_worklog(
     jira = await get_jira_fetcher(ctx)
     worklogs = jira.get_worklogs(issue_key)
     result = {"worklogs": worklogs}
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_worklog"},
+    annotations={"title": "Search Worklogs", "readOnlyHint": True},
+)
+async def search_worklogs(
+    ctx: Context,
+    from_date: Annotated[
+        str,
+        Field(
+            description=(
+                "First worklog date to include, inclusive, format 'yyyy-MM-dd' "
+                "(e.g., '2026-09-10'). Filters on the date the work was logged "
+                "against, not on when the entry was recorded."
+            )
+        ),
+    ],
+    to_date: Annotated[
+        str,
+        Field(
+            description=(
+                "Last worklog date to include, inclusive, format 'yyyy-MM-dd' "
+                "(e.g., '2026-09-10')."
+            )
+        ),
+    ],
+    workers: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated internal Jira user keys to search "
+                "for (e.g., 'JIRAUSER12345'). Defaults to the authenticated "
+                "user."
+            ),
+            default=None,
+        ),
+    ] = None,
+    all_workers: Annotated[
+        bool,
+        Field(
+            description=(
+                "(Optional) Search every worker instead of only the "
+                "authenticated one. Requires task_keys or project_keys, since "
+                "an unfiltered search returns every worklog in the date range."
+            ),
+            default=False,
+        ),
+    ] = False,
+    task_keys: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated issue keys to filter by "
+                "(e.g., 'PROJ-123,PROJ-124')."
+            ),
+            default=None,
+        ),
+    ] = None,
+    project_keys: Annotated[
+        str | None,
+        Field(
+            description="(Optional) Comma-separated project keys to filter by.",
+            default=None,
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of worklogs to return (1-100)",
+            default=50,
+            ge=1,
+            le=100,
+        ),
+    ] = 50,
+) -> str:
+    """Search existing worklogs by date, worker, issue, or project.
+
+    Reads through Tempo Timesheets on Jira Server/Data Center, which is the
+    only way to see the work attributes of worklogs that already exist:
+    jira_get_worklog uses Jira's native endpoint and never returns attributes.
+
+    Args:
+        ctx: The FastMCP context.
+        from_date: First started date to include, 'yyyy-MM-dd'.
+        to_date: Last started date to include, 'yyyy-MM-dd'.
+        workers: Comma-separated internal Jira user keys; defaults to the
+            authenticated user.
+        all_workers: Search all workers; requires task_keys or project_keys.
+        task_keys: Comma-separated issue keys to filter by.
+        project_keys: Comma-separated project keys to filter by.
+        limit: Maximum number of worklogs to return.
+
+    Returns:
+        JSON string with the matching worklogs sorted by started date, each
+        including its Tempo `attributes` when the instance defines any.
+    """
+    jira = await get_jira_fetcher(ctx)
+
+    worker_keys: list[str] | None
+    if workers:
+        worker_keys = [worker.strip() for worker in workers.split(",")]
+    elif all_workers:
+        # An empty list means 'any worker', which the fetcher only accepts
+        # together with a task or project filter.
+        worker_keys = []
+    else:
+        worker_keys = None
+
+    result = jira.search_worklogs(
+        from_date=from_date,
+        to_date=to_date,
+        worker_keys=worker_keys,
+        task_keys=[k.strip() for k in task_keys.split(",")] if task_keys else None,
+        project_keys=(
+            [k.strip() for k in project_keys.split(",")] if project_keys else None
+        ),
+        limit=limit,
+    )
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -2752,12 +2885,22 @@ async def add_worklog(
             )
         ),
     ] = None,
-    # Add original_estimate and remaining_estimate as per original tool
     original_estimate: Annotated[
         str | None, Field(description="(Optional) New value for the original estimate")
     ] = None,
     remaining_estimate: Annotated[
         str | None, Field(description="(Optional) New value for the remaining estimate")
+    ] = None,
+    worklog_attributes: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON string of worklog attributes for Tempo Core Work Attributes. "
+                'Example: {"_WorklogCategory_": {"value": "Bugfixing"}}. '
+                "Use jira_get_issue with include=worklog_attributes to find "
+                "available attribute keys and static-list values."
+            )
+        ),
     ] = None,
 ) -> str:
     """Add a worklog entry to a Jira issue.
@@ -2770,7 +2913,9 @@ async def add_worklog(
         started: Optional start time in ISO format.
         original_estimate: Optional new original estimate.
         remaining_estimate: Optional new remaining estimate.
-
+        worklog_attributes: Optional JSON object mapping Tempo attribute keys to
+            objects containing their values, for example
+            ``{"_WorklogCategory_": {"value": "Bugfixing"}}``.
 
     Returns:
         JSON string representing the added worklog object.
@@ -2779,6 +2924,16 @@ async def add_worklog(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
+    # Parse worklog_attributes from JSON string if provided.
+    parsed_attributes = None
+    if worklog_attributes:
+        try:
+            parsed_attributes = json.loads(worklog_attributes)
+            if not isinstance(parsed_attributes, dict):
+                raise ValueError("worklog_attributes must be a JSON object.")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"worklog_attributes is not valid JSON: {e}") from e
+
     # add_worklog returns dict
     worklog_result = jira.add_worklog(
         issue_key=issue_key,
@@ -2787,6 +2942,7 @@ async def add_worklog(
         started=started,
         original_estimate=original_estimate,
         remaining_estimate=remaining_estimate,
+        worklog_attributes=parsed_attributes,
     )
     result = {"message": "Worklog added successfully", "worklog": worklog_result}
     return json.dumps(result, indent=2, ensure_ascii=False)

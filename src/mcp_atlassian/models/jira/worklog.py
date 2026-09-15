@@ -33,6 +33,7 @@ class JiraWorklog(ApiModel, TimestampMixin):
     started: str = EMPTY_STRING
     time_spent: str = EMPTY_STRING
     time_spent_seconds: int = 0
+    attributes: dict[str, Any] | None = None
 
     @classmethod
     def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "JiraWorklog":
@@ -73,6 +74,9 @@ class JiraWorklog(ApiModel, TimestampMixin):
         except (ValueError, TypeError):
             time_spent_seconds = 0
 
+        # Extract attributes if present (Tempo Worklog Attributes)
+        attributes = data.get("attributes")
+
         return cls(
             id=worklog_id,
             author=author,
@@ -82,6 +86,7 @@ class JiraWorklog(ApiModel, TimestampMixin):
             started=str(data.get("started", EMPTY_STRING)),
             time_spent=str(data.get("timeSpent", EMPTY_STRING)),
             time_spent_seconds=time_spent_seconds,
+            attributes=attributes,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
@@ -105,5 +110,8 @@ class JiraWorklog(ApiModel, TimestampMixin):
 
         if self.updated:
             result["updated"] = self.updated
+
+        if self.attributes:
+            result["attributes"] = self.attributes
 
         return result

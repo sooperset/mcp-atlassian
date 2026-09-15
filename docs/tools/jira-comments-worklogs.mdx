@@ -74,6 +74,25 @@ Add a worklog entry to a Jira issue.
 | `started` | `string` | No | (Optional) Start time in ISO format. If not provided, the current time will be used. Example: '2023-08-01T12:00:00.000+0000' |
 | `original_estimate` | `string` | No | (Optional) New value for the original estimate |
 | `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |
+| `worklog_attributes` | `string` | No | (Optional) JSON string of worklog attributes for Tempo Core Work Attributes. Example: `{"_WorklogCategory_": {"value": "Bugfixing"}}`. Use jira_get_issue with include=worklog_attributes to find available attribute keys and static-list values. |
+
+---
+
+### Search Worklogs
+
+Search existing worklogs by date, worker, issue, or project.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `from_date` | `string` | Yes | First worklog date to include, inclusive, format 'yyyy-MM-dd' (e.g., '2026-09-10'). Filters on the date the work was logged against, not on when the entry was recorded. |
+| `to_date` | `string` | Yes | Last worklog date to include, inclusive, format 'yyyy-MM-dd' (e.g., '2026-09-10'). |
+| `workers` | `string` | No | (Optional) Comma-separated internal Jira user keys to search for (e.g., 'JIRAUSER12345'). Defaults to the authenticated user. |
+| `all_workers` | `boolean` | No | (Optional) Search every worker instead of only the authenticated one. Requires task_keys or project_keys, since an unfiltered search returns every worklog in the date range. |
+| `task_keys` | `string` | No | (Optional) Comma-separated issue keys to filter by (e.g., 'PROJ-123,PROJ-124'). |
+| `project_keys` | `string` | No | (Optional) Comma-separated project keys to filter by. |
+| `limit` | `integer` | No | Maximum number of worklogs to return (1-100) |
 
 ---
 
