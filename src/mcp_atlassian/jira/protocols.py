@@ -28,6 +28,21 @@ class AttachmentsOperationsProto(Protocol):
             A dictionary with upload results
         """
 
+    @abstractmethod
+    def upload_attachments_from_content(
+        self, issue_key: str, attachments: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """
+        Upload multiple attachments to a Jira issue from in-memory bytes.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            attachments: List of dicts with 'filename' and 'content' (bytes) keys
+
+        Returns:
+            A dictionary with upload results
+        """
+
 
 class FormsOperationsProto(Protocol):
     """Protocol defining ProForma forms operations interface."""

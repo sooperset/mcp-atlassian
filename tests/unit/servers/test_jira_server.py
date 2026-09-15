@@ -1,5 +1,6 @@
 """Unit tests for the Jira FastMCP server implementation."""
 
+import base64
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from src.mcp_atlassian.models.jira import (
 )
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
+from src.mcp_atlassian.utils.media import ATTACHMENT_MAX_BYTES
 from src.mcp_atlassian.utils.oauth import OAuthConfig
 from tests.fixtures.jira_mocks import (
     MOCK_JIRA_COMMENTS_SIMPLIFIED,
@@ -2417,6 +2419,161 @@ async def test_update_issue_accepts_json_string_additional_fields(
     content = json.loads(text_content.text)
     assert content["message"] == "Issue updated successfully"
     assert "issue" in content
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_decoded(jira_client, mock_jira_fetcher):
+    """Base64 attachments reach the fetcher as decoded bytes, no paths involved."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "attachments_base64": (
+                '[{"filename": "hello.txt", "content_base64": "SGVsbG8="}]'
+            ),
+        },
+    )
+
+    assert response.content[0].type == "text"
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["attachments_base64"] == [
+        {"filename": "hello.txt", "content": b"Hello"}
+    ]
+    assert "attachments" not in call_kwargs
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_alone_is_not_a_field_update(
+    jira_client, mock_jira_fetcher
+):
+    """A base64-only call must not report 'fields_updated'."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "attachments_base64": (
+                '[{"filename": "hello.txt", "content_base64": "SGVsbG8="}]'
+            ),
+        },
+    )
+
+    content = json.loads(response.content[0].text)
+    assert "fields_updated" not in content["operations_performed"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_combines_with_paths(
+    jira_client, mock_jira_fetcher
+):
+    """Both attachment sources are additive and forwarded independently."""
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": "{}",
+            "attachments": "report.pdf",
+            "attachments_base64": (
+                '[{"filename": "hello.txt", "content_base64": "SGVsbG8="}]'
+            ),
+        },
+    )
+
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    assert call_kwargs["attachments"] == ["report.pdf"]
+    assert call_kwargs["attachments_base64"] == [
+        {"filename": "hello.txt", "content": b"Hello"}
+    ]
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_invalid_base64(jira_client):
+    """Undecodable base64 is rejected with the offending entry named."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": (
+                    '[{"filename": "hello.txt", "content_base64": "not base64!"}]'
+                ),
+            },
+        )
+
+    message = str(excinfo.value)
+    assert "attachments_base64[0]" in message
+    assert "hello.txt" in message
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_rejects_empty_content(jira_client):
+    """Empty content must not become a 0-byte attachment."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": (
+                    '[{"filename": "empty.txt", "content_base64": ""}]'
+                ),
+            },
+        )
+
+    assert "is empty" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_enforces_size_limit(jira_client):
+    """Content over ATTACHMENT_MAX_BYTES is rejected before the request."""
+    oversized = base64.b64encode(b"x" * (ATTACHMENT_MAX_BYTES + 1)).decode()
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": json.dumps(
+                    [{"filename": "big.bin", "content_base64": oversized}]
+                ),
+            },
+        )
+
+    assert "inline limit" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_requires_filename(jira_client):
+    """An entry without a filename is rejected."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": '[{"content_base64": "SGVsbG8="}]',
+            },
+        )
+
+    assert "requires a 'filename'" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_attachments_base64_invalid_json(jira_client):
+    """A non-JSON value is rejected by name."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "fields": "{}",
+                "attachments_base64": "hello.txt",
+            },
+        )
+
+    assert "attachments_base64 is not valid JSON" in str(excinfo.value)
 
 
 @pytest.mark.anyio
