@@ -27,70 +27,66 @@ def _convert_panel(params: str | None, content: str) -> str:
 class JiraPreprocessor(BasePreprocessor):
     """Handles text preprocessing for Jira content."""
 
-    # Step 1: Valid JIRA languages (official list)
-    # Source: https://jira.atlassian.com/browse/JRASERVER-21067 (JIRA 7.5.0+)
-    # and JIRA v9.12.12 release notes
-    # Official documentation: https://jira.atlassian.com/secure/WikiRendererHelpAction.jspa
+    # Step 1: Jira Server/Data Center source-code formatter tags.
+    # Keep this set to tags the Jira wiki renderer accepts directly.
     VALID_JIRA_LANGUAGES = {
-        # Core languages from JIRA 7.5.0+
         "actionscript",
-        "actionscript3",
         "ada",
         "applescript",
         "bash",
-        "sh",  # alias for bash
         "c",
         "c#",
-        "csharp",  # alias for c#
-        "cs",  # alias for c#
         "c++",
-        "cpp",  # alias for c++
+        "cpp",
         "css",
-        "sass",  # CSS preprocessor
-        "less",  # CSS preprocessor
-        "coldfusion",
-        "delphi",
-        "diff",
-        "patch",  # alias for diff
         "erlang",
-        "erl",  # alias for erlang
         "go",
         "groovy",
         "haskell",
         "html",
-        "xml",
         "java",
-        "javafx",
         "javascript",
-        "js",  # alias for javascript
+        "js",
         "json",
         "lua",
+        "none",
         "nyan",
         "objc",
-        "objective-c",  # alias for objc
         "perl",
         "php",
-        "powershell",
-        "ps1",  # alias for powershell
         "python",
-        "py",  # alias for python
         "r",
         "rainbow",
         "ruby",
-        "rb",  # alias for ruby
         "scala",
+        "sh",
         "sql",
         "swift",
         "visualbasic",
-        "vb",  # alias for visualbasic
+        "xml",
         "yaml",
-        "yml",  # alias for yaml
-        "none",  # plain text, no highlighting
     }
 
     # Step 2: Mapping for unsupported languages to closest valid JIRA alternative
     # Only map to actual JIRA languages; unmapped languages will return None → {code}
     LANGUAGE_MAPPING = {
+        # Common aliases for Jira-supported formatters
+        "actionscript3": "actionscript",
+        "csharp": "c#",
+        "cs": "c#",
+        "erl": "erlang",
+        "objective-c": "objc",
+        "py": "python",
+        "rb": "ruby",
+        "vb": "visualbasic",
+        "yml": "yaml",
+        # Related formats without their own Jira formatter
+        "diff": "none",
+        "patch": "none",
+        "less": "css",
+        "sass": "css",
+        "powershell": "bash",
+        "ps1": "bash",
         # Dockerfile → bash (similar shell syntax)
         "dockerfile": "bash",
         "docker": "bash",
@@ -448,7 +444,7 @@ class JiraPreprocessor(BasePreprocessor):
             code = "{code"
             if jira_lang:
                 code += ":" + jira_lang
-            code += "}" + content + "{code}"
+            code += "}\n" + content + "{code}"
             return code
 
         def _md_inline_to_jira(
@@ -460,7 +456,7 @@ class JiraPreprocessor(BasePreprocessor):
         # any other transformations.
         output = _extract_blocks(
             input_text,
-            r"```(\w*)\n([\s\S]+?)```",
+            r"```([\w#+.-]*)\n([\s\S]+?)```",
             _md_code_to_jira,
             code_blocks,
             "CODEBLOCK",
