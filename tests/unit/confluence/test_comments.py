@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 import requests
+from atlassian.errors import ApiError
 
 from mcp_atlassian.confluence.comments import CommentsMixin
 from mcp_atlassian.confluence.config import ConfluenceConfig
@@ -1145,6 +1146,29 @@ class TestAddInlineComment:
         result = comments_mixin_dc.add_inline_comment("12345", "Test", "anchor text")
 
         assert result is None
+
+    def test_delete_comment_success(self, comments_mixin):
+        """delete_comment issues DELETE /rest/api/content/{id} and returns True."""
+        comments_mixin.confluence.remove_content = MagicMock(return_value=None)
+
+        assert comments_mixin.delete_comment("987654") is True
+        comments_mixin.confluence.remove_content.assert_called_once_with("987654")
+
+    def test_delete_comment_network_error(self, comments_mixin):
+        """delete_comment returns False on network error."""
+        comments_mixin.confluence.remove_content = MagicMock(
+            side_effect=requests.RequestException("Network error")
+        )
+
+        assert comments_mixin.delete_comment("987654") is False
+
+    def test_delete_comment_api_error(self, comments_mixin):
+        """delete_comment returns False when the API rejects the request."""
+        comments_mixin.confluence.remove_content = MagicMock(
+            side_effect=ApiError("no content with the given id")
+        )
+
+        assert comments_mixin.delete_comment("987654") is False
 
 
 class TestInlineCommentModel:

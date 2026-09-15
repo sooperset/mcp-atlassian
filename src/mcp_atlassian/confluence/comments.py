@@ -493,6 +493,29 @@ class CommentsMixin(ConfluenceClient):
             )
             return None
 
+    def delete_comment(self, comment_id: str) -> bool:
+        """Delete a footer or inline comment.
+
+        Comments are content on both Cloud and Server/DC, so the v1
+        ``DELETE /rest/api/content/{id}`` endpoint handles every case.
+
+        Args:
+            comment_id: The ID of the comment to delete
+
+        Returns:
+            True if the comment was deleted, False otherwise
+        """
+        try:
+            self.confluence.remove_content(comment_id)
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Network error when deleting comment {comment_id}: {e}")
+            return False
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with full logging
+            logger.error(f"Unexpected error deleting comment {comment_id}: {e}")
+            logger.debug("Full exception details for deleting comment:", exc_info=True)
+            return False
+
     def _process_comment_response(
         self, response: dict[str, Any], space_key: str
     ) -> ConfluenceComment:
