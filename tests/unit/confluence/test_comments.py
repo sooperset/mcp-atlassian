@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 import requests
+from atlassian.errors import ApiError
 
 from mcp_atlassian.confluence.comments import CommentsMixin
 from mcp_atlassian.confluence.config import ConfluenceConfig
@@ -610,6 +611,22 @@ class TestAddCommentV2Routing:
             assert result is None
             adapter.assert_not_called()
 
+    def test_v2_adapter_uses_gateway_wiki_path_for_cloud_oauth(self, comments_mixin):
+        """Cloud OAuth v2 comment calls include the gateway product prefix."""
+        comments_mixin.config.auth_type = "oauth"
+        comments_mixin.confluence.url = (
+            "https://api.atlassian.com/ex/confluence/cloud-1"
+        )
+
+        with patch("mcp_atlassian.confluence.comments.ConfluenceV2Adapter") as adapter:
+            result = comments_mixin._v2_adapter
+
+        assert result is adapter.return_value
+        adapter.assert_called_once_with(
+            session=comments_mixin.confluence._session,
+            base_url="https://api.atlassian.com/ex/confluence/cloud-1/wiki",
+        )
+
     def test_add_comment_v2_routing_for_oauth_cloud(self, comments_mixin):
         """T10: add_comment routes through v2 adapter for OAuth Cloud."""
         comments_mixin.config.auth_type = "oauth"
@@ -1145,6 +1162,57 @@ class TestAddInlineComment:
         result = comments_mixin_dc.add_inline_comment("12345", "Test", "anchor text")
 
         assert result is None
+
+    def test_delete_comment_success_v1(self, comments_mixin):
+        """Basic auth deletion uses the v1 content endpoint."""
+        comments_mixin.confluence.remove_content = MagicMock(return_value=None)
+
+        assert comments_mixin.delete_comment("987654") is True
+        comments_mixin.confluence.remove_content.assert_called_once_with("987654")
+
+    @pytest.mark.parametrize("auth_type", ["oauth", "pat"])
+    def test_delete_comment_uses_v2_for_supported_cloud_auth(
+        self, comments_mixin, auth_type
+    ):
+        """Cloud OAuth and PAT deletion avoid the unavailable v1 endpoint."""
+        comments_mixin.config.auth_type = auth_type
+        comments_mixin.config.url = "https://test.atlassian.net/wiki"
+        mock_adapter = MagicMock()
+
+        with patch.object(
+            type(comments_mixin),
+            "_v2_adapter",
+            new_callable=lambda: property(lambda self: mock_adapter),
+        ):
+            assert comments_mixin.delete_comment("987654") is True
+
+        mock_adapter.delete_comment.assert_called_once_with("987654")
+        comments_mixin.confluence.remove_content.assert_not_called()
+
+    def test_delete_comment_uses_v1_for_server_dc_pat(self, comments_mixin_dc):
+        """Server/DC PAT deletion continues to use the v1 content endpoint."""
+        comments_mixin_dc.config.auth_type = "pat"
+        comments_mixin_dc.confluence.remove_content.return_value = None
+
+        assert comments_mixin_dc.delete_comment("987654") is True
+
+        comments_mixin_dc.confluence.remove_content.assert_called_once_with("987654")
+
+    def test_delete_comment_network_error(self, comments_mixin):
+        """delete_comment returns False on network error."""
+        comments_mixin.confluence.remove_content = MagicMock(
+            side_effect=requests.RequestException("Network error")
+        )
+
+        assert comments_mixin.delete_comment("987654") is False
+
+    def test_delete_comment_api_error(self, comments_mixin):
+        """delete_comment returns False when the API rejects the request."""
+        comments_mixin.confluence.remove_content = MagicMock(
+            side_effect=ApiError("no content with the given id")
+        )
+
+        assert comments_mixin.delete_comment("987654") is False
 
 
 class TestInlineCommentModel:
