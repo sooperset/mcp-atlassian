@@ -3,6 +3,7 @@
 import logging
 import mimetypes
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,16 @@ from .protocols import AttachmentsOperationsProto
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
+
+# Jira Cloud's attachment-content endpoint redirects to the Media Services
+# download URL (e.g. ``https://api.media.atlassian.com/file/{uuid}/binary``).
+# The media file UUID is the path segment after ``/file/``. Match on that
+# fragment only — the host varies (api.media.atlassian.com, api-private.*, and
+# outbound proxies all appear), so anchoring on the host is fragile.
+_MEDIA_FILE_UUID_RE = re.compile(
+    r"/file/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
 
 
 class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
@@ -611,3 +622,136 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             "uploaded": uploaded,
             "failed": failed,
         }
+
+    def delete_attachment(self, attachment_id: str) -> dict[str, Any]:
+        """
+        Delete a Jira attachment by its ID.
+
+        Args:
+            attachment_id: The numeric ID of the attachment to delete
+
+        Returns:
+            A dictionary describing the result of the deletion
+        """
+        if not attachment_id:
+            logger.error("No attachment ID provided for deletion")
+            return {"success": False, "error": "No attachment ID provided"}
+
+        try:
+            logger.info(f"Deleting attachment {attachment_id}")
+            self.jira.remove_attachment(attachment_id)
+            return {
+                "success": True,
+                "attachment_id": attachment_id,
+                "message": f"Attachment {attachment_id} deleted successfully",
+            }
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error deleting attachment {attachment_id}: {error_msg}")
+            return {
+                "success": False,
+                "attachment_id": attachment_id,
+                "error": error_msg,
+            }
+
+    @staticmethod
+    def _extract_media_file_uuid(text: str | None) -> str | None:
+        """Return the media file UUID from a media-download URL, if present."""
+        if not text:
+            return None
+        match = _MEDIA_FILE_UUID_RE.search(text)
+        return match.group(1) if match else None
+
+    def get_attachment_media_id(self, attachment_id: str) -> str | None:
+        """
+        Resolve the Media Services file UUID for an uploaded attachment.
+
+        Inline ADF ``media`` nodes require the Media Services UUID, which
+        differs from the REST attachment id. Jira Cloud exposes it only
+        indirectly: the ``attachment/content/{id}`` endpoint redirects to the
+        media download URL (``.../file/{uuid}/binary``), and the UUID is the
+        ``/file/`` path segment.
+
+        Resolution is attempted in two passes:
+
+        1. Fast path — request the endpoint *without* following the redirect
+           and read the UUID from the ``Location`` header. This is the
+           documented single-hop behaviour.
+        2. Fallback — when the first ``Location`` is not the media URL (e.g.
+           behind the OAuth gateway ``api.atlassian.com/ex/jira/{cloudId}``, a
+           corporate proxy, or a multi-hop redirect), follow the whole chain
+           and scan every hop's URL for the ``/file/{uuid}`` fragment.
+           ``requests`` strips the ``Authorization`` header on cross-host
+           redirects, so following to the media host leaks no credentials, and
+           the session's SSRF response hook still vets every hop.
+
+        Args:
+            attachment_id: The REST attachment id returned when uploading
+
+        Returns:
+            The media UUID string, or None if it cannot be resolved
+        """
+        if not attachment_id:
+            return None
+
+        # resource_url may return a path RELATIVE to the API base depending on
+        # the atlassian-python-api version, and ``_session.get`` needs an
+        # absolute URL or requests raises ``MissingSchema``. Join against the
+        # base the library itself uses (``self.jira.url``) so the OAuth gateway
+        # host (``api.atlassian.com/ex/jira/{cloudId}``) is honoured too.
+        resource = self.jira.resource_url(
+            f"attachment/content/{attachment_id}", api_version="3"
+        )
+        if resource.startswith(("http://", "https://")):
+            url = resource
+        else:
+            url = f"{self.jira.url.rstrip('/')}/{resource.lstrip('/')}"
+
+        # --- Pass 1: documented single-hop redirect (no follow). ---
+        first_status: int | str = "unknown"
+        first_location = ""
+        try:
+            response = self.jira._session.get(url, allow_redirects=False, stream=True)
+            first_status = getattr(response, "status_code", "unknown")
+            first_location = response.headers.get("Location", "")
+            response.close()
+            media_id = self._extract_media_file_uuid(first_location)
+            if media_id:
+                return media_id
+        except Exception:
+            # Don't swallow the real cause: log the full traceback, then let
+            # the redirect-chain pass run (and surface any error it hits).
+            logger.warning(
+                "Media-id resolution pass 1 failed for attachment %s "
+                "(url=%s); trying the redirect chain.",
+                attachment_id,
+                url,
+                exc_info=True,
+            )
+
+        # --- Pass 2: follow the full redirect chain and scan every hop. ---
+        # A hard error here is intentionally NOT caught, so the caller reports
+        # the real reason (e.g. a bad URL or network failure) rather than a
+        # vague "could not resolve".
+        followed = self.jira._session.get(url, allow_redirects=True, stream=True)
+        candidates: list[str] = []
+        for hop in followed.history or []:
+            candidates.append(hop.headers.get("Location", ""))
+            candidates.append(getattr(hop, "url", "") or "")
+        candidates.append(getattr(followed, "url", "") or "")
+        followed.close()
+        for candidate in candidates:
+            media_id = self._extract_media_file_uuid(candidate)
+            if media_id:
+                return media_id
+
+        logger.error(
+            "Could not resolve the media id for attachment %s: HTTP %s and no "
+            "hop exposed a '/file/{uuid}' media URL (first-hop Location: %s). "
+            "The instance may route attachment content through a gateway or "
+            "proxy that hides the media URL.",
+            attachment_id,
+            first_status,
+            (first_location[:120] or "<none>"),
+        )
+        return None

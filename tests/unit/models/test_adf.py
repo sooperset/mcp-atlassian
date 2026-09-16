@@ -13,6 +13,7 @@ import pytest
 
 from src.mcp_atlassian.models.jira.adf import (
     adf_to_text,
+    build_media_comment_adf,
     extract_top_level_media_nodes,
     markdown_to_adf,
     merge_adf_with_preserved_media,
@@ -1168,3 +1169,98 @@ class TestMarkdownToJiraDispatch:
         """Server/DC path with empty string returns empty string."""
         result = server_client._markdown_to_jira("")
         assert result == ""
+
+
+class TestBuildMediaCommentAdf:
+    """Tests for building a comment body that interleaves text and media."""
+
+    def test_orders_text_and_media_as_given(self):
+        """Segments render in order, so text -> image -> text -> image holds."""
+        result = build_media_comment_adf(
+            [
+                {"type": "text", "text": "Before"},
+                {"type": "media", "media_id": "uuid-1"},
+                {"type": "text", "text": "After"},
+                {"type": "media", "media_id": "uuid-2"},
+            ]
+        )
+
+        assert result["version"] == 1
+        assert result["type"] == "doc"
+        node_types = [node["type"] for node in result["content"]]
+        assert node_types == ["paragraph", "mediaSingle", "paragraph", "mediaSingle"]
+        media_ids = [
+            node["content"][0]["attrs"]["id"]
+            for node in result["content"]
+            if node["type"] == "mediaSingle"
+        ]
+        assert media_ids == ["uuid-1", "uuid-2"]
+
+    def test_media_node_shape(self):
+        """The media node carries the file type and an empty collection."""
+        result = build_media_comment_adf([{"type": "media", "media_id": "uuid-1"}])
+
+        media_single = result["content"][0]
+        assert media_single["attrs"] == {"layout": "center"}
+        assert media_single["content"][0]["attrs"] == {
+            "id": "uuid-1",
+            "type": "file",
+            "collection": "",
+        }
+
+    def test_dimensions_are_attached_when_supplied(self):
+        """Pixel dimensions reach the media node so Cloud renders the image."""
+        result = build_media_comment_adf(
+            [{"type": "media", "media_id": "uuid-1", "width": 640, "height": 480}]
+        )
+
+        attrs = result["content"][0]["content"][0]["attrs"]
+        assert attrs["width"] == 640
+        assert attrs["height"] == 480
+
+    @pytest.mark.parametrize(
+        "width,height",
+        [(0, 480), (640, 0), (-1, 480), ("640", "480"), (None, None)],
+    )
+    def test_invalid_dimensions_are_omitted(self, width, height):
+        """Non-positive or non-integer dimensions are dropped, not written."""
+        result = build_media_comment_adf(
+            [{"type": "media", "media_id": "uuid-1", "width": width, "height": height}]
+        )
+
+        attrs = result["content"][0]["content"][0]["attrs"]
+        assert "width" not in attrs
+        assert "height" not in attrs
+
+    def test_markdown_in_text_segments_is_converted(self):
+        """Text segments go through markdown_to_adf, not in as raw strings."""
+        result = build_media_comment_adf([{"type": "text", "text": "- one\n- two"}])
+
+        assert result["content"][0]["type"] == "bulletList"
+
+    def test_blank_text_segments_are_skipped(self):
+        """Whitespace-only text (e.g. between adjacent images) adds no node."""
+        result = build_media_comment_adf(
+            [
+                {"type": "media", "media_id": "uuid-1"},
+                {"type": "text", "text": "\n\n"},
+                {"type": "media", "media_id": "uuid-2"},
+            ]
+        )
+
+        node_types = [node["type"] for node in result["content"]]
+        assert node_types == ["mediaSingle", "mediaSingle"]
+
+    def test_empty_segments_produce_a_valid_document(self):
+        """An ADF doc must hold at least one node, even with nothing to say."""
+        result = build_media_comment_adf([])
+
+        assert result["content"] == [{"type": "paragraph", "content": []}]
+
+    def test_unknown_segment_types_are_ignored(self):
+        """An unrecognised segment contributes nothing rather than breaking."""
+        result = build_media_comment_adf(
+            [{"type": "video", "media_id": "uuid-1"}, {"type": "text", "text": "hi"}]
+        )
+
+        assert [node["type"] for node in result["content"]] == ["paragraph"]
