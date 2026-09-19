@@ -47,6 +47,48 @@ class TestJiraUser:
         assert user.avatar_url == "https://example.com/avatar.png"
         assert user.time_zone == "UTC"
 
+    def test_from_api_response_with_groups_expansion(self):
+        """The `groups` expansion yields group names; absent means None."""
+        user_data = {
+            "name": "jdoe",
+            "key": "JIRAUSER123",
+            "displayName": "John Doe",
+            "groups": {
+                "size": 3,
+                "items": [
+                    {
+                        "name": "jira-users",
+                        "self": "https://x/group?groupname=jira-users",
+                    },
+                    {"name": "ROLE_Global_Support", "self": "https://x/group?..."},
+                    {"self": "https://x/group?groupname=nameless"},
+                ],
+            },
+        }
+        user = JiraUser.from_api_response(user_data)
+        assert user.groups == ["jira-users", "ROLE_Global_Support"]
+        assert user.to_simplified_dict()["groups"] == [
+            "jira-users",
+            "ROLE_Global_Support",
+        ]
+
+        without = JiraUser.from_api_response({"name": "jdoe", "displayName": "J"})
+        assert without.groups is None
+        assert "groups" not in without.to_simplified_dict()
+
+        empty = JiraUser.from_api_response(
+            {"name": "jdoe", "groups": {"size": 0, "items": []}}
+        )
+        assert empty.groups == []
+        assert empty.to_simplified_dict()["groups"] == []
+
+        # Server/DC without the expansion: a stub with a size but no items.
+        stub = JiraUser.from_api_response(
+            {"name": "jdoe", "groups": {"size": 202, "items": []}}
+        )
+        assert stub.groups is None
+        assert "groups" not in stub.to_simplified_dict()
+
     def test_from_api_response_with_empty_data(self):
         """Test creating a JiraUser from empty data."""
         user = JiraUser.from_api_response({})

@@ -38,6 +38,9 @@ class JiraUser(ApiModel):
     active: bool = True
     avatar_url: str | None = None
     time_zone: str | None = None
+    # Group names from the `groups` expansion (``?expand=groups``); None when
+    # the expansion was not requested, so existing callers see no change.
+    groups: list[str] | None = None
 
     @classmethod
     def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "JiraUser":
@@ -66,6 +69,21 @@ class JiraUser(ApiModel):
             else:
                 logger.debug(f"Unexpected avatar data format: {type(avatars)}")
 
+        groups: list[str] | None = None
+        if isinstance(raw_groups := data.get("groups"), dict):
+            # Expanded (?expand=groups), Cloud and Server/DC alike:
+            # {"size": N, "items": [{"name": ...}, ...]}. Without the expansion
+            # Server/DC still sends a stub {"size": N, "items": []} — a size
+            # with no items means "not expanded", so leave groups as None.
+            items = raw_groups.get("items")
+            names = [
+                str(item["name"])
+                for item in (items if isinstance(items, list) else [])
+                if isinstance(item, dict) and item.get("name")
+            ]
+            if names or (isinstance(items, list) and not raw_groups.get("size")):
+                groups = names
+
         return cls(
             account_id=data.get("accountId"),
             username=data.get("name"),
@@ -75,6 +93,7 @@ class JiraUser(ApiModel):
             active=bool(data.get("active", True)),
             avatar_url=avatar_url,
             time_zone=data.get("timeZone"),
+            groups=groups,
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
@@ -88,6 +107,8 @@ class JiraUser(ApiModel):
         }
         if self.user_key:
             result["key"] = self.user_key
+        if self.groups is not None:
+            result["groups"] = list(self.groups)
         return result
 
 
