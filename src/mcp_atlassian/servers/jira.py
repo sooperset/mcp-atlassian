@@ -2623,13 +2623,21 @@ async def add_comment(
                 "the client-side markdown-to-ADF guarantees of "
                 "the regular comment path). Cannot be combined "
                 "with visibility. If the issue's project is "
-                "listed in JIRA_INTERNAL_ONLY_PROJECTS, only "
-                "public=false is accepted — public=true or "
-                "omitting this field is rejected. Issues in such "
-                "a project that are not JSM customer requests "
-                "(e.g. an agent-created Task) have no portal "
-                "audience and are exempt: they post through the "
-                "ordinary comment path and ignore this field."
+                "listed in JIRA_INTERNAL_ONLY_PROJECTS, the "
+                "server's JIRA_INTERNAL_COMMENT_MODE decides "
+                "what is accepted: under 'strict' only "
+                "public=false (public=true or omitting the "
+                "field is rejected); under 'default_internal' "
+                "omitting the field posts an INTERNAL note and "
+                "public=true is the explicit opt-in to a "
+                "customer-visible reply. Pass this field "
+                "explicitly on any service-desk issue rather "
+                "than relying on the default, so the choice is "
+                "recorded in the call. Issues in such a project "
+                "that are not JSM customer requests (e.g. an "
+                "agent-created Task) have no portal audience and "
+                "are exempt: they post through the ordinary "
+                "comment path and ignore this field."
             )
         ),
     ] = None,
@@ -2642,15 +2650,21 @@ async def add_comment(
         body: Comment text in Markdown.
         visibility: (Optional) Comment visibility as JSON string.
         public: (Optional) For JSM issues. True = customer-visible,
-            False = internal/agent-only. Uses ServiceDesk API.
+            False = internal/agent-only. Uses ServiceDesk API. On a
+            project listed in JIRA_INTERNAL_ONLY_PROJECTS, an omitted
+            value is rejected under JIRA_INTERNAL_COMMENT_MODE 'strict'
+            and posts an internal note under 'default_internal'.
 
     Returns:
-        JSON string representing the added comment object.
+        JSON string representing the added comment object. Comments
+        posted through the ServiceDesk API carry the visibility the API
+        reported in 'public' (None if it reported none) alongside the
+        requested value in 'requested_public'.
 
     Raises:
         ValueError: If in read-only mode, Jira client unavailable, or
             the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
-            and public is not exactly False.
+            and public is not permitted by the configured mode.
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
