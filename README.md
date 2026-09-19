@@ -116,6 +116,23 @@ Documentation is also available in [llms.txt format](https://llmstxt.org/), whic
 
 **98 tools total** — See [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) for the complete list.
 
+## Optional: Agent verification (TrustModel AgentCert)
+
+Optionally verify a calling agent's **AgentCert + TrustScore** on each tool call. **Off by default**, **never blocks** unless you opt in — an additional [FastMCP middleware](https://gofastmcp.com/servers/middleware) that reads request metadata only.
+
+```bash
+uv pip install "mcp-atlassian[trustmodel]"
+TRUSTMODEL_VERIFY=1 mcp-atlassian --transport streamable-http   # shadow: logs verdicts
+```
+
+| Env var | Meaning |
+|---|---|
+| `TRUSTMODEL_VERIFY=1` | enable the gate (nothing runs otherwise) |
+| `TRUSTMODEL_MODE=enforce` | reject unverified/revoked agents (default: `shadow`, log-only) |
+| `TRUSTMODEL_VERIFY_URL` | TAG verify endpoint |
+
+Powered by the dependency-free [`trustmodel-agentcert-tag`](https://pypi.org/project/trustmodel-agentcert-tag/) client (MIT). More at [trustmodel.ai/verify](https://trustmodel.ai/verify).
+
 ## Security
 
 Never share API tokens. Keep `.env` files secure. See [SECURITY.md](SECURITY.md).

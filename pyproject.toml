@@ -37,6 +37,7 @@ dependencies = [
 
 [project.optional-dependencies]
 wpad = ["pypac>=0.17.2"]
+trustmodel = ["trustmodel-agentcert-tag>=0.1.0"]
 
 [[project.authors]]
 name = "sooperset"

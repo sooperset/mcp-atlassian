@@ -23,6 +23,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.trustmodel_verify import register_trustmodel_verify
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
@@ -921,6 +922,9 @@ main_mcp = AtlassianMCP(
 )
 main_mcp.mount(jira_mcp, namespace="jira")
 main_mcp.mount(confluence_mcp, namespace="confluence")
+
+# Optional TrustModel AgentCert verify-gate — no-op unless TRUSTMODEL_VERIFY=1.
+register_trustmodel_verify(main_mcp)
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
