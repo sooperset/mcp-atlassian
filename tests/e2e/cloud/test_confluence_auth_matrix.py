@@ -162,3 +162,34 @@ class TestConfluenceWriteOperations:
             content=f"Test comment {uid}",
         )
         assert comment is not None
+
+    def test_delete_footer_and_inline_comments(
+        self,
+        authed_confluence: ConfluenceFetcher,
+        confluence_fetcher: ConfluenceFetcher,
+        cloud_instance: CloudInstanceInfo,
+        resource_tracker: CloudResourceTracker,
+    ) -> None:
+        """Both Cloud comment types can be deleted with each auth method."""
+        uid = uuid.uuid4().hex[:8]
+        anchor = f"Cloud auth delete anchor {uid}"
+        page = confluence_fetcher.create_page(
+            space_key=cloud_instance.space_key,
+            title=f"Cloud E2E Delete Comment Test {uid}",
+            body=f"<p>{anchor}</p>",
+            is_markdown=False,
+            content_representation="storage",
+        )
+        resource_tracker.add_confluence_page(page.id)
+
+        footer = confluence_fetcher.add_comment(page.id, f"Footer comment {uid}")
+        inline = confluence_fetcher.add_inline_comment(
+            page.id,
+            f"Inline comment {uid}",
+            anchor,
+        )
+        assert footer is not None
+        assert inline is not None
+
+        assert authed_confluence.delete_comment(footer.id) is True
+        assert authed_confluence.delete_comment(inline.id) is True

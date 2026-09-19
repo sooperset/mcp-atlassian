@@ -1380,6 +1380,53 @@ async def reply_to_comment(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_comments"},
+    annotations={"title": "Delete Comment", "destructiveHint": True},
+)
+@check_write_access
+async def delete_comment(
+    ctx: Context,
+    comment_id: Annotated[
+        str, Field(description="The ID of the footer or inline comment to delete")
+    ],
+) -> str:
+    """Delete a footer or inline comment from a Confluence page.
+
+    Args:
+        ctx: The FastMCP context.
+        comment_id: The ID of the comment to delete.
+
+    Returns:
+        JSON string indicating success or failure.
+
+    Raises:
+        ValueError: If in read-only mode or Confluence client is unavailable.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        result = confluence_fetcher.delete_comment(comment_id=comment_id)
+        if result:
+            response = {
+                "success": True,
+                "message": f"Comment {comment_id} deleted successfully",
+            }
+        else:
+            response = {
+                "success": False,
+                "message": f"Unable to delete comment {comment_id}. API request completed but deletion unsuccessful.",
+            }
+    except Exception as e:
+        logger.error(f"Error deleting comment {comment_id}: {str(e)}")
+        response = {
+            "success": False,
+            "message": f"Error deleting comment {comment_id}",
+            "error": str(e),
+        }
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_comments"},
     annotations={"title": "Get Inline Comments", "readOnlyHint": True},
 )
