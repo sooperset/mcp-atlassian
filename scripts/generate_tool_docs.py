@@ -40,6 +40,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_batch_create_issues",
         "jira_transition_issue",
         "jira_get_transitions",
+        "jira_get_statuses",
         "jira_get_all_projects",
         "jira_get_project_issues",
     ],
