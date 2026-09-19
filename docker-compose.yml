@@ -1,0 +1,56 @@
+# The Atlassian MCP server coworker's MANUAL Jira/Confluence path talks to.
+#
+# One container for every tenant, not one per tenant. The credentials do not live here at
+# all: coworker sends the site URL and the account's token on EACH request, as headers, and
+# `--stateless` is what makes that safe — no session carries one tenant's fetcher into
+# another's call. That is what the fork's per-request-URL patch exists for; without it the
+# server would bind to whatever single site its own env named.
+#
+# The one-click (Rovo OAuth) path does not come here. It goes to Atlassian's own hosted MCP
+# server, exactly as before.
+
+name: mcp-atlassian
+
+services:
+  mcp-atlassian:
+    # Built by hand from Dockerfile.plain (`make build`, or the command in README-deploy.md).
+    # Not `build:` — this host has classic docker and no buildx, and the compose file should
+    # not decide which of the two Dockerfiles is right.
+    image: mcp-atlassian:local
+    container_name: mcp-atlassian
+    restart: unless-stopped
+
+    # Every setting in one file beside the app's own, same convention as metan-workforce.
+    # It carries no Atlassian credentials — there are none to carry.
+    env_file:
+      - ${COWORKER_STATE_DIR:-/home/dev/workforce-state}/mcp-atlassian.env
+
+    command:
+      - --transport
+      - streamable-http
+      - --port
+      - "9000"
+      # No session state between requests. Each call brings its own tenant's URL and token,
+      # so anything remembered across calls would be a leak, not an optimisation.
+      - --stateless
+
+    # NOT published to the host. Its only client is the workforce container, which reaches
+    # it by name over metaneurons-net. A published port here would be an unauthenticated
+    # door to every connected Atlassian site, since the credentials ride in the request.
+    expose:
+      - "9000"
+
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9000/healthz', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+    networks:
+      - metaneurons-net
+
+networks:
+  metaneurons-net:
+    external: true

@@ -666,6 +666,7 @@ def _create_user_config_for_fetcher(
     auth_type: str,
     credentials: dict[str, Any],
     cloud_id: str | None = None,
+    url: str | None = None,
 ) -> JiraConfig | ConfluenceConfig:
     """Create a user-specific configuration for Jira or Confluence fetchers.
 
@@ -674,6 +675,9 @@ def _create_user_config_for_fetcher(
         auth_type: The authentication type ('oauth', 'pat', or 'basic').
         credentials: Dictionary of credentials (token, email, etc).
         cloud_id: Optional cloud ID to override the base config cloud ID.
+        url: Optional site URL to override the base config URL, for a request that
+            names its own instance. Already SSRF-checked by UserTokenMiddleware,
+            which is the only place it can come from.
 
     Returns:
         JiraConfig or ConfluenceConfig with user-specific credentials.
@@ -694,7 +698,7 @@ def _create_user_config_for_fetcher(
     )
 
     common_args: dict[str, Any] = {
-        "url": base_config.url,
+        "url": url or base_config.url,
         "auth_type": auth_type,
         "ssl_verify": base_config.ssl_verify,
         "http_proxy": base_config.http_proxy,
@@ -899,10 +903,17 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 f"Creating user-specific {spec.name}Fetcher "
                 f"(type: basic) for user {user_email}"
             )
+            # A request may name its own site. Without this the URL comes only from
+            # this process's environment, which pins one deployment to ONE Atlassian
+            # instance — fine for a single-team server, useless for a multi-tenant one,
+            # where every tenant has its own site and the credentials that go with it.
+            # PAT auth already worked this way (Branch 1); basic auth had no reason not
+            # to. The value is SSRF-checked in UserTokenMiddleware before it gets here.
             user_config = _create_user_config_for_fetcher(
                 base_config=global_config,
                 auth_type="basic",
                 credentials=credentials,
+                url=url_header_val,
             )
             return _create_and_validate(
                 request,
