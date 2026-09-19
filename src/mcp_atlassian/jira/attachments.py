@@ -9,6 +9,7 @@ from typing import Any
 from ..models.jira import JiraAttachment
 from ..utils.io import validate_safe_path
 from ..utils.media import ATTACHMENT_MAX_BYTES
+from ..utils.urls import validate_url_for_ssrf
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
 
@@ -32,6 +33,11 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         """
         if not url:
             logger.error("No URL provided for attachment download")
+            return False
+
+        ssrf_error = validate_url_for_ssrf(url)
+        if ssrf_error:
+            logger.error(f"Refusing to download attachment: {ssrf_error}")
             return False
 
         try:
@@ -94,6 +100,11 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         """
         if not url:
             logger.error("No URL provided for attachment fetch")
+            return None
+
+        ssrf_error = validate_url_for_ssrf(url)
+        if ssrf_error:
+            logger.error(f"Refusing to fetch attachment: {ssrf_error}")
             return None
 
         try:
