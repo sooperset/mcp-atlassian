@@ -23,10 +23,34 @@ class SpacesMixin(ConfluenceClient):
 
         Returns:
             Dictionary containing space information with results and metadata
+
+        Raises:
+            ValueError: If the API response is malformed while a spaces filter is set
         """
         spaces = self.confluence.get_all_spaces(start=start, limit=limit)
-        # Cast the return value to the expected type
-        return cast(dict[str, object], spaces)
+        spaces_result = cast(dict[str, object], spaces)
+        allowed_spaces = self._get_allowed_spaces()
+        if allowed_spaces is None:
+            return spaces_result
+
+        results = spaces_result.get("results")
+        if not isinstance(results, list):
+            raise ValueError(
+                "Confluence get spaces returned a malformed response where "
+                "'results' is not a list"
+            )
+
+        filtered_results = [
+            space
+            for space in results
+            if isinstance(space, dict)
+            and str(space.get("key", "")).strip().upper() in allowed_spaces
+        ]
+        filtered_response = dict(spaces_result)
+        filtered_response["results"] = filtered_results
+        if "size" in filtered_response:
+            filtered_response["size"] = len(filtered_results)
+        return filtered_response
 
     def get_user_contributed_spaces(self, limit: int = 250) -> dict:
         """
@@ -39,6 +63,8 @@ class SpacesMixin(ConfluenceClient):
             Dictionary of space keys to space information
         """
         try:
+            allowed_spaces = self._get_allowed_spaces()
+
             # Use CQL to find content the user has contributed to
             cql = "contributor = currentUser() order by lastmodified DESC"
             results = self.confluence.cql(cql=cql, limit=limit)
@@ -74,8 +100,14 @@ class SpacesMixin(ConfluenceClient):
                     if url and url.startswith("/spaces/"):
                         space_key = url.split("/spaces/")[1].split("/")[0]
 
-                # Only add if we found a space key and it's not already in our results
-                if space_key and space_key not in spaces:
+                if (
+                    space_key
+                    and (
+                        allowed_spaces is None
+                        or space_key.strip().upper() in allowed_spaces
+                    )
+                    and space_key not in spaces
+                ):
                     # Add some defaults if we couldn't extract all fields
                     space_name = space_name or f"Space {space_key}"
                     spaces[space_key] = {"key": space_key, "name": space_name}
