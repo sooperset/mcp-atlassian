@@ -481,7 +481,11 @@ class TestAttachmentsMixin:
             "filename": "test_file.txt",
             "size": 100,
         }
-        attachments_mixin.jira.add_attachment.return_value = mock_attachment_response
+        attachments_mixin.jira.post.return_value = [mock_attachment_response]
+        attachments_mixin.jira.resource_url.return_value = (
+            "https://test.atlassian.net/rest/api/2/issue"
+        )
+        attachments_mixin.jira.no_check_headers = {"X-Atlassian-Token": "no-check"}
 
         # Mock file operations
         with (
@@ -513,9 +517,10 @@ class TestAttachmentsMixin:
             assert result["filename"] == "test_file.txt"
             assert result["size"] == 100
             assert result["id"] == "12345"
-            attachments_mixin.jira.add_attachment.assert_called_once_with(
-                issue_key="TEST-123", filename="/absolute/path/test_file.txt"
-            )
+            call = attachments_mixin.jira.post.call_args
+            assert call.args[0].endswith("/issue/TEST-123/attachments")
+            assert call.kwargs["files"]["file"][0] == "test_file.txt"
+            assert call.kwargs["files"]["file"][2] == "text/plain"
 
     def test_upload_attachment_relative_path(
         self, attachments_mixin: AttachmentsMixin, tmp_path: Path
@@ -526,18 +531,19 @@ class TestAttachmentsMixin:
             "filename": "test_file.txt",
             "size": 100,
         }
-        attachments_mixin.jira.add_attachment.return_value = mock_attachment_response
+        attachments_mixin.jira.post.return_value = mock_attachment_response
+        attachments_mixin.jira.resource_url.return_value = (
+            "https://test.atlassian.net/rest/api/2/issue"
+        )
 
         (tmp_path / "test_file.txt").write_bytes(b"test content")
-        resolved = str((tmp_path / "test_file.txt").resolve())
-
         with patch("os.getcwd", return_value=str(tmp_path)):
             result = attachments_mixin.upload_attachment("TEST-123", "test_file.txt")
 
         assert result["success"] is True
-        attachments_mixin.jira.add_attachment.assert_called_once_with(
-            issue_key="TEST-123", filename=resolved
-        )
+        files = attachments_mixin.jira.post.call_args.kwargs["files"]
+        assert files["file"][0] == "test_file.txt"
+        assert files["file"][2] == "text/plain"
 
     def test_upload_attachment_no_issue_key(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no issue key."""
@@ -585,7 +591,7 @@ class TestAttachmentsMixin:
     def test_upload_attachment_api_error(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with an API error."""
         # Mock the Jira API to raise an exception
-        attachments_mixin.jira.add_attachment.side_effect = Exception("API Error")
+        attachments_mixin.jira.post.side_effect = Exception("API Error")
 
         # Mock file operations
         with (
@@ -612,7 +618,7 @@ class TestAttachmentsMixin:
     def test_upload_attachment_no_response(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload when API returns no response."""
         # Mock the Jira API to return None
-        attachments_mixin.jira.add_attachment.return_value = None
+        attachments_mixin.jira.post.return_value = None
 
         # Mock file operations
         with (
@@ -664,7 +670,7 @@ class TestAttachmentsMixin:
         attachments_mixin.jira.post.assert_called_once_with(
             "https://test.atlassian.net/rest/api/2/issue/TEST-123/attachments",
             headers={"X-Atlassian-Token": "no-check"},
-            files={"file": ("test_file.txt", b"test content")},
+            files={"file": ("test_file.txt", b"test content", "text/plain")},
         )
         attachments_mixin.jira.add_attachment.assert_not_called()
 

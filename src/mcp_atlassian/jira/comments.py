@@ -34,6 +34,8 @@ from .config import normalize_project_key
 logger = logging.getLogger("mcp-jira")
 
 _CANONICAL_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]\r\n]*\]\([^\r\n)]+\)")
+_JIRA_IMAGE_MACRO_RE = re.compile(r"(?<!\\)!(?!\[|\s)(?:\\.|[^!\r\n])+?(?<!\\)!")
 
 
 def _http_status(exc: BaseException) -> int | None:
@@ -55,6 +57,90 @@ def _http_status(exc: BaseException) -> int | None:
 
 class CommentsMixin(JiraClient):
     """Mixin for Jira comment operations."""
+
+    @staticmethod
+    def _has_markdown_image(comment: str) -> bool:
+        """Return whether a comment contains Markdown image syntax."""
+        return _MARKDOWN_IMAGE_RE.search(comment) is not None
+
+    @staticmethod
+    def _preserve_jira_image_macros(
+        target_body: str,
+        source_body: str,
+    ) -> str:
+        """Append Jira image macros missing from a rewritten comment body.
+
+        Jira Cloud's v2 comment endpoint exposes embedded ADF attachments as
+        wiki image macros. Keeping those macros in an edit lets Jira resolve
+        them back to the original media nodes instead of garbage-collecting
+        the now-orphaned attachments.
+
+        Args:
+            target_body: New comment body in Jira wiki markup.
+            source_body: Existing comment body returned by Jira REST API v2.
+
+        Returns:
+            The target body with any missing image macros appended.
+        """
+        missing: list[str] = []
+        seen = set(_JIRA_IMAGE_MACRO_RE.findall(target_body))
+        for macro in _JIRA_IMAGE_MACRO_RE.findall(source_body):
+            if macro not in seen:
+                missing.append(macro)
+                seen.add(macro)
+
+        if not missing:
+            return target_body
+        separator = "\n\n" if target_body else ""
+        preserved = "\n\n".join(missing)
+        return f"{target_body}{separator}{preserved}"
+
+    def _prepare_cloud_comment_edit(
+        self,
+        issue_key: str,
+        comment_id: str,
+        comment: str,
+    ) -> str | dict[str, Any]:
+        """Prepare a Cloud edit while preserving existing attachment media.
+
+        REST API v3 returns ADF media nodes but cannot resolve an attachment
+        filename from Markdown. REST API v2 returns those same nodes as wiki
+        image macros and resolves attachment filenames back to ADF on write.
+        Fetch the current v2 representation before every Cloud edit, then use
+        v2 only when either the old or new body contains an image.
+
+        Args:
+            issue_key: The Jira issue key.
+            comment_id: The comment ID.
+            comment: Updated comment text in Markdown.
+
+        Returns:
+            Jira wiki markup for media-bearing edits, otherwise an ADF dict.
+
+        Raises:
+            TypeError: If Jira does not return a usable v2 comment body. The
+                edit fails closed because writing without that body could
+                silently orphan and delete an existing attachment.
+        """
+        current = self.jira.issue_get_comment(issue_key, comment_id)
+        if not isinstance(current, dict):
+            raise TypeError(
+                "Cannot safely edit the comment because Jira returned an "
+                f"unexpected response type: {type(current)}"
+            )
+        current_body = current.get("body")
+        if not isinstance(current_body, str):
+            raise TypeError(
+                "Cannot safely edit the comment because Jira REST API v2 did "
+                "not return its current wiki body"
+            )
+
+        has_existing_media = _JIRA_IMAGE_MACRO_RE.search(current_body) is not None
+        if not has_existing_media and not self._has_markdown_image(comment):
+            return self._markdown_to_jira(comment)
+
+        wiki_body = self.preprocessor.markdown_to_jira(comment)
+        return self._preserve_jira_image_macros(wiki_body, current_body)
 
     @staticmethod
     def _require_canonical_guarded_issue_key(issue_key: str) -> str:
@@ -403,8 +489,13 @@ class CommentsMixin(JiraClient):
             return self._add_servicedesk_comment(issue_key, comment, public)
 
         try:
-            # Convert Markdown to Jira's markup format
-            jira_formatted_comment = self._markdown_to_jira(comment)
+            # Jira Cloud's v2 endpoint resolves attachment filenames in wiki
+            # image macros to the media UUIDs required by ADF. Keep the normal
+            # v3 ADF path for comments without images.
+            if self.config.is_cloud and self._has_markdown_image(comment):
+                jira_formatted_comment = self.preprocessor.markdown_to_jira(comment)
+            else:
+                jira_formatted_comment = self._markdown_to_jira(comment)
 
             # Use v3 API on Cloud for ADF comments
             if isinstance(jira_formatted_comment, dict) and self.config.is_cloud:
@@ -558,8 +649,15 @@ class CommentsMixin(JiraClient):
         self._enforce_internal_only_edit(issue_key, comment_id)
 
         try:
-            # Convert Markdown to Jira's markup format
-            jira_formatted_comment = self._markdown_to_jira(comment)
+            # A Cloud edit must inspect the current v2 wiki representation
+            # before writing. Otherwise an ADF rewrite can silently remove a
+            # media node and Jira may delete the orphaned attachment.
+            if self.config.is_cloud:
+                jira_formatted_comment = self._prepare_cloud_comment_edit(
+                    issue_key, comment_id, comment
+                )
+            else:
+                jira_formatted_comment = self._markdown_to_jira(comment)
 
             # Use v3 API on Cloud for ADF comments
             if isinstance(jira_formatted_comment, dict) and self.config.is_cloud:

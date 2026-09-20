@@ -393,14 +393,24 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
 
             logger.info(f"Uploading attachment from {file_path} to issue {issue_key}")
 
-            # Use the Jira API to upload the file
+            # Send an explicit MIME type. Jira Cloud does not reliably infer it
+            # when the multipart part only contains a file object; attachments
+            # without mimeType cannot render as inline comment media.
             filename = os.path.basename(file_path)
+            content_type = (
+                mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            )
+            base_url = self.jira.resource_url("issue")
             with open(file_path, "rb") as file:
-                attachment = self.jira.add_attachment(
-                    issue_key=issue_key, filename=file_path
+                attachment = self.jira.post(
+                    f"{base_url}/{issue_key}/attachments",
+                    headers=self.jira.no_check_headers,
+                    files={"file": (filename, file, content_type)},
                 )
 
             if attachment:
+                if isinstance(attachment, list):
+                    attachment = attachment[0]
                 file_size = os.path.getsize(file_path)
                 logger.info(
                     f"Successfully uploaded attachment {filename} to {issue_key} (size: {file_size} bytes)"
@@ -518,10 +528,13 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             )
 
             base_url = self.jira.resource_url("issue")
+            content_type = (
+                mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            )
             attachment = self.jira.post(
                 f"{base_url}/{issue_key}/attachments",
                 headers=self.jira.no_check_headers,
-                files={"file": (filename, content)},
+                files={"file": (filename, content, content_type)},
             )
 
             if attachment:

@@ -14,7 +14,7 @@ Add a comment to a Jira issue.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `body` | `string` | Yes | Comment text in Markdown format |
+| `body` | `string` | Yes | Comment text in Markdown format. On Jira Cloud, embed an existing issue attachment with `![alt](filename.png)`. |
 | `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '`{"type":"group","value":"jira-users"}`') |
 | `public` | `boolean` | No | (Optional) For JSM/Service Desk issues only. Set to true for customer-visible comment, false for internal agent-only comment. Posted via the ServiceDesk API as a raw string; Jira Cloud renders it server-side and stores ADF (markdown observed to render on Cloud, without the client-side markdown-to-ADF guarantees of the regular comment path). Cannot be combined with visibility. If the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS, only public=false is accepted — public=true or omitting this field is rejected. Issues in such a project that are not JSM customer requests (e.g. an agent-created Task) have no portal audience and are exempt: they post through the ordinary comment path and ignore this field. |
 **Example:**
@@ -24,7 +24,7 @@ Add a comment to a Jira issue.
 ```
 
 <Tip>
-Supports Markdown formatting. On Jira Cloud, mention users with `[~accountid:ACCOUNT_ID]` or `@[Display Name](accountid:ACCOUNT_ID)`. Use `visibility` parameter for restricted comments (e.g., service desk internal notes). The generated schema lists `body`, but callers may use `comment` as an equivalent input alias for the same comment text.
+Supports Markdown formatting. On Jira Cloud, embed an existing issue attachment with `![alt](filename.png)`, and mention users with `[~accountid:ACCOUNT_ID]` or `@[Display Name](accountid:ACCOUNT_ID)`. Use `visibility` parameter for restricted comments (e.g., service desk internal notes). The generated schema lists `body`, but callers may use `comment` as an equivalent input alias for the same comment text.
 </Tip>
 
 ---
@@ -41,7 +41,7 @@ Edit an existing comment on a Jira issue.
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `comment_id` | `string` | Yes | The ID of the comment to edit |
-| `body` | `string` | Yes | Updated comment text in Markdown format |
+| `body` | `string` | Yes | Updated comment text in Markdown format. On Jira Cloud, existing attachment images are preserved; embed another with `![alt](filename.png)`. |
 | `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '`{"type":"group","value":"jira-users"}`') |
 
 ---

@@ -25,6 +25,7 @@ class TestCommentsMixin:
 
         # Mock the clean_text method
         mixin._clean_text = Mock(side_effect=lambda x: x)
+        mixin.jira.issue_get_comment.return_value = {"body": "Current comment"}
 
         return mixin
 
@@ -369,6 +370,29 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="Error adding comment"):
             comments_mixin.add_comment("TEST-123", "Test comment")
 
+    def test_add_comment_with_attachment_image_uses_v2_wiki(self, comments_mixin):
+        """Cloud v2 resolves an attachment filename to an ADF media node."""
+        comments_mixin.preprocessor.markdown_to_jira.return_value = (
+            "Before\n\n!shot.png|alt=Screenshot!"
+        )
+        comments_mixin.jira.issue_add_comment.return_value = {
+            "id": "10001",
+            "body": "Before\n\n!shot.png|alt=Screenshot!",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+        comments_mixin._post_api3 = Mock()
+
+        result = comments_mixin.add_comment(
+            "TEST-123", "Before\n\n![Screenshot](shot.png)"
+        )
+
+        comments_mixin.jira.issue_add_comment.assert_called_once_with(
+            "TEST-123", "Before\n\n!shot.png|alt=Screenshot!", None
+        )
+        comments_mixin._post_api3.assert_not_called()
+        assert result["id"] == "10001"
+
     def test_edit_comment_basic(self, comments_mixin):
         """Test edit_comment with basic data (Cloud → ADF via v3)."""
         # Setup mock response for v3 API path
@@ -482,6 +506,66 @@ class TestCommentsMixin:
         # Verify it raises the wrapped exception
         with pytest.raises(Exception, match="Error editing comment"):
             comments_mixin.edit_comment("TEST-123", "10001", "Updated comment")
+
+    def test_edit_comment_preserves_existing_attachment_image(self, comments_mixin):
+        """A text edit retains existing v2 image macros and uses v2 PUT."""
+        existing_macro = '!shot (media-uuid).png|width=506,alt="shot.png"!'
+        comments_mixin.jira.issue_get_comment.return_value = {
+            "body": f"Old text\n\n{existing_macro}"
+        }
+        comments_mixin.preprocessor.markdown_to_jira.return_value = "Updated text"
+        comments_mixin.jira.issue_edit_comment.return_value = {
+            "id": "10001",
+            "body": f"Updated text\n\n{existing_macro}",
+            "updated": "2024-01-01T12:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+        comments_mixin._put_api3 = Mock()
+
+        result = comments_mixin.edit_comment("TEST-123", "10001", "Updated text")
+
+        comments_mixin.jira.issue_edit_comment.assert_called_once_with(
+            "TEST-123",
+            "10001",
+            f"Updated text\n\n{existing_macro}",
+            None,
+        )
+        comments_mixin._put_api3.assert_not_called()
+        assert result["id"] == "10001"
+
+    def test_edit_comment_does_not_duplicate_existing_image_macro(self, comments_mixin):
+        """An image macro already present in the new body stays singular."""
+        macro = "!shot.png|alt=Screenshot!"
+        comments_mixin.jira.issue_get_comment.return_value = {
+            "body": f"Old text\n\n{macro}"
+        }
+        comments_mixin.preprocessor.markdown_to_jira.return_value = (
+            f"Updated text\n\n{macro}"
+        )
+        comments_mixin.jira.issue_edit_comment.return_value = {
+            "id": "10001",
+            "body": f"Updated text\n\n{macro}",
+            "updated": "2024-01-01T12:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+        }
+
+        comments_mixin.edit_comment(
+            "TEST-123", "10001", "Updated text\n\n![Screenshot](shot.png)"
+        )
+
+        posted = comments_mixin.jira.issue_edit_comment.call_args.args[2]
+        assert posted.count(macro) == 1
+
+    def test_edit_comment_fails_closed_without_current_v2_body(self, comments_mixin):
+        """A Cloud edit never writes when media preservation cannot be checked."""
+        comments_mixin.jira.issue_get_comment.return_value = {"body": {}}
+        comments_mixin._put_api3 = Mock()
+
+        with pytest.raises(Exception, match="Cannot safely edit"):
+            comments_mixin.edit_comment("TEST-123", "10001", "Updated text")
+
+        comments_mixin._put_api3.assert_not_called()
+        comments_mixin.jira.issue_edit_comment.assert_not_called()
 
     def test_markdown_to_jira_cloud(self, comments_mixin):
         """Test _markdown_to_jira returns ADF dict on Cloud."""
@@ -798,6 +882,7 @@ class TestInternalOnlyProjectsGuard:
         mixin.preprocessor = Mock()
         mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
         mixin._clean_text = Mock(side_effect=lambda x: x)
+        mixin.jira.issue_get_comment.return_value = {"body": "Current comment"}
         return mixin
 
     # --- add_comment ---
@@ -1198,6 +1283,7 @@ class TestAddEditConversionParity:
             return_value="should-not-be-used-on-cloud"
         )
         mixin._clean_text = Mock(side_effect=lambda x: x)
+        mixin.jira.issue_get_comment.return_value = {"body": "Current comment"}
         return mixin
 
     MARKDOWN = "## Heading\n\nThis is **bold** and `code_x` text.\n\n- one\n- two"

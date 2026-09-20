@@ -2596,7 +2596,10 @@ async def add_comment(
     body: Annotated[
         str,
         Field(
-            description="Comment text in Markdown format",
+            description=(
+                "Comment text in Markdown format. On Jira Cloud, embed an "
+                "existing issue attachment with `![alt](filename.png)`."
+            ),
             validation_alias=AliasChoices("body", "comment"),
         ),
     ],
@@ -2684,7 +2687,16 @@ async def edit_comment(
         ),
     ],
     comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
-    body: Annotated[str, Field(description="Updated comment text in Markdown format")],
+    body: Annotated[
+        str,
+        Field(
+            description=(
+                "Updated comment text in Markdown format. On Jira Cloud, "
+                "existing attachment images are preserved; embed another "
+                "with `![alt](filename.png)`."
+            )
+        ),
+    ],
     visibility: Annotated[
         str | None,
         Field(

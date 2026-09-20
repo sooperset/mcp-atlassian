@@ -18,9 +18,10 @@ from fastmcp import Client
 from fastmcp.client import FastMCPTransport
 from mcp.types import CallToolResult, TextContent
 
+from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.servers import main_mcp
 
-from .conftest import CloudInstanceInfo
+from .conftest import TINY_PNG, CloudInstanceInfo
 
 pytestmark = [pytest.mark.cloud_e2e, pytest.mark.anyio]
 
@@ -112,6 +113,32 @@ async def _delete_issue(mcp_client: Client, issue_key: str) -> None:
         "jira_delete_issue",
         {"issue_key": issue_key},
     )
+
+
+def _raw_comment(
+    cloud_instance: CloudInstanceInfo,
+    issue_key: str,
+    comment_id: str,
+) -> dict[str, Any]:
+    """Read a Jira Cloud comment as raw ADF."""
+    response = requests.get(
+        f"{cloud_instance.jira_url}/rest/api/3/issue/{issue_key}/comment/{comment_id}",
+        auth=(cloud_instance.username, cloud_instance.api_token),
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _contains_node_type(node: object, node_type: str) -> bool:
+    """Return whether a nested ADF value contains the requested node type."""
+    if isinstance(node, dict):
+        if node.get("type") == node_type:
+            return True
+        return any(_contains_node_type(value, node_type) for value in node.values())
+    if isinstance(node, list):
+        return any(_contains_node_type(value, node_type) for value in node)
+    return False
 
 
 class TestADFCreateIssue:
@@ -384,6 +411,70 @@ class TestADFUpdateAndComment:
             comment_data = json.loads(comment_result.content[0].text)
             # Verify comment was created (has an id or body)
             assert comment_data.get("id") or comment_data.get("body")
+        finally:
+            await _delete_issue(mcp_client, key)
+
+    async def test_comment_attachment_image_survives_edit(
+        self,
+        mcp_client: Client,
+        cloud_instance: CloudInstanceInfo,
+        jira_fetcher: JiraFetcher,
+    ) -> None:
+        """Cloud resolves attachment Markdown and retains its media on edit."""
+        key = await _create_issue_with_description(
+            mcp_client,
+            cloud_instance.project_key,
+            "issue for comment attachment test",
+        )
+        filename = f"comment-media-{uuid.uuid4().hex[:8]}.png"
+        try:
+            upload = jira_fetcher.upload_attachment_from_content(
+                key, filename, TINY_PNG
+            )
+            assert upload["success"] is True
+
+            issue_response = requests.get(
+                f"{cloud_instance.jira_url}/rest/api/3/issue/{key}",
+                params={"fields": "attachment"},
+                auth=(cloud_instance.username, cloud_instance.api_token),
+                timeout=30,
+            )
+            issue_response.raise_for_status()
+            attachment = next(
+                item
+                for item in issue_response.json()["fields"]["attachment"]
+                if item["filename"] == filename
+            )
+            assert attachment["mimeType"] == "image/png"
+
+            add_result = await call_tool(
+                mcp_client,
+                "jira_add_comment",
+                {
+                    "issue_key": key,
+                    "body": f"Before edit\n\n![Screenshot]({filename})",
+                },
+            )
+            assert not add_result.is_error
+            assert isinstance(add_result.content[0], TextContent)
+            comment_id = str(json.loads(add_result.content[0].text)["id"])
+            assert _contains_node_type(
+                _raw_comment(cloud_instance, key, comment_id)["body"], "media"
+            )
+
+            edit_result = await call_tool(
+                mcp_client,
+                "jira_edit_comment",
+                {
+                    "issue_key": key,
+                    "comment_id": comment_id,
+                    "body": "After edit",
+                },
+            )
+            assert not edit_result.is_error
+            assert _contains_node_type(
+                _raw_comment(cloud_instance, key, comment_id)["body"], "media"
+            )
         finally:
             await _delete_issue(mcp_client, key)
 
