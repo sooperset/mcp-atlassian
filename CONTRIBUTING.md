@@ -97,8 +97,7 @@ Thank you for your interest in contributing to MCP Atlassian! This document prov
 - Run `pre-commit run --all-files` before committing
 - Code quality tools (managed by pre-commit):
   - `ruff` for formatting and linting (88 char line limit)
-  - `pyright` for type checking (preferred over mypy)
-  - `prettier` for YAML/JSON formatting
+  - `mypy` for type checking (options in `.pre-commit-config.yaml`)
   - Additional checks for trailing whitespace, file endings, YAML/TOML validity
 - Follow type annotation patterns:
   - `type[T]` for class types
