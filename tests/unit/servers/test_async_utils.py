@@ -11,9 +11,13 @@ import anyio
 import pytest
 
 from src.mcp_atlassian.servers.async_utils import (
+    DEFAULT_CONFLUENCE_FETCHER_MAX_WORKERS,
     DEFAULT_JIRA_FETCHER_MAX_WORKERS,
+    CONFLUENCE_FETCHER_MAX_WORKERS_ENV,
     JIRA_FETCHER_MAX_WORKERS_ENV,
+    get_confluence_fetcher_max_workers,
     get_jira_fetcher_max_workers,
+    run_confluence_fetcher_call,
     run_jira_fetcher_call,
 )
 
@@ -24,6 +28,14 @@ def reset_jira_fetcher_workers(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
     monkeypatch.delenv(JIRA_FETCHER_MAX_WORKERS_ENV, raising=False)
     yield
     monkeypatch.delenv(JIRA_FETCHER_MAX_WORKERS_ENV, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def reset_confluence_fetcher_workers(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Reset the Confluence worker limit env var between tests."""
+    monkeypatch.delenv(CONFLUENCE_FETCHER_MAX_WORKERS_ENV, raising=False)
+    yield
+    monkeypatch.delenv(CONFLUENCE_FETCHER_MAX_WORKERS_ENV, raising=False)
 
 
 @pytest.mark.parametrize(
@@ -136,6 +148,107 @@ def test_run_jira_fetcher_call_works_across_anyio_backends(
 
     async def call(value: str) -> str:
         return await run_jira_fetcher_call(lambda: value)
+
+    assert anyio.run(call, "asyncio") == "asyncio"
+    assert anyio.run(call, "trio", backend="trio") == "trio"
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        (None, DEFAULT_CONFLUENCE_FETCHER_MAX_WORKERS),
+        ("1", 1),
+        ("8", 8),
+        ("16", 16),
+        ("0", DEFAULT_CONFLUENCE_FETCHER_MAX_WORKERS),
+        ("-1", DEFAULT_CONFLUENCE_FETCHER_MAX_WORKERS),
+        ("abc", DEFAULT_CONFLUENCE_FETCHER_MAX_WORKERS),
+        ("", DEFAULT_CONFLUENCE_FETCHER_MAX_WORKERS),
+    ],
+)
+def test_get_confluence_fetcher_max_workers(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str | None,
+    expected: int,
+) -> None:
+    """Confluence worker limit falls back unless env var is a positive integer."""
+    if raw_value is None:
+        monkeypatch.delenv(CONFLUENCE_FETCHER_MAX_WORKERS_ENV, raising=False)
+    else:
+        monkeypatch.setenv(CONFLUENCE_FETCHER_MAX_WORKERS_ENV, raw_value)
+
+    assert get_confluence_fetcher_max_workers() == expected
+
+
+@pytest.mark.anyio
+async def test_run_confluence_fetcher_call_allows_bounded_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blocking Confluence calls can overlap while respecting the configured limit."""
+    monkeypatch.setenv(CONFLUENCE_FETCHER_MAX_WORKERS_ENV, "2")
+    active = 0
+    max_active = 0
+    lock = Lock()
+
+    def blocking_call(value: int) -> int:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return value
+
+    results: list[int] = []
+
+    async def call(value: int) -> None:
+        results.append(await run_confluence_fetcher_call(blocking_call, value))
+
+    async with anyio.create_task_group() as task_group:
+        for value in range(4):
+            task_group.start_soon(call, value)
+
+    assert sorted(results) == [0, 1, 2, 3]
+    assert max_active > 1
+    assert max_active <= 2
+
+
+@pytest.mark.anyio
+async def test_run_confluence_fetcher_call_respects_single_worker_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configured single-worker limit serializes offloaded blocking calls."""
+    monkeypatch.setenv(CONFLUENCE_FETCHER_MAX_WORKERS_ENV, "1")
+    active = 0
+    max_active = 0
+    lock = Lock()
+
+    def blocking_call(value: int) -> int:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return value
+
+    async with anyio.create_task_group() as task_group:
+        for value in range(3):
+            task_group.start_soon(run_confluence_fetcher_call, blocking_call, value)
+
+    assert max_active == 1
+
+
+def test_run_confluence_fetcher_call_works_across_anyio_backends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confluence limiter state is isolated between asyncio and Trio loops."""
+    monkeypatch.setenv(CONFLUENCE_FETCHER_MAX_WORKERS_ENV, "2")
+
+    async def call(value: str) -> str:
+        return await run_confluence_fetcher_call(lambda: value)
 
     assert anyio.run(call, "asyncio") == "asyncio"
     assert anyio.run(call, "trio", backend="trio") == "trio"
