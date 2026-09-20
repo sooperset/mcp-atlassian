@@ -95,17 +95,37 @@ class TestFieldsMixin:
         # Verify cache was created
         assert fields_mixin._field_ids_cache == mock_fields
 
-    def test_get_fields_error(self, fields_mixin: FieldsMixin):
-        """Test get_fields handles errors gracefully."""
+    def test_get_fields_connection_error_propagates(self, fields_mixin: FieldsMixin):
+        """A connection failure from the Jira client must NOT be silently
+        turned into an empty list. Empty is the answer to "the API has no
+        fields"; a network failure is a different answer entirely. See
+        https://github.com/sooperset/mcp-atlassian/issues/1652
+        """
+        fields_mixin.jira.get_all_fields.side_effect = ConnectionError(
+            "Could not reach Jira"
+        )
 
-        # Mock API error
-        fields_mixin.jira.get_all_fields.side_effect = Exception("API error")
+        with pytest.raises(ConnectionError, match="Could not reach Jira"):
+            fields_mixin.get_fields()
 
-        # Call the method
-        result = fields_mixin.get_fields()
+    def test_get_fields_client_type_error_propagates(self, fields_mixin: FieldsMixin):
+        """A TypeError raised by the Jira client must not be treated as no data."""
+        fields_mixin.jira.get_all_fields.side_effect = TypeError(
+            "Jira client could not parse response"
+        )
 
-        # Verify empty list is returned on error
-        assert result == []
+        with pytest.raises(TypeError, match="Jira client could not parse response"):
+            fields_mixin.get_fields()
+
+    def test_get_fields_unexpected_type_returns_empty(self, fields_mixin: FieldsMixin):
+        """A malformed non-list API response is the only case treated as no data.
+
+        Exceptions raised by the Jira client still propagate so callers can
+        distinguish failure modes.
+        """
+        fields_mixin.jira.get_all_fields.return_value = {"not": "a list"}
+
+        assert fields_mixin.get_fields() == []
 
     def test_get_field_id_by_exact_match(self, fields_mixin: FieldsMixin, mock_fields):
         """Test get_field_id finds field by exact name match."""
@@ -560,18 +580,28 @@ class TestFieldsMixin:
         # Verify only 2 results are returned
         assert len(result) == 2
 
-    def test_search_fields_error(self, fields_mixin: FieldsMixin):
-        """Test search_fields handles errors gracefully."""
-        # Make get_fields raise an exception
+    def test_search_fields_connection_error_propagates(self, fields_mixin: FieldsMixin):
+        """A connection failure from the underlying get_fields call must NOT
+        be silently turned into an empty result. search_fields delegates the
+        data fetch to get_fields, so any exception there (other than the
+        explicit TypeError) must surface. See
+        https://github.com/sooperset/mcp-atlassian/issues/1652
+        """
         fields_mixin.get_fields = MagicMock(
-            side_effect=Exception("Error getting fields")
+            side_effect=ConnectionError("Could not reach Jira")
         )
 
-        # Call the method
-        result = fields_mixin.search_fields("test")
+        with pytest.raises(ConnectionError, match="Could not reach Jira"):
+            fields_mixin.search_fields("test")
 
-        # Verify empty list is returned on error
-        assert result == []
+    def test_search_fields_type_error_is_propagated(self, fields_mixin: FieldsMixin):
+        """A TypeError raised while loading fields must not become no matches."""
+        fields_mixin.get_fields = MagicMock(
+            side_effect=TypeError("Could not parse Jira fields")
+        )
+
+        with pytest.raises(TypeError, match="Could not parse Jira fields"):
+            fields_mixin.search_fields("test")
 
 
 class TestFormatFieldValueForWrite:
