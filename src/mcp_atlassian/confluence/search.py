@@ -5,6 +5,9 @@ import re
 from typing import Any
 from urllib.parse import quote
 
+from atlassian.errors import ApiValueError
+from requests import HTTPError, Response
+
 from ..models.confluence import (
     ConfluencePage,
     ConfluenceSearchResult,
@@ -23,6 +26,60 @@ logger = logging.getLogger("mcp-atlassian")
 
 class SearchMixin(ConfluenceClient):
     """Mixin for Confluence search operations."""
+
+    @staticmethod
+    def _looks_like_html(body: str) -> bool:
+        """Return whether a response body appears to contain an HTML document."""
+        normalized_body = body.lstrip().lower()
+        return normalized_body.startswith(("<!doctype html", "<html"))
+
+    @classmethod
+    def _is_html_bad_request(cls, error: ApiValueError) -> bool:
+        """Identify the HTML HTTP 400 wrapped by ``Confluence.cql``.
+
+        ``atlassian-python-api`` converts every HTTP 400 from the CQL endpoint
+        to ``ApiValueError`` and stores the original ``HTTPError`` in its
+        ``reason`` attribute. Only the HTML variant indicates the broken Cloud
+        search endpoint; a JSON 400 normally means the caller supplied invalid
+        CQL and must continue to surface as an error.
+        """
+        reason = error.reason
+        if not isinstance(reason, HTTPError):
+            return False
+
+        response: Response | None = reason.response
+        if response is None or response.status_code != 400:
+            return False
+
+        content_type = response.headers.get("Content-Type", "").lower()
+        return "text/html" in content_type or cls._looks_like_html(response.text)
+
+    def _search_content_fallback(self, cql: str, limit: int) -> dict[str, Any]:
+        """Search through the legacy content endpoint and normalize its results."""
+        logger.warning(
+            "Primary search endpoint (/rest/api/search) returned an HTML "
+            "error; falling back to /rest/api/content/search"
+        )
+        results = self.confluence.get(
+            "rest/api/content/search",
+            params={
+                "cql": cql,
+                "limit": limit,
+                "expand": "history,version",
+            },
+        )
+        self._validate_search_response(results, "search fallback")
+
+        # /rest/api/content/search returns content fields at the top level,
+        # while /rest/api/search nests them under a "content" key.
+        normalized_results = dict(results)
+        normalized_results["results"] = [
+            {"content": item, "excerpt": item.get("excerpt", "")}
+            if isinstance(item, dict) and "content" not in item
+            else item
+            for item in results["results"]
+        ]
+        return normalized_results
 
     def _and_spaces_filter(self, cql: str, filter_to_use: str) -> str:
         """AND a single comma-separated spaces allowlist into ``cql``.
@@ -119,9 +176,23 @@ class SearchMixin(ConfluenceClient):
         # version metadata; on the /rest/api/search endpoint these nested
         # properties require the "content." prefix (a bare "history,version"
         # is silently ignored).
-        results = self.confluence.cql(
-            cql=cql, limit=limit, expand="content.history,content.version"
-        )
+        try:
+            results = self.confluence.cql(
+                cql=cql, limit=limit, expand="content.history,content.version"
+            )
+        except ApiValueError as error:
+            if not self.config.is_cloud or not self._is_html_bad_request(error):
+                raise
+            results = self._search_content_fallback(cql, limit)
+
+        # Older client releases may return the HTML body directly instead of
+        # raising the wrapped ApiValueError handled above.
+        if (
+            self.config.is_cloud
+            and isinstance(results, str)
+            and self._looks_like_html(results)
+        ):
+            results = self._search_content_fallback(cql, limit)
 
         # Surface malformed responses (missing "results") as errors while
         # allowing a genuine "results": [] to return an empty list.
