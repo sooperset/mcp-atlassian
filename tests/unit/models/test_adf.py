@@ -439,6 +439,62 @@ class TestMarkdownToAdf:
         link_mark = next(m for m in link_nodes[0]["marks"] if m["type"] == "link")
         assert link_mark["attrs"]["href"] == "https://example.com"
 
+    def test_link_title(self):
+        """An optional title follows the URL and is not part of it."""
+        for markdown, href, title in (
+            (
+                '[docs](https://example.com/p "Docs home")',
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p 'Docs home')",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p (Docs home))",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            # CommonMark allows whitespace between the title and the paren.
+            (
+                '[docs](https://example.com/p "Docs home" )',
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p 'Docs home' )",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p (Docs home) )",
+                "https://example.com/p",
+                "Docs home",
+            ),
+        ):
+            para = markdown_to_adf(markdown)["content"][0]
+            nodes = [n for n in para["content"] if n["type"] == "text"]
+            mark = next(m for m in nodes[0]["marks"] if m["type"] == "link")
+            assert mark["attrs"]["href"] == href, markdown
+            assert mark["attrs"]["title"] == title, markdown
+            # The paren form used to leave a stray ")" behind.
+            assert len(nodes) == 1, markdown
+
+    def test_link_without_title(self):
+        """A URL containing a space still resolves as one href."""
+        para = markdown_to_adf("[docs](https://example.com/a b)")["content"][0]
+        mark = next(
+            m
+            for n in para["content"]
+            if n["type"] == "text"
+            for m in n.get("marks", [])
+            if m["type"] == "link"
+        )
+        assert mark["attrs"]["href"] == "https://example.com/a b"
+        assert "title" not in mark["attrs"]
+
     # -- Mentions -----------------------------------------------------------
 
     def test_mention_modern_account_id(self):
