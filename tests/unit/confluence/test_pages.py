@@ -3671,7 +3671,7 @@ class TestPageHierarchy:
         assert result["has_more"] is False
 
     def test_expand_uses_ancestors_only(self, pages_mixin):
-        """Test that the API call uses only 'ancestors' expand parameter."""
+        """Test that the API call expands ancestors and extensions.position."""
         pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
             return_value=self._raw_response([])
         )
@@ -3679,7 +3679,7 @@ class TestPageHierarchy:
         pages_mixin.get_space_page_tree("TEST")
 
         call_kwargs = pages_mixin.confluence.get_all_pages_from_space_raw.call_args
-        assert call_kwargs.kwargs.get("expand") == "ancestors"
+        assert call_kwargs.kwargs.get("expand") == "ancestors,extensions.position"
 
     def test_pagination_limit_one(self, pages_mixin):
         """Test degenerate limit=1 boundary case."""
