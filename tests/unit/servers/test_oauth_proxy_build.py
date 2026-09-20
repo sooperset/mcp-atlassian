@@ -123,6 +123,8 @@ def test_build_auth_provider_uses_cloud_endpoints_for_atlassian_cloud(monkeypatc
         "audience": "api.atlassian.com",
         "prompt": "consent",
     }
+    assert provider._token_validator.is_cloud is True
+    assert provider._token_validator.instance_url == "https://acme.atlassian.net"
 
 
 def test_build_auth_provider_uses_dc_endpoints_for_datacenter_url(monkeypatch):
@@ -140,6 +142,8 @@ def test_build_auth_provider_uses_dc_endpoints_for_datacenter_url(monkeypatch):
         provider._upstream_token_endpoint
         == "https://jira.example.com/rest/oauth2/latest/token"
     )
+    assert provider._token_validator.is_cloud is False
+    assert provider._token_validator.instance_url == "https://jira.example.com"
 
 
 def test_build_auth_provider_infers_base_url_from_redirect_uri(monkeypatch):
