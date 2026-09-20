@@ -60,12 +60,15 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
 
             # Use the Jira session to download the file
             response = self.jira._session.get(url, stream=True)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
 
-            # Write the file to disk
-            with open(target_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                # Write the file to disk
+                with open(target_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            finally:
+                response.close()
 
             # Verify the file was created
             if os.path.exists(target_path):
@@ -99,17 +102,21 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         try:
             logger.info(f"Fetching attachment from {url}")
             response = self.jira._session.get(url, stream=True)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
 
-            chunks: list[bytes] = []
-            for chunk in response.iter_content(chunk_size=8192):
-                chunks.append(chunk)
+                chunks: list[bytes] = []
+                for chunk in response.iter_content(chunk_size=8192):
+                    chunks.append(chunk)
 
-            data = b"".join(chunks)
-            logger.info(
-                f"Successfully fetched attachment from {url} (size: {len(data)} bytes)"
-            )
-            return data
+                data = b"".join(chunks)
+                logger.info(
+                    f"Successfully fetched attachment from {url} "
+                    f"(size: {len(data)} bytes)"
+                )
+                return data
+            finally:
+                response.close()
 
         except Exception as e:
             logger.error(f"Error fetching attachment: {str(e)}")

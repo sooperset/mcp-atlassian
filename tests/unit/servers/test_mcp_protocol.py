@@ -600,6 +600,70 @@ class TestMCPProtocolIntegration:
         assert captured_state.get("user_atlassian_email") is None
         assert response_started["status"] == 200
 
+    def test_middleware_closes_fetcher_cached_on_request_state(self):
+        """A fetcher cached on request.state is closed after the response."""
+        fetcher = MagicMock()
+        seen = {}
+
+        async def endpoint(request):
+            # Mirrors get_jira_fetcher() caching the per-request fetcher.
+            request.state.jira_fetcher = fetcher
+            seen["fetcher"] = request.state.jira_fetcher
+            return PlainTextResponse("ok")
+
+        app = Starlette(routes=[Route("/mcp", endpoint, methods=["POST"])])
+        client = TestClient(UserTokenMiddleware(app, mcp_server_ref=None))
+
+        response = client.post("/mcp")
+
+        assert response.status_code == 200
+        assert seen["fetcher"] is fetcher
+        fetcher.close.assert_called_once()
+
+    async def test_middleware_closes_request_fetchers(self):
+        """UserTokenMiddleware closes request-scoped fetchers after the response."""
+        mcp_server = MagicMock(spec=AtlassianMCP)
+        mcp_server.get_streamable_http_path.return_value = "/mcp"
+
+        jira_fetcher = MagicMock()
+        confluence_fetcher = MagicMock()
+
+        async def mock_app(scope, receive, send):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b'{"status":"ok"}'})
+
+        middleware = UserTokenMiddleware(mock_app, mcp_server_ref=mcp_server)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [(b"authorization", b"Bearer test-oauth-token-12345")],
+            "state": {
+                "jira_fetcher": jira_fetcher,
+                "confluence_fetcher": confluence_fetcher,
+            },
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            del message
+
+        await middleware(scope, receive, send)
+
+        jira_fetcher.close.assert_called_once()
+        confluence_fetcher.close.assert_called_once()
+        assert "jira_fetcher" not in scope["state"]
+        assert "confluence_fetcher" not in scope["state"]
+
     async def test_middleware_pat_token_processing(self):
         """Test UserTokenMiddleware PAT token extraction and processing."""
         mcp_server = MagicMock(spec=AtlassianMCP)

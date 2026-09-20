@@ -97,6 +97,7 @@ class TestAttachmentsMixin:
             mock_file.assert_called_once_with(expected_path, "wb")
             mock_file().write.assert_called_once_with(b"test content")
             mock_makedirs.assert_called_once()
+            mock_response.close.assert_called_once()
 
     def test_download_attachment_relative_path(
         self, attachments_mixin: AttachmentsMixin
@@ -154,10 +155,15 @@ class TestAttachmentsMixin:
         mock_response.raise_for_status.side_effect = Exception("HTTP Error")
         attachments_mixin.jira._session.get.return_value = mock_response
 
-        result = attachments_mixin.download_attachment(
-            "https://test.url/attachment", "/tmp/test_file.txt"
-        )
+        with (
+            patch("os.getcwd", return_value="/tmp"),
+            patch("os.makedirs"),
+        ):
+            result = attachments_mixin.download_attachment(
+                "https://test.url/attachment", "/tmp/downloads/test_file.txt"
+            )
         assert result is False
+        mock_response.close.assert_called_once()
 
     def test_download_attachment_file_write_error(
         self, attachments_mixin: AttachmentsMixin
@@ -173,13 +179,15 @@ class TestAttachmentsMixin:
         with (
             patch("builtins.open", mock_open()) as mock_file,
             patch("os.makedirs") as mock_makedirs,
+            patch("os.getcwd", return_value="/tmp"),
         ):
             mock_file().write.side_effect = OSError("Write error")
 
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "/tmp/test_file.txt"
+                "https://test.url/attachment", "/tmp/downloads/test_file.txt"
             )
             assert result is False
+            mock_response.close.assert_called_once()
 
     def test_download_attachment_file_not_created(
         self, attachments_mixin: AttachmentsMixin
@@ -966,6 +974,7 @@ class TestAttachmentsMixin:
         attachments_mixin.jira._session.get.assert_called_once_with(
             "https://test.url/attachment", stream=True
         )
+        mock_response.close.assert_called_once()
 
     def test_fetch_attachment_content_no_url(self, attachments_mixin: AttachmentsMixin):
         """Test fetch with no URL returns None."""
@@ -984,6 +993,7 @@ class TestAttachmentsMixin:
             "https://test.url/attachment"
         )
         assert result is None
+        mock_response.close.assert_called_once()
 
     # Tests for get_issue_attachment_contents method
 

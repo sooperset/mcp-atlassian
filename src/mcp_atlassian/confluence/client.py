@@ -226,6 +226,12 @@ class ConfluenceClient:
                     "continuing anyway"
                 )
 
+    def close(self) -> None:
+        """Close the underlying requests session and release pooled connections."""
+        session = getattr(self.confluence, "_session", None)
+        if session is not None:
+            session.close()
+
     def _v1_rest_base_url(self) -> str:
         """Return the base URL for direct Confluence REST API v1 calls.
 

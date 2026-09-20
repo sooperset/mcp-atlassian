@@ -542,7 +542,25 @@ class UserTokenMiddleware:
             return  # Don't call self.app - request is rejected
 
         # Call the next application with modified scope and safe send wrapper
-        await self.app(scope_copy, receive, safe_send)
+        try:
+            await self.app(scope_copy, receive, safe_send)
+        finally:
+            self._close_request_fetchers(scope_copy["state"])
+
+    def _close_request_fetchers(self, state: dict[str, Any]) -> None:
+        """Close request-scoped Jira/Confluence fetchers after the response."""
+        # close() only releases the connection pool; dropping the fetcher from
+        # state releases the Session that still holds its auth and headers.
+        for state_key in ("jira_fetcher", "confluence_fetcher"):
+            fetcher = state.pop(state_key, None)
+            close = getattr(fetcher, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    logger.debug(
+                        f"Error closing {state_key} after request", exc_info=True
+                    )
 
     async def _send_json_error_response(
         self, send: Send, status_code: int, error_message: str

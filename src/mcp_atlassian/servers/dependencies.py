@@ -507,6 +507,7 @@ def _create_and_validate(
     """
     fn_name = f"get_{spec.name.lower()}_fetcher"
     auth_desc = "header-based" if auth_branch == "header_pat" else "user"
+    fetcher = None
     try:
         request_passthrough_headers = _get_request_passthrough_headers(
             request, spec, config
@@ -556,6 +557,17 @@ def _create_and_validate(
         setattr(request.state, spec.state_key, fetcher)
         return fetcher
     except Exception as e:
+        if fetcher is not None:
+            close = getattr(fetcher, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    logger.debug(
+                        f"{fn_name}: Error closing {spec.name}Fetcher after "
+                        "failed validation",
+                        exc_info=True,
+                    )
         logger.error(
             f"{fn_name}: Failed to create/validate {auth_desc} {spec.name}Fetcher: {e}",
             exc_info=True,
@@ -1041,7 +1053,13 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             global_config_fallback = _with_request_passthrough_headers(
                 request, spec, global_config_fallback
             )
-        return spec.fetcher_class(config=global_config_fallback)
+        fetcher = spec.fetcher_class(config=global_config_fallback)
+        if request is not None:
+            # Cache on request.state so UserTokenMiddleware can close it in its
+            # finally block, giving the global-credential fallback the same
+            # request-scoped Session lifetime as the per-user branches above.
+            setattr(request.state, spec.state_key, fetcher)
+        return fetcher
 
     logger.error(f"{spec.name} configuration could not be resolved.")
     raise ValueError(
