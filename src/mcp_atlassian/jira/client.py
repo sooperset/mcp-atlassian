@@ -243,6 +243,12 @@ class JiraClient:
                     "continuing anyway"
                 )
 
+    def close(self) -> None:
+        """Close the underlying requests session and release pooled connections."""
+        session = getattr(self.jira, "_session", None)
+        if session is not None:
+            session.close()
+
     def _validate_authentication(self) -> None:
         """Validate authentication by making a simple API call."""
         try:

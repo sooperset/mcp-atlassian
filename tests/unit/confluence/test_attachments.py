@@ -673,6 +673,7 @@ class TestAttachmentsMixin:
             mock_file.assert_called_once_with(test_path, "wb")
             mock_file().write.assert_called_once_with(b"test content")
             mock_makedirs.assert_called_once()
+            mock_response.close.assert_called_once()
 
     def test_download_attachment_relative_path(
         self, attachments_mixin: AttachmentsMixin
@@ -727,6 +728,7 @@ class TestAttachmentsMixin:
                 "https://test.url/attachment", "/tmp/test_file.txt"
             )
         assert result is False
+        mock_response.close.assert_called_once()
 
     def test_download_attachment_file_write_error(
         self, attachments_mixin: AttachmentsMixin
@@ -750,6 +752,7 @@ class TestAttachmentsMixin:
                 "https://test.url/attachment", "/tmp/test_file.txt"
             )
             assert result is False
+            mock_response.close.assert_called_once()
 
     def test_download_attachment_file_not_created(
         self, attachments_mixin: AttachmentsMixin
@@ -794,6 +797,7 @@ class TestAttachmentsMixin:
         attachments_mixin.confluence._session.get.assert_called_once_with(
             "https://test.atlassian.net/download/att123", stream=True
         )
+        mock_response.close.assert_called_once()
 
     def test_fetch_attachment_content_empty_url(
         self, attachments_mixin: AttachmentsMixin
@@ -814,6 +818,7 @@ class TestAttachmentsMixin:
             "https://test.atlassian.net/download/att123"
         )
         assert result is None
+        mock_response.close.assert_called_once()
 
     def test_fetch_attachment_content_network_exception(
         self, attachments_mixin: AttachmentsMixin
