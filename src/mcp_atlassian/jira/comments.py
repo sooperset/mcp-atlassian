@@ -2,9 +2,10 @@
 
 Internal-only guard (JIRA_INTERNAL_ONLY_PROJECTS) coverage map:
 
-- Guarded routes: add_comment (here), edit_comment (here),
-  transition_issue's comment argument (transitions.py), and
-  create_issue_link's comment payload (links.py).
+- Guarded routes: add_comment (here), add_comment_with_media (here),
+  edit_comment (here), delete_comment (here), transition_issue's comment
+  argument (transitions.py), and create_issue_link's comment payload
+  (links.py).
 - Known non-covered route: add_worklog's comment (worklog.py) is left
   unguarded by design — worklog entries are not portal-visible to JSM
   customers by default, so a worklog comment does not carry the
@@ -22,18 +23,26 @@ Internal-only guard (JIRA_INTERNAL_ONLY_PROJECTS) coverage map:
 
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 from requests.exceptions import HTTPError
 
-from ..models.jira.adf import adf_to_text
+from ..models.jira.adf import adf_to_text, build_media_comment_adf
 from ..utils import parse_date
+from ..utils.io import validate_safe_path
+from ..utils.media import ATTACHMENT_MAX_BYTES, get_image_dimensions
 from .client import JiraClient
 from .config import normalize_project_key
+from .protocols import AttachmentMediaOperationsProto
 
 logger = logging.getLogger("mcp-jira")
 
 _CANONICAL_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
+
+# Markdown image syntax used to position an inline attachment inside a comment
+# body: ``![alt](media:0)`` (index into the media list) or ``![alt](shot.png)``
+# (matching a media entry's filename).
+_MEDIA_PLACEHOLDER_RE = re.compile(r"!\[[^\]]*\]\(\s*([^)\s]+)\s*\)")
 
 
 def _http_status(exc: BaseException) -> int | None:
@@ -302,8 +311,10 @@ class CommentsMixin(JiraClient):
                 f"{issue_key} is in an internal-only project): {e}"
             ) from e
 
-    def _enforce_internal_only_edit(self, issue_key: str, comment_id: str) -> None:
-        """Reject edit_comment calls that would modify a public comment on a
+    def _enforce_internal_only_edit(
+        self, issue_key: str, comment_id: str, action: str = "edit"
+    ) -> None:
+        """Reject edit/delete calls that would modify a public comment on a
         project listed in JIRA_INTERNAL_ONLY_PROJECTS.
 
         This closes the gap the client-side PreToolUse hook cannot cover:
@@ -314,6 +325,7 @@ class CommentsMixin(JiraClient):
         Args:
             issue_key: The issue key (e.g. 'CC-123')
             comment_id: The ID of the comment being edited
+            action: The verb used in the rejection message ('edit'/'delete')
 
         Raises:
             ValueError: If the project is internal-only and the target
@@ -326,8 +338,8 @@ class CommentsMixin(JiraClient):
                 f"Comment {comment_id} on issue {issue_key} is PUBLIC "
                 f"(customer-visible). {issue_key}'s project is configured "
                 "as internal-only (JIRA_INTERNAL_ONLY_PROJECTS), so "
-                "automation may not edit public comments there — a human "
-                "must edit client-facing content directly in Jira. Post a "
+                f"automation may not {action} public comments there — a human "
+                f"must {action} client-facing content directly in Jira. Post a "
                 "new internal note (public=False) instead if you need to "
                 "add information."
             )
@@ -591,3 +603,374 @@ class CommentsMixin(JiraClient):
                 f"Error editing comment {comment_id} on issue {issue_key}: {str(e)}"
             )
             raise Exception(f"Error editing comment: {str(e)}") from e
+
+    def delete_comment(self, issue_key: str, comment_id: str) -> bool:
+        """
+        Delete a comment from an issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            comment_id: The ID of the comment to delete
+
+        Returns:
+            True if the comment was deleted successfully
+
+        Raises:
+            ValueError: If issue_key's project is listed in
+                JIRA_INTERNAL_ONLY_PROJECTS and the target comment is
+                currently public (customer-visible)
+            Exception: If there is an error deleting the comment
+        """
+        # Removing a customer-visible comment changes what the portal shows
+        # just as editing one does, so the guard covers this route too.
+        self._enforce_internal_only_edit(issue_key, comment_id, action="delete")
+
+        try:
+            resource = f"issue/{issue_key}/comment/{comment_id}"
+            # Use v3 on Cloud for consistency with the other comment writes;
+            # the library exposes no comment-deletion helper, so issue a raw
+            # DELETE.
+            if self.config.is_cloud:
+                self._delete_api3(resource)
+            else:
+                self.jira.delete(self.jira.resource_url(resource))
+            return True
+        except Exception as e:
+            logger.error(
+                f"Error deleting comment {comment_id} on issue {issue_key}: {str(e)}"
+            )
+            raise Exception(f"Error deleting comment: {str(e)}") from e
+
+    def add_comment_adf(
+        self,
+        issue_key: str,
+        adf_body: dict[str, Any],
+        visibility: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add a comment from a pre-built ADF document.
+
+        Used for rich comments that Markdown cannot express, such as inline
+        media (screenshots embedded in the body). Cloud only, since the v3 API
+        is what accepts ADF.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            adf_body: A complete ADF document (``version``/``type``/``content``)
+            visibility: (optional) Restrict comment visibility
+
+        Returns:
+            The created comment details
+
+        Raises:
+            ValueError: If the Jira instance is not Cloud
+            Exception: If there is an error adding the comment
+        """
+        if not self.config.is_cloud:
+            raise ValueError(
+                "ADF comments (inline media) are supported on Jira Cloud only."
+            )
+
+        try:
+            data: dict[str, Any] = {"body": adf_body}
+            if visibility:
+                data["visibility"] = visibility
+            result = self._post_api3(f"issue/{issue_key}/comment", data)
+
+            if not isinstance(result, dict):
+                msg = f"Unexpected return value type from `_post_api3`: {type(result)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
+            body_raw = result.get("body", "")
+            body_text = (
+                adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
+            )
+            return {
+                "id": result.get("id"),
+                "body": self._clean_text(body_text or ""),
+                "created": str(parse_date(result.get("created"))),
+                "author": result.get("author", {}).get("displayName", "Unknown"),
+            }
+        except Exception as e:
+            logger.error(f"Error adding ADF comment to issue {issue_key}: {str(e)}")
+            raise Exception(f"Error adding ADF comment: {str(e)}") from e
+
+    @staticmethod
+    def _resolve_media_sources(media: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Turn caller-supplied media entries into filename/content pairs.
+
+        Each entry supplies exactly one source: ``file_path`` (read from disk)
+        or ``content`` (raw bytes the caller already holds, such as decoded
+        base64). File reads are confined to the server workspace by
+        :func:`validate_safe_path`, so a caller cannot use a comment to
+        exfiltrate an arbitrary file from the host.
+
+        Args:
+            media: Ordered list of media entries.
+
+        Returns:
+            An ordered list of ``{"filename": str, "content": bytes}`` dicts.
+
+        Raises:
+            ValueError: If an entry names no source, names both, is missing a
+                filename for inline content, escapes the workspace, does not
+                exist, or exceeds the attachment size limit.
+        """
+        resolved: list[dict[str, Any]] = []
+
+        for index, entry in enumerate(media):
+            if not isinstance(entry, dict):
+                raise ValueError(f"media[{index}] must be a JSON object.")
+
+            file_path = entry.get("file_path")
+            content = entry.get("content")
+            filename = entry.get("filename")
+
+            if file_path and content is not None:
+                raise ValueError(
+                    f"media[{index}]: provide 'file_path' OR inline content, not both."
+                )
+
+            if file_path:
+                # Confine the read to the workspace before it happens: an
+                # absolute or traversing path would otherwise let a caller
+                # attach any file the server process can read.
+                safe_path = validate_safe_path(file_path)
+                if not safe_path.is_file():
+                    raise ValueError(f"media[{index}]: file not found: {file_path}")
+                content = safe_path.read_bytes()
+                filename = filename or safe_path.name
+            elif content is None:
+                raise ValueError(f"media[{index}]: needs 'file_path' or content.")
+            elif not filename:
+                raise ValueError(
+                    f"media[{index}]: 'filename' is required with inline content."
+                )
+
+            if not isinstance(content, bytes):
+                raise ValueError(f"media[{index}]: content must be bytes.")
+            if not content:
+                raise ValueError(f"media[{index}]: content is empty.")
+            if len(content) > ATTACHMENT_MAX_BYTES:
+                raise ValueError(
+                    f"media[{index}]: '{filename}' is {len(content)} bytes, which "
+                    f"exceeds the {ATTACHMENT_MAX_BYTES} byte limit."
+                )
+
+            resolved.append({"filename": str(filename), "content": content})
+
+        return resolved
+
+    @staticmethod
+    def _plan_media_comment(body: str, filenames: list[str]) -> list[dict[str, Any]]:
+        """Split a Markdown body into ordered text and media placeholders.
+
+        A placeholder is Markdown image syntax whose target is either
+        ``media:<index>`` or the filename of a media entry. Image syntax that
+        matches neither is left in the text, where ``markdown_to_adf`` handles
+        it as ordinary Markdown. Media the body never references is appended
+        after the text, in the order supplied.
+
+        Args:
+            body: The comment body in Markdown.
+            filenames: Filenames of the resolved media entries, in order.
+
+        Returns:
+            An ordered list of ``{"type": "text", "text": ...}`` and
+            ``{"type": "media", "index": ...}`` segments.
+
+        Raises:
+            ValueError: If a ``media:<index>`` placeholder is malformed or out
+                of range.
+        """
+        by_name: dict[str, int] = {}
+        for position, name in enumerate(filenames):
+            # First occurrence wins, so duplicate filenames stay deterministic.
+            by_name.setdefault(name, position)
+
+        segments: list[dict[str, Any]] = []
+        referenced: set[int] = set()
+        cursor = 0
+
+        for match in _MEDIA_PLACEHOLDER_RE.finditer(body):
+            target = match.group(1)
+            if target.startswith("media:"):
+                raw_index = target[len("media:") :]
+                if not raw_index.isdigit():
+                    raise ValueError(
+                        f"Invalid media placeholder '{target}': "
+                        "expected 'media:<index>'."
+                    )
+                index = int(raw_index)
+                if index >= len(filenames):
+                    raise ValueError(
+                        f"Media placeholder '{target}' refers to media[{index}], "
+                        f"but only {len(filenames)} media entries were given."
+                    )
+            elif target in by_name:
+                index = by_name[target]
+            else:
+                # Not one of ours, so leave it in the surrounding text.
+                continue
+
+            segments.append({"type": "text", "text": body[cursor : match.start()]})
+            segments.append({"type": "media", "index": index})
+            referenced.add(index)
+            cursor = match.end()
+
+        segments.append({"type": "text", "text": body[cursor:]})
+        segments.extend(
+            {"type": "media", "index": position}
+            for position in range(len(filenames))
+            if position not in referenced
+        )
+        return segments
+
+    def add_comment_with_media(
+        self,
+        issue_key: str,
+        body: str,
+        media: list[dict[str, Any]],
+        visibility: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add a Jira Cloud comment whose body embeds images inline.
+
+        Each media entry is uploaded as an issue attachment, its Media Services
+        file UUID is resolved, and the image is embedded in the comment body at
+        the position of its placeholder, giving the text -> screenshot -> text
+        -> screenshot layout that a plain-text comment cannot express.
+
+        If any step fails, every attachment uploaded during this call is
+        deleted again, so a failed comment leaves no orphans behind.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            body: Comment body in Markdown, optionally containing
+                ``![alt](media:0)`` or ``![alt](filename)`` placeholders
+            media: Ordered media entries, each with ``file_path`` or raw
+                ``content`` bytes (plus ``filename`` for inline content)
+            visibility: (optional) Restrict comment visibility
+
+        Returns:
+            A dict with the created ``comment`` and the ``embedded``
+            attachments (filename, attachment id, media id)
+
+        Raises:
+            ValueError: If the instance is not Cloud, the media entries or
+                placeholders are invalid, or issue_key's project is listed in
+                JIRA_INTERNAL_ONLY_PROJECTS (an inline-media comment is always
+                customer-visible, so it cannot satisfy that guard)
+            Exception: If an upload, media-id resolution, or the comment post
+                fails
+        """
+        if not self.config.is_cloud:
+            raise ValueError("Inline media comments are supported on Jira Cloud only.")
+        if not media:
+            raise ValueError("At least one media entry is required.")
+
+        # Inline-media comments post through the ordinary (customer-visible)
+        # comment API, so the internal-only guard applies here exactly as it
+        # does to add_comment. Issues in a guarded project that are not JSM
+        # customer requests have no portal audience and stay exempt.
+        if self._is_internal_only_project(issue_key):
+            issue_key = self._require_canonical_guarded_issue_key(issue_key)
+            if self._is_servicedesk_request(issue_key):
+                self._enforce_internal_only_add(issue_key, None)
+
+        # Validate and read every source before anything is uploaded, so bad
+        # input never leaves a partial upload behind.
+        resolved = self._resolve_media_sources(media)
+        plan = self._plan_media_comment(body, [item["filename"] for item in resolved])
+
+        uploaded_ids: list[str] = []
+        embedded: list[dict[str, Any]] = []
+        media_nodes: dict[int, dict[str, Any]] = {}
+
+        # The attachment methods live on AttachmentsMixin, which JiraFetcher
+        # composes alongside this mixin. Declaring the dependency by cast keeps
+        # CommentsMixin instantiable on its own, which inheriting the Protocol
+        # (whose members are abstract) would not.
+        attachments = cast(AttachmentMediaOperationsProto, self)
+
+        try:
+            for index, item in enumerate(resolved):
+                filename = item["filename"]
+                content = item["content"]
+                upload = attachments.upload_attachment_from_content(
+                    issue_key, filename, content
+                )
+                if not upload.get("success"):
+                    raise ValueError(
+                        f"media[{index}]: attachment upload failed: "
+                        f"{upload.get('error')}"
+                    )
+
+                attachment_id = upload.get("id")
+                if not attachment_id:
+                    raise ValueError(
+                        f"media[{index}]: could not determine the attachment id "
+                        "after upload."
+                    )
+                # Track immediately, so a later resolve/post failure rolls this
+                # upload back too.
+                uploaded_ids.append(str(attachment_id))
+
+                media_id = attachments.get_attachment_media_id(str(attachment_id))
+                if not media_id:
+                    raise ValueError(
+                        f"media[{index}]: could not resolve the Media Services "
+                        f"id for attachment {attachment_id}. Jira Cloud's "
+                        "attachment-content endpoint returned no parseable "
+                        "media redirect (this happens behind some OAuth "
+                        "gateways and proxies; the server log records the HTTP "
+                        "status and redirect target)."
+                    )
+
+                node: dict[str, Any] = {"type": "media", "media_id": media_id}
+                dimensions = get_image_dimensions(content)
+                if dimensions is not None:
+                    node["width"], node["height"] = dimensions
+                media_nodes[index] = node
+                embedded.append(
+                    {
+                        "filename": filename,
+                        "attachment_id": str(attachment_id),
+                        "media_id": media_id,
+                    }
+                )
+
+            segments = [
+                media_nodes[segment["index"]] if segment["type"] == "media" else segment
+                for segment in plan
+            ]
+            adf_body = build_media_comment_adf(segments, self.config.url or "")
+            comment = self.add_comment_adf(issue_key, adf_body, visibility)
+        except Exception:
+            self._rollback_attachments(issue_key, uploaded_ids)
+            raise
+
+        return {"comment": comment, "embedded": embedded}
+
+    def _rollback_attachments(self, issue_key: str, attachment_ids: list[str]) -> None:
+        """Best-effort deletion of attachments uploaded by a failed operation."""
+        if not attachment_ids:
+            return
+        attachments = cast(AttachmentMediaOperationsProto, self)
+        for attachment_id in attachment_ids:
+            try:
+                attachments.delete_attachment(attachment_id)
+            except Exception as exc:  # noqa: BLE001 - cleanup must not mask the cause
+                logger.warning(
+                    "Failed to roll back attachment %s on %s: %s",
+                    attachment_id,
+                    issue_key,
+                    exc,
+                )
+        logger.info(
+            "Rolled back %d attachment(s) on %s after a failed media comment: %s",
+            len(attachment_ids),
+            issue_key,
+            attachment_ids,
+        )

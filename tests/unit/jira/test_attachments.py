@@ -1588,3 +1588,172 @@ class TestUploadPathTraversalRegression:
             "download targeting the CWD (where Python imports modules) must be "
             "confined to a dedicated directory, not allowed to overwrite source files"
         )
+
+
+class TestDeleteAttachment:
+    """Tests for deleting a Jira attachment by id."""
+
+    @pytest.fixture
+    def attachments_mixin(self, jira_fetcher):
+        return jira_fetcher
+
+    def test_delete_attachment_success(self, attachments_mixin):
+        """A successful deletion reports the id it removed."""
+        attachments_mixin.jira.remove_attachment = MagicMock(return_value=None)
+
+        result = attachments_mixin.delete_attachment("10001")
+
+        assert result["success"] is True
+        assert result["attachment_id"] == "10001"
+        attachments_mixin.jira.remove_attachment.assert_called_once_with("10001")
+
+    def test_delete_attachment_without_id(self, attachments_mixin):
+        """A missing id is rejected before any API call."""
+        attachments_mixin.jira.remove_attachment = MagicMock()
+
+        result = attachments_mixin.delete_attachment("")
+
+        assert result["success"] is False
+        assert "No attachment ID provided" in result["error"]
+        attachments_mixin.jira.remove_attachment.assert_not_called()
+
+    def test_delete_attachment_api_error(self, attachments_mixin):
+        """An API failure surfaces as a failed result, not an exception."""
+        attachments_mixin.jira.remove_attachment = MagicMock(
+            side_effect=Exception("403 Forbidden")
+        )
+
+        result = attachments_mixin.delete_attachment("10001")
+
+        assert result["success"] is False
+        assert result["attachment_id"] == "10001"
+        assert "403 Forbidden" in result["error"]
+
+
+class TestGetAttachmentMediaId:
+    """Tests for resolving the Media Services UUID of an attachment."""
+
+    MEDIA_UUID = "0e4b3f6a-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
+    MEDIA_URL = f"https://api.media.atlassian.com/file/{MEDIA_UUID}/binary"
+
+    @pytest.fixture
+    def attachments_mixin(self, jira_fetcher):
+        jira_fetcher.jira.resource_url = MagicMock(
+            return_value="https://example.atlassian.net/rest/api/3/attachment/content/1"
+        )
+        jira_fetcher.jira.url = "https://example.atlassian.net"
+        return jira_fetcher
+
+    @staticmethod
+    def _response(status_code=302, location="", url=""):
+        response = MagicMock()
+        response.status_code = status_code
+        response.headers = {"Location": location} if location else {}
+        response.url = url
+        response.history = []
+        response.close = MagicMock()
+        return response
+
+    def test_resolves_from_first_hop_location(self, attachments_mixin):
+        """The documented single-hop redirect is read straight off Location."""
+        session = MagicMock()
+        session.get.return_value = self._response(location=self.MEDIA_URL)
+        attachments_mixin.jira._session = session
+
+        assert attachments_mixin.get_attachment_media_id("1") == self.MEDIA_UUID
+        # Only the fast path runs; the redirect chain is never followed.
+        assert session.get.call_count == 1
+        assert session.get.call_args.kwargs["allow_redirects"] is False
+
+    def test_follows_redirect_chain_when_first_hop_is_a_gateway(
+        self, attachments_mixin
+    ):
+        """A gateway or proxy hop hides the media URL until the chain is walked."""
+        gateway = self._response(
+            location="https://api.atlassian.com/ex/jira/cloud-id/secure/attachment/1"
+        )
+        hop = MagicMock()
+        hop.headers = {"Location": self.MEDIA_URL}
+        hop.url = "https://api.atlassian.com/ex/jira/cloud-id/secure/attachment/1"
+        followed = self._response(status_code=200, url=self.MEDIA_URL)
+        followed.history = [hop]
+
+        session = MagicMock()
+        session.get.side_effect = [gateway, followed]
+        attachments_mixin.jira._session = session
+
+        assert attachments_mixin.get_attachment_media_id("1") == self.MEDIA_UUID
+        assert session.get.call_count == 2
+        assert session.get.call_args.kwargs["allow_redirects"] is True
+
+    def test_falls_back_to_chain_when_the_fast_path_raises(self, attachments_mixin):
+        """A failure on the fast path does not abort resolution."""
+        followed = self._response(status_code=200, url=self.MEDIA_URL)
+        session = MagicMock()
+        session.get.side_effect = [Exception("boom"), followed]
+        attachments_mixin.jira._session = session
+
+        assert attachments_mixin.get_attachment_media_id("1") == self.MEDIA_UUID
+
+    def test_builds_an_absolute_url_from_a_relative_resource(self, attachments_mixin):
+        """Some library versions return a relative resource_url; requests needs
+        an absolute one or it raises MissingSchema."""
+        attachments_mixin.jira.resource_url = MagicMock(
+            return_value="rest/api/3/attachment/content/1"
+        )
+        session = MagicMock()
+        session.get.return_value = self._response(location=self.MEDIA_URL)
+        attachments_mixin.jira._session = session
+
+        attachments_mixin.get_attachment_media_id("1")
+
+        assert session.get.call_args.args[0] == (
+            "https://example.atlassian.net/rest/api/3/attachment/content/1"
+        )
+
+    def test_returns_none_when_no_hop_exposes_a_media_url(self, attachments_mixin):
+        """An instance that hides the media URL resolves to None, not a crash."""
+        first = self._response(location="https://example.atlassian.net/elsewhere")
+        followed = self._response(
+            status_code=200, url="https://example.atlassian.net/elsewhere"
+        )
+        session = MagicMock()
+        session.get.side_effect = [first, followed]
+        attachments_mixin.jira._session = session
+
+        assert attachments_mixin.get_attachment_media_id("1") is None
+
+    def test_returns_none_without_an_attachment_id(self, attachments_mixin):
+        """A missing id short-circuits before any request."""
+        session = MagicMock()
+        attachments_mixin.jira._session = session
+
+        assert attachments_mixin.get_attachment_media_id("") is None
+        session.get.assert_not_called()
+
+    def test_redirect_chain_errors_are_not_swallowed(self, attachments_mixin):
+        """A hard failure surfaces its real cause instead of a vague None."""
+        session = MagicMock()
+        session.get.side_effect = [
+            Exception("first"),
+            ValueError("Redirect blocked (SSRF): internal host"),
+        ]
+        attachments_mixin.jira._session = session
+
+        with pytest.raises(ValueError, match="Redirect blocked"):
+            attachments_mixin.get_attachment_media_id("1")
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            (f"https://api.media.atlassian.com/file/{MEDIA_UUID}/binary", MEDIA_UUID),
+            (f"https://proxy.internal/pass/file/{MEDIA_UUID}/image", MEDIA_UUID),
+            ("https://api.media.atlassian.com/file/not-a-uuid/binary", None),
+            ("https://example.atlassian.net/secure/attachment/1/shot.png", None),
+            ("", None),
+            (None, None),
+        ],
+    )
+    def test_media_uuid_extraction_is_host_agnostic(self, text, expected):
+        """The UUID is matched on the /file/ fragment, whatever the host is."""
+        assert AttachmentsMixin._extract_media_file_uuid(text) == expected
