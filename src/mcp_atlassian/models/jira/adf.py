@@ -110,10 +110,14 @@ def _parse_inline_formatting(
         r"|`(?P<code_inner>[^`]+)`"
         r"|\{status:(?:color=(?P<status_color>\w+)\|)?"
         r"title=(?P<status_title>[^}]+)\}"
-        r"|\*\*(?P<bold_inner>.+?)\*\*"
-        r"|~~(?P<strike_inner>.+?)~~"
+        # Emphasis inners must start and end with a non-whitespace character so
+        # literal markers in prose (globs like *.py, arithmetic like 2 * 3 * 4,
+        # spaced ** / ~~ runs) are preserved. Real *emphasised* / **bold** /
+        # ~~strike~~ still match.
+        r"|\*\*(?P<bold_inner>\S(?:.*?\S)?)\*\*"
+        r"|~~(?P<strike_inner>\S(?:.*?\S)?)~~"
         r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
-        r"|(?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)"
+        r"|(?<!\*)\*(?!\*)(?P<italic_inner>\S(?:.*?\S)?)(?<!\*)\*(?!\*)"
     )
 
     pos = 0

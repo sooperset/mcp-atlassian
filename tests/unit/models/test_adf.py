@@ -396,6 +396,46 @@ class TestMarkdownToAdf:
         assert len(italic_nodes) >= 1
         assert italic_nodes[0]["text"] == "italic"
 
+    def test_literal_asterisks_in_globs_and_arithmetic_preserved(self):
+        """Literal * / ** / ~~ in prose must not be eaten as emphasis (#1630)."""
+        cases = [
+            "Run *.py and *.txt through the linter",
+            "Compute 2 * 3 * 4 carefully",
+            "build/* patterns matter",
+            "2 ** 3 ** 4 exponent",
+            "a ~~ b ~~ c",
+        ]
+        for md in cases:
+            result = markdown_to_adf(md)
+            para = result["content"][0]
+            texts = [n["text"] for n in para["content"] if n.get("type") == "text"]
+            joined = "".join(texts)
+            assert joined == md, md
+            assert all(
+                not n.get("marks")
+                for n in para["content"]
+                if n.get("type") == "text"
+            ), md
+
+    def test_real_emphasis_still_applies_beside_literal_markers(self):
+        """Genuine emphasis still converts when delimiters hug the word."""
+        result = markdown_to_adf(
+            "A single *emphasised* word is fine; also **bold** and ~~strike~~"
+        )
+        para = result["content"][0]
+        by_mark = {
+            mark: [
+                n["text"]
+                for n in para["content"]
+                if n.get("type") == "text"
+                and any(m["type"] == mark for m in n.get("marks", []))
+            ]
+            for mark in ("em", "strong", "strike")
+        }
+        assert by_mark["em"] == ["emphasised"]
+        assert by_mark["strong"] == ["bold"]
+        assert by_mark["strike"] == ["strike"]
+
     def test_inline_code(self):
         """`code` text gets a code mark."""
         result = markdown_to_adf("`code`")
