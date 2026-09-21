@@ -40,6 +40,9 @@ JIRA_CLOUD_ONLY_TOOL_NAMES = {
     "batch_get_changelogs",
     "move_issue",
 }
+JIRA_SERVER_ONLY_TOOL_NAMES = {
+    "discover",
+}
 
 
 def _mock_tool(name, tags):
@@ -198,7 +201,12 @@ class TestMCPProtocolIntegration:
         """The production server advertises Cloud-only Jira tools only on Cloud."""
         jira_config = MagicMock(spec=JiraConfig)
         jira_config.is_cloud = is_cloud
-        app_context = MainAppContext(full_jira_config=jira_config)
+        # Enable the (default-off) jira_assets toolset so the deployment
+        # filter, not the toolset filter, decides whether its tools appear.
+        app_context = MainAppContext(
+            full_jira_config=jira_config,
+            enabled_toolsets={"jira_issues", "jira_assets"},
+        )
         request_context = MagicMock()
         request_context.request = None
         request_context.lifespan_context = {"app_lifespan_context": app_context}
@@ -213,6 +221,12 @@ class TestMCPProtocolIntegration:
         assert "jira_get_issue" in listed_tool_names
         assert listed_tool_names & expected_cloud_only_tools == (
             expected_cloud_only_tools if is_cloud else set()
+        )
+        expected_server_only_tools = {
+            f"jira_{name}" for name in JIRA_SERVER_ONLY_TOOL_NAMES
+        }
+        assert listed_tool_names & expected_server_only_tools == (
+            set() if is_cloud else expected_server_only_tools
         )
 
     async def test_tool_filtering_uses_header_based_jira_deployment(

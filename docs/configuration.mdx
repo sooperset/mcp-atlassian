@@ -197,6 +197,24 @@ JIRA_ISSUE_KEY_PATTERN=^[A-Z0-9][A-Z0-9_]*-\d+(?:-\d+)*$
 JIRA_PROJECT_KEY_PATTERN=^[A-Z0-9][A-Z0-9_]*$
 ```
 
+### Jira Assets (Server/Data Center)
+
+The `jira_assets` toolset enables Assets discovery through the consolidated
+`jira_discover` tool on Jira Service Management Server/Data Center. It is disabled
+by default; enable it with `TOOLSETS=default,jira_assets` (or `all`). The tool is
+hidden automatically when connected to Jira Cloud, whose workspace-scoped Assets
+API is not supported. `jira_get_issue` can also inline connected objects with
+`include="assets"` on Server/Data Center.
+
+| Variable | Description |
+|----------|-------------|
+| `JIRA_ASSETS_API_BASE` | REST base path for Assets discovery and issue enrichment (default: `rest/assets/1.0`, JSM Data Center 5.3+). Set to `rest/insight/1.0` for legacy Insight installs (JSM 5.2 and earlier). Leading/trailing slashes are ignored. |
+
+```bash
+TOOLSETS=default,jira_assets
+JIRA_ASSETS_API_BASE=rest/insight/1.0
+```
+
 ### Server Options
 
 | Variable | Description |
