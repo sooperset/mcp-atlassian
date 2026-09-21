@@ -195,8 +195,8 @@ def cloud_queues_fetcher(jira_fetcher: JiraFetcher) -> JiraFetcher:
 def test_queue_methods_reject_cloud(
     cloud_queues_fetcher: JiraFetcher, method: str, args: tuple[str, ...]
 ) -> None:
-    """All queue methods should raise NotImplementedError on Cloud."""
-    with pytest.raises(NotImplementedError, match="Server/Data Center"):
+    """All queue methods should retain their own Cloud rejection context."""
+    with pytest.raises(NotImplementedError, match="queue read endpoints"):
         getattr(cloud_queues_fetcher, method)(*args)
 
 

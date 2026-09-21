@@ -3,7 +3,7 @@
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from ..models.jira import JiraIssue, ProFormaForm
+from ..models.jira import JiraIssue, JiraWorkAttribute, ProFormaForm
 from ..models.jira.search import JiraSearchResult
 
 if TYPE_CHECKING:
@@ -239,6 +239,15 @@ class FieldsOperationsProto(Protocol):
         Returns:
             Dictionary mapping required field names to their definitions
         """
+
+
+@runtime_checkable
+class WorkAttributeOperationsProto(Protocol):
+    """Protocol defining Tempo work attribute operations interface."""
+
+    @abstractmethod
+    def get_work_attribute_catalog(self) -> list[JiraWorkAttribute]:
+        """Get work attribute definitions with static-list values populated."""
 
 
 @runtime_checkable
