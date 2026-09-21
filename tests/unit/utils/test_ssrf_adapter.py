@@ -235,3 +235,62 @@ def test_global_address_connects_to_the_validated_ip():
         _pinned_create_connection(("example.com", 443))
 
     assert connected["addr"][0] == "93.184.216.34"
+
+
+class _NoopSock:
+    """A socket that accepts the connect sequence without touching the network."""
+
+    def setsockopt(self, *a):
+        pass
+
+    def settimeout(self, *a):
+        pass
+
+    def bind(self, *a):
+        pass
+
+    def connect(self, sa):
+        pass
+
+    def close(self):
+        pass
+
+
+def _family_seen_by_adapter() -> int:
+    """Resolve one host through the adapter and report the family it asked for."""
+    seen = {"family": None}
+
+    def gai(host, port, family, socktype, *args, **kwargs):
+        seen["family"] = family
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port or 443))
+        ]
+
+    with (
+        patch("mcp_atlassian.utils.ssrf_adapter.socket.getaddrinfo", side_effect=gai),
+        patch(
+            "mcp_atlassian.utils.ssrf_adapter.socket.socket", return_value=_NoopSock()
+        ),
+    ):
+        _pinned_create_connection(("example.com", 443))
+    return seen["family"]
+
+
+def test_address_family_follows_urllib3_policy_when_ipv6_available():
+    """With IPv6 available the adapter resolves both families, as urllib3 does."""
+    with patch("urllib3.util.connection.HAS_IPV6", new=True):
+        assert _family_seen_by_adapter() == socket.AF_UNSPEC
+
+
+def test_disabling_urllib3_ipv6_switches_the_adapter_to_ipv4_only():
+    """urllib3's ``HAS_IPV6`` is the documented escape hatch for hosts whose IPv6
+    routes are advertised but unreachable: ``allowed_gai_family()`` returns
+    ``AF_INET`` and urllib3's own ``create_connection`` passes it to getaddrinfo.
+
+    This adapter replaces that connector, so hardcoding ``0`` (AF_UNSPEC) made the
+    knob silently inert — every request still resolved AAAA records first and
+    spent the full socket timeout on each unreachable IPv6 address before trying
+    IPv4 (issue #1633: ~60s versus ~0.3s).
+    """
+    with patch("urllib3.util.connection.HAS_IPV6", new=False):
+        assert _family_seen_by_adapter() == socket.AF_INET
