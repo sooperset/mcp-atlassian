@@ -135,6 +135,45 @@ async def health_check(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+def _credentials_are_usable(
+    service: str, config: JiraConfig | ConfluenceConfig
+) -> bool:
+    """Check that configured credentials actually authenticate.
+
+    ``is_auth_configured`` only proves credentials are *present*. Atlassian
+    serves some endpoints to anonymous callers with HTTP 200 and an empty
+    collection, so an unusable token otherwise surfaces as an empty Jira or
+    Confluence rather than as an error.
+    """
+    if is_env_truthy("ATLASSIAN_SKIP_AUTH_VALIDATION"):
+        logger.debug(
+            "Skipping %s credential validation (ATLASSIAN_SKIP_AUTH_VALIDATION set)",
+            service,
+        )
+        return True
+
+    try:
+        if service == "Jira":
+            from mcp_atlassian.jira import JiraFetcher
+
+            JiraFetcher(config=config)._validate_authentication()
+        else:
+            from mcp_atlassian.confluence import ConfluenceFetcher
+
+            ConfluenceFetcher(config=config)._validate_authentication()
+    except Exception as e:
+        logger.error(
+            "%s credentials were rejected: %s. %s tools will be unavailable. "
+            "Set ATLASSIAN_SKIP_AUTH_VALIDATION=true to start anyway.",
+            service,
+            e,
+            service,
+        )
+        return False
+
+    return True
+
+
 @asynccontextmanager
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
@@ -149,11 +188,11 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
     if services.get("jira"):
         try:
             jira_config = JiraConfig.from_env()
-            if jira_config.is_auth_configured():
+            if jira_config.is_auth_configured() and _credentials_are_usable(
+                "Jira", jira_config
+            ):
                 loaded_jira_config = jira_config
-                logger.info(
-                    "Jira configuration loaded and authentication is configured."
-                )
+                logger.info("Jira configuration loaded and credentials verified.")
             else:
                 logger.warning(
                     "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
@@ -164,11 +203,11 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
     if services.get("confluence"):
         try:
             confluence_config = ConfluenceConfig.from_env()
-            if confluence_config.is_auth_configured():
+            if confluence_config.is_auth_configured() and _credentials_are_usable(
+                "Confluence", confluence_config
+            ):
                 loaded_confluence_config = confluence_config
-                logger.info(
-                    "Confluence configuration loaded and authentication is configured."
-                )
+                logger.info("Confluence configuration loaded and credentials verified.")
             else:
                 logger.warning(
                     "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
