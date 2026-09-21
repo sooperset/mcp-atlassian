@@ -10,6 +10,8 @@ from typing import Any, Protocol
 from bs4 import BeautifulSoup, Tag
 from markdownify import markdownify as md
 
+from ..utils.urls import resolve_relative_url
+
 logger = logging.getLogger("mcp-atlassian")
 
 
@@ -150,6 +152,45 @@ class BasePreprocessor:
                 and not date_element.get_text(strip=True)
             ):
                 date_element.string = datetime_value
+
+    def process_rendered_html_content(self, html_content: str) -> tuple[str, str]:
+        """Process Confluence-rendered HTML (``body.view`` format) to markdown.
+
+        Unlike :meth:`process_html_content`, which parses Confluence storage XML
+        (``body.storage``) containing ``<ac:link>``, ``<ac:structured-macro>``, and
+        other proprietary tags, this method operates on the HTML that Confluence has
+        already rendered to standard HTML with real ``<a href>`` links, proper tables,
+        and ordinary HTML elements.
+
+        Args:
+            html_content: Rendered HTML from the Confluence ``body.view`` API field.
+
+        Returns:
+            Tuple of ``(processed_html, markdown)`` where markdown is the converted
+            text.
+        """
+        try:
+            soup = BeautifulSoup(html_content, "html.parser")
+            for tag_name, attribute in (("a", "href"), ("img", "src")):
+                for element in soup.find_all(tag_name):
+                    url = element.get(attribute)
+                    if (
+                        isinstance(url, str)
+                        and url.startswith("/")
+                        and not url.startswith("//")
+                    ):
+                        element[attribute] = resolve_relative_url(url, self.base_url)
+
+            processed_html = str(soup)
+            processed_markdown = md(
+                processed_html,
+                heading_style="ATX",
+                bullets="-",
+            )
+            return processed_html, processed_markdown
+        except Exception as e:
+            logger.error(f"Error in process_rendered_html_content: {str(e)}")
+            raise
 
     def _process_user_mentions_in_soup(
         self, soup: BeautifulSoup, confluence_client: ConfluenceClient | None = None

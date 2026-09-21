@@ -178,6 +178,63 @@ class PagesMixin(ConfluenceClient):
 
         return enriched_items
 
+    @staticmethod
+    def _get_body_expand(*, convert_to_markdown: bool) -> str:
+        """Return the Confluence body representation needed for the response."""
+        return "body.view" if convert_to_markdown else "body.storage"
+
+    def _process_page_body(
+        self,
+        page: dict[str, Any],
+        *,
+        convert_to_markdown: bool,
+        space_key: str,
+        content_id: str,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Process a page body using rendered view HTML or storage XML as needed."""
+        body = page.get("body") or {}
+        process_kwargs: dict[str, Any] = {
+            "space_key": space_key,
+            "confluence_client": self.confluence,
+            "content_id": content_id,
+        }
+        if attachments is not None:
+            process_kwargs["attachments"] = attachments
+
+        if convert_to_markdown:
+            view_content = (body.get("view") or {}).get("value") or ""
+            if view_content:
+                logger.debug(
+                    f"Page {content_id}: using body.view for markdown conversion"
+                )
+                _, processed_markdown = self.preprocessor.process_rendered_html_content(
+                    view_content
+                )
+                return processed_markdown
+
+            logger.debug(
+                f"Page {content_id}: body.view unavailable, "
+                "falling back to body.storage"
+            )
+            storage_content = (body.get("storage") or {}).get("value") or ""
+            _, processed_markdown = self.preprocessor.process_html_content(
+                storage_content,
+                **process_kwargs,
+            )
+            return processed_markdown
+
+        try:
+            storage_content = page["body"]["storage"]["value"] or ""
+        except (KeyError, TypeError) as e:
+            logger.warning(f"Page {content_id} missing body.storage.value: {e}")
+            storage_content = ""
+        processed_html, _ = self.preprocessor.process_html_content(
+            storage_content,
+            **process_kwargs,
+        )
+        return processed_html
+
     @handle_auth_errors("Confluence API")
     def get_page_content(
         self, page_id: str, *, convert_to_markdown: bool = True
@@ -201,6 +258,9 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error retrieving the page
         """
         try:
+            body_expand = self._get_body_expand(convert_to_markdown=convert_to_markdown)
+            expand = f"{body_expand},version,space,children.attachment,history"
+
             # Use v2 API for OAuth, v1 API for token/basic auth
             v2_adapter = self._v2_adapter
             if v2_adapter:
@@ -209,7 +269,7 @@ class PagesMixin(ConfluenceClient):
                 )
                 page = v2_adapter.get_page(
                     page_id=page_id,
-                    expand="body.storage,version,space,children.attachment,history",
+                    expand=expand,
                 )
             else:
                 logger.debug(
@@ -218,7 +278,7 @@ class PagesMixin(ConfluenceClient):
                 )
                 page = self.confluence.get_page_by_id(
                     page_id=page_id,
-                    expand="body.storage,version,space,children.attachment,history",
+                    expand=expand,
                 )
 
             # Check if API returned an error string
@@ -227,27 +287,17 @@ class PagesMixin(ConfluenceClient):
                 raise Exception(error_msg)
 
             space_key = page.get("space", {}).get("key", "")
-            try:
-                content = page["body"]["storage"]["value"]
-            except (KeyError, TypeError) as e:
-                logger.warning(
-                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
-                )
-                content = ""
             page_id_str = str(page.get("id", ""))
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
-            if convert_to_markdown:
-                _, page_content = self.preprocessor.process_html_content(
-                    content,
-                    space_key=space_key,
-                    confluence_client=self.confluence,
-                    content_id=page_id_str,
-                    attachments=page_attachments,
-                )
-            else:
-                page_content = content
+            page_content = self._process_page_body(
+                page,
+                convert_to_markdown=convert_to_markdown,
+                space_key=space_key,
+                content_id=page_id_str,
+                attachments=page_attachments,
+            )
 
             # Fetch page emoji and width from content properties
             emoji = self._get_page_emoji(page_id)
@@ -1422,6 +1472,9 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error getting page history
         """
         try:
+            body_expand = self._get_body_expand(convert_to_markdown=convert_to_markdown)
+            expand = f"{body_expand},version,space,children.attachment,history"
+
             v2_adapter = self._v2_adapter
             if v2_adapter:
                 logger.debug(
@@ -1432,7 +1485,7 @@ class PagesMixin(ConfluenceClient):
                 page = v2_adapter.get_page_by_version(
                     page_id=page_id,
                     version=version,
-                    expand="body.storage,version,space,children.attachment,history",
+                    expand=expand,
                 )
             else:
                 logger.debug(
@@ -1444,34 +1497,25 @@ class PagesMixin(ConfluenceClient):
                     page_id=page_id,
                     status="historical",
                     version=version,
-                    expand="body.storage,version,space,children.attachment,history",
+                    expand=expand,
                 )
 
             if isinstance(page, str):
                 error_msg = f"API returned error response: {page[:500]}"
                 raise Exception(error_msg)
 
-            try:
-                content = page["body"]["storage"]["value"]
-            except (KeyError, TypeError) as e:
-                logger.warning(
-                    f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
-                )
-                content = ""
-
             space_key = page.get("space", {}).get("key", "")
+            page_id_str = str(page.get("id", ""))
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
+            page_content = self._process_page_body(
+                page,
+                convert_to_markdown=convert_to_markdown,
                 space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=str(page.get("id", "")),
+                content_id=page_id_str,
                 attachments=page_attachments,
             )
-
-            page_content = processed_markdown if convert_to_markdown else processed_html
 
             emoji = self._get_page_emoji(page_id)
             return ConfluencePage.from_api_response(
