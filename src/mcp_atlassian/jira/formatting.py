@@ -64,9 +64,24 @@ class FormattingMixin(
 
         Returns:
             Text in Jira markup format
+
+        Note:
+            When ``config.content_format`` is ``"wiki"``, the input is treated
+            as wiki markup and returned unchanged (no conversion). Jira renders
+            wiki markup server-side, which preserves nested list structure that
+            the markdown->ADF conversion drops.
         """
         if not markdown_text:
             return ""
+
+        # Wiki passthrough: when configured, skip conversion and hand Jira the
+        # raw string. Jira renders wiki markup server-side, preserving nested
+        # list structure that the markdown->ADF conversion loses.
+        content_format = getattr(
+            getattr(self, "config", None), "content_format", "markdown"
+        )
+        if content_format == "wiki":
+            return markdown_text
 
         try:
             # Use the existing preprocessor
