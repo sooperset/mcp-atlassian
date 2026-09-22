@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import ssl
 import sys
 import threading
 from importlib.metadata import PackageNotFoundError, version
@@ -49,6 +50,19 @@ try:
 except PackageNotFoundError:
     # package is not installed
     __version__ = "0.0.0"
+
+# Whether truststore.inject_into_ssl() (in the MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE
+# block at the top of this module) actually replaced the stdlib ssl.SSLContext.
+# The HTTPS-listener guard in main() depends on this: truststore's context is
+# client-side only and would reject every inbound TLS handshake.
+_TRUSTSTORE_INJECTED = ssl.SSLContext.__module__.startswith("truststore")
+
+# Cipher suites for the server's own HTTPS listener. uvicorn's default cipher
+# group ("TLSv1") contains NULL-encryption and anonymous suites and no AEAD
+# suites; pin modern AEAD suites instead. TLS 1.0/1.1 have no AEAD suites, so
+# this also excludes them; TLS 1.3 suites are configured separately by OpenSSL
+# and remain enabled.
+_TLS_LISTENER_CIPHERS = "ECDHE+AESGCM:ECDHE+CHACHA20:!aNULL:!eNULL:!MD5"
 
 # Initialize logging with appropriate level
 logging_level = logging.WARNING
@@ -112,6 +126,24 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
             and not isinstance(server_result[0], asyncio.CancelledError)
         ):
             raise server_result[0]
+
+
+def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
+    """Fail fast if the TLS certificate/key pair cannot be loaded.
+
+    uvicorn only loads the pair deep inside server startup, after the
+    "Starting server" log line, so a mismatched pair, non-PEM content, or an
+    unreadable file would otherwise surface as an opaque late error. The
+    empty-string password callable turns an encrypted key (unsupported) into a
+    clean error instead of an interactive passphrase prompt from OpenSSL.
+    """
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(
+            certfile, keyfile, password=lambda: ""
+        )
+    except OSError as exc:  # ssl.SSLError is an OSError subclass
+        logger.error(f"TLS certificate/key could not be loaded: {exc}")
+        sys.exit(1)
 
 
 @click.version_option(__version__, prog_name="mcp-atlassian")
@@ -232,6 +264,21 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     help="Atlassian Cloud OAuth 2.0 access token (if you have your own you'd like to "
     "use for the session.)",
 )
+@click.option(
+    "--ssl-certfile",
+    default=None,
+    help="Path to the TLS certificate (PEM) for the server's own HTTPS "
+    "listener (sse/streamable-http transports). This terminates TLS at the "
+    "MCP server itself; it is unrelated to the client-side *_CLIENT_CERT "
+    "mTLS options used when connecting to Atlassian. Not validated at parse "
+    "time: stdio ignores it, and the HTTP transports validate it at startup.",
+)
+@click.option(
+    "--ssl-keyfile",
+    default=None,
+    help="Path to the TLS private key (PEM) for the server's own HTTPS "
+    "listener. Must be provided together with --ssl-certfile.",
+)
 def main(
     verbose: int,
     env_file: str | None,
@@ -262,6 +309,8 @@ def main(
     oauth_scope: str | None,
     oauth_cloud_id: str | None,
     oauth_access_token: str | None,
+    ssl_certfile: str | None,
+    ssl_keyfile: str | None,
 ) -> None:
     """MCP Atlassian Server - Jira and Confluence functionality for MCP
 
@@ -370,6 +419,111 @@ def main(
         f"Final path for Streamable HTTP: {final_path if final_path else 'FastMCP default'}"
     )
 
+    # TLS for the server's own HTTPS listener (sse/streamable-http).
+    def resolve_tls_path(
+        env_name: str, cli_name: str, cli_value: str | None
+    ) -> str | None:
+        """CLI wins over env, mirroring host/port/path above. A value that is
+        set but blank (e.g. templated config rendering an unset value as "")
+        is a configuration error, not "TLS off" — checked on the selected
+        source only, so a provided CLI flag overrides a blank env var."""
+        if cli_value is not None:
+            if not cli_value.strip():
+                logger.error(f"{cli_name} is set but empty; provide a file path.")
+                sys.exit(1)
+            return cli_value
+        env_value = os.getenv(env_name)
+        if env_value is not None and not env_value.strip():
+            logger.error(
+                f"{env_name} is set but empty; provide a file path or unset "
+                "the variable."
+            )
+            sys.exit(1)
+        return env_value
+
+    tls_cli_certfile = (
+        ssl_certfile
+        if click_ctx and was_option_provided(click_ctx, "ssl_certfile")
+        else None
+    )
+    tls_cli_keyfile = (
+        ssl_keyfile
+        if click_ctx and was_option_provided(click_ctx, "ssl_keyfile")
+        else None
+    )
+    final_ssl_certfile: str | None = None
+    final_ssl_keyfile: str | None = None
+    final_ssl_enabled = False
+    if final_transport == "stdio":
+        # No network listener: the TLS options are ignored entirely — no
+        # validation, just one warning so the operator isn't silently ignored.
+        if (
+            tls_cli_certfile is not None
+            or tls_cli_keyfile is not None
+            or os.getenv("MCP_SSL_CERTFILE") is not None
+            or os.getenv("MCP_SSL_KEYFILE") is not None
+        ):
+            logger.warning(
+                "TLS certificate configured but transport is 'stdio'; the "
+                "options are ignored because stdio has no network listener."
+            )
+    else:
+        final_ssl_certfile = resolve_tls_path(
+            "MCP_SSL_CERTFILE", "--ssl-certfile", tls_cli_certfile
+        )
+        final_ssl_keyfile = resolve_tls_path(
+            "MCP_SSL_KEYFILE", "--ssl-keyfile", tls_cli_keyfile
+        )
+
+        # A half-configured listener fails obscurely deep in uvicorn startup,
+        # so require both or neither and fail fast with a clear message.
+        if bool(final_ssl_certfile) != bool(final_ssl_keyfile):
+            logger.error(
+                "--ssl-certfile and --ssl-keyfile (env MCP_SSL_CERTFILE / "
+                "MCP_SSL_KEYFILE) must be provided together."
+            )
+            sys.exit(1)
+        final_ssl_enabled = bool(final_ssl_certfile) and bool(final_ssl_keyfile)
+        # The OS trust store injection replaces ssl.SSLContext globally with
+        # truststore's client-side-only context, whose post-handshake
+        # peer-cert verification rejects every INBOUND TLS connection (a
+        # server's peer sends no certificate). uvicorn builds its listener
+        # context from ssl.SSLContext, so the two features cannot coexist in
+        # one process; fail fast with the remediation rather than serving a
+        # listener that resets every connection. This is a static
+        # incompatibility, so check it before the per-deployment file checks.
+        if final_ssl_enabled and _TRUSTSTORE_INJECTED:
+            logger.error(
+                "The HTTPS listener (--ssl-certfile/--ssl-keyfile) cannot be "
+                "used while the OS trust store is injected. Set "
+                "MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE=false as a process "
+                "environment variable or in the default .env file (--env-file "
+                "is loaded too late to affect trust store injection). Outbound "
+                "SSL verification then uses the bundled certifi CAs; for a "
+                "private CA set both REQUESTS_CA_BUNDLE and SSL_CERT_FILE "
+                "(see the HTTP transport docs)."
+            )
+            sys.exit(1)
+        # Neither source is existence-checked at parse time (click must not
+        # reject paths that stdio would ignore), so check the selected values
+        # here: a missing file fails fast with a clear message instead of an
+        # opaque uvicorn error after the listener log line.
+        if final_ssl_certfile and not os.path.isfile(final_ssl_certfile):
+            logger.error(
+                "TLS certificate file not found or not a regular file: "
+                f"{final_ssl_certfile!r}"
+            )
+            sys.exit(1)
+        if final_ssl_keyfile and not os.path.isfile(final_ssl_keyfile):
+            logger.error(
+                "TLS private key file not found or not a regular file: "
+                f"{final_ssl_keyfile!r}"
+            )
+            sys.exit(1)
+        if final_ssl_certfile and final_ssl_keyfile:
+            _preflight_tls_certificates(final_ssl_certfile, final_ssl_keyfile)
+    logger.debug(f"Final TLS for HTTP listener: enabled={final_ssl_enabled}")
+
     # Set env vars for downstream config
     if click_ctx and was_option_provided(click_ctx, "enabled_tools"):
         os.environ["ENABLED_TOOLS"] = enabled_tools
@@ -439,8 +593,17 @@ def main(
 
         run_kwargs["stateless_http"] = final_stateless
 
+        if final_ssl_enabled:
+            run_kwargs["uvicorn_config"] = {
+                "ssl_certfile": final_ssl_certfile,
+                "ssl_keyfile": final_ssl_keyfile,
+                "ssl_ciphers": _TLS_LISTENER_CIPHERS,
+            }
+
+        scheme = "https" if final_ssl_enabled else "http"
         logger.info(
-            f"Starting server with {final_transport.upper()} transport on http://{final_host}:{final_port}{log_display_path}"
+            f"Starting server with {final_transport.upper()} transport on "
+            f"{scheme}://{final_host}:{final_port}{log_display_path}"
         )
     else:
         logger.error(
