@@ -18,6 +18,8 @@ class MainAppContext:
 
     full_jira_config: JiraConfig | None = None
     full_confluence_config: ConfluenceConfig | None = None
+    has_deferred_jira_auth: bool = False
+    has_deferred_confluence_auth: bool = False
     read_only: bool = False
     enabled_tools: list[str] | None = None
     enabled_toolsets: set[str] | None = None
