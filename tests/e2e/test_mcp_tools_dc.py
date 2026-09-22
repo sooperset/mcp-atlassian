@@ -58,6 +58,22 @@ class TestMCPJiraTools:
     """MCP Jira tool tests against DC."""
 
     @pytest.mark.anyio
+    async def test_jira_get_current_user_profile(
+        self,
+        mcp_client: Client,
+    ) -> None:
+        result = await call_tool(
+            mcp_client,
+            "jira_get_user_profile",
+            {"user_identifier": "me"},
+        )
+        assert not result.is_error
+        assert result.content and isinstance(result.content[0], TextContent)
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert data["user"]["name"] or data["user"]["display_name"]
+
+    @pytest.mark.anyio
     async def test_jira_get_issue(
         self,
         mcp_client: Client,
