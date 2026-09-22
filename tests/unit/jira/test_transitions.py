@@ -75,6 +75,30 @@ class TestTransitionsMixin:
         assert result[1]["name"] == "Done"
         assert result[1]["to_status"] == "Done"
 
+    def test_get_available_transitions_flattened_to_field(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """The installed atlassian-python-api's Jira.get_issue_transitions()
+        returns `"to"` already flattened to the status name string
+        (`{"name": ..., "id": ..., "to": transition["to"]["name"]}`), not a
+        nested `{"name": ...}` dict. Previously only the nested-dict shape
+        (and the never-actually-returned `to_status`/`status` keys) were
+        handled, so `to_status` silently stayed empty and every status-name
+        lookup in `_update_issue_with_status` failed (#1694) even though the
+        target status was right there in the response.
+        """
+        mock_transitions = [
+            {"id": 21, "name": "On Hold", "to": "On Hold"},
+            {"id": 31, "name": "Resolve Issue", "to": "Resolved"},
+        ]
+        transitions_mixin.jira.get_issue_transitions.return_value = mock_transitions
+
+        result = transitions_mixin.get_available_transitions("TEST-123")
+
+        assert len(result) == 2
+        assert result[0]["to_status"] == "On Hold"
+        assert result[1]["to_status"] == "Resolved"
+
     def test_get_available_transitions_empty_response(
         self, transitions_mixin: TransitionsMixin
     ):

@@ -51,13 +51,22 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
                 # Handle "to" field in different formats
                 to_status = None
-                # Option 1: 'to' field with sub-fields
+                # Option 1: 'to' field with sub-fields (raw Jira REST shape)
                 if "to" in transition and isinstance(transition["to"], dict):
                     to_status = transition["to"].get("name")
-                # Option 2: 'to_status' field directly
+                # Option 2: 'to' field already flattened to the status name
+                # string - what the installed atlassian-python-api's own
+                # Jira.get_issue_transitions() actually returns
+                # (`"to": transition["to"]["name"]`, not a nested dict).
+                # Previously unhandled, so to_status silently stayed empty
+                # and every status-name lookup in _update_issue_with_status
+                # failed even though the target status was right there (#1694).
+                elif "to" in transition and isinstance(transition["to"], str):
+                    to_status = transition["to"]
+                # Option 3: 'to_status' field directly
                 elif "to_status" in transition:
                     to_status = transition.get("to_status")
-                # Option 3: 'status' field directly
+                # Option 4: 'status' field directly
                 elif "status" in transition:
                     to_status = transition.get("status")
 

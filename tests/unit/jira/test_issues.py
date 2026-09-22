@@ -11,6 +11,7 @@ from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.issues import IssuesMixin, logger
+from mcp_atlassian.jira.transitions import TransitionsMixin
 from mcp_atlassian.models.jira import JiraIssue
 from tests.utils.mocks import setup_api3_passthrough_mocks
 
@@ -1020,6 +1021,33 @@ class TestIssuesMixin:
 
         # Call the method with status in kwargs instead of fields
         issues_mixin.update_issue(issue_key="TEST-123", status="In Progress")
+
+    def test_update_issue_with_status_real_transitions_shape(
+        self, issues_mixin: IssuesMixin
+    ):
+        """End-to-end reproduction of #1694: the underlying atlassian-python-api
+        client's own `get_issue_transitions()` returns `"to"` already flattened
+        to the status name string, not a nested dict. Restoring the real
+        `get_available_transitions` (the fixture stubs it out) and mocking only
+        the underlying client call, the way the real library actually returns
+        transitions, must resolve the transition instead of raising
+        'Could not find transition to status'.
+        """
+        issues_mixin.get_available_transitions = (
+            TransitionsMixin.get_available_transitions.__get__(issues_mixin)
+        )
+        issues_mixin.jira.get_issue_transitions.return_value = [
+            {"id": 11, "name": "Start Progress", "to": "In Progress"},
+            {"id": 21, "name": "On Hold", "to": "On Hold"},
+        ]
+
+        # Must not raise - pre-fix this failed with "Could not find transition
+        # to status 'On Hold'" even though it's right there in the mocked data.
+        issues_mixin.update_issue(issue_key="TEST-123", status="On Hold")
+
+        issues_mixin.jira.set_issue_status_by_transition_id.assert_called_once_with(
+            issue_key="TEST-123", transition_id=21
+        )
 
     def test_update_issue_with_status_and_fields(self, issues_mixin: IssuesMixin):
         """Test field updates use correct update= kwarg with status."""
