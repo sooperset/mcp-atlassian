@@ -181,6 +181,11 @@ class JiraConfig:
     disable_jira_markup_translation: bool = (
         False  # Disable automatic markup translation between formats
     )
+    content_format: Literal["markdown", "wiki"] = "markdown"
+    # Input format for write bodies (descriptions, comments, rich-text fields).
+    # "markdown" (default) converts to Jira's format via the preprocessor.
+    # "wiki" passes the raw string through unconverted; Jira renders wiki markup
+    # server-side, preserving nested lists that markdown->ADF conversion drops.
     client_cert: str | None = None  # Client certificate file path (.pem)
     client_key: str | None = None  # Client private key file path (.pem)
     client_key_password: str | None = None  # Password for encrypted private key
@@ -349,6 +354,17 @@ class JiraConfig:
             os.getenv("DISABLE_JIRA_MARKUP_TRANSLATION", "false").lower() == "true"
         )
 
+        # Body input format for writes. "wiki" bypasses markdown conversion so
+        # wiki markup is rendered server-side by Jira (preserves nested lists).
+        content_format = os.getenv("JIRA_CONTENT_FORMAT", "markdown").strip().lower()
+        if content_format not in ("markdown", "wiki"):
+            logging.getLogger("mcp-atlassian.jira.config").warning(
+                "Invalid JIRA_CONTENT_FORMAT %r; expected 'markdown' or 'wiki'. "
+                "Falling back to 'markdown'.",
+                content_format,
+            )
+            content_format = "markdown"
+
         # Client certificate settings
         client_cert = os.getenv("JIRA_CLIENT_CERT")
         client_key = os.getenv("JIRA_CLIENT_KEY")
@@ -377,6 +393,7 @@ class JiraConfig:
             custom_headers=custom_headers,
             passthrough_headers=passthrough_headers,
             disable_jira_markup_translation=disable_jira_markup_translation,
+            content_format=content_format,
             client_cert=client_cert,
             client_key=client_key,
             client_key_password=client_key_password,
