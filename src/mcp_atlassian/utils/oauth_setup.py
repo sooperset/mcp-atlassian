@@ -19,6 +19,7 @@ import webbrowser
 from dataclasses import dataclass
 from html import escape as html_escape
 
+from ..utils.cloud import GOV_MODERATE, cloud_endpoints
 from ..utils.oauth import OAuthConfig
 
 # Configure logging
@@ -227,6 +228,11 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
         client_secret=args.client_secret,
         redirect_uri=args.redirect_uri,
         scope=args.scope,
+        service_url=(
+            os.getenv("ATLASSIAN_OAUTH_INSTANCE_URL")
+            or os.getenv("JIRA_URL")
+            or os.getenv("CONFLUENCE_URL")
+        ),
     )
 
     # Generate a random state for CSRF protection
@@ -405,7 +411,17 @@ def run_oauth_setup() -> int:
         "This wizard will guide you through setting up OAuth 2.0 authentication for MCP Atlassian."
     )
     print("\nYou need to have created an OAuth 2.0 app in your Atlassian account.")
-    print("You can create one at: https://developer.atlassian.com/console/myapps/")
+    service_url = (
+        os.getenv("ATLASSIAN_OAUTH_INSTANCE_URL")
+        or os.getenv("JIRA_URL")
+        or os.getenv("CONFLUENCE_URL")
+    )
+    console = (
+        "https://developer.atlassian-us-gov-mod.com/console"
+        if cloud_endpoints(service_url) == GOV_MODERATE
+        else "https://developer.atlassian.com/console/myapps/"
+    )
+    print(f"You can create one at: {console}")
     print("\nPlease provide the following information:\n")
 
     # Check for environment variables first

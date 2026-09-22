@@ -20,6 +20,7 @@ from typing import Any, Optional
 import keyring
 import requests
 
+from .cloud import cloud_endpoints
 from .urls import is_atlassian_cloud_url
 
 # Configure logging
@@ -69,9 +70,13 @@ class OAuthConfig:
     refresh_token: str | None = None
     access_token: str | None = None
     expires_at: float | None = None
+    service_url: str | None = None
 
     def __post_init__(self) -> None:
         """Validate mutual exclusivity of cloud_id and base_url."""
+        if self.service_url is None:
+            self.service_url = self.base_url
+        cloud_endpoints(self.service_url)
         if self.cloud_id and self.base_url:
             # Check if base_url is a Cloud URL — if so, cloud_id takes precedence
             if is_atlassian_cloud_url(self.base_url):
@@ -102,7 +107,7 @@ class OAuthConfig:
         """
         if self.is_data_center and self.base_url:
             return f"{self.base_url.rstrip('/')}{DC_TOKEN_PATH}"
-        return CLOUD_TOKEN_URL
+        return cloud_endpoints(self.service_url).token_url
 
     @property
     def authorize_url(self) -> str:
@@ -113,7 +118,7 @@ class OAuthConfig:
         """
         if self.is_data_center and self.base_url:
             return f"{self.base_url.rstrip('/')}{DC_AUTHORIZE_PATH}"
-        return CLOUD_AUTHORIZE_URL
+        return cloud_endpoints(self.service_url).authorize_url
 
     @property
     def is_token_expired(self) -> bool:
@@ -147,7 +152,7 @@ class OAuthConfig:
         }
         # Cloud-specific params (DC doesn't use audience or prompt)
         if not self.is_data_center:
-            params["audience"] = "api.atlassian.com"
+            params["audience"] = cloud_endpoints(self.service_url).api_host
             params["prompt"] = "consent"
 
         return f"{self.authorize_url}?{urllib.parse.urlencode(params)}"
@@ -319,7 +324,11 @@ class OAuthConfig:
 
         try:
             headers = {"Authorization": f"Bearer {self.access_token}"}
-            response = requests.get(CLOUD_ID_URL, headers=headers, timeout=HTTP_TIMEOUT)
+            response = requests.get(
+                cloud_endpoints(self.service_url).resources_url,
+                headers=headers,
+                timeout=HTTP_TIMEOUT,
+            )
             response.raise_for_status()
 
             resources = response.json()
@@ -542,6 +551,7 @@ class OAuthConfig:
                 scope=scope or "",
                 cloud_id=cloud_id,
                 base_url=base_url,
+                service_url=service_url,
             )
 
             # Try to load existing tokens
@@ -574,6 +584,7 @@ class OAuthConfig:
                 scope="",  # Will be determined by user token permissions
                 cloud_id=cloud_id,
                 base_url=base_url,
+                service_url=service_url,
             )
 
         # No OAuth configuration
