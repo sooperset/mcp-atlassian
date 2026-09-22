@@ -74,7 +74,9 @@ def _parse_inline_formatting(
     Handles: bold (**), italic (*), inline code (`), links ([text](url)),
     strikethrough (~~), Jira-flavored user mentions
     ([~accountid:ACCOUNT_ID] or @[Display Name](accountid:ACCOUNT_ID)), and
-    status lozenges ({status:color=green|title=Done}).
+    status lozenges ({status:color=green|title=Done}). Combined bold+italic
+    (***text*** or **_text_**) produces a single text node carrying both
+    ``strong`` and ``em`` marks.
 
     Bare Jira issue keys are converted to links when ``jira_base_url`` is set.
 
@@ -102,7 +104,14 @@ def _parse_inline_formatting(
     nodes: list[dict[str, Any]] = []
     # Pattern order matters: mention before link, bold before italic,
     # code before others. Status sits after code so a backticked
-    # `{status:...}` stays literal.
+    # `{status:...}` stays literal. The two combined bold+italic forms
+    # (***text***, **_text_**) must come before the plain bold pattern:
+    # both start with the same "**" the bold alternative also matches, and
+    # regex alternation takes the first alternative that matches at a given
+    # position, not the most specific one — with bold listed first, its lazy
+    # `.+?` simply scans past the inner *)/_ looking for the next literal
+    # "**", capturing "*bold italic" or "_bold italic mix_" as literal text
+    # instead of recognizing the combined emphasis (#1696).
     inline_re = re.compile(
         r"\[~accountid:(?P<wiki_mention_id>[^\]]+)\]"
         r"|@\[(?P<display_mention_text>[^\]]+)\]"
@@ -110,6 +119,8 @@ def _parse_inline_formatting(
         r"|`(?P<code_inner>[^`]+)`"
         r"|\{status:(?:color=(?P<status_color>\w+)\|)?"
         r"title=(?P<status_title>[^}]+)\}"
+        r"|\*\*\*(?P<boldital_star_inner>.+?)\*\*\*"
+        r"|\*\*_(?P<boldital_mixed_inner>.+?)_\*\*"
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
         r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
@@ -161,6 +172,20 @@ def _parse_inline_formatting(
                         "style": "",
                     },
                 }
+            )
+        elif m.group("boldital_star_inner") is not None:
+            _append_text_nodes(
+                nodes,
+                m.group("boldital_star_inner"),
+                jira_base_url,
+                [{"type": "strong"}, {"type": "em"}],
+            )
+        elif m.group("boldital_mixed_inner") is not None:
+            _append_text_nodes(
+                nodes,
+                m.group("boldital_mixed_inner"),
+                jira_base_url,
+                [{"type": "strong"}, {"type": "em"}],
             )
         elif m.group("bold_inner") is not None:
             _append_text_nodes(

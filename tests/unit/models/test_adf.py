@@ -396,6 +396,42 @@ class TestMarkdownToAdf:
         assert len(italic_nodes) >= 1
         assert italic_nodes[0]["text"] == "italic"
 
+    def test_combined_bold_italic_triple_star(self):
+        """***text*** gets a single node carrying both strong and em (#1696)."""
+        result = markdown_to_adf("***bold italic***")
+        para = result["content"][0]
+        assert para["content"] == [
+            {
+                "type": "text",
+                "text": "bold italic",
+                "marks": [{"type": "strong"}, {"type": "em"}],
+            }
+        ]
+
+    def test_combined_bold_italic_mixed_markers(self):
+        """**_text_** gets a single node carrying both strong and em (#1696)."""
+        result = markdown_to_adf("**_bold italic mix_**")
+        para = result["content"][0]
+        assert para["content"] == [
+            {
+                "type": "text",
+                "text": "bold italic mix",
+                "marks": [{"type": "strong"}, {"type": "em"}],
+            }
+        ]
+
+    def test_combined_bold_italic_alongside_plain_bold(self):
+        """A combined span next to a plain bold span doesn't confuse the two (#1696)."""
+        result = markdown_to_adf("**plain** and ***combined***")
+        para = result["content"][0]
+        text_nodes = [n for n in para["content"] if n["type"] == "text"]
+        plain = next(n for n in text_nodes if n["text"] == "plain")
+        combined = next(n for n in text_nodes if n["text"] == "combined")
+        assert [m["type"] for m in plain["marks"]] == ["strong"]
+        assert {m["type"] for m in combined["marks"]} == {"strong", "em"}
+        # No leftover literal asterisks anywhere in the output.
+        assert all("*" not in n["text"] for n in text_nodes)
+
     def test_inline_code(self):
         """`code` text gets a code mark."""
         result = markdown_to_adf("`code`")
