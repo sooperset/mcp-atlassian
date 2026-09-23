@@ -55,6 +55,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
     "jira-agile": [
         "jira_get_agile_boards",
         "jira_get_board_issues",
+        "jira_get_board_backlog",
         "jira_get_sprints_from_board",
         "jira_get_sprint_issues",
         "jira_create_sprint",

@@ -17,12 +17,15 @@ from starlette.requests import Request
 
 from src.mcp_atlassian.jira import JiraFetcher
 from src.mcp_atlassian.jira.config import JiraConfig
+from src.mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from src.mcp_atlassian.models.jira import (
     JiraCustomerRequest,
+    JiraIssue,
     JiraRequestType,
     JiraRequestTypeField,
     JiraRequestTypeFieldsResult,
     JiraRequestTypesResult,
+    JiraSearchResult,
 )
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
@@ -472,6 +475,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         edit_comment,
         get_agile_boards,
         get_all_projects,
+        get_board_backlog,
         get_board_issues,
         get_create_fields,
         get_cross_project_dependencies,
@@ -547,6 +551,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_proforma_form_details)
     jira_sub_mcp.add_tool(get_project_epic_hierarchy)
     jira_sub_mcp.add_tool(get_agile_boards)
+    jira_sub_mcp.add_tool(get_board_backlog)
     jira_sub_mcp.add_tool(get_board_issues)
     jira_sub_mcp.add_tool(get_sprints_from_board)
     jira_sub_mcp.add_tool(get_sprint_issues)
@@ -2805,8 +2810,43 @@ async def test_transition_issue_comment_schema_warns_about_cloud_screen():
     assert "jira_add_comment" in description
 
 
+@pytest.mark.anyio
+async def test_get_board_backlog_tool(jira_client, mock_jira_fetcher):
+    """Test jira_get_board_backlog returns backlog issues for a board."""
+    mock_jira_fetcher.get_board_backlog.return_value = JiraSearchResult(
+        issues=[JiraIssue(key="TEST-1", summary="Backlog issue")],
+        total=1,
+        start_at=0,
+        max_results=10,
+    )
+
+    response = await jira_client.call_tool(
+        "jira_get_board_backlog",
+        {"board_id": "1000"},
+    )
+
+    mock_jira_fetcher.get_board_backlog.assert_called_once_with(
+        board_id="1000",
+        jql="",
+        fields=sorted(DEFAULT_READ_JIRA_FIELDS),
+        start=0,
+        limit=10,
+        expand="version",
+    )
+    data = json.loads(response.content[0].text)
+    assert data["total"] == 1
+    assert data["issues"][0]["key"] == "TEST-1"
+
+
 @pytest.mark.parametrize(
-    "tool_name", ["get_issue", "search", "get_board_issues", "get_sprint_issues"]
+    "tool_name",
+    [
+        "get_issue",
+        "search",
+        "get_board_issues",
+        "get_board_backlog",
+        "get_sprint_issues",
+    ],
 )
 @pytest.mark.anyio
 async def test_read_tool_fields_default_is_hash_seed_independent(tool_name):

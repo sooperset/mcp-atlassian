@@ -291,6 +291,82 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 f"Error searching issues for board with JQL {str(e)}"
             ) from e
 
+    def get_board_backlog(
+        self,
+        board_id: str,
+        jql: str = "",
+        fields: str | None = None,
+        start: int = 0,
+        limit: int = 50,
+        expand: str | None = None,
+    ) -> JiraSearchResult:
+        """
+        Get the issues in a board's backlog.
+
+        Returns incomplete issues on the board that have not yet been
+        assigned to any future or active sprint. Only meaningful for Scrum
+        boards; Kanban boards have no distinct backlog.
+
+        Args:
+            board_id: The ID of the board
+            jql: Optional JQL query string to further filter the backlog
+            fields: Fields to return (comma-separated string or "*all")
+            start: Starting index
+            limit: Maximum issues to return
+            expand: Optional items to expand (comma-separated)
+
+        Returns:
+            JiraSearchResult object containing backlog issues and metadata
+
+        Raises:
+            Exception: If there is an error getting the board's backlog
+        """
+        try:
+            limit = clamp_limit(limit, context="jira.get_board_backlog")
+
+            # Sanitize JQL reserved words in project key values
+            jql = sanitize_jql_reserved_words(jql) or jql
+
+            # Constrain the backlog to the allowed projects (JIRA_PROJECTS_FILTER)
+            jql = self._apply_projects_filter(jql)
+
+            fields_param = fields
+            if fields_param is None:
+                fields_param = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS))
+
+            resource = f"board/{board_id}/backlog"
+            url = self.jira.get_agile_resource_url(resource)
+            params: dict[str, Any] = {
+                "startAt": start,
+                "maxResults": limit,
+                "fields": fields_param,
+            }
+            if jql:
+                params["jql"] = jql
+            if expand:
+                params["expand"] = expand
+
+            response = self.jira.get(url, params=params)
+            if not isinstance(response, dict):
+                msg = f"Unexpected return value type from board backlog endpoint: {type(response)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
+            search_result = JiraSearchResult.from_api_response(
+                response, base_url=self.config.url, requested_fields=fields_param
+            )
+            return search_result
+        except requests.HTTPError as e:
+            logger.error(
+                f"Error getting backlog for board {board_id}: {str(e.response.content)}"
+            )
+            raise Exception(
+                f"Error getting backlog for board: {str(e.response.content)}"
+            ) from e
+        except Exception as e:
+            logger.error(f"Error getting backlog for board {board_id}: {str(e)}")
+            raise Exception(f"Error getting backlog for board: {str(e)}") from e
+
     def get_sprint_issues(
         self,
         sprint_id: str,

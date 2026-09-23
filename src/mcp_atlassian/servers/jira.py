@@ -1670,6 +1670,85 @@ async def get_board_issues(
 
 @jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_agile"},
+    annotations={"title": "Get Board Backlog", "readOnlyHint": True},
+)
+async def get_board_backlog(
+    ctx: Context,
+    board_id: Annotated[str, Field(description="The id of the board (e.g., '1001')")],
+    jql: Annotated[
+        str,
+        Field(
+            description=(
+                "Optional JQL query string to further filter the backlog. "
+                "Leave empty to return the full backlog."
+            ),
+            default="",
+        ),
+    ] = "",
+    fields: Annotated[
+        str,
+        Field(
+            description=(
+                "Comma-separated fields to return in the results. "
+                "Use '*all' for all fields, or specify individual "
+                "fields like 'summary,status,assignee,priority'"
+            ),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
+        ),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=10, ge=1, le=50),
+    ] = 10,
+    expand: Annotated[
+        str,
+        Field(
+            description="Optional fields to expand in the response (e.g., 'changelog').",
+            default="version",
+        ),
+    ] = "version",
+) -> str:
+    """Get the issues in a board's backlog.
+
+    Returns incomplete issues on the board that have not yet been assigned
+    to any future or active sprint. Only meaningful for Scrum boards; Kanban
+    boards have no distinct backlog.
+
+    Args:
+        ctx: The FastMCP context.
+        board_id: The ID of the board.
+        jql: Optional JQL query string to further filter the backlog.
+        fields: Comma-separated fields to return.
+        start_at: Starting index for pagination.
+        limit: Maximum number of results.
+        expand: Optional fields to expand.
+
+    Returns:
+        JSON string representing the search results including pagination info.
+    """
+    jira = await get_jira_fetcher(ctx)
+    fields_list: str | list[str] | None = fields
+    if fields and fields != "*all":
+        fields_list = [f.strip() for f in fields.split(",")]
+
+    search_result = jira.get_board_backlog(
+        board_id=board_id,
+        jql=jql,
+        fields=fields_list,
+        start=start_at,
+        limit=limit,
+        expand=expand,
+    )
+    result = search_result.to_simplified_dict()
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_agile"},
     annotations={"title": "Get Sprints from Board", "readOnlyHint": True},
 )
 async def get_sprints_from_board(
