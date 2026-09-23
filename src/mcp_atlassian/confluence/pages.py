@@ -188,7 +188,7 @@ class PagesMixin(ConfluenceClient):
         Args:
             page_id: The ID of the page to retrieve
             convert_to_markdown: When True, returns content in
-                markdown format, otherwise returns raw HTML
+                markdown format, otherwise returns raw Confluence storage XHTML
                 (keyword-only)
 
         Returns:
@@ -238,15 +238,16 @@ class PagesMixin(ConfluenceClient):
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=page_id_str,
-                attachments=page_attachments,
-            )
-
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            if convert_to_markdown:
+                _, page_content = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=page_id_str,
+                    attachments=page_attachments,
+                )
+            else:
+                page_content = content
 
             # Fetch page emoji and width from content properties
             emoji = self._get_page_emoji(page_id)
@@ -330,7 +331,11 @@ class PagesMixin(ConfluenceClient):
             if not properties:
                 return None
 
-            results = properties.get("results", [])
+            results = (
+                properties
+                if isinstance(properties, list)
+                else properties.get("results", [])
+            )
             for prop in results:
                 key = prop.get("key", "")
                 if key in ("emoji-title-published", "emoji-title-draft"):
@@ -488,7 +493,11 @@ class PagesMixin(ConfluenceClient):
             if not properties:
                 return None
 
-            results = properties.get("results", [])
+            results = (
+                properties
+                if isinstance(properties, list)
+                else properties.get("results", [])
+            )
             for prop in results:
                 key = prop.get("key", "")
                 if key in ("content-appearance-published", "content-appearance-draft"):
@@ -560,7 +569,7 @@ class PagesMixin(ConfluenceClient):
             space_key: The key of the space containing the page
             title: The title of the page to retrieve
             convert_to_markdown: When True, returns content in markdown format,
-                               otherwise returns raw HTML (keyword-only)
+                otherwise returns raw Confluence storage XHTML (keyword-only)
 
         Returns:
             ConfluencePage model containing the page content and metadata, or None if not found
@@ -568,8 +577,10 @@ class PagesMixin(ConfluenceClient):
         try:
             # Directly try to find the page by title
             page = self.confluence.get_page_by_title(
-                space=space_key, title=title, expand="body.storage,version"
+                space_key, title, expand="body.storage,version"
             )
+            if isinstance(page, dict) and isinstance(page.get("results"), list):
+                page = page["results"][0] if page["results"] else None
 
             if not page:
                 logger.warning(
@@ -585,15 +596,15 @@ class PagesMixin(ConfluenceClient):
                     f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
                 )
                 content = ""
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=str(page.get("id", "")),
-            )
-
-            # Use the appropriate content format based on the convert_to_markdown flag
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            if convert_to_markdown:
+                _, page_content = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=str(page.get("id", "")),
+                )
+            else:
+                page_content = content
 
             # Fetch page emoji and width from content properties
             emoji = self._get_page_emoji(str(page.get("id", "")))
@@ -649,7 +660,7 @@ class PagesMixin(ConfluenceClient):
             List of ConfluencePage models containing page content and metadata
         """
         pages = self.confluence.get_all_pages_from_space(
-            space=space_key, start=start, limit=limit, expand="body.storage"
+            space_key, start=start, limit=limit, expand="body.storage"
         )
 
         page_models = []
@@ -1069,7 +1080,7 @@ class PagesMixin(ConfluenceClient):
         page_id: str,
         start: int = 0,
         limit: int = 25,
-        expand: str = "version",
+        expand: str = "version,history",
         *,
         convert_to_markdown: bool = True,
         include_folders: bool = True,

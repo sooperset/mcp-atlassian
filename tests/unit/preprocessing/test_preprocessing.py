@@ -251,6 +251,24 @@ def test_jira_to_markdown(preprocessor_with_jira):
     assert preprocessor_with_jira.jira_to_markdown("*bold text*") == "**bold text**"
     assert preprocessor_with_jira.jira_to_markdown("_italic text_") == "*italic text*"
 
+    # Test escaped delimiters are preserved, not paired as emphasis (issue #1610)
+    assert (
+        preprocessor_with_jira.jira_to_markdown(r"QUALITY\_GATES\_LLM\_ENABLED")
+        == r"QUALITY\_GATES\_LLM\_ENABLED"
+    )
+    assert preprocessor_with_jira.jira_to_markdown(r"foo\_bar") == r"foo\_bar"
+    assert (
+        preprocessor_with_jira.jira_to_markdown(r"my\_var\_x and her\_var")
+        == r"my\_var\_x and her\_var"
+    )
+    assert "*" not in preprocessor_with_jira.jira_to_markdown(
+        r"my\_var\_x and her\_var"
+    )
+    assert (
+        preprocessor_with_jira.jira_to_markdown(r"escaped \*stars\* stay literal")
+        == r"escaped \*stars\* stay literal"
+    )
+
     # Test code blocks
     assert preprocessor_with_jira.jira_to_markdown("{{code}}") == "`code`"
 
@@ -292,6 +310,26 @@ For more information, see [our website|https://example.com].
     assert "- Feature 1" in converted
     assert "```python" in converted
     assert "[our website](https://example.com)" in converted
+
+
+@pytest.mark.parametrize(
+    ("wiki", "expected"),
+    [
+        ("* Item with *bold text*.", "- Item with **bold text**."),
+        ("* Item with *two* bold *spans*.", "- Item with **two** bold **spans**."),
+        ("* Item with a lone * asterisk.", "- Item with a lone * asterisk."),
+        ("** Level two.", "  - Level two."),
+        ("*** Level three.", "    - Level three."),
+        ("** Nested *bold* and _italic_.", "  - Nested **bold** and *italic*."),
+        ("*# Ordered *child*.", "  1. Ordered **child**."),
+        ("#* Unordered *child*.", "  - Unordered **child**."),
+    ],
+)
+def test_jira_to_markdown_list_markers_are_not_emphasis(
+    preprocessor_with_jira, wiki, expected
+):
+    """Preserve list depth and format emphasis within the item body (#1651)."""
+    assert preprocessor_with_jira.jira_to_markdown(wiki) == expected
 
 
 def test_jira_to_markdown_citation(preprocessor_with_jira):
@@ -1051,6 +1089,24 @@ def test_normalize_code_language_mapped_languages(preprocessor_with_jira):
     assert preprocessor_with_jira._normalize_code_language("make") == "bash"
 
 
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [
+        ("csharp", "c#"),
+        ("cs", "c#"),
+        ("objective-c", "objc"),
+        ("py", "python"),
+        ("rb", "ruby"),
+        ("yml", "yaml"),
+    ],
+)
+def test_normalize_code_language_jira_aliases(
+    preprocessor_with_jira, language, expected
+):
+    """Test markdown aliases map to formatter tags accepted by Jira."""
+    assert preprocessor_with_jira._normalize_code_language(language) == expected
+
+
 def test_normalize_code_language_unmapped_returns_none(preprocessor_with_jira):
     """Test that unmapped languages return None for plain {code} blocks."""
     # Languages with no good JIRA alternative should return None
@@ -1077,6 +1133,40 @@ def hello():
     assert "{code:python}" in result
     assert "def hello():" in result
     assert "{code}" in result
+
+
+def test_markdown_to_jira_code_block_preserves_newline_after_opener(
+    preprocessor_with_jira,
+):
+    """Test fenced code content starts on the line after the Jira opener."""
+    markdown = "```python\nprint('hello')\n```"
+
+    assert preprocessor_with_jira.markdown_to_jira(markdown) == (
+        "{code:python}\nprint('hello')\n{code}"
+    )
+
+
+@pytest.mark.parametrize("language", ["c#", "c++"])
+def test_markdown_to_jira_code_block_accepts_nonword_language_tags(
+    preprocessor_with_jira, language
+):
+    """Test Jira formatter tags containing punctuation remain fenced blocks."""
+    markdown = f"```{language}\nvoid Run() {{}}\n```"
+
+    assert preprocessor_with_jira.markdown_to_jira(markdown) == (
+        f"{{code:{language}}}\nvoid Run() {{}}\n{{code}}"
+    )
+
+
+def test_markdown_to_jira_invalid_jira_language_falls_back_to_plain_code(
+    preprocessor_with_jira,
+):
+    """Test formatter tags Jira rejects fall back to an untyped code macro."""
+    markdown = "```coldfusion\nwriteOutput('hello')\n```"
+
+    assert preprocessor_with_jira.markdown_to_jira(markdown) == (
+        "{code}\nwriteOutput('hello')\n{code}"
+    )
 
 
 def test_markdown_to_jira_code_block_dockerfile_maps_to_bash(preprocessor_with_jira):

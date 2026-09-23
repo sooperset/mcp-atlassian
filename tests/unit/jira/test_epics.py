@@ -233,6 +233,7 @@ class TestEpicsMixin:
 
     def test_prepare_epic_fields_with_required_epic_name(self, epics_mixin: EpicsMixin):
         """Test Epic field preparation when Epic Name is a required field."""
+        epics_mixin._find_epic_issue_type_id = MagicMock(return_value="10001")
         # Mock get_field_ids_to_epic to return field IDs
         epics_mixin.get_field_ids_to_epic = MagicMock(
             return_value={
@@ -266,7 +267,7 @@ class TestEpicsMixin:
         assert kwargs["__epic_color_value"] == "blue"
 
         # Verify get_required_fields was called with correct parameters
-        epics_mixin.get_required_fields.assert_called_once_with("Epic", "TEST")
+        epics_mixin.get_required_fields.assert_called_once_with("10001", "TEST")
 
     def test_prepare_epic_fields_with_optional_epic_name(self, epics_mixin: EpicsMixin):
         """Test Epic field preparation when Epic Name is not a required field."""
@@ -580,6 +581,28 @@ class TestEpicsMixin:
         ):
             epics_mixin.link_issue_to_epic("TEST-123", "TEST-456")
 
+    def test_link_issue_to_localized_epic_by_issue_type_id(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Accept a localized Epic when its stable issue type ID matches."""
+        epics_mixin.jira.get_issue.side_effect = [
+            {"key": "TEST-123"},
+            {
+                "key": "EPIC-456",
+                "fields": {
+                    "project": {"key": "TEST"},
+                    "issuetype": {"id": "10001", "name": "Эпик"},
+                },
+            },
+        ]
+        epics_mixin._find_epic_issue_type_id = MagicMock(return_value="10001")
+        epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+
+        result = epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
+
+        assert result == epics_mixin.get_issue.return_value
+        epics_mixin._find_epic_issue_type_id.assert_called_once_with("TEST")
+
     def test_link_issue_to_epic_all_methods_fail(self, epics_mixin: EpicsMixin):
         """Test link_issue_to_epic when all linking methods fail."""
         # Setup mocks
@@ -676,6 +699,36 @@ class TestEpicsMixin:
             ValueError, match="Issue TEST-123 is not an Epic, it is a Task"
         ):
             epics_mixin.get_epic_issues("TEST-123")
+
+    def test_get_epic_issues_accepts_localized_epic_by_issue_type_id(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Accept a localized Epic when project metadata identifies its type ID."""
+        from mcp_atlassian.models.jira import JiraSearchResult
+
+        epics_mixin.jira.get_issue.return_value = {
+            "key": "EPIC-123",
+            "fields": {
+                "project": {"key": "TEST"},
+                "issuetype": {"id": "10001", "name": "Эпик"},
+            },
+        }
+        epics_mixin._find_epic_issue_type_id = MagicMock(return_value="10001")
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": "customfield_10014"}
+        )
+        epics_mixin.search_issues = MagicMock(
+            return_value=JiraSearchResult(
+                issues=[JiraIssue(key="TEST-456", summary="Issue 1")],
+                total=1,
+                start_at=0,
+            )
+        )
+
+        result = epics_mixin.get_epic_issues("EPIC-123")
+
+        assert [issue.key for issue in result] == ["TEST-456"]
+        epics_mixin._find_epic_issue_type_id.assert_called_once_with("TEST")
 
     def test_get_epic_issues_no_results(self, epics_mixin):
         """Test get_epic_issues when no results are found."""

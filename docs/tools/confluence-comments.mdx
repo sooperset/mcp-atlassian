@@ -37,6 +37,10 @@ Get comments for a specific Confluence page.
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | Confluence page ID (numeric ID, can be parsed from URL, e.g. from 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title' -> '123456789') |
 
+<Note>
+Replies include `parent_comment_id` when Confluence provides the parent thread. Inline comments also include `marker_ref`, `original_selection`, and `resolution_status` when available.
+</Note>
+
 ---
 
 ### Reply to Comment
@@ -72,6 +76,10 @@ Get all inline comments for a Confluence page.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | The ID of the page to get inline comments from |
+
+<Note>
+Each inline comment includes `parent_comment_id`, `marker_ref`, `original_selection`, and `resolution_status` when Confluence provides those values.
+</Note>
 
 ---
 

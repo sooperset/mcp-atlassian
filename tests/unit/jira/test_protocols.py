@@ -180,6 +180,11 @@ class TestProtocolContractValidation:
             ) -> dict[str, Any]:
                 return {}
 
+            def upload_attachments_from_content(
+                self, issue_key: str, attachments: list[dict[str, Any]]
+            ) -> dict[str, Any]:
+                return {}
+
         class NonCompliantImplementation:
             def some_other_method(self):
                 pass
