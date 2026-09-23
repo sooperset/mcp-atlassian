@@ -2569,6 +2569,7 @@ async def test_transition_issue_resolves_name_to_id(jira_client, mock_jira_fetch
     mock_jira_fetcher.transition_issue.assert_called_once_with(
         issue_key="TEST-123", transition_id="31", fields={}, comment=None
     )
+    mock_jira_fetcher.get_available_transitions.assert_called_once_with("TEST-123")
 
 
 @pytest.mark.anyio
@@ -2591,6 +2592,7 @@ async def test_transition_issue_still_accepts_numeric_id(
     mock_jira_fetcher.transition_issue.assert_called_once_with(
         issue_key="TEST-123", transition_id="31", fields={}, comment=None
     )
+    mock_jira_fetcher.get_available_transitions.assert_not_called()
 
 
 @pytest.mark.anyio

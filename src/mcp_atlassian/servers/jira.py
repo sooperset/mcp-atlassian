@@ -3000,8 +3000,16 @@ async def transition_issue(
     # Parse fields from JSON string
     update_fields = _parse_additional_fields(fields)
 
-    available_transitions = jira.get_available_transitions(issue_key)
-    resolved_transition_id = resolve_transition(available_transitions, transition_id)
+    # A raw numeric ID needs no name resolution, so skip the transitions
+    # lookup entirely and let Jira validate the ID directly on transition.
+    # Only a name (e.g. "Done") needs the lookup to resolve it to an ID.
+    if transition_id.isdigit():
+        resolved_transition_id = transition_id
+    else:
+        available_transitions = jira.get_available_transitions(issue_key)
+        resolved_transition_id = resolve_transition(
+            available_transitions, transition_id
+        )
 
     issue = jira.transition_issue(
         issue_key=issue_key,
