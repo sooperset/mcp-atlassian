@@ -280,13 +280,16 @@ class JiraPreprocessor(BasePreprocessor):
         # Text formatting (bold, italic). Delimiters preceded by a backslash
         # are wiki escapes (e.g. the intraword `\_` this module's
         # markdown_to_jira writes), not markup, so they must neither open nor
-        # close a span.
+        # close a span. Like Jira's renderer, `_` next to a word character on
+        # the outer side (`foo_bar_baz`) is literal, not italic, and so is a
+        # doubled `__` (`__init__`).
         output = re.sub(
-            r"(?<!\\)([*_])(.*?)(?<!\\)\1",
+            r"(?<!\\)\*(.*?)(?<!\\)\*"
+            r"|(?<!\\)(?<!\w)_(?!_)(.*?)(?<!\\)(?<!_)_(?!\w)",
             lambda match: (
-                ("**" if match.group(1) == "*" else "*")
-                + match.group(2)
-                + ("**" if match.group(1) == "*" else "*")
+                f"**{match.group(1)}**"
+                if match.group(1) is not None
+                else f"*{match.group(2)}*"
             ),
             output,
         )

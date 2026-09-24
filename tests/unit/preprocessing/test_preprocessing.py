@@ -332,6 +332,36 @@ def test_jira_to_markdown_list_markers_are_not_emphasis(
     assert preprocessor_with_jira.jira_to_markdown(wiki) == expected
 
 
+@pytest.mark.parametrize(
+    ("wiki", "expected"),
+    [
+        (
+            "TIFF stored for a RENDER_INVOICE_PDF_TO_TIFF buyer",
+            "TIFF stored for a RENDER_INVOICE_PDF_TO_TIFF buyer",
+        ),
+        ("AP_INVOICE_SEARCH_CONSTRAINT", "AP_INVOICE_SEARCH_CONSTRAINT"),
+        (
+            "set customfield_10101 and snake_case_word",
+            "set customfield_10101 and snake_case_word",
+        ),
+        ("say _hi_ there", "say *hi* there"),
+        ("(_hi_), _two words_.", "(*hi*), *two words*."),
+        ("_hi_ then snake_case_word", "*hi* then snake_case_word"),
+        ("see {{RENDER_INVOICE_PDF_TO_TIFF}}", "see `RENDER_INVOICE_PDF_TO_TIFF`"),
+        ("{noformat}\na_b_c _d_\n{noformat}", "```\n\na_b_c _d_\n\n```"),
+        ("*bold* and a*b*c", "**bold** and a**b**c"),
+        ("call __init__ then __del__ later", "call __init__ then __del__ later"),
+        ("__main__ and _hi_", "__main__ and *hi*"),
+        ("foo__bar__baz", "foo__bar__baz"),
+    ],
+)
+def test_jira_to_markdown_intraword_underscores_are_literal(
+    preprocessor_with_jira, wiki, expected
+):
+    """Jira's renderer never italicizes an underscore between letters or digits."""
+    assert preprocessor_with_jira.jira_to_markdown(wiki) == expected
+
+
 def test_jira_to_markdown_citation(preprocessor_with_jira):
     """Test citation markup conversion and that unmatched ?? does not cause ReDoS."""
     # Matched citation
