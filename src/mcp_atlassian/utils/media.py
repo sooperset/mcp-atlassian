@@ -66,6 +66,25 @@ def is_image_attachment(
     return False, media_type or "application/octet-stream"
 
 
+def resolve_mime_type(media_type: str | None, filename: str | None) -> str:
+    """Resolve an attachment MIME type, preferring a specific reported type.
+
+    Ambiguous or missing reported types fall back to a guess from the
+    filename extension.
+
+    Args:
+        media_type: The MIME type reported by the API.
+        filename: The attachment filename.
+
+    Returns:
+        The resolved MIME type.
+    """
+    if media_type and media_type not in _AMBIGUOUS_MIME_TYPES:
+        return media_type
+    guessed = mimetypes.guess_type(filename)[0] if filename else None
+    return guessed or media_type or "application/octet-stream"
+
+
 def fetch_and_encode_attachment(
     fetch_fn: Callable[[str], bytes | None],
     url: str,
