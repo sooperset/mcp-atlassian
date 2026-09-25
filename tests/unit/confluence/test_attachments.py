@@ -540,7 +540,11 @@ class TestAttachmentsMixin:
         assert call_args[1]["headers"]["X-Atlassian-Token"] == "no-check"
         assert call_args[1]["data"]["minorEdit"] == "false"
         # The raw bytes are sent directly as the multipart file payload
-        assert call_args[1]["files"]["file"] == ("test_file.txt", b"test content")
+        assert call_args[1]["files"]["file"] == (
+            "test_file.txt",
+            b"test content",
+            "text/plain",
+        )
 
     def test_upload_attachment_from_content_no_content_id(
         self, attachments_mixin: AttachmentsMixin
@@ -633,7 +637,38 @@ class TestAttachmentsMixin:
         assert attachments_mixin.confluence._session.post.call_count == 2
         second_call = attachments_mixin.confluence._session.post.call_args_list[1]
         assert "/child/attachment/att12345/data" in second_call[0][0]
-        assert second_call[1]["files"]["file"] == (filename, b"updated content")
+        assert second_call[1]["files"]["file"] == (
+            filename,
+            b"updated content",
+            "text/plain",
+        )
+
+    @pytest.mark.parametrize(
+        ("filename", "expected_type"),
+        [
+            ("diagram.png", "image/png"),
+            ("report.pdf", "application/pdf"),
+            ("data.unknownext", "application/octet-stream"),
+        ],
+        ids=["png", "pdf", "unknown-extension"],
+    )
+    def test_upload_attachment_from_content_sets_part_content_type(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        filename: str,
+        expected_type: str,
+    ):
+        """The multipart file part carries a Content-Type guessed from the name.
+
+        Confluence stores attachments uploaded without a part Content-Type as
+        application/octet-stream.
+        """
+        self._mock_rest_api_upload(attachments_mixin)
+
+        attachments_mixin.upload_attachment_from_content("123456", filename, b"data")
+
+        call_args = attachments_mixin.confluence._session.post.call_args
+        assert call_args[1]["files"]["file"] == (filename, b"data", expected_type)
 
     # Tests for download_attachment method
 
@@ -1518,6 +1553,54 @@ class TestDownloadAttachmentServerTool:
         assert result.resource.blob
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("title", "media_type", "expected_mime"),
+        [
+            ("diagram.png", "application/octet-stream", "image/png"),
+            ("notes.txt", "application/binary", "text/plain"),
+            ("blob", "application/octet-stream", "application/octet-stream"),
+            ("renamed.png", "application/pdf", "application/pdf"),
+        ],
+        ids=[
+            "octet-stream-png-title",
+            "binary-txt-title",
+            "octet-stream-no-extension",
+            "specific-type-wins",
+        ],
+    )
+    async def test_resolves_ambiguous_media_type_from_title(
+        self, title: str, media_type: str, expected_mime: str
+    ):
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter = None
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+
+        meta_resp = MagicMock()
+        meta_resp.json.return_value = {
+            "title": title,
+            "_links": {"download": f"/download/{title}"},
+            "extensions": {"mediaType": media_type, "fileSize": 100},
+        }
+        meta_resp.raise_for_status.return_value = None
+        mock_fetcher.confluence._session.get.return_value = meta_resp
+        mock_fetcher.fetch_attachment_content.return_value = b"content"
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment(
+                ctx=MagicMock(), attachment_id="att123456"
+            )
+
+        assert isinstance(result, EmbeddedResource)
+        assert result.resource.mimeType == expected_mime
+
+    @pytest.mark.asyncio
     async def test_returns_text_on_missing_download_url(self):
         mock_fetcher = MagicMock()
         mock_fetcher._v2_adapter = None
@@ -1649,6 +1732,41 @@ class TestDownloadContentAttachmentsServerTool:
         assert summary["downloaded"] == 1
         assert isinstance(results[1], EmbeddedResource)
         assert results[1].resource.mimeType == "text/plain"
+
+    @pytest.mark.asyncio
+    async def test_resolves_ambiguous_media_type_from_title(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+        mock_fetcher.get_content_attachments.return_value = {
+            "success": True,
+            "attachments": [
+                {
+                    "id": "att1",
+                    "title": "diagram.png",
+                    "extensions": {
+                        "mediaType": "application/octet-stream",
+                        "fileSize": 7,
+                    },
+                    "_links": {"download": "/download/diagram.png"},
+                }
+            ],
+        }
+        mock_fetcher.fetch_attachment_content.return_value = b"content"
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_content_attachments as server_download_content,
+            )
+
+            results = await server_download_content(
+                ctx=MagicMock(), content_id="123456"
+            )
+
+        assert isinstance(results[1], EmbeddedResource)
+        assert results[1].resource.mimeType == "image/png"
 
     @pytest.mark.asyncio
     async def test_returns_text_when_no_attachments(self):
