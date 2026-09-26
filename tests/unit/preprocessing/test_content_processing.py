@@ -1335,3 +1335,66 @@ class TestListParagraphSeparation:
         expected = f"{block}\nIntro\n\n- item\n"
         preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
         assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    def test_multiline_html_start_tag_preserves_literal_list_markers(self):
+        """Block tags split across lines must not get injected blank lines."""
+        markdown = '<div\n class="panel">\nline\n- literal\n</div>\n'
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_processing_resumes_after_multiline_html_start_tag(self):
+        """List separation resumes after a multiline block opening tag."""
+        markdown = '<div\n class="panel">\nline\n- literal\n</div>\nIntro\n- item\n'
+        expected = (
+            '<div\n class="panel">\nline\n- literal\n</div>\nIntro\n\n- item\n'
+        )
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    def test_multiline_doctype_quoted_system_id_closes_across_lines(self):
+        """Quoted external identifiers may span declaration continuation lines."""
+        markdown = (
+            "<!DOCTYPE root\n"
+            ' SYSTEM "http://example.com/\n'
+            'dtd">\n'
+            "Intro\n- item\n"
+        )
+        expected = (
+            "<!DOCTYPE root\n"
+            ' SYSTEM "http://example.com/\n'
+            'dtd">\n'
+            "Intro\n\n- item\n"
+        )
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
+
+    def test_multiline_doctype_bracket_on_next_line_is_preserved(self):
+        """Internal subset brackets may open on a continuation line."""
+        markdown = (
+            "<!DOCTYPE root\n"
+            " [\n"
+            "<!ELEMENT x (#PCDATA)>\n"
+            "- literal\n"
+            "]>\n"
+        )
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == markdown
+
+    def test_processing_resumes_after_multiline_doctype(self):
+        """A real list after a multiline declaration still gets separated."""
+        markdown = (
+            "<!DOCTYPE root\n"
+            " [\n"
+            "<!ELEMENT x (#PCDATA)>\n"
+            "]>\n"
+            "Intro\n- item\n"
+        )
+        expected = (
+            "<!DOCTYPE root\n"
+            " [\n"
+            "<!ELEMENT x (#PCDATA)>\n"
+            "]>\n"
+            "Intro\n\n- item\n"
+        )
+        preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
+        assert preprocessor._ensure_list_paragraph_separation(markdown) == expected

@@ -116,6 +116,10 @@ class ConfluencePreprocessor(BasePreprocessor):
         r"^ {0,3}<(?P<tag>[A-Za-z][\w:-]*)(?:\s[^>]*)?>",
         re.IGNORECASE,
     )
+    _HTML_BLOCK_TAG_START_PATTERN = re.compile(
+        r"^ {0,3}<(?P<tag>[A-Za-z][\w:-]*)",
+        re.IGNORECASE,
+    )
     _HTML_TAG_PATTERN = re.compile(
         r"<(?P<closing>/)?(?P<tag>[A-Za-z][\w:-]*)(?:\s[^>]*)?\s*/?>",
         re.IGNORECASE,
@@ -278,7 +282,10 @@ class ConfluencePreprocessor(BasePreprocessor):
         in_processing_instruction = False
         in_cdata = False
         in_html_declaration = False
+        html_declaration_quote: str | None = None
         html_declaration_has_internal_subset = False
+        html_open_tag_buffer: str | None = None
+        html_open_tag_quote: str | None = None
         previous_line: str | None = None
 
         for line in lines:
@@ -307,12 +314,37 @@ class ConfluencePreprocessor(BasePreprocessor):
 
             if in_html_declaration:
                 result.append(line)
-                if cls._html_declaration_is_closed(
+                (
+                    html_declaration_quote,
+                    html_declaration_has_internal_subset,
+                    declaration_closed,
+                ) = cls._feed_html_declaration_line(
                     line_content,
+                    quote=html_declaration_quote,
                     has_internal_subset=html_declaration_has_internal_subset,
-                ):
+                )
+                if declaration_closed:
                     in_html_declaration = False
+                    html_declaration_quote = None
                     html_declaration_has_internal_subset = False
+                previous_line = line
+                continue
+
+            if html_open_tag_buffer is not None:
+                result.append(line)
+                html_open_tag_buffer = f"{html_open_tag_buffer}\n{line_content}"
+                html_open_tag_quote, tag_closed = cls._scan_line_for_unquoted_gt(
+                    line_content, html_open_tag_quote
+                )
+                if tag_closed:
+                    html_block_tag, html_block_depth = cls._html_block_open_from_opener(
+                        html_open_tag_buffer
+                    )
+                    if html_block_tag is not None and html_block_depth <= 0:
+                        html_block_tag = None
+                        html_block_depth = 0
+                    html_open_tag_buffer = None
+                    html_open_tag_quote = None
                 previous_line = line
                 continue
 
@@ -363,18 +395,32 @@ class ConfluencePreprocessor(BasePreprocessor):
 
             if cls._HTML_DECLARATION_OPEN_PATTERN.match(line_content):
                 result.append(line)
-                html_declaration_has_internal_subset = (
-                    cls._html_declaration_contains_internal_subset(line_content)
-                )
-                if not cls._html_declaration_is_closed(
+                (
+                    html_declaration_quote,
+                    html_declaration_has_internal_subset,
+                    declaration_closed,
+                ) = cls._feed_html_declaration_line(
                     line_content,
-                    has_internal_subset=html_declaration_has_internal_subset,
-                ):
+                    quote=None,
+                    has_internal_subset=False,
+                )
+                if not declaration_closed:
                     in_html_declaration = True
-                else:
-                    html_declaration_has_internal_subset = False
                 previous_line = line
                 continue
+
+            tag_start_match = cls._HTML_BLOCK_TAG_START_PATTERN.match(line_content)
+            if tag_start_match:
+                tag_start_index = line_content.find("<")
+                html_open_tag_quote, tag_closed = cls._scan_line_for_unquoted_gt(
+                    line_content[tag_start_index:],
+                    None,
+                )
+                if not tag_closed:
+                    html_open_tag_buffer = line_content
+                    result.append(line)
+                    previous_line = line
+                    continue
 
             fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
             if fence_match:
@@ -416,23 +462,28 @@ class ConfluencePreprocessor(BasePreprocessor):
         return "".join(result)
 
     @staticmethod
-    def _html_declaration_contains_internal_subset(line: str) -> bool:
-        """Return whether a declaration opens an internal subset."""
-        quote: str | None = None
+    def _scan_line_for_unquoted_gt(line: str, quote: str | None) -> tuple[str | None, bool]:
+        """Track quoted attributes and detect an unquoted ``>``."""
         for character in line:
             if quote is not None:
                 if character == quote:
                     quote = None
-            elif character in {"'", '"'}:
+                continue
+            if character in {"'", '"'}:
                 quote = character
-            elif character == "[":
-                return True
-        return False
+            elif character == ">":
+                return quote, True
+        return quote, False
 
-    @staticmethod
-    def _html_declaration_is_closed(line: str, *, has_internal_subset: bool) -> bool:
-        """Return whether a declaration closes on the current line."""
-        quote: str | None = None
+    @classmethod
+    def _feed_html_declaration_line(
+        cls,
+        line: str,
+        *,
+        quote: str | None,
+        has_internal_subset: bool,
+    ) -> tuple[str | None, bool, bool]:
+        """Advance declaration parsing and return quote, subset flag, and closed."""
         for index, character in enumerate(line):
             if quote is not None:
                 if character == quote:
@@ -440,12 +491,31 @@ class ConfluencePreprocessor(BasePreprocessor):
                 continue
             if character in {"'", '"'}:
                 quote = character
+            elif not has_internal_subset and character == "[":
+                has_internal_subset = True
             elif has_internal_subset:
                 if character == "]" and line[index + 1 : index + 2] == ">":
-                    return True
+                    return quote, has_internal_subset, True
             elif character == ">":
-                return True
-        return False
+                return quote, has_internal_subset, True
+        return quote, has_internal_subset, False
+
+    @classmethod
+    def _html_block_open_from_opener(cls, opener: str) -> tuple[str | None, int]:
+        """Return the block tag and depth delta for a completed opening tag."""
+        normalized = opener.replace("\r", "").replace("\n", " ")
+        match = cls._HTML_BLOCK_TAG_START_PATTERN.match(normalized)
+        if match is None:
+            return None, 0
+        tag = match.group("tag").lower()
+        if tag not in cls._HTML_BLOCK_TAGS:
+            return None, 0
+        if tag in cls._HTML_VOID_BLOCK_TAGS:
+            return None, 0
+        depth = cls._html_block_depth_delta(normalized, tag)
+        if depth <= 0:
+            return None, 0
+        return tag, depth
 
     @staticmethod
     def _line_ending(line: str, previous_line: str) -> str:
