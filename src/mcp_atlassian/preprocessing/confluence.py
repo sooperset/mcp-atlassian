@@ -462,7 +462,9 @@ class ConfluencePreprocessor(BasePreprocessor):
         return "".join(result)
 
     @staticmethod
-    def _scan_line_for_unquoted_gt(line: str, quote: str | None) -> tuple[str | None, bool]:
+    def _scan_line_for_unquoted_gt(
+        line: str, quote: str | None
+    ) -> tuple[str | None, bool]:
         """Track quoted attributes and detect an unquoted ``>``."""
         for character in line:
             if quote is not None:

@@ -1351,8 +1351,12 @@ class TestListParagraphSeparation:
 
     def test_multiline_doctype_quoted_system_id_closes_across_lines(self):
         """Quoted external identifiers may span declaration continuation lines."""
-        markdown = '<!DOCTYPE root\n SYSTEM "http://example.com/\ndtd">\nIntro\n- item\n'
-        expected = '<!DOCTYPE root\n SYSTEM "http://example.com/\ndtd">\nIntro\n\n- item\n'
+        markdown = (
+            '<!DOCTYPE root\n SYSTEM "http://example.com/\ndtd">\nIntro\n- item\n'
+        )
+        expected = (
+            '<!DOCTYPE root\n SYSTEM "http://example.com/\ndtd">\nIntro\n\n- item\n'
+        )
         preprocessor = ConfluencePreprocessor(base_url="https://test.atlassian.net")
         assert preprocessor._ensure_list_paragraph_separation(markdown) == expected
 
