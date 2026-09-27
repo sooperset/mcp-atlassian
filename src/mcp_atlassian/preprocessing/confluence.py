@@ -31,6 +31,103 @@ class ConfluencePreprocessor(BasePreprocessor):
     # restoring an opt-out task list cannot remove user-supplied characters.
     _TASK_MARKER_PREFIX = "\ue000"
     _TASK_MARKER_PATTERN = re.compile(r"(<li\b[^>]*>)(\[[ xX]\])")
+    _LIST_LINE_PATTERN = re.compile(r"^ {0,3}(?:[-*+]|\d+\.)[ \t]+")
+    _THEMATIC_BREAK_PATTERN = re.compile(
+        r"^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$"
+    )
+    _HEADING_LINE_PATTERN = re.compile(r"^ {0,3}#{1,6}[ \t]+")
+    _BLOCKQUOTE_LINE_PATTERN = re.compile(r"^ {0,3}>")
+    _FENCE_LINE_PATTERN = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
+    _UNORDERED_LIST_INTERRUPT_PATTERN = re.compile(r"^ {0,3}[-*+][ \t]+\S")
+    _ORDERED_LIST_INTERRUPT_PATTERN = re.compile(r"^ {0,3}1\.[ \t]+\S")
+    _HTML_BLOCK_TAGS = frozenset(
+        {
+            "address",
+            "article",
+            "aside",
+            "blockquote",
+            "body",
+            "canvas",
+            "caption",
+            "center",
+            "colgroup",
+            "dd",
+            "details",
+            "dialog",
+            "dir",
+            "div",
+            "dl",
+            "dt",
+            "fieldset",
+            "figcaption",
+            "figure",
+            "footer",
+            "form",
+            "group",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "head",
+            "header",
+            "html",
+            "hgroup",
+            "iframe",
+            "legend",
+            "li",
+            "main",
+            "menu",
+            "menuitem",
+            "math",
+            "map",
+            "nav",
+            "noscript",
+            "noframes",
+            "noembed",
+            "ol",
+            "object",
+            "option",
+            "output",
+            "p",
+            "pre",
+            "progress",
+            "script",
+            "section",
+            "summary",
+            "table",
+            "tbody",
+            "td",
+            "tfoot",
+            "th",
+            "thead",
+            "title",
+            "tr",
+            "ul",
+            "video",
+            "hr",
+            "style",
+            "textarea",
+        }
+    )
+    _HTML_VOID_BLOCK_TAGS = frozenset({"hr"})
+    _HTML_BLOCK_OPEN_PATTERN = re.compile(
+        r"^ {0,3}<(?P<tag>[A-Za-z][\w:-]*)(?:\s[^>]*)?>",
+        re.IGNORECASE,
+    )
+    _HTML_BLOCK_TAG_START_PATTERN = re.compile(
+        r"^ {0,3}<(?P<tag>[A-Za-z][\w:-]*)",
+        re.IGNORECASE,
+    )
+    _HTML_TAG_PATTERN = re.compile(
+        r"<(?P<closing>/)?(?P<tag>[A-Za-z][\w:-]*)(?:\s[^>]*)?\s*/?>",
+        re.IGNORECASE,
+    )
+    _HTML_COMMENT_OPEN_PATTERN = re.compile(r"^ {0,3}<!--")
+    _HTML_PROCESSING_INSTRUCTION_OPEN_PATTERN = re.compile(r"^ {0,3}<\?")
+    _HTML_DECLARATION_OPEN_PATTERN = re.compile(r"^ {0,3}<!(?!--|\[)")
+    _HTML_CDATA_OPEN_PATTERN = re.compile(r"^ {0,3}<!\[CDATA\[")
 
     def __init__(self, base_url: str) -> None:
         """
@@ -79,6 +176,7 @@ class ConfluencePreprocessor(BasePreprocessor):
         Returns:
             Confluence storage format (XHTML) string
         """
+        markdown_content = self._ensure_list_paragraph_separation(markdown_content)
         try:
             # First convert markdown to HTML
             html_content = self._fix_attachment_images(
@@ -162,6 +260,307 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = self._apply_table_layout(storage_format, table_layout)
 
             return storage_format
+
+    @classmethod
+    def _ensure_list_paragraph_separation(cls, markdown_content: str) -> str:
+        """Insert blank lines before lists that directly follow paragraph lines.
+
+        Python-Markdown (used by md2conf) does not implement CommonMark's rule
+        that a list may interrupt a paragraph without a blank line in between.
+        """
+        if not markdown_content:
+            return markdown_content
+
+        lines = markdown_content.splitlines(keepends=True)
+        result: list[str] = []
+        in_fence = False
+        fence_char: str | None = None
+        fence_length = 0
+        html_block_tag: str | None = None
+        html_block_depth = 0
+        in_html_comment = False
+        in_processing_instruction = False
+        in_cdata = False
+        in_html_declaration = False
+        html_declaration_quote: str | None = None
+        html_declaration_has_internal_subset = False
+        html_open_tag_buffer: str | None = None
+        html_open_tag_quote: str | None = None
+        previous_line: str | None = None
+
+        for line in lines:
+            line_content = line.rstrip("\r\n")
+
+            if in_html_comment:
+                result.append(line)
+                if "-->" in line_content:
+                    in_html_comment = False
+                previous_line = line
+                continue
+
+            if in_processing_instruction:
+                result.append(line)
+                if "?>" in line_content:
+                    in_processing_instruction = False
+                previous_line = line
+                continue
+
+            if in_cdata:
+                result.append(line)
+                if "]]>" in line_content:
+                    in_cdata = False
+                previous_line = line
+                continue
+
+            if in_html_declaration:
+                result.append(line)
+                (
+                    html_declaration_quote,
+                    html_declaration_has_internal_subset,
+                    declaration_closed,
+                ) = cls._feed_html_declaration_line(
+                    line_content,
+                    quote=html_declaration_quote,
+                    has_internal_subset=html_declaration_has_internal_subset,
+                )
+                if declaration_closed:
+                    in_html_declaration = False
+                    html_declaration_quote = None
+                    html_declaration_has_internal_subset = False
+                previous_line = line
+                continue
+
+            if html_open_tag_buffer is not None:
+                result.append(line)
+                html_open_tag_buffer = f"{html_open_tag_buffer}\n{line_content}"
+                html_open_tag_quote, tag_closed = cls._scan_line_for_unquoted_gt(
+                    line_content, html_open_tag_quote
+                )
+                if tag_closed:
+                    html_block_tag, html_block_depth = cls._html_block_open_from_opener(
+                        html_open_tag_buffer
+                    )
+                    if html_block_tag is not None and html_block_depth <= 0:
+                        html_block_tag = None
+                        html_block_depth = 0
+                    html_open_tag_buffer = None
+                    html_open_tag_quote = None
+                previous_line = line
+                continue
+
+            if html_block_tag is not None:
+                result.append(line)
+                html_block_depth += cls._html_block_depth_delta(
+                    line_content, html_block_tag
+                )
+                if html_block_depth <= 0:
+                    html_block_tag = None
+                    html_block_depth = 0
+                previous_line = line
+                continue
+
+            if in_fence:
+                fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
+                if fence_match:
+                    marker = fence_match.group("marker")
+                    if (
+                        fence_char == marker[0]
+                        and len(marker) >= fence_length
+                        and not fence_match.group("info").strip()
+                    ):
+                        in_fence = False
+                        fence_char = None
+                        fence_length = 0
+                result.append(line)
+                previous_line = line
+                continue
+
+            if cls._HTML_COMMENT_OPEN_PATTERN.match(line_content):
+                result.append(line)
+                in_html_comment = "-->" not in line_content
+                previous_line = line
+                continue
+
+            if cls._HTML_CDATA_OPEN_PATTERN.match(line_content):
+                result.append(line)
+                in_cdata = "]]>" not in line_content
+                previous_line = line
+                continue
+
+            if cls._HTML_PROCESSING_INSTRUCTION_OPEN_PATTERN.match(line_content):
+                result.append(line)
+                in_processing_instruction = "?>" not in line_content
+                previous_line = line
+                continue
+
+            if cls._HTML_DECLARATION_OPEN_PATTERN.match(line_content):
+                result.append(line)
+                (
+                    html_declaration_quote,
+                    html_declaration_has_internal_subset,
+                    declaration_closed,
+                ) = cls._feed_html_declaration_line(
+                    line_content,
+                    quote=None,
+                    has_internal_subset=False,
+                )
+                if not declaration_closed:
+                    in_html_declaration = True
+                previous_line = line
+                continue
+
+            tag_start_match = cls._HTML_BLOCK_TAG_START_PATTERN.match(line_content)
+            if tag_start_match:
+                tag_start_index = line_content.find("<")
+                html_open_tag_quote, tag_closed = cls._scan_line_for_unquoted_gt(
+                    line_content[tag_start_index:],
+                    None,
+                )
+                if not tag_closed:
+                    html_open_tag_buffer = line_content
+                    result.append(line)
+                    previous_line = line
+                    continue
+
+            fence_match = cls._FENCE_LINE_PATTERN.match(line_content)
+            if fence_match:
+                marker = fence_match.group("marker")
+                in_fence = True
+                fence_char = marker[0]
+                fence_length = len(marker)
+                result.append(line)
+                previous_line = line
+                continue
+
+            html_open_match = cls._HTML_BLOCK_OPEN_PATTERN.match(line_content)
+            if html_open_match:
+                tag = html_open_match.group("tag").lower()
+                if tag in cls._HTML_BLOCK_TAGS:
+                    if tag not in cls._HTML_VOID_BLOCK_TAGS:
+                        html_block_depth = cls._html_block_depth_delta(
+                            line_content, tag
+                        )
+                    if tag not in cls._HTML_VOID_BLOCK_TAGS and html_block_depth > 0:
+                        html_block_tag = tag
+                result.append(line)
+                previous_line = line
+                continue
+
+            if (
+                previous_line is not None
+                and cls._may_interrupt_paragraph_list_line(line)
+                and previous_line.strip()
+                and not cls._is_list_line(previous_line)
+                and not cls._HEADING_LINE_PATTERN.match(previous_line)
+                and not cls._BLOCKQUOTE_LINE_PATTERN.match(previous_line)
+            ):
+                result.append(cls._line_ending(line, previous_line))
+
+            result.append(line)
+            previous_line = line
+
+        return "".join(result)
+
+    @staticmethod
+    def _scan_line_for_unquoted_gt(
+        line: str, quote: str | None
+    ) -> tuple[str | None, bool]:
+        """Track quoted attributes and detect an unquoted ``>``."""
+        for character in line:
+            if quote is not None:
+                if character == quote:
+                    quote = None
+                continue
+            if character in {"'", '"'}:
+                quote = character
+            elif character == ">":
+                return quote, True
+        return quote, False
+
+    @classmethod
+    def _feed_html_declaration_line(
+        cls,
+        line: str,
+        *,
+        quote: str | None,
+        has_internal_subset: bool,
+    ) -> tuple[str | None, bool, bool]:
+        """Advance declaration parsing and return quote, subset flag, and closed."""
+        for index, character in enumerate(line):
+            if quote is not None:
+                if character == quote:
+                    quote = None
+                continue
+            if character in {"'", '"'}:
+                quote = character
+            elif not has_internal_subset and character == "[":
+                has_internal_subset = True
+            elif has_internal_subset:
+                if character == "]" and line[index + 1 : index + 2] == ">":
+                    return quote, has_internal_subset, True
+            elif character == ">":
+                return quote, has_internal_subset, True
+        return quote, has_internal_subset, False
+
+    @classmethod
+    def _html_block_open_from_opener(cls, opener: str) -> tuple[str | None, int]:
+        """Return the block tag and depth delta for a completed opening tag."""
+        normalized = opener.replace("\r", "").replace("\n", " ")
+        match = cls._HTML_BLOCK_TAG_START_PATTERN.match(normalized)
+        if match is None:
+            return None, 0
+        tag = match.group("tag").lower()
+        if tag not in cls._HTML_BLOCK_TAGS:
+            return None, 0
+        if tag in cls._HTML_VOID_BLOCK_TAGS:
+            return None, 0
+        depth = cls._html_block_depth_delta(normalized, tag)
+        if depth <= 0:
+            return None, 0
+        return tag, depth
+
+    @staticmethod
+    def _line_ending(line: str, previous_line: str) -> str:
+        """Return the line-ending convention used by adjacent input lines."""
+        for candidate in (line, previous_line):
+            if candidate.endswith("\r\n"):
+                return "\r\n"
+            if candidate.endswith(("\n", "\r")):
+                return candidate[-1]
+        return "\n"
+
+    @classmethod
+    def _html_block_depth_delta(cls, line: str, tag: str) -> int:
+        """Return the open-minus-close count for one HTML block tag line."""
+        depth_delta = 0
+        for match in cls._HTML_TAG_PATTERN.finditer(line):
+            if match.group("tag").lower() != tag:
+                continue
+            if match.group("closing"):
+                depth_delta -= 1
+            elif not match.group(0).rstrip().endswith("/>"):
+                depth_delta += 1
+        return depth_delta
+
+    @classmethod
+    def _is_list_line(cls, line: str) -> bool:
+        """Return whether a line starts a Markdown list rather than a rule."""
+        line_content = line.rstrip("\r\n")
+        return bool(
+            cls._LIST_LINE_PATTERN.match(line_content)
+            and not cls._THEMATIC_BREAK_PATTERN.fullmatch(line_content)
+        )
+
+    @classmethod
+    def _may_interrupt_paragraph_list_line(cls, line: str) -> bool:
+        """Return whether a list may interrupt a paragraph without a blank line."""
+        line_content = line.rstrip("\r\n")
+        if cls._THEMATIC_BREAK_PATTERN.fullmatch(line_content):
+            return False
+        return bool(
+            cls._UNORDERED_LIST_INTERRUPT_PATTERN.match(line_content)
+            or cls._ORDERED_LIST_INTERRUPT_PATTERN.match(line_content)
+        )
 
     @classmethod
     def _get_task_list_marker_prefix(cls, html_content: str) -> str:
