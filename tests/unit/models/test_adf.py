@@ -396,6 +396,48 @@ class TestMarkdownToAdf:
         assert len(italic_nodes) >= 1
         assert italic_nodes[0]["text"] == "italic"
 
+    def test_asterisk_bridge_over_wildcard_suffixes_stays_literal(self):
+        """Two standalone wildcard-style trailing asterisks on one line (a
+        common ops/glob convention, e.g. "name_*" as a prefix match) must
+        not pair up and swallow everything in between as an accidental
+        italic span. CommonMark's actual flanking rule -- an opening `*`
+        can't be followed by whitespace, a closing `*` can't be preceded
+        by whitespace -- was missing here; both asterisks below are
+        followed by a space, so neither can open/close in the first
+        place."""
+        md = "Saw metric_name_* and other_metric_* in the dashboard."
+        result = markdown_to_adf(md)
+        para = result["content"][0]
+        combined_text = "".join(n["text"] for n in para["content"])
+        assert combined_text == md
+        assert not any(n.get("marks") for n in para["content"])
+
+    def test_single_wildcard_asterisk_alone_stays_literal(self):
+        """A single trailing wildcard asterisk with no partner on the line
+        was already safe before this fix (no closing delimiter to pair
+        with) -- pinned here as a baseline alongside the two-asterisk
+        case above."""
+        result = markdown_to_adf("all worker-node-* hosts crossed a threshold")
+        para = result["content"][0]
+        assert len(para["content"]) == 1
+        assert (
+            para["content"][0]["text"] == "all worker-node-* hosts crossed a threshold"
+        )
+        assert "marks" not in para["content"][0]
+
+    def test_genuine_asterisk_italic_unaffected_by_flanking_rule(self):
+        """Normal, whitespace-flanked *italic* usage must still work after
+        adding the not-followed/preceded-by-whitespace constraint."""
+        result = markdown_to_adf("this is *important* to check.")
+        para = result["content"][0]
+        em_nodes = [
+            n
+            for n in para["content"]
+            if any(m["type"] == "em" for m in n.get("marks", []))
+        ]
+        assert len(em_nodes) == 1
+        assert em_nodes[0]["text"] == "important"
+
     def test_inline_code(self):
         """`code` text gets a code mark."""
         result = markdown_to_adf("`code`")
@@ -438,6 +480,120 @@ class TestMarkdownToAdf:
         assert link_nodes[0]["text"] == "click here"
         link_mark = next(m for m in link_nodes[0]["marks"] if m["type"] == "link")
         assert link_mark["attrs"]["href"] == "https://example.com"
+
+    @pytest.mark.parametrize(
+        "md",
+        [
+            "set level to [WARN](not a url, just a note)",
+            "the response was [404](page not found, no scheme here)",
+        ],
+    )
+    def test_bracket_immediately_followed_by_non_url_parens_stays_literal(
+        self, md: str
+    ) -> None:
+        """[text](something) is only a real link if "something" looks like
+        a URL/path. A bracketed phrase immediately followed by an
+        unrelated parenthetical with no space in between must not become
+        a link to nonsense -- that renders as plain link-styled text with
+        the brackets invisible, which reads as the brackets having been
+        silently stripped."""
+        result = markdown_to_adf(md)
+        para = result["content"][0]
+        assert not any(
+            any(m["type"] == "link" for m in n.get("marks", []))
+            for n in para["content"]
+        )
+        combined_text = "".join(n["text"] for n in para["content"])
+        assert combined_text == md
+
+    def test_bracket_paren_still_becomes_link_when_href_looks_like_a_url(self):
+        """Sanity check that the rejection above is narrow: a real
+        scheme-based href right after brackets still becomes a link even
+        with no space before the opening paren."""
+        result = markdown_to_adf("see [docs](https://example.com/docs) for more")
+        para = result["content"][0]
+        link_node = next(
+            n
+            for n in para["content"]
+            if any(m["type"] == "link" for m in n.get("marks", []))
+        )
+        assert link_node["text"] == "docs"
+
+    @pytest.mark.parametrize(
+        "md, expected_href",
+        [
+            ("see [docs](docs.example.com) for more", "docs.example.com"),
+            ("call [support](tel:+15551234567) now", "tel:+15551234567"),
+            ("see [wiki](www.example.com/wiki) for more", "www.example.com/wiki"),
+        ],
+    )
+    def test_link_href_without_scheme_still_recognized(
+        self, md: str, expected_href: str
+    ) -> None:
+        """A bare domain with no scheme (common shorthand when pasting
+        links into Jira) or a non-slash URI scheme like tel: must still be
+        recognized as a real link -- these all linkified before the
+        href-validation guard was added, and rejecting them was a
+        regression, not a narrowing of the "unrelated parenthetical"
+        case the guard targets."""
+        result = markdown_to_adf(md)
+        para = result["content"][0]
+        link_node = next(
+            n
+            for n in para["content"]
+            if any(m["type"] == "link" for m in n.get("marks", []))
+        )
+        link_mark = next(m for m in link_node["marks"] if m["type"] == "link")
+        assert link_mark["attrs"]["href"] == expected_href
+
+    def test_legacy_wiki_style_link(self):
+        """Legacy Jira/Confluence [Display Text|url] syntax (common in
+        content authored before this converter existed) is recognized as
+        a real link, not left as literal text requiring manual rewriting
+        to Markdown link syntax first."""
+        result = markdown_to_adf(
+            "See [Runbook|https://wiki.example.com/runbook] for details"
+        )
+        para = result["content"][0]
+        link_node = next(
+            n
+            for n in para["content"]
+            if any(m["type"] == "link" for m in n.get("marks", []))
+        )
+        assert link_node["text"] == "Runbook"
+        link_mark = next(m for m in link_node["marks"] if m["type"] == "link")
+        assert link_mark["attrs"]["href"] == "https://wiki.example.com/runbook"
+
+    def test_bracket_pipe_non_url_stays_literal(self):
+        """[text|something] where "something" isn't a URL stays literal
+        rather than being misread as a legacy wiki link."""
+        result = markdown_to_adf("the value is [name|value] pair")
+        para = result["content"][0]
+        assert not any(
+            any(m["type"] == "link" for m in n.get("marks", []))
+            for n in para["content"]
+        )
+        combined_text = "".join(n["text"] for n in para["content"])
+        assert combined_text == "the value is [name|value] pair"
+
+    def test_bracket_pipe_rejection_still_processes_embedded_formatting(self):
+        """When the wikilink pattern's href doesn't look like a URL, the
+        display text is still recursed into for its own inline formatting
+        instead of the whole thing being flattened to plain text."""
+        result = markdown_to_adf("the value is [**name**|value] pair")
+        para = result["content"][0]
+        assert not any(
+            any(m["type"] == "link" for m in n.get("marks", []))
+            for n in para["content"]
+        )
+        bold_node = next(
+            n
+            for n in para["content"]
+            if any(m["type"] == "strong" for m in n.get("marks", []))
+        )
+        assert bold_node["text"] == "name"
+        combined_text = "".join(n["text"] for n in para["content"])
+        assert combined_text == "the value is [name|value] pair"
 
     # -- Mentions -----------------------------------------------------------
 
