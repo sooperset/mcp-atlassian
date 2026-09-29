@@ -898,6 +898,16 @@ class PagesMixin(ConfluenceClient):
                 logger.debug(
                     f"Using v1 API for token/basic authentication to update page '{page_id}'"
                 )
+                # atlassian-python-api's update_page always writes the
+                # content-appearance-draft/-published properties and defaults
+                # full_width to False, so a plain content update silently resets a
+                # full-width page to fixed-width on Confluence Cloud. Carry the
+                # page's current width through the call so updating the body does
+                # not change the layout.
+                current_width = (
+                    self._get_page_width(page_id) if page_width is None else None
+                )
+
                 update_kwargs = {
                     "page_id": page_id,
                     "title": title,
@@ -907,11 +917,17 @@ class PagesMixin(ConfluenceClient):
                     "minor_edit": is_minor_edit,
                     "version_comment": version_comment,
                     "always_update": True,
+                    "full_width": current_width == "full-width",
                 }
                 if parent_id:
                     update_kwargs["parent_id"] = parent_id
 
                 self.confluence.update_page(**update_kwargs)
+
+                # full_width is a boolean, so 'max' cannot be round-tripped
+                # through it — restore it explicitly.
+                if current_width == "max":
+                    self._set_page_width(page_id, current_width)
 
             # Set or remove the page emoji if provided
             if emoji is not None:
