@@ -316,7 +316,19 @@ def _parse_list_block(
             child_items, child_type, i = _parse_list_block(
                 lines, i, peek[0], jira_base_url
             )
-            children.append({"type": child_type, "content": child_items})
+            # Inconsistent indentation among what's meant to be one run of
+            # sibling children (e.g. one line pasted/retyped at a
+            # different indent than the others) makes each indent value
+            # its own _parse_list_block call, so this can legitimately
+            # fire more than once per item. Merge consecutive results of
+            # the same list type into one node instead of leaving them as
+            # separate list nodes -- otherwise an ordered list restarts
+            # its numbering at every indent change even though every item
+            # is meant to be one continuous list under the same parent.
+            if children and children[-1]["type"] == child_type:
+                children[-1]["content"].extend(child_items)
+            else:
+                children.append({"type": child_type, "content": child_items})
         item = _make_list_item(item_text, jira_base_url)
         item["content"].extend(children)
         items.append(item)

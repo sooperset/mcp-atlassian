@@ -687,6 +687,40 @@ class TestMarkdownToAdf:
         level3 = level2["content"][1]["content"][0]
         assert level3["content"][0]["content"][0]["text"] == "C"
 
+    def test_nested_list_inconsistent_child_indent_stays_one_list(self) -> None:
+        """Sibling children at inconsistent indent levels under the same
+        parent (e.g. one line pasted/retyped at a different indent than
+        the others -- a very plausible real-world mistake) must still
+        produce one combined list, not fragment into a separate list node
+        per distinct indent value. For an ordered list, fragmenting also
+        means Jira restarts numbering at 1 for every fragment."""
+        md = "- A\n    1. B\n  2. C\n  3. D"
+        result = markdown_to_adf(md)
+        item_a = result["content"][0]["content"][0]
+        nested_lists = [n for n in item_a["content"] if n["type"] == "orderedList"]
+        assert len(nested_lists) == 1
+        texts = [
+            item["content"][0]["content"][0]["text"]
+            for item in nested_lists[0]["content"]
+        ]
+        assert texts == ["B", "C", "D"]
+
+    def test_nested_list_inconsistent_indent_with_genuine_deeper_level(self) -> None:
+        """Same indent-drift tolerance, but a genuinely deeper line (D,
+        more indented than B/C) must still nest under its own parent (C)
+        rather than being flattened into the merged list."""
+        md = "- A\n    1. B\n  2. C\n      3. D"
+        result = markdown_to_adf(md)
+        item_a = result["content"][0]["content"][0]
+        nested_lists = [n for n in item_a["content"] if n["type"] == "orderedList"]
+        assert len(nested_lists) == 1
+        b_item, c_item = nested_lists[0]["content"]
+        assert b_item["content"][0]["content"][0]["text"] == "B"
+        assert c_item["content"][0]["content"][0]["text"] == "C"
+        d_list = c_item["content"][1]
+        assert d_list["type"] == "orderedList"
+        assert d_list["content"][0]["content"][0]["content"][0]["text"] == "D"
+
     def test_nested_list_tab_indent(self) -> None:
         """A tab is treated as four spaces of indent for nesting purposes."""
         md = "- A\n\t- B"
