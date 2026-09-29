@@ -67,6 +67,17 @@ def _append_text_nodes(
 
 
 _LOOKS_LIKE_URL_RE = re.compile(r"^(?:[a-zA-Z][a-zA-Z0-9+.-]*://|mailto:|/|#|\.\.?/)")
+_NO_SLASH_SCHEMES = ("tel:", "sms:")
+# A bare domain-ish href with no scheme at all (e.g. "example.com/path" or
+# "www.example.com") -- common shorthand when pasting links into Jira.
+# Requires at least one ".label" segment and, since this is checked only
+# after confirming the string has no whitespace, safely excludes ordinary
+# prose (which almost never looks like this end to end).
+_BARE_DOMAIN_RE = re.compile(
+    r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?"
+    r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+"
+    r"(?::\d+)?(?:[/?#]\S*)?$"
+)
 
 
 def _looks_like_url(href: str) -> bool:
@@ -75,16 +86,27 @@ def _looks_like_url(href: str) -> bool:
     bracketed phrase.
 
     ``[text](href)`` is only treated as a real link when ``href`` has a URL
-    scheme (``https://``, ``mailto:``, ...) or looks like a path (``/...``,
-    ``#...``, ``./...``). Without this check, ordinary prose like
-    ``[note](not a url, just a parenthetical)`` -- a bracketed phrase
-    immediately followed by an unrelated parenthetical with zero
-    intervening whitespace -- gets misread as a link whose href is
-    nonsense text, and the brackets effectively disappear visually since
-    Jira just renders it as plain link-styled text with no visible
-    brackets.
+    scheme (``https://``, ``mailto:``, ``tel:``, ...), looks like a path
+    (``/...``, ``#...``, ``./...``), or looks like a bare domain with no
+    scheme (``example.com/path``, ``www.example.com``) -- the last of
+    these is common shorthand when pasting links into Jira, and rejecting
+    it was a regression: unlike the original motivating case below, a
+    bare domain never contains whitespace, so it can't be confused with
+    prose.
+
+    Without any of this, ordinary prose like ``[note](not a url, just a
+    parenthetical)`` -- a bracketed phrase immediately followed by an
+    unrelated parenthetical with zero intervening whitespace -- gets
+    misread as a link whose href is nonsense text, and the brackets
+    effectively disappear visually since Jira just renders it as plain
+    link-styled text with no visible brackets.
     """
-    return bool(_LOOKS_LIKE_URL_RE.match(href.strip()))
+    href = href.strip()
+    if _LOOKS_LIKE_URL_RE.match(href) or href.startswith(_NO_SLASH_SCHEMES):
+        return True
+    if any(c.isspace() for c in href):
+        return False
+    return bool(_BARE_DOMAIN_RE.match(href))
 
 
 def _parse_inline_formatting(

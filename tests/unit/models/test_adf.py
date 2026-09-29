@@ -519,6 +519,33 @@ class TestMarkdownToAdf:
         )
         assert link_node["text"] == "docs"
 
+    @pytest.mark.parametrize(
+        "md, expected_href",
+        [
+            ("see [docs](docs.example.com) for more", "docs.example.com"),
+            ("call [support](tel:+15551234567) now", "tel:+15551234567"),
+            ("see [wiki](www.example.com/wiki) for more", "www.example.com/wiki"),
+        ],
+    )
+    def test_link_href_without_scheme_still_recognized(
+        self, md: str, expected_href: str
+    ) -> None:
+        """A bare domain with no scheme (common shorthand when pasting
+        links into Jira) or a non-slash URI scheme like tel: must still be
+        recognized as a real link -- these all linkified before the
+        href-validation guard was added, and rejecting them was a
+        regression, not a narrowing of the "unrelated parenthetical"
+        case the guard targets."""
+        result = markdown_to_adf(md)
+        para = result["content"][0]
+        link_node = next(
+            n
+            for n in para["content"]
+            if any(m["type"] == "link" for m in n.get("marks", []))
+        )
+        link_mark = next(m for m in link_node["marks"] if m["type"] == "link")
+        assert link_mark["attrs"]["href"] == expected_href
+
     def test_legacy_wiki_style_link(self):
         """Legacy Jira/Confluence [Display Text|url] syntax (common in
         content authored before this converter existed) is recognized as
