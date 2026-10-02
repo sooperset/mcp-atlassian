@@ -410,6 +410,127 @@ async def get_page(
 
 @confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Page Outline", "readOnlyHint": True},
+)
+async def get_page_outline(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID, full page URL, or tiny link. For example: "
+                "'123456789', "
+                "'https://example.atlassian.net/wiki/spaces/TEAM/pages/"
+                "123456789/Page+Title', or "
+                "'https://example.atlassian.net/wiki/x/N4CIO'."
+            ),
+        ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
+    ],
+) -> str:
+    """List every heading on a Confluence page without returning section bodies.
+
+    Heading texts are the exact, case-sensitive strings accepted by
+    confluence_update_page_section. Every heading is returned in document
+    order, including duplicates, with a match_count so callers can identify
+    unambiguous sections. Page content before the first heading is not
+    included; use confluence_get_page to read it.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID, full page URL, or tiny link.
+
+    Returns:
+        JSON string with a compact page envelope (id, title, url, version)
+        and the heading list in document order.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    page_id_str = _resolve_page_id(str(page_id))
+    result = confluence_fetcher.get_page_outline(page_id_str)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Page Section", "readOnlyHint": True},
+)
+async def get_page_section(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID, full page URL, or tiny link. For example: "
+                "'123456789', "
+                "'https://example.atlassian.net/wiki/spaces/TEAM/pages/"
+                "123456789/Page+Title', or "
+                "'https://example.atlassian.net/wiki/x/N4CIO'."
+            ),
+        ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
+    ],
+    heading_text: Annotated[
+        str,
+        Field(
+            description=(
+                "Exact text of the heading that starts the section to read. "
+                "Matching is case-sensitive and outer whitespace is ignored. "
+                "Use confluence_get_page_outline to list the exact heading "
+                "texts. The call fails when the heading is missing or appears "
+                "more than once on the page."
+            ),
+        ),
+    ],
+    expected_version: Annotated[
+        int | None,
+        Field(
+            description=(
+                "(Optional) Page version the caller last observed. When "
+                "provided, the read fails if the live page version differs, "
+                "which helps detect stale content before editing. Omit for "
+                "ordinary reads."
+            ),
+            default=None,
+            ge=1,
+        ),
+    ] = None,
+) -> str:
+    """Get the storage-format body of one section of a Confluence page.
+
+    Returns only the content beneath a uniquely matching heading, so a
+    localized edit can inspect the exact current markup without the rest of
+    the page. The section boundary is the same one
+    confluence_update_page_section replaces: the body runs up to the next
+    heading of the same or higher level.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID, full page URL, or tiny link.
+        heading_text: Exact heading text identifying the section to read.
+        expected_version: Optional page version to verify before reading.
+
+    Returns:
+        JSON string with a compact page envelope (id, title, url, version),
+        the matched heading, the section body in storage format, and a
+        contains_confluence_elements hint indicating ac:/ri: markup.
+
+    Raises:
+        ValueError: If the heading is missing or duplicated, heading_text is
+            blank, the version check fails, or the Confluence client is not
+            configured.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    page_id_str = _resolve_page_id(str(page_id))
+    result = confluence_fetcher.get_page_section(
+        page_id=page_id_str,
+        heading_text=heading_text,
+        expected_version=expected_version,
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page Children", "readOnlyHint": True},
 )
 async def get_page_children(

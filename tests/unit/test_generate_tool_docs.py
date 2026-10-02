@@ -187,6 +187,17 @@ def test_upload_attachment_examples_survive_page_regeneration(
         ),
         (
             "confluence-pages",
+            "confluence_get_page_outline",
+            '{"page_id": "12345678"}',
+        ),
+        (
+            "confluence-pages",
+            "confluence_get_page_section",
+            '{"page_id": "12345678", "heading_text": "Deployment", '
+            '"expected_version": 7}',
+        ),
+        (
+            "confluence-pages",
             "confluence_move_page",
             '{"page_id": "12345678", "target_parent_id": "98765432"}',
         ),

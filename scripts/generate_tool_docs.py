@@ -111,6 +111,8 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
     ],
     "confluence-pages": [
         "confluence_get_page",
+        "confluence_get_page_outline",
+        "confluence_get_page_section",
         "confluence_create_page",
         "confluence_update_page",
         "confluence_delete_page",

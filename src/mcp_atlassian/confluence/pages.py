@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 from atlassian.errors import ApiError
 from bs4 import BeautifulSoup, Tag
+from bs4.element import PageElement
 from requests.exceptions import HTTPError
 
 from ..models.confluence import ConfluencePage
@@ -18,6 +19,62 @@ from .utils import emoji_to_hex_id, extract_emoji_from_property
 from .v2_adapter import ConfluenceV2Adapter
 
 logger = logging.getLogger("mcp-atlassian")
+
+_HEADING_TAGS: tuple[str, ...] = ("h1", "h2", "h3", "h4", "h5", "h6")
+
+
+def _section_nodes(heading: Tag) -> list[PageElement]:
+    """Collect the sibling nodes that form the body under a section heading.
+
+    Walks the siblings following ``heading`` until a sibling heading of the
+    same or higher level, or the end of the heading's parent container.
+    Whitespace and text nodes are included alongside element nodes.
+
+    Args:
+        heading: The heading tag that starts the section.
+
+    Returns:
+        The sibling nodes belonging to the section body, in document order.
+    """
+    heading_level = int(heading.name[1])
+    nodes: list[PageElement] = []
+    current: PageElement | None = heading.next_sibling
+    while current is not None:
+        if (
+            isinstance(current, Tag)
+            and current.name in _HEADING_TAGS
+            and int(current.name[1]) <= heading_level
+        ):
+            break
+        nodes.append(current)
+        current = current.next_sibling
+    return nodes
+
+
+def _contains_confluence_elements(nodes: list[PageElement]) -> bool:
+    """Return whether section body nodes contain Confluence storage elements.
+
+    Detection is based on actual element names using the ``ac:`` and ``ri:``
+    storage prefixes, not on substring searches over text or CDATA content.
+    """
+    for node in nodes:
+        if not isinstance(node, Tag):
+            continue
+        if node.name.startswith(("ac:", "ri:")):
+            return True
+        if any(child.name.startswith(("ac:", "ri:")) for child in node.find_all()):
+            return True
+    return False
+
+
+def _section_page_metadata(page: ConfluencePage) -> dict[str, Any]:
+    """Build the compact page envelope shared by the selective page readers."""
+    return {
+        "id": page.id,
+        "title": page.title,
+        "url": page.url,
+        "version": page.version.number if page.version is not None else None,
+    }
 
 
 class PagesMixin(ConfluenceClient):
@@ -1005,9 +1062,8 @@ class PagesMixin(ConfluenceClient):
         # 3. Parse the full storage XML with BeautifulSoup.
         soup = BeautifulSoup(raw_storage, "html.parser")
 
-        heading_tags = ["h1", "h2", "h3", "h4", "h5", "h6"]
         target_heading: Tag | None = None
-        for tag in soup.find_all(heading_tags):
+        for tag in soup.find_all(_HEADING_TAGS):
             if (
                 isinstance(tag, Tag)
                 and tag.get_text(strip=True) == heading_text.strip()
@@ -1022,20 +1078,11 @@ class PagesMixin(ConfluenceClient):
             )
             raise ValueError(error_msg)
 
-        heading_level = int(target_heading.name[1])  # e.g. "h2" → 2
-
         # 4. Collect all sibling nodes that belong to this section (between
         #    this heading and the next heading of the same or higher level).
         #    NavigableString nodes (whitespace, text) are included alongside
         #    Tag nodes, so we type the list broadly.
-        siblings_to_remove: list[Any] = []
-        current = target_heading.next_sibling
-        while current is not None:
-            if isinstance(current, Tag) and current.name in heading_tags:
-                if int(current.name[1]) <= heading_level:
-                    break
-            siblings_to_remove.append(current)
-            current = current.next_sibling
+        siblings_to_remove = _section_nodes(target_heading)
 
         # 5. Capture heading HTML, remove old section nodes, then splice in the
         #    new fragment via string operations — avoids moving nodes between
@@ -1074,6 +1121,147 @@ class PagesMixin(ConfluenceClient):
             is_minor_edit=is_minor_edit,
             version_comment=version_comment,
         )
+
+    def get_page_outline(self, page_id: str) -> dict[str, Any]:
+        """Get the heading outline of a Confluence page.
+
+        Fetches the page in raw storage format and lists every heading in
+        document order, without returning any section bodies. Heading text is
+        the exact text accepted by ``update_page_section``
+        (``tag.get_text(strip=True)``), so outline entries can be passed back
+        to the section readers and writer unchanged.
+
+        Args:
+            page_id: The ID of the page to outline.
+
+        Returns:
+            Dict with a compact ``page`` envelope (id, title, url, version)
+            and a ``headings`` list of ``{"text", "level", "match_count"}``
+            entries. ``match_count`` counts every heading with that exact
+            text, including duplicates. Pages without headings return an
+            empty list.
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails
+                with the Confluence API (401/403)
+            Exception: If there is an error retrieving the page
+        """
+        page = self.get_page_content(page_id, convert_to_markdown=False)
+        soup = BeautifulSoup(page.content or "", "html.parser")
+
+        entries: list[tuple[str, int]] = [
+            (tag.get_text(strip=True), int(tag.name[1]))
+            for tag in soup.find_all(_HEADING_TAGS)
+            if isinstance(tag, Tag)
+        ]
+
+        match_counts: dict[str, int] = {}
+        for text, _ in entries:
+            match_counts[text] = match_counts.get(text, 0) + 1
+
+        headings = [
+            {"text": text, "level": level, "match_count": match_counts[text]}
+            for text, level in entries
+        ]
+
+        return {
+            "page": _section_page_metadata(page),
+            "headings": headings,
+        }
+
+    def get_page_section(
+        self,
+        page_id: str,
+        heading_text: str,
+        *,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        """Get the storage-format body of a single section of a Confluence page.
+
+        Fetches the page once in raw storage format and returns only the body
+        beneath a uniquely matching heading. The section boundary (the sibling
+        range up to the next heading of the same or higher level) is the same
+        one ``update_page_section`` replaces, so the returned markup can be
+        passed back to the writer directly.
+
+        Args:
+            page_id: The ID of the page to read.
+            heading_text: Exact text of the heading that starts the section.
+                Matching is case-sensitive; outer whitespace is ignored.
+            expected_version: Optional page version to verify before reading.
+                When the live page version is missing or differs, a
+                ``ValueError`` is raised. (keyword-only)
+
+        Returns:
+            Dict with a compact ``page`` envelope (id, title, url, version),
+            the matched ``heading`` (text and level), the section
+            ``content`` as ``{"value", "format": "storage"}`` (empty value
+            when the heading has no body), and a
+            ``contains_confluence_elements`` hint for ac:/ri: markup.
+
+        Raises:
+            ValueError: If ``heading_text`` is empty or whitespace-only,
+                ``expected_version`` is below 1, the live version does not
+                match ``expected_version``, the heading is not found, or the
+                heading text appears more than once.
+            MCPAtlassianAuthenticationError: If authentication fails
+                with the Confluence API (401/403)
+            Exception: If there is an error retrieving the page
+        """
+        trimmed_heading = heading_text.strip()
+        if not trimmed_heading:
+            raise ValueError(
+                "heading_text must not be empty or whitespace-only. "
+                "Use confluence_get_page to read pages without headings."
+            )
+        if expected_version is not None and expected_version < 1:
+            raise ValueError(f"expected_version must be >= 1, got {expected_version}.")
+
+        page = self.get_page_content(page_id, convert_to_markdown=False)
+
+        if expected_version is not None:
+            current_version = page.version.number if page.version is not None else None
+            if current_version != expected_version:
+                raise ValueError(
+                    f"Page {page_id} is at version {current_version}, not the "
+                    f"expected version {expected_version}. Read the current "
+                    "outline or section again before editing."
+                )
+
+        soup = BeautifulSoup(page.content or "", "html.parser")
+        matches = [
+            tag
+            for tag in soup.find_all(_HEADING_TAGS)
+            if isinstance(tag, Tag) and tag.get_text(strip=True) == trimmed_heading
+        ]
+
+        if not matches:
+            error_msg = (
+                f"Heading '{trimmed_heading}' not found in page {page_id}. "
+                "Heading text must match exactly (case-sensitive)."
+            )
+            raise ValueError(error_msg)
+        if len(matches) > 1:
+            error_msg = (
+                f"Heading '{trimmed_heading}' appears {len(matches)} times in "
+                f"page {page_id}. Selective section reads require a unique "
+                "heading; use confluence_get_page to read the full page."
+            )
+            raise ValueError(error_msg)
+
+        heading = matches[0]
+        body_nodes = _section_nodes(heading)
+        body = "".join(str(node) for node in body_nodes).strip()
+
+        return {
+            "page": _section_page_metadata(page),
+            "heading": {
+                "text": heading.get_text(strip=True),
+                "level": int(heading.name[1]),
+            },
+            "content": {"value": body, "format": "storage"},
+            "contains_confluence_elements": _contains_confluence_elements(body_nodes),
+        }
 
     def get_page_children(
         self,

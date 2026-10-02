@@ -28,6 +28,58 @@ Content is returned in Markdown format by default. Set `convert_to_markdown` to 
 
 ---
 
+### Get Page Outline
+
+List every heading on a Confluence page without returning section bodies.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence page ID, full page URL, or tiny link. For example: '123456789', 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', or 'https://example.atlassian.net/wiki/x/N4CIO'. |
+**Example:**
+
+```json
+{"page_id": "12345678"}
+```
+
+<Tip>
+Use this to plan localized edits without downloading the whole page. Heading texts are the exact, case-sensitive strings accepted by `confluence_get_page_section` and `confluence_update_page_section`, so outline entries can be passed back to those tools unchanged. Entries with `match_count` greater than 1 are duplicate headings; selective section reads reject duplicates, so fall back to `confluence_get_page` for those.
+</Tip>
+
+<Warning>
+Content before the first heading is not part of the outline; use `confluence_get_page` to read a preamble. The compact `page` envelope contains only id, title, url, and version.
+</Warning>
+
+---
+
+### Get Page Section
+
+Get the storage-format body of one section of a Confluence page.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | Confluence page ID, full page URL, or tiny link. For example: '123456789', 'https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Page+Title', or 'https://example.atlassian.net/wiki/x/N4CIO'. |
+| `heading_text` | `string` | Yes | Exact text of the heading that starts the section to read. Matching is case-sensitive and outer whitespace is ignored. Use confluence_get_page_outline to list the exact heading texts. The call fails when the heading is missing or appears more than once on the page. |
+| `expected_version` | `integer` | No | (Optional) Page version the caller last observed. When provided, the read fails if the live page version differs, which helps detect stale content before editing. Omit for ordinary reads. |
+**Example:**
+
+```json
+{"page_id": "12345678", "heading_text": "Deployment", "expected_version": 7}
+```
+
+<Tip>
+Use the read/edit flow `confluence_get_page_outline` -> `confluence_get_page_section` -> `confluence_update_page_section` for localized edits so only the target section passes through the model. The body is raw Confluence storage markup covering the same sibling range the section writer replaces, so it can be modified and written back with `content_format: "storage"`. When `contains_confluence_elements` is true, preserve macros, links, mentions, and images when rewriting the section.
+</Tip>
+
+<Warning>
+Matching is case-sensitive and trimmed at the outer edges of `heading_text`. A missing heading or one that appears more than once raises a `ValueError`. `expected_version` is an optional freshness check on the read snapshot; it is not an atomic read-modify-write guarantee. Pages without headings cannot be read this way; use `confluence_get_page` instead.
+</Warning>
+
+---
+
 ### Create Page
 
 Create a new Confluence page.
