@@ -10,9 +10,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+import requests
 from fastmcp import Client, FastMCP
 from fastmcp.client import FastMCPTransport
 from fastmcp.exceptions import ToolError
+from requests.exceptions import HTTPError
 from starlette.requests import Request
 
 from src.mcp_atlassian.jira import JiraFetcher
@@ -2788,6 +2790,7 @@ async def test_transition_issue_resolves_name_to_id(jira_client, mock_jira_fetch
     mock_jira_fetcher.transition_issue.assert_called_once_with(
         issue_key="TEST-123", transition_id="31", fields={}, comment=None
     )
+    mock_jira_fetcher.get_available_transitions.assert_called_once_with("TEST-123")
 
 
 @pytest.mark.anyio
@@ -2875,6 +2878,67 @@ async def test_transition_issue_still_accepts_numeric_id(
     mock_jira_fetcher.transition_issue.assert_called_once_with(
         issue_key="TEST-123", transition_id="31", fields={}, comment=None
     )
+    mock_jira_fetcher.get_available_transitions.assert_not_called()
+
+
+def _http_error(status_code: int) -> HTTPError:
+    response = requests.Response()
+    response.status_code = status_code
+    return HTTPError(f"{status_code} error", response=response)
+
+
+@pytest.mark.anyio
+async def test_transition_issue_bad_numeric_id_raises_with_options(
+    jira_client, mock_jira_fetcher
+):
+    """A rejected numeric ID falls back to the 'Available options' error."""
+    mock_jira_fetcher.transition_issue.side_effect = _http_error(400)
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    with pytest.raises(ToolError, match=r"Available options: Done \(31\)"):
+        await jira_client.call_tool(
+            "jira_transition_issue",
+            {"issue_key": "TEST-123", "transition_id": "99"},
+        )
+
+    mock_jira_fetcher.get_available_transitions.assert_called_once_with("TEST-123")
+
+
+@pytest.mark.anyio
+async def test_transition_issue_valid_numeric_id_http_error_is_preserved(
+    jira_client, mock_jira_fetcher
+):
+    """A valid numeric ID that Jira still rejects keeps the original error."""
+    mock_jira_fetcher.transition_issue.side_effect = _http_error(400)
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    with pytest.raises(ToolError) as exc_info:
+        await jira_client.call_tool(
+            "jira_transition_issue",
+            {"issue_key": "TEST-123", "transition_id": "31"},
+        )
+
+    assert "Available options" not in str(exc_info.value)
+
+
+@pytest.mark.anyio
+async def test_transition_issue_auth_error_skips_fallback_lookup(
+    jira_client, mock_jira_fetcher
+):
+    """401/403 on a numeric ID is not retried with a transitions lookup."""
+    mock_jira_fetcher.transition_issue.side_effect = _http_error(403)
+
+    with pytest.raises(ToolError):
+        await jira_client.call_tool(
+            "jira_transition_issue",
+            {"issue_key": "TEST-123", "transition_id": "31"},
+        )
+
+    mock_jira_fetcher.get_available_transitions.assert_not_called()
 
 
 @pytest.mark.anyio

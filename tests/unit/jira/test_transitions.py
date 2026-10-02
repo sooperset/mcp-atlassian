@@ -134,6 +134,18 @@ class TestTransitionsMixin:
         assert result.summary == "Test Issue"
         assert result.description == "Issue content"
 
+    def test_transition_issue_skips_transitions_lookup(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """transition_issue no longer fetches transitions to pre-validate the ID.
+
+        That lookup never blocked an invalid ID (Jira's own API call did),
+        so it was a redundant round-trip on every transition.
+        """
+        transitions_mixin.transition_issue("TEST-123", "10")
+
+        transitions_mixin.get_transitions_models.assert_not_called()
+
     def test_transition_issue_with_int_id(self, transitions_mixin: TransitionsMixin):
         """Test transition_issue with int transition ID."""
         # Call the method with int ID

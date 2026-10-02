@@ -162,31 +162,11 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             # Normalize transition_id to int when possible
             normalized_transition_id = self._normalize_transition_id(transition_id)
 
-            # Validate that this is a valid transition ID
-            valid_transitions = self.get_transitions_models(issue_key)
-            valid_ids: list[str | int] = [t.id for t in valid_transitions]
-
-            # Convert string IDs to integers for proper comparison
-            if isinstance(normalized_transition_id, int):
-                valid_ids = [
-                    int(id_val)
-                    if isinstance(id_val, str) and id_val.isdigit()
-                    else id_val
-                    for id_val in valid_ids
-                ]
-
-            # Check if normalized_transition_id is valid
-            id_to_check = normalized_transition_id
-            if id_to_check not in valid_ids:
-                available_transitions = ", ".join(
-                    f"{t.id} ({t.name})" for t in valid_transitions
-                )
-                logger.warning(
-                    f"Transition ID {id_to_check} not in"
-                    " available transitions:"
-                    f" {available_transitions}"
-                )
-                # Continue anyway as Jira will validate
+            # No pre-flight validation against get_transitions_models() here:
+            # it never blocked an invalid ID (see prior behavior, "Continue
+            # anyway as Jira will validate"), so it only added a redundant
+            # API round-trip on every call. The POST below is Jira's own
+            # validation and already surfaces a clear error on a bad ID.
 
             # Sanitize fields if provided
             fields_for_api = None

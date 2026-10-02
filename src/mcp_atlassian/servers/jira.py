@@ -3125,15 +3125,39 @@ async def transition_issue(
     # Parse fields from JSON string
     update_fields = _parse_additional_fields(fields, param_name="fields")
 
-    available_transitions = jira.get_available_transitions(issue_key)
-    resolved_transition_id = resolve_transition(available_transitions, transition_id)
+    # A raw numeric ID needs no name resolution, so send it straight through
+    # and skip the transitions lookup on the common (valid-ID) path. Only a
+    # name (e.g. "Done") needs the lookup to resolve it to an ID.
+    numeric_id = transition_id.isdigit()
+    if numeric_id:
+        resolved_transition_id = transition_id
+    else:
+        available_transitions = jira.get_available_transitions(issue_key)
+        resolved_transition_id = resolve_transition(
+            available_transitions, transition_id
+        )
 
-    issue = jira.transition_issue(
-        issue_key=issue_key,
-        transition_id=resolved_transition_id,
-        fields=update_fields,
-        comment=comment,
-    )
+    try:
+        issue = jira.transition_issue(
+            issue_key=issue_key,
+            transition_id=resolved_transition_id,
+            fields=update_fields,
+            comment=comment,
+        )
+    except HTTPError as e:
+        status_code = getattr(e.response, "status_code", None)
+        if not numeric_id or status_code in (401, 403):
+            raise
+        # The unchecked numeric ID may be what Jira rejected. Look up the
+        # available transitions so a bad ID gets the same "Available options"
+        # error as before; if the ID is valid, the failure was something else
+        # (e.g. a missing required field), so re-raise the original error.
+        try:
+            available_transitions = jira.get_available_transitions(issue_key)
+        except Exception:
+            raise e from None
+        resolve_transition(available_transitions, transition_id)
+        raise
 
     result = {
         "message": f"Issue {issue_key} transitioned successfully",
