@@ -3886,3 +3886,503 @@ class TestUpdatePageSection:
             )
 
         pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+
+class TestGetPageOutline:
+    """Tests for PagesMixin.get_page_outline."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def _make_page(
+        self,
+        page_id: str,
+        title: str,
+        storage_html: str,
+        version_number: int | None = 1,
+    ) -> ConfluencePage:
+        version = {"number": version_number} if version_number is not None else None
+        return ConfluencePage(
+            id=page_id,
+            title=title,
+            content=storage_html,
+            url=(
+                f"https://example.atlassian.net/wiki/pages/"
+                f"viewpage.action?pageId={page_id}"
+            ),
+            space={"key": "PROJ", "name": "Project"},
+            version=version,
+        )
+
+    def test_outline_lists_headings_in_document_order(self, pages_mixin):
+        """Headings are returned in document order with level and exact text."""
+        storage = (
+            "<p>preamble</p>"
+            "<h2>Deployment</h2><p>body</p>"
+            "<h3>Steps</h3><p>sub body</p>"
+            "<h1>Overview</h1><p>overview body</p>"
+        )
+        raw_page = self._make_page("123", "Runbook", storage, version_number=7)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_outline("123")
+
+        assert [h["text"] for h in result["headings"]] == [
+            "Deployment",
+            "Steps",
+            "Overview",
+        ]
+        assert [h["level"] for h in result["headings"]] == [2, 3, 1]
+        assert all(h["match_count"] == 1 for h in result["headings"])
+
+    def test_outline_page_envelope_is_compact(self, pages_mixin):
+        """The page envelope contains only id, title, url, and version."""
+        raw_page = self._make_page("123", "Runbook", "<h2>A</h2>", version_number=7)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_outline("123")
+
+        assert result["page"] == {
+            "id": "123",
+            "title": "Runbook",
+            "url": (
+                "https://example.atlassian.net/wiki/pages/viewpage.action?pageId=123"
+            ),
+            "version": 7,
+        }
+
+    def test_outline_counts_duplicate_headings(self, pages_mixin):
+        """match_count counts every heading with the same exact text."""
+        storage = (
+            "<h2>Deployment</h2><p>a</p>"
+            "<h2>Rollback</h2><p>b</p>"
+            "<h2>Deployment</h2><p>c</p>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_outline("1")
+
+        assert result["headings"] == [
+            {"text": "Deployment", "level": 2, "match_count": 2},
+            {"text": "Rollback", "level": 2, "match_count": 1},
+            {"text": "Deployment", "level": 2, "match_count": 2},
+        ]
+
+    def test_outline_uses_raw_storage_fetch(self, pages_mixin):
+        """The page is fetched once in raw storage format."""
+        raw_page = self._make_page("1", "P", "<h2>A</h2>")
+
+        with patch.object(
+            pages_mixin, "get_page_content", return_value=raw_page
+        ) as mock_fetch:
+            pages_mixin.get_page_outline("1")
+
+        mock_fetch.assert_called_once_with("1", convert_to_markdown=False)
+
+    def test_outline_empty_page_returns_no_headings(self, pages_mixin):
+        """A page without headings returns an empty heading list."""
+        raw_page = self._make_page("1", "P", "<p>just a preamble</p>")
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_outline("1")
+
+        assert result["headings"] == []
+
+    def test_outline_contains_no_section_bodies(self, pages_mixin):
+        """Section bodies and preamble content never appear in the outline."""
+        sentinel = "SENTINEL-UNRELATED-CONTENT"
+        storage = (
+            f"<p>{sentinel} preamble</p>"
+            "<h2>Deployment</h2><p>" + sentinel + " body</p>"
+            "<h2>Rollback</h2><p>" + sentinel + " body</p>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_outline("1")
+
+        assert sentinel not in str(result)
+
+    def test_outline_fetch_failure_propagates(self, pages_mixin):
+        """Fetch failures propagate instead of returning empty data."""
+        with (
+            patch.object(
+                pages_mixin,
+                "get_page_content",
+                side_effect=Exception("HTTP 404"),
+            ),
+            patch.object(pages_mixin, "update_page") as mock_update,
+        ):
+            with pytest.raises(Exception, match="HTTP 404"):
+                pages_mixin.get_page_outline("1")
+
+        mock_update.assert_not_called()
+
+    def test_outline_readers_never_call_write_methods(self, pages_mixin):
+        """The outline reader performs no updates, uploads, or conversions."""
+        raw_page = self._make_page("1", "P", "<h2>A</h2><p>body</p>")
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(pages_mixin, "update_page") as mock_update_page,
+            patch.object(pages_mixin, "update_page_section") as mock_update_section,
+        ):
+            pages_mixin.get_page_outline("1")
+
+        mock_update_page.assert_not_called()
+        mock_update_section.assert_not_called()
+        pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+
+class TestGetPageSection:
+    """Tests for PagesMixin.get_page_section."""
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def _make_page(
+        self,
+        page_id: str,
+        title: str,
+        storage_html: str,
+        version_number: int | None = 1,
+    ) -> ConfluencePage:
+        version = {"number": version_number} if version_number is not None else None
+        return ConfluencePage(
+            id=page_id,
+            title=title,
+            content=storage_html,
+            url=(
+                f"https://example.atlassian.net/wiki/pages/"
+                f"viewpage.action?pageId={page_id}"
+            ),
+            space={"key": "PROJ", "name": "Project"},
+            version=version,
+        )
+
+    def test_returns_body_excluding_heading_and_adjacent_sections(self, pages_mixin):
+        """The body stops at the next same-level heading and skips siblings."""
+        storage = (
+            "<h2>Section A</h2><p>a content</p>"
+            "<h2>Section B</h2><p>b content</p>"
+            "<h3>Sub</h3><p>sub content</p>"
+            "<h2>Section C</h2><p>c content</p>"
+        )
+        raw_page = self._make_page("1", "P", storage, version_number=3)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "Section B")
+
+        assert result["heading"] == {"text": "Section B", "level": 2}
+        assert result["content"]["format"] == "storage"
+        assert result["content"]["value"] == (
+            "<p>b content</p><h3>Sub</h3><p>sub content</p>"
+        )
+        assert "a content" not in result["content"]["value"]
+        assert "c content" not in result["content"]["value"]
+
+    def test_last_section_runs_to_end_of_page(self, pages_mixin):
+        """A heading with no following sibling heading owns everything after it."""
+        storage = "<h1>Intro</h1><p>intro</p><h2>Last</h2><p>l1</p><p>l2</p>"
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "Last")
+
+        assert result["content"]["value"] == "<p>l1</p><p>l2</p>"
+
+    def test_empty_body_returns_empty_value(self, pages_mixin):
+        """A heading followed immediately by its boundary yields an empty body."""
+        storage = "<h2>Empty</h2><h2>Next</h2><p>next</p>"
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "Empty")
+
+        assert result["content"]["value"] == ""
+        assert result["content"]["format"] == "storage"
+        assert result["contains_confluence_elements"] is False
+
+    def test_plain_text_nodes_are_returned(self, pages_mixin):
+        """Bare text nodes beneath the heading are part of the body."""
+        storage = "<h2>Text</h2>loose text<p>paragraph</p><h2>Next</h2>"
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "Text")
+
+        assert result["content"]["value"] == "loose text<p>paragraph</p>"
+
+    def test_formatted_heading_text_uses_get_text(self, pages_mixin):
+        """Formatted headings match on their stripped text content."""
+        storage = "<h2><b>Deploy</b>ment</h2><p>body</p>"
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "Deployment")
+
+        assert result["heading"] == {"text": "Deployment", "level": 2}
+        assert result["content"]["value"] == "<p>body</p>"
+
+    def test_unicode_heading_matches(self, pages_mixin):
+        """Unicode heading text round-trips exactly."""
+        storage = "<h2>Über-Bereich</h2><p>body</p>"
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "Über-Bereich")
+
+        assert result["heading"]["text"] == "Über-Bereich"
+
+    def test_matching_is_case_sensitive(self, pages_mixin):
+        """Differently cased heading text does not match."""
+        raw_page = self._make_page("1", "P", "<h2>Section</h2><p>body</p>")
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            with pytest.raises(ValueError, match="not found in page"):
+                pages_mixin.get_page_section("1", "section")
+
+    def test_outer_whitespace_is_ignored(self, pages_mixin):
+        """Heading text is trimmed at its outer edges before matching."""
+        raw_page = self._make_page("1", "P", "<h2>Section</h2><p>body</p>")
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "  Section  ")
+
+        assert result["heading"]["text"] == "Section"
+
+    def test_missing_heading_raises(self, pages_mixin):
+        """A heading that is not on the page raises a descriptive ValueError."""
+        raw_page = self._make_page("1", "P", "<h2>Existing</h2><p>content</p>")
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            with pytest.raises(ValueError, match="not found in page 1"):
+                pages_mixin.get_page_section("1", "Nonexistent")
+
+    def test_blank_heading_raises_before_fetch(self, pages_mixin):
+        """Blank heading_text is rejected before any page fetch happens."""
+        with patch.object(pages_mixin, "get_page_content") as mock_fetch:
+            with pytest.raises(ValueError, match="empty or whitespace-only"):
+                pages_mixin.get_page_section("1", "   ")
+
+        mock_fetch.assert_not_called()
+
+    def test_duplicate_headings_raise(self, pages_mixin):
+        """Ambiguous heading text raises instead of silently reading the first."""
+        storage = "<h2>Section</h2><p>a</p><h2>Section</h2><p>b</p>"
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            with pytest.raises(ValueError, match="appears 2 times"):
+                pages_mixin.get_page_section("1", "Section")
+
+    def test_version_mismatch_raises(self, pages_mixin):
+        """A different live version fails the read with re-read guidance."""
+        raw_page = self._make_page("1", "P", "<h2>S</h2><p>body</p>", 5)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            with pytest.raises(ValueError, match="Read the current"):
+                pages_mixin.get_page_section("1", "S", expected_version=4)
+
+    def test_missing_version_with_expected_version_raises(self, pages_mixin):
+        """A page without version data cannot satisfy an expected_version check."""
+        raw_page = self._make_page("1", "P", "<h2>S</h2><p>body</p>", None)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            with pytest.raises(ValueError, match="version"):
+                pages_mixin.get_page_section("1", "S", expected_version=1)
+
+    def test_version_match_proceeds(self, pages_mixin):
+        """A matching expected_version does not block the read."""
+        raw_page = self._make_page("1", "P", "<h2>S</h2><p>body</p>", 5)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "S", expected_version=5)
+
+        assert result["content"]["value"] == "<p>body</p>"
+        assert result["page"]["version"] == 5
+
+    def test_invalid_expected_version_raises_before_fetch(self, pages_mixin):
+        """expected_version below 1 is rejected before any page fetch."""
+        with patch.object(pages_mixin, "get_page_content") as mock_fetch:
+            with pytest.raises(ValueError, match="expected_version"):
+                pages_mixin.get_page_section("1", "S", expected_version=0)
+
+        mock_fetch.assert_not_called()
+
+    def test_confluence_elements_survive_in_returned_storage(self, pages_mixin):
+        """Tables, links, task lists, mentions, images, and macros are preserved."""
+        storage = (
+            "<h2>Deployment</h2>"
+            "<table><tr><td>cell</td></tr></table>"
+            '<p>See <a href="https://example.com">the runbook</a></p>'
+            '<ac:structured-macro ac:name="info">'
+            '<ac:parameter ac:name="title">Note</ac:parameter>'
+            "<ac:rich-text-body><p>task body</p></ac:rich-text-body>"
+            "</ac:structured-macro>"
+            '<ac:link><ri:role-link ri:role="@mentions" ri:userkey="u1"/>'
+            "<ac:card/>"
+            "</ac:link>"
+            '<ac:structured-macro ac:name="image">'
+            '<ac:parameter ac:name="src">/download/attachments/1/pic.png</ac:parameter>'
+            "</ac:structured-macro>"
+            "<h2>Next</h2><p>other</p>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "Deployment")
+
+        value = result["content"]["value"]
+        assert "<table><tr><td>cell</td></tr></table>" in value
+        assert '<a href="https://example.com">the runbook</a>' in value
+        assert 'ac:name="info"' in value
+        assert "<ac:parameter" in value
+        assert "ri:userkey" in value
+        assert 'ac:name="image"' in value
+        assert "other" not in value
+        assert result["contains_confluence_elements"] is True
+
+    def test_plain_markup_reports_no_confluence_elements(self, pages_mixin):
+        """Plain HTML without ac:/ri: names yields a false hint."""
+        storage = "<h2>Plain</h2><table><tr><td>x</td></tr></table><h2>Next</h2>"
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "Plain")
+
+        assert result["contains_confluence_elements"] is False
+
+    def test_container_boundary_stops_at_parent(self, pages_mixin):
+        """Headings inside a container stop at that parent's end, like the writer."""
+        storage = (
+            "<table><tr><td>"
+            "<h2>Inner</h2><p>inner body</p>"
+            "</td></tr></table>"
+            "<p>outside body</p>"
+            "<h2>Other</h2><p>other</p>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "Inner")
+
+        assert result["content"]["value"] == "<p>inner body</p>"
+        assert "outside body" not in result["content"]["value"]
+
+    def test_cdata_and_escaped_headings_are_not_headings(self, pages_mixin):
+        """Apparent headings inside CDATA or escaped code are ignored."""
+        storage = (
+            '<ac:structured-macro ac:name="code">'
+            "<ac:plain-text-body><![CDATA[<h2>NotAHeading</h2>]]>"
+            "</ac:plain-text-body></ac:structured-macro>"
+            "<h2>Real</h2><p>real body</p>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            outline = pages_mixin.get_page_outline("1")
+            result = pages_mixin.get_page_section("1", "Real")
+
+        assert [h["text"] for h in outline["headings"]] == ["Real"]
+        assert result["content"]["value"] == "<p>real body</p>"
+
+    def test_sentinel_content_stays_out(self, pages_mixin):
+        """Only the selected body is returned; unrelated content stays out."""
+        sentinel = "SENTINEL-UNRELATED-" * 50
+        storage = (
+            f"<h2>Unrelated</h2><p>{sentinel}</p>"
+            "<h2>Target</h2><p>target body</p>"
+            f"<h2>Also Unrelated</h2><p>{sentinel}</p>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            result = pages_mixin.get_page_section("1", "Target")
+            outline = pages_mixin.get_page_outline("1")
+
+        assert result["content"]["value"] == "<p>target body</p>"
+        assert sentinel not in str(result)
+        assert sentinel not in str(outline)
+
+    def test_readers_never_call_write_methods(self, pages_mixin):
+        """Section reads perform no writes, uploads, or markdown conversion."""
+        raw_page = self._make_page("1", "P", "<h2>S</h2><p>body</p>")
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(pages_mixin, "update_page") as mock_update_page,
+            patch.object(pages_mixin, "update_page_section") as mock_update_section,
+        ):
+            pages_mixin.get_page_section("1", "S")
+
+        mock_update_page.assert_not_called()
+        mock_update_section.assert_not_called()
+        pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+    def test_fetch_failure_propagates(self, pages_mixin):
+        """Fetch failures propagate instead of returning empty data."""
+        with patch.object(
+            pages_mixin, "get_page_content", side_effect=Exception("HTTP 401")
+        ):
+            with pytest.raises(Exception, match="HTTP 401"):
+                pages_mixin.get_page_section("1", "S")
+
+    def test_boundary_agrees_with_writer(self, pages_mixin):
+        """The reader's body is exactly the range the writer replaces."""
+        storage = (
+            "<h2>Section A</h2><p>a content</p>"
+            "<h2>Section B</h2><p>b content</p>"
+            "<h3>Sub</h3><p>sub content</p>"
+            "<h2>Section C</h2><p>c content</p>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+        updated_page = self._make_page("1", "P", "")
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new b</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            read = pages_mixin.get_page_section("1", "Section B")
+            pages_mixin.update_page_section("1", "Section B", "<p>new b</p>")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert "b content" not in body
+        assert "sub content" not in body
+        assert "<p>new b</p>" in body
+        assert "<h2>Section A</h2>" in body
+        assert "<h2>Section C</h2>" in body
+
+        # Re-reading the written storage yields exactly the new body.
+        rewritten_page = self._make_page("1", "P", body)
+        with patch.object(pages_mixin, "get_page_content", return_value=rewritten_page):
+            reread = pages_mixin.get_page_section("1", "Section B")
+
+        assert read["content"]["value"] != ""
+        assert reread["content"]["value"] == "<p>new b</p>"

@@ -1,0 +1,6 @@
+example: |
+  {"page_id": "12345678"}
+tips: |
+  Use this to plan localized edits without downloading the whole page. Heading texts are the exact, case-sensitive strings accepted by `confluence_get_page_section` and `confluence_update_page_section`, so outline entries can be passed back to those tools unchanged. Entries with `match_count` greater than 1 are duplicate headings; selective section reads reject duplicates, so fall back to `confluence_get_page` for those.
+platform_notes: |
+  Content before the first heading is not part of the outline; use `confluence_get_page` to read a preamble. The compact `page` envelope contains only id, title, url, and version.

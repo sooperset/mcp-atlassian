@@ -65,6 +65,29 @@ def mock_confluence_fetcher():
     mock_fetcher.update_page.return_value = mock_page
     mock_fetcher.update_page_section.return_value = mock_page
     mock_fetcher.delete_page.return_value = True
+    mock_fetcher.get_page_outline.return_value = {
+        "page": {
+            "id": "123456",
+            "title": "Test Page Mock Title",
+            "url": "https://example.atlassian.net/wiki/spaces/TEST/pages/123456/Test+Page",
+            "version": 7,
+        },
+        "headings": [
+            {"text": "Overview", "level": 2, "match_count": 1},
+            {"text": "Weekly Update", "level": 3, "match_count": 2},
+        ],
+    }
+    mock_fetcher.get_page_section.return_value = {
+        "page": {
+            "id": "123456",
+            "title": "Test Page Mock Title",
+            "url": "https://example.atlassian.net/wiki/spaces/TEST/pages/123456/Test+Page",
+            "version": 7,
+        },
+        "heading": {"text": "Weekly Update", "level": 3},
+        "content": {"value": "<p>Current section body.</p>", "format": "storage"},
+        "contains_confluence_elements": False,
+    }
 
     # Mock comment
     mock_comment = MagicMock()
@@ -247,6 +270,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page,
         get_page_children,
         get_page_images,
+        get_page_outline,
+        get_page_section,
         get_page_template,
         get_space_page_tree,
         get_space_permissions,
@@ -278,6 +303,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp = FastMCP(name="TestConfluenceSubMCP")
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
+    confluence_sub_mcp.add_tool(get_page_outline)
+    confluence_sub_mcp.add_tool(get_page_section)
     confluence_sub_mcp.add_tool(get_page_children)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
@@ -330,6 +357,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_page,
         get_page_children,
         get_page_images,
+        get_page_outline,
+        get_page_section,
         get_page_template,
         get_space_page_tree,
         get_space_permissions,
@@ -363,6 +392,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp = FastMCP(name="NoFetcherTestConfluenceSubMCP")
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
+    confluence_sub_mcp.add_tool(get_page_outline)
+    confluence_sub_mcp.add_tool(get_page_section)
     confluence_sub_mcp.add_tool(get_page_children)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
@@ -1300,6 +1331,280 @@ async def test_get_page_with_numeric_id(client, mock_confluence_fetcher):
     result_data = json.loads(response.content[0].text)
     assert "metadata" in result_data
     assert result_data["metadata"]["id"] == "123456"
+
+
+# --- selective page reader tool tests ---
+
+
+@pytest.mark.anyio
+async def test_section_readers_are_registered_read_only():
+    """Both readers are discoverable, read-only, and in the pages toolset."""
+    tools = {
+        tool.name: tool for tool in await confluence_server.confluence_mcp.list_tools()
+    }
+
+    for name in ("get_page_outline", "get_page_section"):
+        tool = tools[name]
+        assert tool.annotations.readOnlyHint is True
+        assert "toolset:confluence_pages" in tool.tags
+        assert "read" in tool.tags
+
+    assert tools["get_page_outline"].annotations.title == "Get Page Outline"
+    assert tools["get_page_section"].annotations.title == "Get Page Section"
+
+
+@pytest.mark.anyio
+async def test_get_page_outline(client, mock_confluence_fetcher):
+    """The outline tool forwards the resolved ID and returns heading JSON."""
+    response = await client.call_tool(
+        "confluence_get_page_outline", {"page_id": "123456"}
+    )
+
+    mock_confluence_fetcher.get_page_outline.assert_called_once_with("123456")
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["page"]["id"] == "123456"
+    assert result_data["page"]["version"] == 7
+    assert [h["text"] for h in result_data["headings"]] == [
+        "Overview",
+        "Weekly Update",
+    ]
+    assert result_data["headings"][1]["match_count"] == 2
+
+
+@pytest.mark.anyio
+async def test_get_page_outline_numeric_id(client, mock_confluence_fetcher):
+    """A numeric page_id is coerced to a string before the fetcher call."""
+    await client.call_tool("confluence_get_page_outline", {"page_id": 123456})
+
+    mock_confluence_fetcher.get_page_outline.assert_called_once_with("123456")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("page_reference", "expected"),
+    [
+        (
+            "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Title",
+            "123456789",
+        ),
+        (
+            "https://confluence.example.com/pages/viewpage.action?pageId=123456789",
+            "123456789",
+        ),
+        ("https://example.atlassian.net/wiki/x/N4CIO", "948469815"),
+        ("https://confluence.example.com/confluence/x/N4CIO", "948469815"),
+    ],
+)
+async def test_get_page_outline_resolves_page_references(
+    client: Client,
+    mock_confluence_fetcher: MagicMock,
+    page_reference: str,
+    expected: str,
+) -> None:
+    """Full URLs and tiny links are resolved before the fetcher call."""
+    await client.call_tool("confluence_get_page_outline", {"page_id": page_reference})
+
+    mock_confluence_fetcher.get_page_outline.assert_called_once_with(expected)
+
+
+@pytest.mark.anyio
+async def test_get_page_section(client, mock_confluence_fetcher):
+    """The section tool forwards arguments and defaults expected_version."""
+    response = await client.call_tool(
+        "confluence_get_page_section",
+        {"page_id": "123456", "heading_text": "Weekly Update"},
+    )
+
+    mock_confluence_fetcher.get_page_section.assert_called_once_with(
+        page_id="123456",
+        heading_text="Weekly Update",
+        expected_version=None,
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["heading"] == {"text": "Weekly Update", "level": 3}
+    assert result_data["content"] == {
+        "value": "<p>Current section body.</p>",
+        "format": "storage",
+    }
+    assert result_data["contains_confluence_elements"] is False
+    # Compact envelope only — no full-page data leaks into the response.
+    assert set(result_data["page"]) == {"id", "title", "url", "version"}
+    assert "space" not in result_data["page"]
+    assert "attachments" not in result_data["page"]
+
+
+@pytest.mark.anyio
+async def test_get_page_section_forwards_expected_version(
+    client, mock_confluence_fetcher
+):
+    """An explicit expected_version is forwarded to the fetcher unchanged."""
+    await client.call_tool(
+        "confluence_get_page_section",
+        {"page_id": "123456", "heading_text": "Weekly Update", "expected_version": 7},
+    )
+
+    mock_confluence_fetcher.get_page_section.assert_called_once_with(
+        page_id="123456",
+        heading_text="Weekly Update",
+        expected_version=7,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_page_section_resolves_page_references(
+    client: Client, mock_confluence_fetcher: MagicMock
+) -> None:
+    """Full URLs and tiny links are resolved before the fetcher call."""
+    await client.call_tool(
+        "confluence_get_page_section",
+        {
+            "page_id": "https://example.atlassian.net/wiki/x/N4CIO",
+            "heading_text": "Weekly Update",
+        },
+    )
+
+    mock_confluence_fetcher.get_page_section.assert_called_once_with(
+        page_id="948469815",
+        heading_text="Weekly Update",
+        expected_version=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_page_section_empty_content(client, mock_confluence_fetcher):
+    """An empty section body is returned as an empty storage value."""
+    mock_confluence_fetcher.get_page_section.return_value = {
+        "page": {
+            "id": "123456",
+            "title": "Test Page Mock Title",
+            "url": "https://example.atlassian.net/wiki/spaces/TEST/pages/123456/Test+Page",
+            "version": 7,
+        },
+        "heading": {"text": "Empty", "level": 2},
+        "content": {"value": "", "format": "storage"},
+        "contains_confluence_elements": False,
+    }
+
+    response = await client.call_tool(
+        "confluence_get_page_section",
+        {"page_id": "123456", "heading_text": "Empty"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["content"] == {"value": "", "format": "storage"}
+
+
+@pytest.mark.anyio
+async def test_get_page_outline_fetcher_error_surfaces(client, mock_confluence_fetcher):
+    """Fetcher failures surface as tool errors with the original message."""
+    mock_confluence_fetcher.get_page_outline.side_effect = ValueError(
+        "Page 999 not found"
+    )
+
+    with pytest.raises(ToolError) as excinfo:
+        await client.call_tool("confluence_get_page_outline", {"page_id": "999"})
+
+    assert "Page 999 not found" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_get_page_section_fetcher_error_surfaces(client, mock_confluence_fetcher):
+    """Fetcher failures surface as tool errors with the original message."""
+    mock_confluence_fetcher.get_page_section.side_effect = ValueError(
+        "Heading 'Missing' not found in page 999."
+    )
+
+    with pytest.raises(ToolError) as excinfo:
+        await client.call_tool(
+            "confluence_get_page_section",
+            {"page_id": "999", "heading_text": "Missing"},
+        )
+
+    assert "Heading 'Missing' not found in page 999." in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_get_page_section_rejects_invalid_expected_version(
+    client, mock_confluence_fetcher
+):
+    """The input schema rejects expected_version values below 1."""
+    with pytest.raises(Exception):
+        await client.call_tool(
+            "confluence_get_page_section",
+            {
+                "page_id": "123456",
+                "heading_text": "Weekly Update",
+                "expected_version": 0,
+            },
+        )
+
+    mock_confluence_fetcher.get_page_section.assert_not_called()
+
+
+@pytest.fixture
+def read_only_confluence_mcp(mock_base_confluence_config):
+    """Create a read-only test FastMCP instance with the two section readers."""
+    from src.mcp_atlassian.servers.confluence import (
+        get_page_outline,
+        get_page_section,
+    )
+
+    @asynccontextmanager
+    async def read_only_lifespan(app: FastMCP) -> AsyncGenerator[dict, None]:
+        yield {
+            "app_lifespan_context": MainAppContext(
+                full_confluence_config=mock_base_confluence_config,
+                read_only=True,
+            )
+        }
+
+    test_mcp = AtlassianMCP(
+        "ReadOnlyConfluence",
+        instructions="Read-only Confluence MCP Server",
+        lifespan=read_only_lifespan,
+    )
+
+    confluence_sub_mcp = FastMCP(name="ReadOnlyConfluenceSubMCP")
+    confluence_sub_mcp.add_tool(get_page_outline)
+    confluence_sub_mcp.add_tool(get_page_section)
+    test_mcp.mount(confluence_sub_mcp, namespace="confluence")
+
+    return test_mcp
+
+
+@pytest.fixture
+async def read_only_client_fixture(read_only_confluence_mcp, mock_confluence_fetcher):
+    """Create a read-only client with a mocked Confluence fetcher."""
+    with patch(
+        "src.mcp_atlassian.servers.confluence.get_confluence_fetcher",
+        AsyncMock(return_value=mock_confluence_fetcher),
+    ):
+        client_instance = Client(transport=FastMCPTransport(read_only_confluence_mcp))
+        async with client_instance as connected_client:
+            yield connected_client
+
+
+@pytest.mark.anyio
+async def test_section_readers_available_in_read_only_mode(
+    read_only_client_fixture, mock_confluence_fetcher
+):
+    """Readers remain callable when the server runs in read-only mode."""
+    outline_response = await read_only_client_fixture.call_tool(
+        "confluence_get_page_outline", {"page_id": "123456"}
+    )
+    assert json.loads(outline_response.content[0].text)["page"]["id"] == "123456"
+
+    section_response = await read_only_client_fixture.call_tool(
+        "confluence_get_page_section",
+        {"page_id": "123456", "heading_text": "Weekly Update"},
+    )
+    assert json.loads(section_response.content[0].text)["heading"]["text"] == (
+        "Weekly Update"
+    )
+    mock_confluence_fetcher.update_page.assert_not_called()
+    mock_confluence_fetcher.update_page_section.assert_not_called()
 
 
 # Phase 5: MCP Attachment Tools Tests (TDD RED Phase)

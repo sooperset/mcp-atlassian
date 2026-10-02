@@ -1,0 +1,6 @@
+example: |
+  {"page_id": "12345678", "heading_text": "Deployment", "expected_version": 7}
+tips: |
+  Use the read/edit flow `confluence_get_page_outline` -> `confluence_get_page_section` -> `confluence_update_page_section` for localized edits so only the target section passes through the model. The body is raw Confluence storage markup covering the same sibling range the section writer replaces, so it can be modified and written back with `content_format: "storage"`. When `contains_confluence_elements` is true, preserve macros, links, mentions, and images when rewriting the section.
+platform_notes: |
+  Matching is case-sensitive and trimmed at the outer edges of `heading_text`. A missing heading or one that appears more than once raises a `ValueError`. `expected_version` is an optional freshness check on the read snapshot; it is not an atomic read-modify-write guarantee. Pages without headings cannot be read this way; use `confluence_get_page` instead.
