@@ -511,6 +511,46 @@ async def test_search(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("query", "expected_cql"),
+    [
+        (
+            '"Quarterly Planning Notes"',
+            'siteSearch ~ "\\"Quarterly Planning Notes\\""',
+        ),
+        ("back\\slash", 'siteSearch ~ "back\\\\slash"'),
+    ],
+)
+async def test_search_escapes_simple_query_literal(
+    client, mock_confluence_fetcher, query, expected_cql
+):
+    """Test that quotes and backslashes in a simple query are escaped in CQL."""
+    await client.call_tool("confluence_search", {"query": query})
+
+    mock_confluence_fetcher.search.assert_called_once()
+    args, _ = mock_confluence_fetcher.search.call_args
+    assert args[0] == expected_cql
+
+
+@pytest.mark.anyio
+async def test_search_text_fallback_escapes_simple_query_literal(
+    client, mock_confluence_fetcher
+):
+    """Test that the text-search fallback also escapes quotes in the query."""
+    pages = mock_confluence_fetcher.search.return_value
+    mock_confluence_fetcher.search.side_effect = [
+        RuntimeError("siteSearch not supported"),
+        pages,
+    ]
+
+    await client.call_tool("confluence_search", {"query": '"Quarterly Planning Notes"'})
+
+    assert mock_confluence_fetcher.search.call_count == 2
+    args, _ = mock_confluence_fetcher.search.call_args
+    assert args[0] == 'text ~ "\\"Quarterly Planning Notes\\""'
+
+
+@pytest.mark.anyio
 async def test_search_returns_error_details(client, mock_confluence_fetcher):
     """Test that search tool failures preserve the original error message."""
     mock_confluence_fetcher.search.side_effect = RuntimeError(
