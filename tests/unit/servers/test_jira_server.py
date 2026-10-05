@@ -382,6 +382,13 @@ def mock_jira_fetcher():
         "author": "Test User",
     }
 
+    # Configure delete_comment
+    mock_fetcher.delete_comment.return_value = {
+        "issue_key": "TEST-123",
+        "comment_id": "10001",
+        "deleted": True,
+    }
+
     # Configure add_worklog
     mock_fetcher.add_worklog.return_value = {
         "id": "10100",
@@ -467,6 +474,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         create_issue_link,
         create_remote_issue_link,
         create_sprint,
+        delete_comment,
         delete_issue,
         download_attachments,
         edit_comment,
@@ -564,6 +572,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(move_issues_to_backlog)
     jira_sub_mcp.add_tool(add_comment)
     jira_sub_mcp.add_tool(edit_comment)
+    jira_sub_mcp.add_tool(delete_comment)
     jira_sub_mcp.add_tool(add_worklog)
     jira_sub_mcp.add_tool(link_to_epic)
     jira_sub_mcp.add_tool(create_issue_link)
@@ -633,6 +642,55 @@ async def jira_client(test_jira_mcp, mock_jira_fetcher, mock_request):
     ):
         async with Client(transport=FastMCPTransport(test_jira_mcp)) as client_instance:
             yield client_instance
+
+
+@pytest.fixture
+def delete_comment_client_factory(
+    mock_base_jira_config, mock_jira_fetcher, mock_request
+):
+    """Build a client exposing only delete_comment, in write or read-only mode.
+
+    The lifespan yields the {"app_lifespan_context": ...} mapping that
+    main.py's own lifespan produces. That shape is what the tool filter
+    and the read-only guard actually read, so a bare MainAppContext
+    leaves both inert.
+    """
+
+    @asynccontextmanager
+    async def _client(read_only: bool) -> AsyncGenerator[Client, None]:
+        @asynccontextmanager
+        async def lifespan(app: FastMCP) -> AsyncGenerator[dict[str, Any], None]:
+            yield {
+                "app_lifespan_context": MainAppContext(
+                    full_jira_config=mock_base_jira_config, read_only=read_only
+                )
+            }
+
+        test_mcp = AtlassianMCP(
+            "DeleteCommentTestJira",
+            instructions="Delete Comment Test Jira MCP Server",
+            lifespan=lifespan,
+        )
+        from src.mcp_atlassian.servers.jira import delete_comment
+
+        jira_sub_mcp = FastMCP(name="DeleteCommentTestJiraSubMCP")
+        jira_sub_mcp.add_tool(delete_comment)
+        test_mcp.mount(jira_sub_mcp, namespace="jira")
+
+        with (
+            patch(
+                "src.mcp_atlassian.servers.jira.get_jira_fetcher",
+                AsyncMock(return_value=mock_jira_fetcher),
+            ),
+            patch(
+                "src.mcp_atlassian.servers.dependencies.get_http_request",
+                return_value=mock_request,
+            ),
+        ):
+            async with Client(transport=FastMCPTransport(test_mcp)) as client:
+                yield client
+
+    return _client
 
 
 @pytest.fixture
@@ -3731,6 +3789,55 @@ async def test_edit_comment(jira_client, mock_jira_fetcher):
     result = json.loads(response.content[0].text)
     assert result["id"] == "10001"
     assert result["body"] == "Updated comment body"
+
+
+@pytest.mark.anyio
+async def test_delete_comment(jira_client, mock_jira_fetcher):
+    """Test delete_comment passes the issue key and comment id through."""
+    response = await jira_client.call_tool(
+        "jira_delete_comment",
+        {"issue_key": "TEST-123", "comment_id": "10001"},
+    )
+
+    mock_jira_fetcher.delete_comment.assert_called_once_with("TEST-123", "10001")
+
+    result = json.loads(response.content[0].text)
+    assert result == {
+        "issue_key": "TEST-123",
+        "comment_id": "10001",
+        "deleted": True,
+    }
+
+
+@pytest.mark.anyio
+async def test_delete_comment_listed_in_write_mode(delete_comment_client_factory):
+    """delete_comment is exposed as jira_delete_comment when writes are allowed."""
+    async with delete_comment_client_factory(read_only=False) as client:
+        tools = await client.list_tools()
+
+    assert "jira_delete_comment" in {tool.name for tool in tools}
+
+
+@pytest.mark.anyio
+async def test_delete_comment_rejected_in_read_only_mode(
+    delete_comment_client_factory, mock_jira_fetcher
+):
+    """Read-only mode hides the write tool and refuses it by name.
+
+    The refusal reuses the unknown-tool message so a read-only server
+    does not reveal that the tool exists but is disabled.
+    """
+    async with delete_comment_client_factory(read_only=True) as client:
+        tools = await client.list_tools()
+        assert "jira_delete_comment" not in {tool.name for tool in tools}
+
+        with pytest.raises(ToolError, match="Unknown tool: jira_delete_comment"):
+            await client.call_tool(
+                "jira_delete_comment",
+                {"issue_key": "TEST-123", "comment_id": "10001"},
+            )
+
+    mock_jira_fetcher.delete_comment.assert_not_called()
 
 
 @pytest.mark.anyio

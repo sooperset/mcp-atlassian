@@ -483,6 +483,30 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="Error editing comment"):
             comments_mixin.edit_comment("TEST-123", "10001", "Updated comment")
 
+    def test_delete_comment_cloud_uses_v3(self, comments_mixin):
+        """Test delete_comment goes through the v3 API on Cloud."""
+        # Jira answers a successful delete with 204 and an empty body
+        comments_mixin._delete_api3 = Mock(return_value=None)
+
+        result = comments_mixin.delete_comment("TEST-123", "10001")
+
+        comments_mixin._delete_api3.assert_called_once_with(
+            "issue/TEST-123/comment/10001"
+        )
+        comments_mixin.jira.delete.assert_not_called()
+        assert result == {
+            "issue_key": "TEST-123",
+            "comment_id": "10001",
+            "deleted": True,
+        }
+
+    def test_delete_comment_with_error(self, comments_mixin):
+        """Test delete_comment with an error response."""
+        comments_mixin._delete_api3 = Mock(side_effect=Exception("API Error"))
+
+        with pytest.raises(Exception, match="Error deleting comment"):
+            comments_mixin.delete_comment("TEST-123", "10001")
+
     def test_markdown_to_jira_cloud(self, comments_mixin):
         """Test _markdown_to_jira returns ADF dict on Cloud."""
         result = comments_mixin._markdown_to_jira("Markdown text")
@@ -558,6 +582,25 @@ class TestCommentsMixin:
         comment_arg = call_args[0][2]
         assert isinstance(comment_arg, str)
         assert result["body"] == "h1. Updated"
+
+    def test_delete_comment_server_uses_v2_rest_path(self, server_comments_mixin):
+        """Server/DC delete_comment deletes via the v2 REST path.
+
+        atlassian-python-api has no issue_delete_comment, so the method
+        uses the authenticated generic delete.
+        """
+        server_comments_mixin.jira.delete.return_value = None
+
+        result = server_comments_mixin.delete_comment("TEST-123", "10001")
+
+        server_comments_mixin.jira.delete.assert_called_once_with(
+            "rest/api/2/issue/TEST-123/comment/10001"
+        )
+        assert result == {
+            "issue_key": "TEST-123",
+            "comment_id": "10001",
+            "deleted": True,
+        }
 
     # --- ServiceDesk API (internal/public comments) tests ---
 
@@ -972,6 +1015,51 @@ class TestInternalOnlyProjectsGuard:
         guarded_mixin.jira.get.return_value = response
         with pytest.raises(ValueError, match="PUBLIC"):
             guarded_mixin.edit_comment("CC-1", "5", "Updated text")
+
+    # --- delete_comment ---
+
+    def test_delete_comment_unlisted_project_skips_visibility_fetch(
+        self, guarded_mixin
+    ):
+        """An unlisted project never pays the extra ServiceDesk lookup."""
+        guarded_mixin._delete_api3 = Mock(return_value=None)
+        result = guarded_mixin.delete_comment("TEST-1", "1")
+        guarded_mixin.jira.get.assert_not_called()
+        guarded_mixin._delete_api3.assert_called_once_with("issue/TEST-1/comment/1")
+        assert result["deleted"] is True
+
+    def test_delete_comment_internal_only_rejects_public_comment(self, guarded_mixin):
+        """Listed project + currently-public target comment is rejected, and
+        no delete is attempted."""
+        guarded_mixin.jira.get.return_value = {"id": "5", "public": True}
+        guarded_mixin._delete_api3 = Mock()
+        with pytest.raises(ValueError, match="PUBLIC"):
+            guarded_mixin.delete_comment("CC-1", "5")
+        guarded_mixin._delete_api3.assert_not_called()
+        guarded_mixin.jira.delete.assert_not_called()
+        guarded_mixin.jira.get.assert_called_once()
+        call_args = guarded_mixin.jira.get.call_args
+        assert "rest/servicedeskapi/request/CC-1/comment/5" in str(call_args)
+
+    def test_delete_comment_internal_only_accepts_internal_comment(self, guarded_mixin):
+        """Listed project + currently-internal target comment passes through."""
+        guarded_mixin.jira.get.return_value = {"id": "5", "public": False}
+        guarded_mixin._delete_api3 = Mock(return_value=None)
+        result = guarded_mixin.delete_comment("CC-1", "5")
+        guarded_mixin.jira.get.assert_called_once()
+        guarded_mixin._delete_api3.assert_called_once_with("issue/CC-1/comment/5")
+        assert result["deleted"] is True
+
+    def test_delete_comment_internal_only_visibility_lookup_fails_closed(
+        self, guarded_mixin
+    ):
+        """If the ServiceDesk visibility lookup errors, the delete is refused
+        rather than silently allowed through (fail closed)."""
+        guarded_mixin.jira.get.side_effect = Exception("500 Server Error")
+        guarded_mixin._delete_api3 = Mock()
+        with pytest.raises(Exception, match="Could not verify"):
+            guarded_mixin.delete_comment("CC-1", "5")
+        guarded_mixin._delete_api3.assert_not_called()
 
 
 class TestInternalOnlyNonRequestIssues:
