@@ -395,6 +395,15 @@ class JiraClient:
         url = self.jira.resource_url(resource, api_version="3")
         return self.jira.put(url, data=data)
 
+    def _delete_api3(self, resource: str) -> Any:
+        """DELETE from Jira REST API v3, for parity with the v3 read/write paths.
+
+        Jira answers a successful comment delete with 204 and an empty body,
+        so callers must treat a None or empty result as success.
+        """
+        url = self.jira.resource_url(resource, api_version="3")
+        return self.jira.delete(url)
+
     def get_paged(
         self,
         method: Literal["get", "post"],
