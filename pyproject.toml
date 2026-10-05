@@ -163,6 +163,16 @@ disallow_untyped_defs = false
 module = "pypac.*"
 ignore_missing_imports = true
 
+# Deprecated is pulled in transitively by atlassian-python-api. Current
+# releases use the 3.12 `type` statement, which mypy rejects while
+# python_version is 3.10, so checking any module that imports
+# atlassian-python-api fails inside this third-party source. We do not
+# type-check it, so skip following it rather than parsing it.
+[[tool.mypy.overrides]]
+module = "deprecated.*"
+follow_imports = "skip"
+ignore_missing_imports = true
+
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
 
