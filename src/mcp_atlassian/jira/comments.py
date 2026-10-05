@@ -3,8 +3,8 @@
 Internal-only guard (JIRA_INTERNAL_ONLY_PROJECTS) coverage map:
 
 - Guarded routes: add_comment (here), edit_comment (here),
-  transition_issue's comment argument (transitions.py), and
-  create_issue_link's comment payload (links.py).
+  delete_comment (here), transition_issue's comment argument
+  (transitions.py), and create_issue_link's comment payload (links.py).
 - Known non-covered route: add_worklog's comment (worklog.py) is left
   unguarded by design — worklog entries are not portal-visible to JSM
   customers by default, so a worklog comment does not carry the
@@ -591,3 +591,73 @@ class CommentsMixin(JiraClient):
                 f"Error editing comment {comment_id} on issue {issue_key}: {str(e)}"
             )
             raise Exception(f"Error editing comment: {str(e)}") from e
+
+    def _enforce_internal_only_delete(self, issue_key: str, comment_id: str) -> None:
+        """Reject delete_comment calls that would remove a public comment on a
+        project listed in JIRA_INTERNAL_ONLY_PROJECTS.
+
+        Deleting a customer-visible comment is at least as consequential as
+        editing one: it removes content a customer may already have read, and
+        the API offers no way to restore it. As with the edit guard, the
+        server resolves the comment's current visibility itself, because a
+        client-side hook can inspect a delete_comment call's arguments but
+        not the visibility of the comment it names.
+
+        Args:
+            issue_key: The issue key (e.g. 'CC-123')
+            comment_id: The ID of the comment being deleted
+
+        Raises:
+            ValueError: If the project is internal-only and the target
+                comment is currently public
+        """
+        if not self._is_internal_only_project(issue_key):
+            return
+        if self._fetch_servicedesk_comment_is_public(issue_key, comment_id):
+            raise ValueError(
+                f"Comment {comment_id} on issue {issue_key} is PUBLIC "
+                f"(customer-visible). {issue_key}'s project is configured "
+                "as internal-only (JIRA_INTERNAL_ONLY_PROJECTS), so "
+                "automation may not delete public comments there: a human "
+                "must remove client-facing content directly in Jira."
+            )
+
+    def delete_comment(self, issue_key: str, comment_id: str) -> dict[str, Any]:
+        """
+        Delete an existing comment on an issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            comment_id: The ID of the comment to delete
+
+        Returns:
+            Confirmation of which comment was deleted
+
+        Raises:
+            ValueError: If issue_key's project is listed in
+                JIRA_INTERNAL_ONLY_PROJECTS and the target comment is
+                currently public (customer-visible)
+            Exception: If there is an error deleting the comment, or if
+                the target comment's visibility cannot be verified for
+                an internal-only project
+        """
+        self._enforce_internal_only_delete(issue_key, comment_id)
+
+        try:
+            # Jira answers a successful delete with 204 and an empty body, so
+            # there is no payload to validate or clean up here.
+            if self.config.is_cloud:
+                self._delete_api3(f"issue/{issue_key}/comment/{comment_id}")
+            else:
+                self.jira.delete(f"rest/api/2/issue/{issue_key}/comment/{comment_id}")
+
+            return {
+                "issue_key": issue_key,
+                "comment_id": comment_id,
+                "deleted": True,
+            }
+        except Exception as e:
+            logger.error(
+                f"Error deleting comment {comment_id} on issue {issue_key}: {str(e)}"
+            )
+            raise Exception(f"Error deleting comment: {str(e)}") from e
