@@ -299,3 +299,99 @@ class TestIssuesMarkdownConversion:
         # Custom field should not be converted
         assert "customfield_10001" in create_call
         assert create_call["customfield_10001"] == "# Custom Field Description"
+
+
+class TestCreatedIssueDescriptions:
+    """Tests for description formatting in issue creation responses."""
+
+    def test_create_issue_returns_markdown_description(
+        self, jira_fetcher: JiraFetcher
+    ) -> None:
+        """Return Markdown while continuing to send wiki markup to Server/DC."""
+        jira_fetcher.config.url = "https://jira.example.com"
+        markdown = "## Goal\n\n**Bold** and [Docs](https://example.com/docs)."
+        wiki = "h2. Goal\n\n*Bold* and [Docs|https://example.com/docs]."
+        jira_fetcher.jira.create_issue.return_value = {"key": "TEST-123"}
+        jira_fetcher.jira.get_issue.return_value = {
+            "key": "TEST-123",
+            "fields": {"summary": "Test Issue", "description": wiki},
+        }
+
+        issue = jira_fetcher.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Task",
+            description=markdown,
+        )
+
+        assert (
+            jira_fetcher.jira.create_issue.call_args.kwargs["fields"]["description"]
+            == wiki
+        )
+        assert issue.to_simplified_dict()["description"] == markdown
+        jira_fetcher.jira.get_issue.assert_called_once_with("TEST-123")
+
+    def test_create_issue_respects_disabled_translation(
+        self, jira_fetcher: JiraFetcher
+    ) -> None:
+        """Leave returned wiki markup intact when translation is disabled."""
+        jira_fetcher.config.url = "https://jira.example.com"
+        jira_fetcher.config.disable_jira_markup_translation = True
+        jira_fetcher.preprocessor.disable_translation = True
+        wiki = "h2. Goal\n\n*Bold* text."
+        jira_fetcher.jira.create_issue.return_value = {"key": "TEST-123"}
+        jira_fetcher.jira.get_issue.return_value = {
+            "key": "TEST-123",
+            "fields": {"summary": "Test Issue", "description": wiki},
+        }
+
+        issue = jira_fetcher.create_issue("TEST", "Test Issue", "Task", wiki)
+
+        assert issue.description == wiki
+        assert (
+            jira_fetcher.jira.create_issue.call_args.kwargs["fields"]["description"]
+            == wiki
+        )
+
+    @pytest.mark.parametrize("description", [None, ""])
+    def test_create_issue_with_no_description(
+        self, jira_fetcher: JiraFetcher, description: str | None
+    ) -> None:
+        """Preserve empty and null descriptions in the created issue model."""
+        jira_fetcher.jira.create_issue.return_value = {"key": "TEST-123"}
+        jira_fetcher.jira.get_issue.return_value = {
+            "key": "TEST-123",
+            "fields": {"summary": "Test Issue", "description": description},
+        }
+
+        issue = jira_fetcher.create_issue("TEST", "Test Issue", "Task")
+
+        assert issue.description == description
+
+    def test_create_issue_preserves_cloud_adf_description(
+        self, jira_fetcher: JiraFetcher
+    ) -> None:
+        """Continue to let the model handle Cloud ADF descriptions."""
+        jira_fetcher.jira.create_issue.return_value = {"key": "TEST-123"}
+        jira_fetcher.jira.get_issue.return_value = {
+            "key": "TEST-123",
+            "fields": {
+                "summary": "Test Issue",
+                "description": {
+                    "type": "doc",
+                    "version": 1,
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [
+                                {"type": "text", "text": "Keep *literal* text."}
+                            ],
+                        }
+                    ],
+                },
+            },
+        }
+
+        issue = jira_fetcher.create_issue("TEST", "Test Issue", "Task")
+
+        assert issue.description == "Keep *literal* text."
