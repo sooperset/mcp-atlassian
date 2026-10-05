@@ -2717,6 +2717,43 @@ async def edit_comment(
 
 
 @jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_comments"},
+    annotations={"title": "Delete Comment", "destructiveHint": True},
+)
+@check_write_access
+async def delete_comment(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    comment_id: Annotated[str, Field(description="The ID of the comment to delete")],
+) -> str:
+    """Delete an existing comment on a Jira issue.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        comment_id: The ID of the comment to delete.
+
+    Returns:
+        JSON string confirming which comment was deleted.
+
+    Raises:
+        ValueError: If in read-only mode, Jira client unavailable, or
+            the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
+            and the target comment is currently public (customer-visible)
+            - deleting public comments there is blocked server-side.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.delete_comment(issue_key, comment_id)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_worklog"},
     annotations={"title": "Add Worklog", "destructiveHint": True},
 )
