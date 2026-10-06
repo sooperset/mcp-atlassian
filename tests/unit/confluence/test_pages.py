@@ -167,6 +167,80 @@ class TestPagesMixin:
         assert result.content == raw_storage_content
         pages_mixin.preprocessor.process_html_content.assert_not_called()
 
+    @pytest.mark.parametrize("read_path", ["id", "title", "history", "space"])
+    @pytest.mark.parametrize(
+        "reference", ['ri:userkey="dc-user"', 'ri:account-id="cloud-user"']
+    )
+    def test_raw_reads_preserve_mentions_and_macros(
+        self, pages_mixin, read_path, reference
+    ):
+        storage = (
+            '<ac:structured-macro ac:name="info"><ac:rich-text-body>\n'
+            f"<p>Owner: <ac:link><ri:user {reference} /></ac:link></p>\n"
+            '<ac:structured-macro ac:name="code"><ac:plain-text-body>'
+            "<![CDATA[<xml>unmodified</xml>]]></ac:plain-text-body>"
+            "</ac:structured-macro></ac:rich-text-body></ac:structured-macro>"
+        )
+        page = {
+            "id": "123",
+            "title": "Owners",
+            "space": {"key": "TEST"},
+            "version": {"number": 3},
+            "body": {"storage": {"value": storage}},
+        }
+        pages_mixin.confluence.get_page_by_id.return_value = page
+        pages_mixin.confluence.get_page_by_title.return_value = page
+        pages_mixin.confluence.get_all_pages_from_space.return_value = [page]
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            "<p>Owner: @Alice Smith</p>",
+            "Owner: @Alice Smith",
+        )
+        if read_path == "id":
+            result = pages_mixin.get_page_content("123", convert_to_markdown=False)
+        elif read_path == "title":
+            result = pages_mixin.get_page_by_title(
+                "TEST", "Owners", convert_to_markdown=False
+            )
+        elif read_path == "history":
+            result = pages_mixin.get_page_history("123", 3, convert_to_markdown=False)
+        else:
+            result = pages_mixin.get_space_pages("TEST", convert_to_markdown=False)[0]
+        assert result.content == storage
+        assert result.to_simplified_dict()["content"] == {
+            "value": storage,
+            "format": "storage",
+        }
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
+
+    def test_read_update_read_storage_preserves_mentions(self, pages_mixin):
+        storage = '<p>Owner: <ac:link><ri:user ri:userkey="dc-user" /></ac:link></p>'
+        page = {
+            "id": "123",
+            "title": "Owners",
+            "space": {"key": "TEST"},
+            "version": {"number": 3},
+            "body": {"storage": {"value": storage}},
+        }
+        pages_mixin.confluence.get_page_by_id.return_value = page
+
+        def update(**kwargs):
+            assert kwargs["representation"] == "storage"
+            page["body"]["storage"]["value"] = kwargs["body"]
+            page["version"]["number"] += 1
+
+        pages_mixin.confluence.update_page.side_effect = update
+        first = pages_mixin.get_page_content("123", convert_to_markdown=False)
+        edited = first.content + "<p>New paragraph</p>"
+        pages_mixin.update_page(
+            "123", "Owners", edited, is_markdown=False, content_representation="storage"
+        )
+        pages_mixin.preprocessor.process_html_content.reset_mock()
+        saved = pages_mixin.get_page_content("123", convert_to_markdown=False)
+        assert saved.content == edited
+        assert 'ri:userkey="dc-user"' in saved.content
+        pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
+
     def test_get_page_by_title_success(self, pages_mixin):
         """Test getting a page by title when it exists."""
         # Setup
@@ -1636,9 +1710,10 @@ class TestPagesMixin:
             page_id, version, convert_to_markdown=False
         )
 
-        # Assert - HTML should be used instead of markdown
+        # Assert the historical storage is returned unchanged.
         assert isinstance(result, ConfluencePage)
-        assert result.content == "<p>Processed HTML content</p>"
+        assert result.content == "<p>HTML content</p>"
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
         assert result.version.number == version
 
     def test_get_page_history_with_attachments_v1(self, pages_mixin):
@@ -2196,9 +2271,10 @@ class TestPagesOAuthMixin:
                 page_id, version, convert_to_markdown=False
             )
 
-            # Assert - should return HTML
+            # Assert the historical storage is returned unchanged.
             assert isinstance(result, ConfluencePage)
-            assert result.content == "<h1>Processed HTML</h1>"
+            assert result.content == "<h1>HTML</h1>"
+            oauth_pages_mixin.preprocessor.process_html_content.assert_not_called()
             assert result.version.number == version
 
     def test_get_page_history_oauth_missing_body(self, oauth_pages_mixin):
@@ -2952,6 +3028,32 @@ class TestGetPageVersionDiff:
         assert result["from_version"] == 1
         assert result["to_version"] == 2
         assert result["diff"] == ""
+
+    def test_raw_diff_detects_removed_mention(self, pages_mixin):
+        old = '<p>Owner: <ac:link><ri:user ri:userkey="alice" /></ac:link></p>'
+        new = "<p>Owner: @Alice Smith</p>"
+
+        def get_version(**kwargs):
+            value = old if kwargs["version"] == 1 else new
+            return {
+                "id": "12345",
+                "title": "Owners",
+                "space": {"key": "TEST"},
+                "version": {"number": kwargs["version"]},
+                "body": {"storage": {"value": value}},
+            }
+
+        pages_mixin.confluence.get_page_by_id.side_effect = get_version
+        pages_mixin.preprocessor.process_html_content.return_value = (
+            new,
+            "Owner: @Alice Smith",
+        )
+        result = pages_mixin.get_page_version_diff(
+            "12345", 1, 2, convert_to_markdown=False
+        )
+        assert "-" + old in result["diff"]
+        assert "+" + new in result["diff"]
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
 
     def test_versions_passed_correctly(self, pages_mixin):
         """Test that from_version and to_version are passed to get_page_history."""
