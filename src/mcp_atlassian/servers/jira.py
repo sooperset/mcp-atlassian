@@ -1223,6 +1223,10 @@ async def get_transitions(
 ) -> str:
     """Get available status transitions for a Jira issue.
 
+    Each item includes ``to.name`` (the destination status) and, when Jira
+    sends it, ``to.statusCategory``. Match the destination, not the
+    transition name: a transition named Done may land on another status.
+
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.

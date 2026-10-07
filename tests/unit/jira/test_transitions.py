@@ -57,11 +57,15 @@ class TestTransitionsMixin:
     ):
         """Test get_available_transitions with list format response."""
         # Setup mock response - list format
-        mock_transitions = [
-            {"id": "10", "name": "In Progress", "to_status": "In Progress"},
-            {"id": "11", "name": "Done", "status": "Done"},
-        ]
-        transitions_mixin.jira.get_issue_transitions.return_value = mock_transitions
+        mock_transitions = {
+            "transitions": [
+                {"id": "10", "name": "In Progress", "to_status": "In Progress"},
+                {"id": "11", "name": "Done", "status": "Done"},
+            ]
+        }
+        transitions_mixin.jira.get_issue_transitions_full.return_value = (
+            mock_transitions
+        )
 
         # Call the method
         result = transitions_mixin.get_available_transitions("TEST-123")
@@ -71,16 +75,18 @@ class TestTransitionsMixin:
         assert result[0]["id"] == "10"
         assert result[0]["name"] == "In Progress"
         assert result[0]["to_status"] == "In Progress"
+        assert result[0]["to"] == {"name": "In Progress"}
         assert result[1]["id"] == "11"
         assert result[1]["name"] == "Done"
         assert result[1]["to_status"] == "Done"
+        assert result[1]["to"] == {"name": "Done"}
 
     def test_get_available_transitions_empty_response(
         self, transitions_mixin: TransitionsMixin
     ):
         """Test get_available_transitions with empty response."""
         # Setup mock response - empty
-        transitions_mixin.jira.get_issue_transitions.return_value = {}
+        transitions_mixin.jira.get_issue_transitions_full.return_value = {}
 
         # Call the method
         result = transitions_mixin.get_available_transitions("TEST-123")
@@ -94,7 +100,7 @@ class TestTransitionsMixin:
     ):
         """Test get_available_transitions with invalid format response."""
         # Setup mock response - invalid format
-        transitions_mixin.jira.get_issue_transitions.return_value = "invalid"
+        transitions_mixin.jira.get_issue_transitions_full.return_value = "invalid"
 
         # Call the method
         result = transitions_mixin.get_available_transitions("TEST-123")
@@ -108,7 +114,7 @@ class TestTransitionsMixin:
     ):
         """Test get_available_transitions error handling."""
         # Setup mock to raise exception
-        transitions_mixin.jira.get_issue_transitions.side_effect = Exception(
+        transitions_mixin.jira.get_issue_transitions_full.side_effect = Exception(
             "Transition fetch error"
         )
 
@@ -330,6 +336,59 @@ class TestTransitionsMixin:
             },
         )
         transitions_mixin._post_api3.assert_not_called()
+
+    def test_get_available_transitions_destination_differs_from_name(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Destination status is ``to.name``, not the transition name.
+
+        RED transition 31 is named Done and lands on Awaiting Verification.
+        Closed (41) is the status whose category is Done.
+        """
+        transitions_mixin.jira.get_issue_transitions_full.return_value = {
+            "transitions": [
+                {
+                    "id": "31",
+                    "name": "Done",
+                    "to": {
+                        "name": "Awaiting Verification",
+                        "id": "10001",
+                        "statusCategory": {
+                            "id": 4,
+                            "key": "indeterminate",
+                            "name": "In Progress",
+                            "colorName": "yellow",
+                        },
+                    },
+                },
+                {
+                    "id": "41",
+                    "name": "Closed",
+                    "to": {
+                        "name": "Closed",
+                        "id": "6",
+                        "statusCategory": {
+                            "key": "done",
+                            "name": "Done",
+                        },
+                    },
+                },
+            ]
+        }
+
+        result = transitions_mixin.get_available_transitions("TEST-123")
+
+        assert result[0]["name"] == "Done"
+        assert result[0]["to"]["name"] == "Awaiting Verification"
+        assert result[0]["to"]["statusCategory"] == {
+            "id": 4,
+            "key": "indeterminate",
+            "name": "In Progress",
+            "colorName": "yellow",
+        }
+        assert result[0]["to_status"] == "Awaiting Verification"
+        assert result[1]["to"]["name"] == "Closed"
+        assert result[1]["to"]["statusCategory"]["name"] == "Done"
 
     def test_get_transitions_uses_full_api(self, transitions_mixin: TransitionsMixin):
         """Test that get_transitions uses get_issue_transitions_full for complete data.
