@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from typing import Any, Literal
 from urllib.parse import unquote
 
@@ -34,6 +35,14 @@ from .config import JiraConfig, normalize_project_key
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
+
+# Attachment URLs on the configured site that resolve to a Media Services file:
+# REST content endpoints and the legacy /secure/attachment path.
+_ATTACHMENT_PATH_RE = re.compile(
+    r"^/(?:rest/api/[23]/attachment/(?:content|thumbnail)/(\d+)"
+    r"|secure/(?:thumbnail|attachment)/(\d+)(?:/.*)?)(?:[?#].*)?$"
+)
+_MEDIA_FILE_ID_RE = re.compile(r"/file/([0-9a-fA-F-]{36})(?:/|\?|$)")
 
 
 class JiraClient:
@@ -321,7 +330,11 @@ class JiraClient:
 
         if self.config.is_cloud:
             try:
-                return markdown_to_adf(markdown_text, jira_base_url=self.config.url)
+                return markdown_to_adf(
+                    markdown_text,
+                    jira_base_url=self.config.url,
+                    media_resolver=self._resolve_attachment_media,
+                )
             except Exception as e:
                 logger.warning(f"Error converting markdown to ADF: {e}")
                 return {
@@ -340,6 +353,64 @@ class JiraClient:
         except Exception as e:
             logger.warning(f"Error converting markdown to Jira format: {str(e)}")
             return markdown_text
+
+    def _resolve_attachment_media(self, url: str) -> dict[str, Any] | None:
+        """Map an image URL that points at one of this site's Jira attachments
+        to a native ADF ``file`` media node.
+
+        Jira Cloud serves attachment bytes from
+        ``/rest/api/{2,3}/attachment/content/{id}`` (and the legacy
+        ``/secure/attachment/{id}/...``) with a redirect to the Media
+        Services file URL. The redirect target carries the media file id
+        that ADF ``media`` nodes reference, which no public endpoint
+        exposes directly. Reading that one ``Location`` header lets a
+        Markdown image of an attachment render inline instead of as an
+        external image.
+
+        Args:
+            url: Image URL from the Markdown source.
+
+        Returns:
+            ``{"type": "file", "id": <media id>, "collection": ""}`` when the
+            URL is one of this site's attachments and the redirect reveals a
+            media id; ``None`` otherwise so the image stays external.
+        """
+        if not self.config.is_cloud or not url:
+            return None
+        attachment_id = self._attachment_id_from_url(url)
+        if attachment_id is None:
+            return None
+        content_url = (
+            f"{self.config.url.rstrip('/')}/rest/api/3/attachment/content/"
+            f"{attachment_id}"
+        )
+        try:
+            response = self.jira._session.get(
+                content_url, allow_redirects=False, timeout=30
+            )
+        except Exception as e:  # noqa: BLE001 - fall back to an external image
+            logger.debug(f"Attachment {attachment_id} media lookup failed: {e}")
+            return None
+        location = response.headers.get("Location", "") if response is not None else ""
+        match = _MEDIA_FILE_ID_RE.search(location or "")
+        if not match:
+            logger.debug(
+                f"Attachment {attachment_id} content did not redirect to a media "
+                f"file (status {getattr(response, 'status_code', '?')})"
+            )
+            return None
+        return {"type": "file", "id": match.group(1), "collection": ""}
+
+    def _attachment_id_from_url(self, url: str) -> str | None:
+        """Return the attachment id when ``url`` is an attachment on this site."""
+        base = self.config.url.rstrip("/")
+        if not url.startswith(f"{base}/"):
+            return None
+        path = url[len(base) :]
+        match = _ATTACHMENT_PATH_RE.match(path)
+        if not match:
+            return None
+        return match.group(1) or match.group(2)
 
     @staticmethod
     def _project_key_from_issue_key(issue_key: str) -> str:

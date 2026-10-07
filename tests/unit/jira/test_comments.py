@@ -1,6 +1,6 @@
 """Tests for the Jira Comments mixin."""
 
-from unittest.mock import Mock
+from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
 from requests.exceptions import HTTPError
@@ -502,6 +502,113 @@ class TestCommentsMixin:
         assert (
             link_mark["attrs"]["href"] == "https://test.atlassian.net/browse/PROJ-123"
         )
+
+    def test_markdown_to_jira_cloud_resolves_own_attachment_image(self, comments_mixin):
+        """An image of this site's attachment becomes a native file media node."""
+        base = comments_mixin.config.url.rstrip("/")
+        redirect = Mock()
+        redirect.status_code = 303
+        redirect.headers = {
+            "Location": "https://api.media.atlassian.com/file/"
+            "b8d76604-06ef-46dc-932b-d1e19a75a3e6/binary?token=abc"
+        }
+        comments_mixin.jira._session.get = Mock(return_value=redirect)
+
+        result = comments_mixin._markdown_to_jira(
+            f"Shot: ![login]({base}/rest/api/3/attachment/content/103037)"
+        )
+
+        assert isinstance(result, dict)
+        media = result["content"][1]["content"][0]
+        assert media["attrs"] == {
+            "type": "file",
+            "id": "b8d76604-06ef-46dc-932b-d1e19a75a3e6",
+            "collection": "",
+            "alt": "login",
+        }
+        comments_mixin.jira._session.get.assert_called_once_with(
+            f"{base}/rest/api/3/attachment/content/103037",
+            allow_redirects=False,
+            timeout=30,
+        )
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/rest/api/2/attachment/content/7?x=1",
+            "/rest/api/3/attachment/thumbnail/7",
+            "/secure/attachment/7/shot.png",
+            "/secure/thumbnail/7/_thumb_7.png",
+        ],
+    )
+    def test_attachment_id_from_site_urls(self, comments_mixin, path):
+        base = comments_mixin.config.url.rstrip("/")
+        assert comments_mixin._attachment_id_from_url(f"{base}{path}") == "7"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://elsewhere.example.com/rest/api/3/attachment/content/7",
+            "https://example.com/pic.png",
+            "/rest/api/3/attachment/content/7",
+            "",
+        ],
+    )
+    def test_attachment_id_rejects_foreign_or_relative_urls(self, comments_mixin, url):
+        assert comments_mixin._attachment_id_from_url(url) is None
+
+    def test_resolve_attachment_media_external_when_not_a_redirect(
+        self, comments_mixin
+    ):
+        """A 200 or a redirect without a media id leaves the image external."""
+        base = comments_mixin.config.url.rstrip("/")
+        plain = Mock()
+        plain.status_code = 200
+        plain.headers = {}
+        comments_mixin.jira._session.get = Mock(return_value=plain)
+        assert (
+            comments_mixin._resolve_attachment_media(
+                f"{base}/rest/api/3/attachment/content/7"
+            )
+            is None
+        )
+
+    def test_resolve_attachment_media_swallows_request_errors(self, comments_mixin):
+        base = comments_mixin.config.url.rstrip("/")
+        comments_mixin.jira._session.get = Mock(side_effect=RuntimeError("boom"))
+        assert (
+            comments_mixin._resolve_attachment_media(
+                f"{base}/rest/api/3/attachment/content/7"
+            )
+            is None
+        )
+
+    def test_resolve_attachment_media_skips_foreign_urls_without_a_request(
+        self, comments_mixin
+    ):
+        comments_mixin.jira._session.get = Mock()
+        assert (
+            comments_mixin._resolve_attachment_media("https://example.com/a.png")
+            is None
+        )
+        comments_mixin.jira._session.get.assert_not_called()
+
+    def test_resolve_attachment_media_is_cloud_only(self, comments_mixin):
+        base = comments_mixin.config.url.rstrip("/")
+        comments_mixin.jira._session.get = Mock()
+        with patch.object(
+            type(comments_mixin.config),
+            "is_cloud",
+            new_callable=PropertyMock,
+            return_value=False,
+        ):
+            assert (
+                comments_mixin._resolve_attachment_media(
+                    f"{base}/rest/api/3/attachment/content/7"
+                )
+                is None
+            )
+        comments_mixin.jira._session.get.assert_not_called()
 
     def test_markdown_to_jira_cloud_empty(self, comments_mixin):
         """Test _markdown_to_jira with empty text on Cloud returns ADF."""
