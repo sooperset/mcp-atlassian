@@ -66,12 +66,30 @@ def _append_text_nodes(
         nodes.append(node)
 
 
+def _with_marks(
+    nodes: list[dict[str, Any]], marks: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return ``nodes`` with ``marks`` folded in front of their own.
+
+    ADF status nodes carry no marks, so they pass through untouched; every
+    other inline node kind produced here accepts them.
+    """
+    marked: list[dict[str, Any]] = []
+    for node in nodes:
+        if node.get("type") in ("text", "mention", "inlineCard"):
+            node = {**node, "marks": [*marks, *node.get("marks", [])]}
+        marked.append(node)
+    return marked
+
+
 def _parse_inline_formatting(
     text: str, jira_base_url: str = ""
 ) -> list[dict[str, Any]]:
     """Parse inline Markdown formatting into ADF inline nodes.
 
     Handles: bold (**), italic (*), inline code (`), links ([text](url)),
+    Each of bold, italic and strikethrough parses its inner text through this
+    same function, so a code span or a link inside one keeps its own mark.
     strikethrough (~~), Jira-flavored user mentions
     ([~accountid:ACCOUNT_ID] or @[Display Name](accountid:ACCOUNT_ID)), and
     status lozenges ({status:color=green|title=Done}).
@@ -163,18 +181,18 @@ def _parse_inline_formatting(
                 }
             )
         elif m.group("bold_inner") is not None:
-            _append_text_nodes(
-                nodes,
-                m.group("bold_inner"),
-                jira_base_url,
-                [{"type": "strong"}],
+            nodes.extend(
+                _with_marks(
+                    _parse_inline_formatting(m.group("bold_inner"), jira_base_url),
+                    [{"type": "strong"}],
+                )
             )
         elif m.group("strike_inner") is not None:
-            _append_text_nodes(
-                nodes,
-                m.group("strike_inner"),
-                jira_base_url,
-                [{"type": "strike"}],
+            nodes.extend(
+                _with_marks(
+                    _parse_inline_formatting(m.group("strike_inner"), jira_base_url),
+                    [{"type": "strike"}],
+                )
             )
         elif m.group("link_text") is not None:
             nodes.append(
@@ -190,11 +208,11 @@ def _parse_inline_formatting(
                 }
             )
         elif m.group("italic_inner") is not None:
-            _append_text_nodes(
-                nodes,
-                m.group("italic_inner"),
-                jira_base_url,
-                [{"type": "em"}],
+            nodes.extend(
+                _with_marks(
+                    _parse_inline_formatting(m.group("italic_inner"), jira_base_url),
+                    [{"type": "em"}],
+                )
             )
 
         pos = m.end()

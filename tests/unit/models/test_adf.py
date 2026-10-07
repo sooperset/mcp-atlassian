@@ -1168,3 +1168,41 @@ class TestMarkdownToJiraDispatch:
         """Server/DC path with empty string returns empty string."""
         result = server_client._markdown_to_jira("")
         assert result == ""
+
+
+def test_code_span_inside_bold_keeps_its_own_mark():
+    """A code span inside bold carries both marks, not literal backticks (#1718)."""
+    nodes = markdown_to_adf("**Lead `a_b` here.**")["content"][0]["content"]
+    assert [n["text"] for n in nodes] == ["Lead ", "a_b", " here."]
+    assert [m["type"] for m in nodes[1]["marks"]] == ["strong", "code"]
+    assert all(
+        [m["type"] for m in n["marks"]] == ["strong"] for n in (nodes[0], nodes[2])
+    )
+
+
+def test_link_inside_bold_keeps_its_own_mark():
+    """A link inside bold stays a link instead of literal Markdown (#1718)."""
+    nodes = markdown_to_adf("**see [docs](https://example.com/x)**")["content"][0][
+        "content"
+    ]
+    assert [n["text"] for n in nodes] == ["see ", "docs"]
+    assert [m["type"] for m in nodes[1]["marks"]] == ["strong", "link"]
+    assert nodes[1]["marks"][1]["attrs"]["href"] == "https://example.com/x"
+
+
+def test_inner_marks_survive_strike_and_italic():
+    """The same folding applies to the other two delimiters."""
+    strike = markdown_to_adf("~~gone `x`~~")["content"][0]["content"]
+    assert [n["text"] for n in strike] == ["gone ", "x"]
+    assert [m["type"] for m in strike[1]["marks"]] == ["strike", "code"]
+
+    em = markdown_to_adf("*em `y`*")["content"][0]["content"]
+    assert [n["text"] for n in em] == ["em ", "y"]
+    assert [m["type"] for m in em[1]["marks"]] == ["em", "code"]
+
+
+def test_plain_bold_is_one_node_still():
+    """Text without inline syntax inside stays a single marked node."""
+    nodes = markdown_to_adf("**just bold**")["content"][0]["content"]
+    assert [n["text"] for n in nodes] == ["just bold"]
+    assert [m["type"] for m in nodes[0]["marks"]] == ["strong"]
