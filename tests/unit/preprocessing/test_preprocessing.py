@@ -1788,3 +1788,37 @@ class TestHtmlConversionCodeProtection:
         """Direct test of _convert_html_to_markdown with markdown code spans."""
         result = preprocessor._convert_html_to_markdown(md_input)
         assert expected_substr in result, f"Expected '{expected_substr}' in: {result!r}"
+
+
+def test_jira_to_markdown_inline_code_containing_a_closing_brace(
+    preprocessor_with_jira,
+):
+    """Inline code may contain a closing brace; it used to close the span early."""
+    assert (
+        preprocessor_with_jira.jira_to_markdown('Use {{{"a": 1}}} here')
+        == 'Use `{"a": 1}` here'
+    )
+    assert (
+        preprocessor_with_jira.jira_to_markdown("Use {{a}b}} here") == "Use `a}b` here"
+    )
+    assert (
+        preprocessor_with_jira.jira_to_markdown("Use {{a_b}c_d}} here")
+        == "Use `a_b}c_d` here"
+    )
+
+
+def test_jira_to_markdown_inline_code_across_lines(preprocessor_with_jira):
+    """A span may contain a newline, which needs DOTALL rather than a negated class."""
+    assert (
+        preprocessor_with_jira.jira_to_markdown("Use {{multi\nline}} here")
+        == "Use `multi\nline` here"
+    )
+
+
+def test_jira_to_markdown_inline_code_edges_unchanged(preprocessor_with_jira):
+    """The forms that already converted must keep converting the same way."""
+    assert preprocessor_with_jira.jira_to_markdown("{{a}} and {{b}}") == "`a` and `b`"
+    assert (
+        preprocessor_with_jira.jira_to_markdown("plain {{x}} code") == "plain `x` code"
+    )
+    assert preprocessor_with_jira.jira_to_markdown("{{}}") == "{{}}"
