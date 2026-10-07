@@ -12,6 +12,41 @@ from .protocols import IssueOperationsProto, UsersOperationsProto
 
 logger = logging.getLogger("mcp-jira")
 
+_STATUS_CATEGORY_KEYS = ("id", "key", "name", "colorName")
+
+
+def _destination_status(
+    transition: dict[str, Any],
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Return the destination status name and a ``to`` object.
+
+    ``to.name`` is the status the transition lands on. It can differ from
+    the transition name.
+    """
+    to_field = transition.get("to")
+    if isinstance(to_field, dict):
+        raw_name = to_field.get("name")
+        destination_name = raw_name if isinstance(raw_name, str) and raw_name else None
+        destination: dict[str, Any] | None = None
+        if destination_name:
+            destination = {"name": destination_name}
+            category = to_field.get("statusCategory")
+            if isinstance(category, dict):
+                status_category = {
+                    key: category[key]
+                    for key in _STATUS_CATEGORY_KEYS
+                    if category.get(key) is not None
+                }
+                if status_category:
+                    destination["statusCategory"] = status_category
+        return destination_name, destination
+
+    for key in ("to", "to_status", "status"):
+        value = transition.get(key)
+        if isinstance(value, str) and value:
+            return value, {"name": value}
+    return None, None
+
 
 class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
     """Mixin for Jira transition operations."""
@@ -25,8 +60,8 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             issue_key: The issue key (e.g. 'PROJ-123')
 
         Returns:
-            List of available transitions with id, name,
-            and to status details
+            List of available transitions with id, name, ``to_status``,
+            and ``to`` (destination status name and status category).
 
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails
@@ -34,36 +69,22 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             Exception: If there is an error getting transitions
         """
         try:
-            transitions_data: object = self.jira.get_issue_transitions(issue_key)
-            if not isinstance(transitions_data, list):
-                return []
+            # Full payload: simplified get_issue_transitions() drops ``to``,
+            # so a transition named Done can hide a different destination.
+            transitions_data = self.get_transitions(issue_key)
             result: list[dict[str, Any]] = []
 
             for transition in transitions_data:
-                if not isinstance(transition, dict):
-                    continue
-
-                # Extract the essential information
-                transition_info = {
+                transition_info: dict[str, Any] = {
                     "id": transition.get("id", ""),
                     "name": transition.get("name", ""),
                 }
 
-                # Handle "to" field in different formats
-                to_status = None
-                # Option 1: 'to' field with sub-fields
-                if "to" in transition and isinstance(transition["to"], dict):
-                    to_status = transition["to"].get("name")
-                # Option 2: 'to_status' field directly
-                elif "to_status" in transition:
-                    to_status = transition.get("to_status")
-                # Option 3: 'status' field directly
-                elif "status" in transition:
-                    to_status = transition.get("status")
-
-                # Add to_status if found in any format
+                to_status, destination = _destination_status(transition)
                 if to_status:
                     transition_info["to_status"] = to_status
+                if destination:
+                    transition_info["to"] = destination
 
                 result.append(transition_info)
 
