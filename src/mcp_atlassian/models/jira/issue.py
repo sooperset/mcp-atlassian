@@ -6,6 +6,7 @@ This module provides Pydantic models for Jira issues.
 
 import logging
 import re
+from collections.abc import Callable
 from typing import Any, Literal
 
 from pydantic import Field
@@ -92,6 +93,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     worklog: dict | None = None
     changelogs: list[JiraChangelog] = Field(default_factory=list)
     issuelinks: list[JiraIssueLink] = Field(default_factory=list)
+    rendered_fields: dict[str, Any] = Field(default_factory=dict)
 
     def __getattribute__(self, name: str) -> Any:
         """
@@ -517,6 +519,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             requested_fields=requested_fields_param,
             changelogs=changelogs,
             issuelinks=cls._extract_issue_links(fields),
+            rendered_fields=cls._extract_rendered_fields(data.get("renderedFields")),
         )
 
     def to_simplified_dict(self) -> dict[str, Any]:
@@ -661,6 +664,12 @@ class JiraIssue(ApiModel, TimestampMixin):
             result["issuelinks"] = [
                 link.to_simplified_dict() for link in self.issuelinks
             ]
+
+        # Rendered HTML is only present when expand=renderedFields was requested
+        if self.rendered_fields:
+            rendered = self._simplify_rendered_fields(should_include_field)
+            if rendered:
+                result["rendered_fields"] = rendered
 
         # Process custom fields
         if self.custom_fields:
@@ -967,6 +976,70 @@ class JiraIssue(ApiModel, TimestampMixin):
                     return field_value.get("key") or field_value.get("value")
                 return str(field_value)
         return None
+
+    @staticmethod
+    def _extract_rendered_fields(rendered_data: Any) -> dict[str, Any]:
+        """
+        Extract non-empty rendered values from ``renderedFields``.
+
+        Jira returns ``renderedFields`` beside ``fields`` when the request
+        expands it, with an HTML value (or ``None``) for each returned field.
+        Rendered comments are reduced to their id and HTML body.
+
+        Args:
+            rendered_data: The ``renderedFields`` object from the Jira API
+
+        Returns:
+            Rendered values keyed by Jira field id
+        """
+        if not isinstance(rendered_data, dict):
+            return {}
+
+        rendered_fields: dict[str, Any] = {}
+        for field_id, value in rendered_data.items():
+            if field_id == "comment":
+                comments_data = (
+                    value.get("comments") if isinstance(value, dict) else None
+                )
+                value = (
+                    [
+                        {"id": str(comment.get("id")), "body": comment["body"]}
+                        for comment in comments_data
+                        if isinstance(comment, dict) and comment.get("body")
+                    ]
+                    if isinstance(comments_data, list)
+                    else None
+                )
+            if value:
+                rendered_fields[field_id] = value
+        return rendered_fields
+
+    def _simplify_rendered_fields(
+        self, should_include_field: Callable[[str], bool]
+    ) -> dict[str, Any]:
+        """
+        Select the rendered values to emit in ``to_simplified_dict``.
+
+        Only requested fields are kept. Rendered comments are limited to the
+        comments present on the issue, so ``comment_limit`` still applies.
+
+        Args:
+            should_include_field: Predicate deciding whether a field is requested
+
+        Returns:
+            Rendered values keyed by Jira field id
+        """
+        rendered: dict[str, Any] = {}
+        for field_id, value in self.rendered_fields.items():
+            if not should_include_field(field_id):
+                continue
+            if field_id == "comment":
+                comment_ids = {comment.id for comment in self.comments}
+                value = [c for c in value if c["id"] in comment_ids]
+                if not value:
+                    continue
+            rendered[field_id] = value
+        return rendered
 
     @staticmethod
     def _extract_issue_links(fields: dict[str, Any]) -> list[JiraIssueLink]:
