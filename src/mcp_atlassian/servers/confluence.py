@@ -2518,7 +2518,18 @@ async def delete_attachment(
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
-    confluence_fetcher.delete_attachment(attachment_id=attachment_id)
+    result = confluence_fetcher.delete_attachment(attachment_id=attachment_id)
+
+    if not result.get("success"):
+        return json.dumps(
+            {
+                "success": False,
+                "message": f"Unable to delete attachment {attachment_id}",
+                "error": result.get("error", "Unknown error"),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
 
     return json.dumps(
         {
