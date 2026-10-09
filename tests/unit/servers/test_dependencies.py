@@ -498,6 +498,39 @@ class TestCreateUserConfigForFetcher:
             )
 
 
+def _header_pat_request(service_headers: dict[str, str]):
+    """Build a request that selects the header-PAT branch.
+
+    That branch requires ``user_atlassian_token`` to be absent from request state
+    rather than set to None, which a plain mock cannot express.
+
+    Args:
+        service_headers: The validated X-Atlassian-* headers for the request.
+
+    Returns:
+        A request whose state routes to the header-PAT fetcher branch.
+    """
+
+    class MockState:
+        def __init__(self):
+            self.jira_fetcher = None
+            self.confluence_fetcher = None
+            self.user_atlassian_auth_type = "pat"
+            self.user_atlassian_email = None
+            self.atlassian_service_headers = service_headers
+
+        def __getattr__(self, name):
+            if name == "user_atlassian_token":
+                raise AttributeError(
+                    f"'{type(self).__name__}' object has no attribute '{name}'"
+                )
+            return None
+
+    request = MockFastMCP.create_request()
+    request.state = MockState()
+    return request
+
+
 def _setup_mock_request_state(
     mock_request, auth_scenario=None, cached_fetcher=None, service_headers=None
 ):
@@ -1776,23 +1809,7 @@ class TestValidationCache:
         }
 
     def _header_pat_request(self, service_headers: dict[str, str]):
-        class MockState:
-            def __init__(self):
-                self.confluence_fetcher = None
-                self.user_atlassian_auth_type = "pat"
-                self.user_atlassian_email = None
-                self.atlassian_service_headers = service_headers
-
-            def __getattr__(self, name):
-                if name == "user_atlassian_token":
-                    raise AttributeError(
-                        f"'{type(self).__name__}' object has no attribute '{name}'"
-                    )
-                return None
-
-        request = MockFastMCP.create_request()
-        request.state = MockState()
-        return request
+        return _header_pat_request(service_headers)
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
@@ -2456,14 +2473,14 @@ class TestSsrfProtection:
 
     def test_redirect_hook_blocks_internal(self) -> None:
         """Redirect to internal IP is blocked by SSRF hook."""
-        from mcp_atlassian.servers.dependencies import _make_ssrf_safe_hook
-        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+        from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
 
-        hook = _make_ssrf_safe_hook(validate_url_for_ssrf)
+        hook = make_ssrf_redirect_hook("https://company.atlassian.net")
 
         # Create a mock response that simulates a redirect
         mock_response = MagicMock()
         mock_response.is_redirect = True
+        mock_response.url = "https://company.atlassian.net/rest/api/2/myself"
         mock_response.headers = {"Location": "http://169.254.169.254/latest/meta-data"}
 
         with pytest.raises(ValueError, match="Redirect blocked"):
@@ -2471,13 +2488,13 @@ class TestSsrfProtection:
 
     def test_redirect_hook_allows_safe(self) -> None:
         """Redirect to safe URL passes through."""
-        from mcp_atlassian.servers.dependencies import _make_ssrf_safe_hook
-        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+        from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
 
-        hook = _make_ssrf_safe_hook(validate_url_for_ssrf)
+        hook = make_ssrf_redirect_hook("https://company.atlassian.net")
 
         mock_response = MagicMock()
         mock_response.is_redirect = True
+        mock_response.url = "https://company.atlassian.net/rest/api/2/myself"
         mock_response.headers = {
             "Location": "https://company.atlassian.net/rest/api/2/issue"
         }
@@ -2490,10 +2507,9 @@ class TestSsrfProtection:
 
     def test_redirect_hook_ignores_non_redirect(self) -> None:
         """Non-redirect response passes through without checks."""
-        from mcp_atlassian.servers.dependencies import _make_ssrf_safe_hook
-        from mcp_atlassian.utils.urls import validate_url_for_ssrf
+        from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
 
-        hook = _make_ssrf_safe_hook(validate_url_for_ssrf)
+        hook = make_ssrf_redirect_hook("https://company.atlassian.net")
 
         mock_response = MagicMock()
         mock_response.is_redirect = False
@@ -2547,6 +2563,77 @@ class TestSsrfHookCoverageRegression:
         assert len(response_hooks) > 0, (
             "basic-auth user fetcher session must carry the SSRF redirect hook"
         )
+
+    @pytest.mark.security_regression
+    @patch("mcp_atlassian.servers.dependencies.make_ssrf_redirect_hook")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_hook_is_bound_to_the_session_configured_url(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_make_hook,
+        mock_context,
+        mock_request,
+        config_factory,
+    ) -> None:
+        """The hook is bound to the URL of the instance this session talks to.
+
+        Binding is what lets an on-prem instance follow its own redirects without
+        trusting any other host.
+        """
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = "user@example.com"
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context()
+        _setup_mock_context(mock_context, app_context)
+        mock_jira_fetcher_class.return_value = _create_mock_fetcher(JiraFetcher)
+
+        await get_jira_fetcher(mock_context)
+
+        mock_make_hook.assert_called_once_with("https://test.atlassian.net")
+
+    @pytest.mark.security_regression
+    @patch("mcp_atlassian.servers.dependencies.make_ssrf_redirect_hook")
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_header_pat_hook_is_bound_to_the_caller_url_only(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_make_hook,
+        mock_context,
+        config_factory,
+    ) -> None:
+        """A header-supplied base URL must not inherit the operator's trust.
+
+        The redirect exemption is the session's own host, so a session built from
+        ``X-Atlassian-Jira-Url`` may only be bound to that caller-supplied host.
+        Binding it to the operator's configured URL instead would let a caller
+        redirect into the operator's internal instance.
+        """
+
+        request = _header_pat_request(
+            {
+                "X-Atlassian-Jira-Url": "https://caller.example.com",
+                "X-Atlassian-Jira-Personal-Token": "caller-token",
+            }
+        )
+        mock_get_http_request.return_value = request
+
+        _setup_mock_context(mock_context, config_factory.create_app_context())
+        mock_jira_fetcher_class.return_value = _create_mock_fetcher(JiraFetcher)
+
+        await get_jira_fetcher(mock_context)
+
+        mock_make_hook.assert_called_once_with("https://caller.example.com")
 
     @pytest.mark.security_regression
     @patch("mcp_atlassian.servers.dependencies.get_access_token")

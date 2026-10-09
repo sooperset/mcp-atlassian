@@ -172,7 +172,9 @@ class ConfluenceClient:
         # Validate redirects for SSRF on every outbound call from this session
         # (covers direct _session.get() paths and global/stdio fetchers, not just
         # the per-user HTTP path).
-        self.confluence._session.hooks["response"].append(make_ssrf_redirect_hook())
+        self.confluence._session.hooks["response"].append(
+            make_ssrf_redirect_hook(transport_url)
+        )
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
         mount_ssrf_pinning(self.confluence._session, transport_url)

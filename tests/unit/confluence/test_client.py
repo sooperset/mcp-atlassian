@@ -125,6 +125,7 @@ def test_init_from_env():
         patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
     ):
         mock_config = MagicMock()
+        mock_config.url = "https://test.atlassian.net/wiki"  # read at session setup
         mock_from_env.return_value = mock_config
 
         # Act
@@ -139,7 +140,10 @@ def test_process_html_content():
     """Test the _process_html_content method."""
     # Arrange
     with (
-        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env"),
+        patch(
+            "mcp_atlassian.confluence.client.ConfluenceConfig.from_env",
+            return_value=MagicMock(url="https://test.atlassian.net/wiki"),
+        ),
         patch("mcp_atlassian.confluence.client.Confluence"),
         patch(
             "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
@@ -169,7 +173,10 @@ def test_get_user_details_by_accountid():
     """Test the get_user_details_by_accountid method."""
     # Arrange
     with (
-        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env"),
+        patch(
+            "mcp_atlassian.confluence.client.ConfluenceConfig.from_env",
+            return_value=MagicMock(url="https://test.atlassian.net/wiki"),
+        ),
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence_class,
         patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
         patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
@@ -377,7 +384,10 @@ def test_confluence_fetcher_has_attachments_mixin():
 def test_confluence_fetcher_has_attachment_methods():
     """Test that ConfluenceFetcher exposes all attachment methods."""
     with (
-        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env"),
+        patch(
+            "mcp_atlassian.confluence.client.ConfluenceConfig.from_env",
+            return_value=MagicMock(url="https://test.atlassian.net/wiki"),
+        ),
         patch("mcp_atlassian.confluence.client.Confluence"),
         patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
         patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
@@ -404,7 +414,10 @@ def test_confluence_fetcher_has_attachment_methods():
 def test_confluence_fetcher_attachment_method_calls():
     """Test that attachment methods can be called through ConfluenceFetcher."""
     with (
-        patch("mcp_atlassian.confluence.client.ConfluenceConfig.from_env"),
+        patch(
+            "mcp_atlassian.confluence.client.ConfluenceConfig.from_env",
+            return_value=MagicMock(url="https://test.atlassian.net/wiki"),
+        ),
         patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence_class,
         patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
         patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
@@ -589,3 +602,25 @@ def test_confluence_client_custom_user_agent_overrides_default():
         ConfluenceClient(config=config)
 
         assert headers["User-Agent"] == "my-app/1.0"
+
+
+def test_redirect_hook_is_bound_to_the_configured_url():
+    """The session's redirect hook learns which host it may redirect within.
+
+    Without the argument the hook trusts no host, and an on-prem instance on a
+    private network cannot follow its own redirects.
+    """
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+        patch("mcp_atlassian.confluence.client.make_ssrf_redirect_hook") as mock_hook,
+    ):
+        config = ConfluenceConfig(
+            url="https://wiki.internal",
+            auth_type="pat",
+            personal_token="test_token",
+        )
+
+        ConfluenceClient(config=config)
+
+    mock_hook.assert_called_once_with("https://wiki.internal")

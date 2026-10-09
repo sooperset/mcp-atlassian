@@ -8,18 +8,74 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 
-def make_ssrf_redirect_hook() -> Callable[..., Any]:
-    """Return a requests ``response`` hook that blocks SSRF-unsafe redirects.
 
-    Attach to any session (``session.hooks["response"].append(...)``) so that an
-    open redirect cannot steer an outbound request to an internal/metadata host.
+def _origin(url: str) -> tuple[str, str, int] | None:
+    """Reduce a URL to its origin.
+
+    Args:
+        url: The URL to reduce.
+
+    Returns:
+        A ``(scheme, host, port)`` tuple with the default port filled in for
+        http/https and a trailing dot stripped from the host, or None when the
+        URL cannot be parsed or names no scheme or host.
     """
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if not parsed.scheme or not host:
+        return None
+    return parsed.scheme, host, port or _DEFAULT_PORTS.get(parsed.scheme, 0)
+
+
+def make_ssrf_redirect_hook(base_url: str | None = None) -> Callable[..., Any]:
+    """Block SSRF-unsafe redirects, exempting the session's configured origin.
+
+    An HTTP base also trusts HTTPS:443 on the same host, including redirects
+    within that HTTPS origin. Other transitions use strict validation. Scheme,
+    backslash-authority and domain-allowlist checks always apply.
+
+    Args:
+        base_url: Configured service URL, or None to grant no exemption.
+
+    Returns:
+        A hook suitable for ``session.hooks["response"].append(...)``.
+    """
+    trusted_origin = _origin(base_url) if base_url else None
 
     def hook(response: Any, **kwargs: Any) -> Any:
         if response.is_redirect:
-            redirect_url = urljoin(response.url, response.headers.get("Location", ""))
-            error = validate_url_for_ssrf(redirect_url)
+            try:
+                redirect_url = urljoin(
+                    response.url, response.headers.get("Location", "")
+                )
+            except ValueError as e:
+                response.close()
+                raise ValueError(
+                    f"Redirect blocked (SSRF): unparsable Location: {e}"
+                ) from e
+
+            # Exempt the base and one-way upgrade to its HTTPS:443 counterpart.
+            # Check both origins so external sources cannot borrow this exemption.
+            trusted_host = None
+            source_origin = _origin(response.url)
+            target_origin = _origin(redirect_url)
+            if trusted_origin is not None and (
+                source_origin == target_origin == trusted_origin
+                or (
+                    trusted_origin[0] == "http"
+                    and target_origin == ("https", trusted_origin[1], 443)
+                    and source_origin in (trusted_origin, target_origin)
+                )
+            ):
+                trusted_host = trusted_origin[1]
+
+            error = _validate_url(redirect_url, trusted_host=trusted_host)
             if error:
                 response.close()
                 raise ValueError(f"Redirect blocked (SSRF): {error}")
@@ -98,6 +154,25 @@ def validate_url_for_ssrf(url: str) -> str | None:
     Returns:
         None if safe, error message string if blocked.
     """
+    return _validate_url(url)
+
+
+def _validate_url(url: str, *, trusted_host: str | None = None) -> str | None:
+    """Validate a URL for SSRF, optionally exempting one specific host.
+
+    Args:
+        url: The URL to validate.
+        trusted_host: A hostname exempt from the non-global-address rejections —
+            callers that care about scheme and port must check those themselves;
+            the blocked-hostname list, the IP-literal check and the DNS resolution
+            check. The scheme check, the backslash-authority check and the
+            ``MCP_ALLOWED_URL_DOMAINS`` restriction always apply. Matched against
+            the URL's hostname by exact equality, never by suffix, so a subdomain
+            of a trusted host is not itself trusted.
+
+    Returns:
+        None if safe, error message string if blocked.
+    """
     if not url or not url.strip():
         return "Empty URL"
 
@@ -120,15 +195,23 @@ def validate_url_for_ssrf(url: str) -> str | None:
     if not hostname:
         return "No hostname in URL"
 
-    # Check blocked hostnames
-    blocked_hostnames = {"localhost", "metadata.google.internal"}
-    if hostname.lower() in blocked_hostnames:
-        return f"Blocked hostname: {hostname}"
+    # The session's own host may legitimately be a private address, localhost or a
+    # bare IP - that is the ordinary on-prem Server/DC deployment. Exact match only:
+    # a subdomain of the trusted host is a different host and stays untrusted.
+    trusted = trusted_host is not None and hostname.lower().rstrip(
+        "."
+    ) == trusted_host.lower().rstrip(".")
 
-    # Check if hostname is an IP address
-    ip_error = _check_ip_address(hostname)
-    if ip_error:
-        return ip_error
+    if not trusted:
+        # Check blocked hostnames
+        blocked_hostnames = {"localhost", "metadata.google.internal"}
+        if hostname.lower() in blocked_hostnames:
+            return f"Blocked hostname: {hostname}"
+
+        # Check if hostname is an IP address
+        ip_error = _check_ip_address(hostname)
+        if ip_error:
+            return ip_error
 
     # Domain allowlist check
     allowlist = _get_domain_allowlist()
@@ -138,9 +221,10 @@ def validate_url_for_ssrf(url: str) -> str | None:
         return None  # explicitly allowlisted — skip DNS check
 
     # DNS resolution check - resolve hostname and check all IPs
-    dns_error = _check_dns_resolution(hostname)
-    if dns_error:
-        return dns_error
+    if not trusted:
+        dns_error = _check_dns_resolution(hostname)
+        if dns_error:
+            return dns_error
 
     return None
 

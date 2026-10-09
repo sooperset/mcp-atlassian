@@ -229,6 +229,7 @@ def test_init_from_env():
     ):
         mock_config = MagicMock()
         mock_config.auth_type = "basic"  # needed for the if condition
+        mock_config.url = "https://test.atlassian.net"  # read at session setup
         mock_from_env.return_value = mock_config
 
         client = JiraClient()
@@ -712,3 +713,25 @@ def test_update_version_rejects_non_dict_response() -> None:
 
         with pytest.raises(ValueError, match="Unexpected response from Jira API"):
             client.update_version("10001", released=True)
+
+
+def test_redirect_hook_is_bound_to_the_configured_url():
+    """The session's redirect hook learns which host it may redirect within.
+
+    Without the argument the hook trusts no host, and an on-prem instance on a
+    private network cannot follow its own redirects.
+    """
+    with (
+        patch("mcp_atlassian.jira.client.Jira"),
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+        patch("mcp_atlassian.jira.client.make_ssrf_redirect_hook") as mock_hook,
+    ):
+        config = JiraConfig(
+            url="https://jira.internal",
+            auth_type="pat",
+            personal_token="test_token",
+        )
+
+        JiraClient(config=config)
+
+    mock_hook.assert_called_once_with("https://jira.internal")
