@@ -2805,6 +2805,56 @@ async def test_transition_issue_comment_schema_warns_about_cloud_screen():
     assert "jira_add_comment" in description
 
 
+@pytest.mark.parametrize(
+    "tool_name", ["get_issue", "search", "get_board_issues", "get_sprint_issues"]
+)
+@pytest.mark.anyio
+async def test_read_tool_fields_default_is_hash_seed_independent(tool_name):
+    """Regression test for #1662.
+
+    DEFAULT_READ_JIRA_FIELDS is a set; joining it without sorting first makes
+    the "fields" default of get_issue/search/get_board_issues/
+    get_sprint_issues depend on the interpreter's (randomised) hash seed. Two
+    worker processes of the same version then advertise two different tool
+    schemas for the same tool. MCP clients that fingerprint the tool catalog
+    (observed with GitHub Copilot CLI against a live deployment) treat that as
+    the catalog changing mid-session and abort the call, even though nothing
+    about the tool actually changed.
+
+    This spawns fresh interpreters with different PYTHONHASHSEED values -
+    exactly what differs between two worker processes of a real deployment -
+    and asserts they all print the same "fields" default. Without
+    `sorted(...)` around the join, this test fails intermittently depending on
+    which seeds happen to collide.
+    """
+    import subprocess
+    import sys
+
+    script = (
+        "import asyncio\n"
+        "import mcp_atlassian.servers.jira as s\n"
+        "async def main():\n"
+        "    t = {x.name: x for x in await s.jira_mcp.list_tools()}\n"
+        f"    print(t[{tool_name!r}].parameters['properties']['fields']['default'])\n"
+        "asyncio.run(main())\n"
+    )
+
+    seen_defaults = set()
+    for seed in ("0", "1", "2", "3"):
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        seen_defaults.add(completed.stdout.strip())
+
+    assert len(seen_defaults) == 1, (
+        f"'{tool_name}' fields default differs by PYTHONHASHSEED: {seen_defaults}"
+    )
+
+
 @pytest.mark.anyio
 async def test_transition_issue_still_accepts_numeric_id(
     jira_client, mock_jira_fetcher

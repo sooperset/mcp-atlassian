@@ -667,9 +667,9 @@ async def get_issue(
                 "You may also provide a single field as a string (e.g., 'duedate'). "
                 "Use '*all' for all fields (including custom fields), or omit for essential fields only."
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     expand: Annotated[
         str | None,
         Field(
@@ -854,9 +854,9 @@ async def search(
                 "(Optional) Comma-separated fields to return in the results. "
                 "Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     limit: Annotated[
         int,
         Field(description="Maximum number of results (1-50)", default=10, ge=1),
@@ -1618,9 +1618,9 @@ async def get_board_issues(
                 "Use '*all' for all fields, or specify individual "
                 "fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     start_at: Annotated[
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),
@@ -1723,9 +1723,9 @@ async def get_sprint_issues(
                 "Use '*all' for all fields, or specify individual "
                 "fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     start_at: Annotated[
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),

@@ -7,6 +7,7 @@ import pytest
 import requests
 
 from mcp_atlassian.jira import JiraFetcher
+from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.search import SearchMixin
 from mcp_atlassian.models.jira import JiraIssue, JiraSearchResult
 
@@ -81,6 +82,7 @@ class TestSearchMixin:
         call_args = search_mixin.jira.post.call_args
         assert call_args[0][0] == "rest/api/3/search/jql"
         assert call_args[1]["json"]["jql"] == jql_query
+        assert call_args[1]["json"]["fields"] == sorted(DEFAULT_READ_JIRA_FIELDS)
 
         # Assert: v2 API (jql) was NOT called
         search_mixin.jira.jql.assert_not_called()
@@ -466,6 +468,15 @@ class TestSearchMixin:
 
         # Call the method
         result = search_mixin.get_board_issues("1000", jql="", limit=20)
+
+        search_mixin.jira.get_issues_for_board.assert_called_once_with(
+            board_id="1000",
+            jql="",
+            fields=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
+            start=0,
+            limit=20,
+            expand=None,
+        )
 
         # Verify results
         assert isinstance(result, JiraSearchResult)
