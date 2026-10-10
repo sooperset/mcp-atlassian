@@ -357,6 +357,109 @@ class TestDevelopmentMixin:
         assert result["branches"] == []
         assert result["commits"] == []
 
+    def test_get_issue_development_info_unauthorized(self, development_mixin):
+        """Test 401 response returns an authentication error without raising."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.raise_for_status.side_effect = HTTPError(
+            "401 Client Error: Unauthorized"
+        )
+        development_mixin.jira._session.get.return_value = mock_response
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123", application_type="GitHub", data_type="pullrequest"
+        )
+
+        assert "error" in result
+        assert "Authentication failed" in result["error"]
+        assert result["pullRequests"] == []
+
+    def test_get_issue_development_info_auto_discovery_401(self, development_mixin):
+        """Test a 401 during auto-discovery surfaces an error, not empty success."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.raise_for_status.side_effect = HTTPError(
+            "401 Client Error: Unauthorized"
+        )
+        development_mixin.jira._session.get.return_value = mock_response
+
+        result = development_mixin.get_issue_development_info("TEST-123")
+
+        assert "error" in result
+        assert "Authentication failed" in result["error"]
+        assert result["pullRequests"] == []
+
+    def test_get_issue_development_info_all_fetches_fail(self, development_mixin):
+        """Test that failing every detail fetch sets an error on the result."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        summary_response = MagicMock(status_code=200)
+        summary_response.json.return_value = {
+            "summary": {"pullrequest": {"byInstanceType": {"github": {"count": 1}}}}
+        }
+        detail_response = MagicMock(status_code=500)
+        detail_response.raise_for_status.side_effect = HTTPError(
+            "500 Server Error: Internal Server Error"
+        )
+        development_mixin.jira._session.get.side_effect = [
+            summary_response,
+            detail_response,
+        ]
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123", data_type="pullrequest"
+        )
+
+        assert "500 Server Error" in result["error"]
+        assert result["pullRequests"] == []
+
+    def test_get_issue_development_info_partial_fetch_failure(
+        self, development_mixin, mock_dev_status_response
+    ):
+        """Test that data is returned without an error when some fetches succeed."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        summary_response = MagicMock(status_code=200)
+        summary_response.json.return_value = {
+            "summary": {
+                "pullrequest": {
+                    "byInstanceType": {"github": {"count": 1}, "stash": {"count": 1}}
+                }
+            }
+        }
+        failed_response = MagicMock(status_code=500)
+        failed_response.raise_for_status.side_effect = HTTPError("500 Server Error")
+        ok_response = MagicMock(status_code=200)
+        ok_response.json.return_value = mock_dev_status_response
+        development_mixin.jira._session.get.side_effect = [
+            summary_response,
+            failed_response,
+            ok_response,
+        ]
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123", data_type="pullrequest"
+        )
+
+        assert "error" not in result
+        assert len(result["pullRequests"]) == 1
+
     def test_get_issue_development_info_auto_discovery_404(self, development_mixin):
         """Test a missing summary endpoint falls back to common types."""
         development_mixin.jira.get_issue.return_value = {
