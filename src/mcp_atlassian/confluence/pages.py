@@ -965,6 +965,8 @@ class PagesMixin(ConfluenceClient):
             page_id: The ID of the page to update.
             heading_text: Exact text of the heading that starts the section to
                 replace. Matching is case-sensitive and whitespace-normalised.
+                Only h2–h6 section headings are matched; the page-title ``<h1>``
+                is rejected so a mistaken title cannot wipe the whole page.
             new_content: Replacement content for the section body (excluding the
                 heading itself).
             content_format: Format of new_content — ``'markdown'`` (default) or
@@ -979,8 +981,10 @@ class PagesMixin(ConfluenceClient):
             Updated ``ConfluencePage`` with the section replaced.
 
         Raises:
-            ValueError: If ``heading_text`` is not found on the page, or if
-                ``content_format`` is not one of the accepted values.
+            ValueError: If ``heading_text`` is not found as an h2–h6 section
+                heading (including when it only matches the page-title
+                ``<h1>``), or if ``content_format`` is not one of the accepted
+                values.
             Exception: If retrieving or updating the page fails.
         """
         if content_format not in ("markdown", "storage"):
@@ -1005,21 +1009,41 @@ class PagesMixin(ConfluenceClient):
         # 3. Parse the full storage XML with BeautifulSoup.
         soup = BeautifulSoup(raw_storage, "html.parser")
 
+        # All heading levels are used when finding the end of a section (a later
+        # h1 still ends an h2 section). Matching the target itself is limited to
+        # h2–h6: Confluence stores the page title as the top-level <h1>, and
+        # treating that as a section replaces the entire page body (#1732).
         heading_tags = ["h1", "h2", "h3", "h4", "h5", "h6"]
+        section_heading_tags = ["h2", "h3", "h4", "h5", "h6"]
         target_heading: Tag | None = None
+        matched_h1: Tag | None = None
         for tag in soup.find_all(heading_tags):
-            if (
-                isinstance(tag, Tag)
-                and tag.get_text(strip=True) == heading_text.strip()
-            ):
+            if not isinstance(tag, Tag):
+                continue
+            if tag.get_text(strip=True) != heading_text.strip():
+                continue
+            if tag.name in section_heading_tags:
                 target_heading = tag
                 break
+            if tag.name == "h1" and matched_h1 is None:
+                matched_h1 = tag
 
         if target_heading is None:
-            error_msg = (
-                f"Heading '{heading_text.strip()}' not found in page {page_id}. "
-                "Heading text must match exactly (case-sensitive)."
-            )
+            if matched_h1 is not None:
+                error_msg = (
+                    f"Heading '{heading_text.strip()}' matches only the page "
+                    f"title (<h1>) on page {page_id}. "
+                    "confluence_update_page_section only updates sections under "
+                    "h2–h6 headings so the page title cannot wipe the whole "
+                    "page. Pass a section heading (h2 or below), or use "
+                    "confluence_update_page to replace the full body."
+                )
+            else:
+                error_msg = (
+                    f"Heading '{heading_text.strip()}' not found in page "
+                    f"{page_id}. Heading text must match exactly "
+                    "(case-sensitive) an h2–h6 section heading."
+                )
             raise ValueError(error_msg)
 
         heading_level = int(target_heading.name[1])  # e.g. "h2" → 2

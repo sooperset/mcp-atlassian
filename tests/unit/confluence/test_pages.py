@@ -3886,3 +3886,52 @@ class TestUpdatePageSection:
             )
 
         pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+    def test_page_title_h1_rejected(self, pages_mixin):
+        """Matching only the page-title <h1> must fail instead of wiping the page."""
+        storage = (
+            "<h1>My Page</h1><p>intro</p>"
+            "<h2>Section A</h2><p>a content</p>"
+            "<h2>Section B</h2><p>b content</p>"
+        )
+        raw_page = self._make_page("42", "My Page", storage)
+
+        with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
+            with patch.object(pages_mixin, "update_page") as mock_update:
+                with pytest.raises(ValueError, match="only the page title"):
+                    pages_mixin.update_page_section(
+                        "42",
+                        "My Page",
+                        "oops wipe everything",
+                    )
+                mock_update.assert_not_called()
+
+    def test_h2_with_same_text_as_title_still_updates(self, pages_mixin):
+        """An h2 that reuses the page title text is a valid section target."""
+        storage = (
+            "<h1>My Page</h1><p>intro</p>"
+            "<h2>My Page</h2><p>old section</p>"
+            "<h2>Other</h2><p>other</p>"
+        )
+        raw_page = self._make_page("42", "My Page", storage)
+        updated_page = self._make_page("42", "My Page", "updated")
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new section</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("42", "My Page", "new section")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert "<h1>My Page</h1>" in body
+        assert "<p>intro</p>" in body
+        assert "<h2>My Page</h2>" in body
+        assert "<p>new section</p>" in body
+        assert "old section" not in body
+        assert "<h2>Other</h2>" in body
+        assert "<p>other</p>" in body
