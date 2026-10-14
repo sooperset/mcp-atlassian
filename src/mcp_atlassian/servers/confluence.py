@@ -2212,7 +2212,7 @@ async def download_attachment(
         if v2_adapter:
             attachment_data = v2_adapter.get_attachment_by_id(attachment_id)
         else:
-            base_url = confluence_fetcher.config.url.rstrip("/")
+            base_url = confluence_fetcher._rest_base_url()
             url = f"{base_url}/rest/api/content/{attachment_id}"
             resp_meta = confluence_fetcher.confluence._session.get(url)
             resp_meta.raise_for_status()
