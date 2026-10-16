@@ -2374,7 +2374,7 @@ def test_key_patterns_ignore_uncompilable_env_override(
 
 
 # =============================================================================
-# update_issue additional_fields JSON string tests
+# update_issue fields and additional_fields input tests
 # =============================================================================
 
 
@@ -2400,6 +2400,24 @@ async def test_update_issue_accepts_json_string_fields(jira_client, mock_jira_fe
 
 
 @pytest.mark.anyio
+async def test_update_issue_accepts_dict_fields(
+    jira_client: Client, mock_jira_fetcher: Any
+) -> None:
+    """Ensure object fields pass through the tool schema to the Jira fetcher."""
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": {"summary": "Updated via JSON object"},
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue updated successfully"
+    call_kwargs = mock_jira_fetcher.update_issue.call_args.kwargs
+    assert call_kwargs["summary"] == "Updated via JSON object"
+
+
+@pytest.mark.anyio
 async def test_update_issue_accepts_json_string_additional_fields(
     jira_client, mock_jira_fetcher
 ):
@@ -2419,6 +2437,28 @@ async def test_update_issue_accepts_json_string_additional_fields(
     content = json.loads(text_content.text)
     assert content["message"] == "Issue updated successfully"
     assert "issue" in content
+    call_kwargs = mock_jira_fetcher.update_issue.call_args.kwargs
+    assert call_kwargs["labels"] == ["ai"]
+
+
+@pytest.mark.anyio
+async def test_update_issue_accepts_dict_additional_fields(
+    jira_client: Client, mock_jira_fetcher: Any
+) -> None:
+    """Ensure nested object values reach the Jira fetcher unchanged."""
+    custom_field = {"stepsRows": [{"isGroup": False, "cells": ["Action", "", ""]}]}
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "fields": '{"summary": "Updated"}',
+            "additional_fields": {"customfield_11203": custom_field},
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue updated successfully"
+    call_kwargs = mock_jira_fetcher.update_issue.call_args.kwargs
+    assert call_kwargs["customfield_11203"] == custom_field
 
 
 @pytest.mark.anyio
