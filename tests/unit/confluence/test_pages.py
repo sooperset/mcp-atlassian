@@ -4059,3 +4059,86 @@ class TestUpdatePageSection:
         assert 'ac:name="info"' not in body
         assert "new agenda" in body
         assert "<h1>Next steps</h1>" in body
+
+
+class TestGetSpacePageTreeCloudOAuth:
+    """On Cloud OAuth the space page tree is read through the v2 API.
+
+    Atlassian answers 410 Gone for the v1 space page listing on the OAuth
+    gateway, so the tree must come from ``/spaces/{id}/pages``.
+    """
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def test_tree_uses_v2_and_derives_depth(self, pages_mixin):
+        """Pages come from the adapter; depth is walked within the set."""
+        pages_mixin.config.auth_type = "oauth"
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as adapter_class:
+            adapter = MagicMock()
+            adapter_class.return_value = adapter
+            adapter.get_space_pages_for_tree.return_value = {
+                "pages": [
+                    {"id": "1", "title": "Root", "parent_id": None, "position": 2},
+                    {"id": "2", "title": "Child", "parent_id": "1", "position": 1},
+                    {
+                        "id": "3",
+                        "title": "Grandchild",
+                        "parent_id": "2",
+                        "position": None,
+                    },
+                    {"id": "4", "title": "Orphan", "parent_id": "999", "position": 5},
+                ],
+                "has_more": True,
+            }
+
+            result = pages_mixin.get_space_page_tree("FDE", limit=4)
+
+        adapter.get_space_pages_for_tree.assert_called_once_with("FDE", 4)
+        pages_mixin.confluence.get_all_pages_from_space_raw.assert_not_called()
+        assert result["space_key"] == "FDE"
+        assert result["total_pages"] == 4
+        assert result["has_more"] is True
+        assert [p["id"] for p in result["pages"]] == ["1", "4", "2", "3"]
+        assert {p["id"]: p["depth"] for p in result["pages"]} == {
+            "1": 0,
+            "4": 0,
+            "2": 1,
+            "3": 2,
+        }
+        assert result["pages"][0]["parent_id"] is None
+        assert result["pages"][2]["parent_id"] == "1"
+
+    def test_tree_empty_space_on_v2(self, pages_mixin):
+        """An empty listing yields the empty tree shape."""
+        pages_mixin.config.auth_type = "oauth"
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+        ) as adapter_class:
+            adapter = MagicMock()
+            adapter_class.return_value = adapter
+            adapter.get_space_pages_for_tree.return_value = {
+                "pages": [],
+                "has_more": False,
+            }
+
+            result = pages_mixin.get_space_page_tree("EMPTY")
+
+        assert result == {
+            "space_key": "EMPTY",
+            "total_pages": 0,
+            "has_more": False,
+            "pages": [],
+        }

@@ -717,6 +717,101 @@ class TestConfluenceV2AdapterComments:
         assert result["id"] == "333444555"
 
 
+class TestConfluenceV2AdapterSpacePagesForTree:
+    """Tests for ConfluenceV2Adapter.get_space_pages_for_tree."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    @staticmethod
+    def _response(payload):
+        response = Mock()
+        response.status_code = 200
+        response.links = {}
+        response.json.return_value = payload
+        return response
+
+    def test_reads_pages_across_cursors(self, v2_adapter, mock_session):
+        """The space id is resolved, then every cursor page is read."""
+        mock_session.get.side_effect = [
+            self._response({"results": [{"id": "120193605", "key": "FDE"}]}),
+            self._response(
+                {
+                    "results": [
+                        {"id": 1, "title": "Root", "parentId": None, "position": 2},
+                        {"id": 2, "title": "Child", "parentId": 1, "position": 1},
+                    ],
+                    "_links": {"next": "/wiki/api/v2/spaces/120193605/pages?cursor=c2"},
+                }
+            ),
+            self._response(
+                {
+                    "results": [
+                        {"id": 3, "title": "", "parentId": 2, "position": None}
+                    ],
+                    "_links": {},
+                }
+            ),
+        ]
+
+        result = v2_adapter.get_space_pages_for_tree("FDE", limit=10)
+
+        assert mock_session.get.call_args_list[0] == call(
+            "https://example.atlassian.net/wiki/api/v2/spaces", params={"keys": "FDE"}
+        )
+        assert mock_session.get.call_args_list[1] == call(
+            "https://example.atlassian.net/wiki/api/v2/spaces/120193605/pages",
+            params={"status": "current", "limit": 10},
+        )
+        assert mock_session.get.call_args_list[2] == call(
+            "https://example.atlassian.net/wiki/api/v2/spaces/120193605/pages",
+            params={"status": "current", "limit": 8, "cursor": "c2"},
+        )
+        assert result["has_more"] is False
+        assert result["pages"] == [
+            {"id": "1", "title": "Root", "parent_id": None, "position": 2},
+            {"id": "2", "title": "Child", "parent_id": "1", "position": 1},
+            {"id": "3", "title": "Untitled", "parent_id": "2", "position": None},
+        ]
+
+    def test_stops_at_limit_and_reports_more(self, v2_adapter, mock_session):
+        """Reaching the limit with a cursor left sets has_more."""
+        mock_session.get.side_effect = [
+            self._response({"results": [{"id": "120193605", "key": "FDE"}]}),
+            self._response(
+                {
+                    "results": [
+                        {"id": 1, "title": "A", "parentId": None, "position": 0},
+                        {"id": 2, "title": "B", "parentId": None, "position": 1},
+                    ],
+                    "_links": {"next": "/wiki/api/v2/spaces/120193605/pages?cursor=c2"},
+                }
+            ),
+        ]
+
+        result = v2_adapter.get_space_pages_for_tree("FDE", limit=2)
+
+        assert mock_session.get.call_count == 2
+        assert result["has_more"] is True
+        assert [p["id"] for p in result["pages"]] == ["1", "2"]
+
+    def test_unknown_space_is_an_error(self, v2_adapter, mock_session):
+        """A space key that resolves to nothing raises ValueError."""
+        mock_session.get.return_value = self._response({"results": []})
+
+        with pytest.raises(ValueError, match="Failed to list pages for space 'NOPE'"):
+            v2_adapter.get_space_pages_for_tree("NOPE", limit=5)
+
+
 class TestConfluenceV2AdapterFooterComments:
     """Tests for ConfluenceV2Adapter.get_footer_comments."""
 

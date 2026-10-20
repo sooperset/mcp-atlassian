@@ -366,6 +366,78 @@ class ConfluenceV2Adapter:
                 logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
 
+    def get_space_pages_for_tree(self, space_key: str, limit: int) -> dict[str, Any]:
+        """List a space's current pages for a page tree using the v2 API.
+
+        Confluence Cloud has removed the v1 space page listing from the OAuth
+        gateway (410 Gone). This reads ``/spaces/{id}/pages`` cursor by cursor
+        until ``limit`` pages are collected or the listing ends.
+
+        Args:
+            space_key: The key of the space
+            limit: Maximum number of pages to collect
+
+        Returns:
+            Dict with ``pages`` (id, title, parent_id, position per page) and
+            ``has_more`` (True when the listing had more pages than ``limit``).
+
+        Raises:
+            ValueError: If the space is unknown or a request fails
+        """
+        try:
+            space_id = self._get_space_id(space_key)
+            url = f"{self.base_url}/api/v2/spaces/{space_id}/pages"
+            pages: list[dict[str, Any]] = []
+            cursor: str | None = None
+            has_more = False
+
+            while True:
+                params: dict[str, Any] = {
+                    "status": "current",
+                    "limit": max(1, min(250, limit - len(pages))),
+                }
+                if cursor is not None:
+                    params["cursor"] = cursor
+
+                response = self.session.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+                for item in data.get("results", []):
+                    if not isinstance(item, dict):
+                        continue
+                    parent_id = item.get("parentId")
+                    pages.append(
+                        {
+                            "id": str(item.get("id", "")),
+                            "title": item.get("title") or "Untitled",
+                            "parent_id": str(parent_id) if parent_id else None,
+                            "position": item.get("position"),
+                        }
+                    )
+
+                cursor = self._comment_next_cursor(response, data)
+                if not cursor:
+                    break
+                if len(pages) >= limit:
+                    has_more = True
+                    break
+
+            logger.debug(f"Retrieved {len(pages)} pages for space '{space_key}' tree")
+            return {"pages": pages[:limit], "has_more": has_more}
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error listing pages for space '{space_key}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error listing pages for space '{space_key}': {e}")
+            raise ValueError(
+                f"Failed to list pages for space '{space_key}': {e}"
+            ) from e
+
     def get_page_direct_children(
         self,
         page_id: str,
