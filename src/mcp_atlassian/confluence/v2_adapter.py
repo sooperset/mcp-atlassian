@@ -772,6 +772,15 @@ class ConfluenceV2Adapter:
         params: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """Read every cursor page from a v2 comment collection endpoint."""
+        return self._get_all_cursor_results(url, params=params)
+
+    def _get_all_cursor_results(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Read every cursor page from a v2 collection endpoint."""
         results: list[dict[str, Any]] = []
         cursor: str | None = None
         seen_cursors: set[str | None] = set()
@@ -794,11 +803,51 @@ class ConfluenceV2Adapter:
             if not cursor:
                 break
         else:
-            logger.warning(
-                "Stopping comment pagination after repeated cursor '%s'", cursor
-            )
+            logger.warning("Stopping pagination after repeated cursor '%s'", cursor)
 
         return results
+
+    def get_page_labels(self, page_id: str) -> dict[str, Any]:
+        """Get a page's labels using the v2 API.
+
+        Reads every cursor page of ``GET /pages/{id}/labels`` and returns the
+        labels in the v1 ``{"results": [...]}`` shape, with ``label`` mirrored
+        from ``name`` as the v1 endpoint does, so callers built for v1 keep
+        working.
+
+        Args:
+            page_id: The ID of the page whose labels to retrieve.
+
+        Returns:
+            A v1-compatible dict with a ``results`` list of label dicts.
+
+        Raises:
+            ValueError: If the request fails.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/labels"
+            raw_labels = self._get_all_cursor_results(url, params={"limit": 250})
+            results = [
+                {
+                    "id": str(label.get("id", "")),
+                    "prefix": label.get("prefix", "global"),
+                    "name": label.get("name", ""),
+                    "label": label.get("name", ""),
+                }
+                for label in raw_labels
+            ]
+            logger.debug(f"Retrieved {len(results)} labels for page '{page_id}'")
+            return {"results": results, "size": len(results)}
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting labels for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting labels for page '{page_id}': {e}")
+            raise ValueError(f"Failed to get labels for page '{page_id}': {e}") from e
 
     def create_inline_comment(
         self,

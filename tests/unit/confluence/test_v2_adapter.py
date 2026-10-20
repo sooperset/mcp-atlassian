@@ -715,3 +715,85 @@ class TestConfluenceV2AdapterComments:
         assert payload["pageId"] == "12345"
         assert "parentCommentId" not in payload
         assert result["id"] == "333444555"
+
+
+class TestConfluenceV2AdapterLabels:
+    """Tests for ConfluenceV2Adapter.get_page_labels."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    def test_get_page_labels_returns_v1_shape(self, v2_adapter, mock_session):
+        """Labels come back in the v1 results shape with ``label`` mirrored."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.links = {}
+        mock_response.json.return_value = {
+            "results": [
+                {"id": "1311178753", "name": "scratch", "prefix": "global"},
+                {"id": "1311178754", "name": "draft", "prefix": "my"},
+            ],
+            "_links": {"base": "https://example.atlassian.net/wiki"},
+        }
+        mock_session.get.return_value = mock_response
+
+        result = v2_adapter.get_page_labels("1310359554")
+
+        mock_session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/pages/1310359554/labels",
+            params={"limit": 250},
+        )
+        assert result["size"] == 2
+        assert result["results"][0] == {
+            "id": "1311178753",
+            "prefix": "global",
+            "name": "scratch",
+            "label": "scratch",
+        }
+        assert result["results"][1]["prefix"] == "my"
+
+    def test_get_page_labels_follows_cursor(self, v2_adapter, mock_session):
+        """Every cursor page is read."""
+        first = Mock()
+        first.status_code = 200
+        first.links = {}
+        first.json.return_value = {
+            "results": [{"id": "1", "name": "a", "prefix": "global"}],
+            "_links": {"next": "/wiki/api/v2/pages/1/labels?cursor=abc"},
+        }
+        second = Mock()
+        second.status_code = 200
+        second.links = {}
+        second.json.return_value = {
+            "results": [{"id": "2", "name": "b", "prefix": "global"}],
+            "_links": {},
+        }
+        mock_session.get.side_effect = [first, second]
+
+        result = v2_adapter.get_page_labels("1")
+
+        assert [label["name"] for label in result["results"]] == ["a", "b"]
+        assert mock_session.get.call_args_list[1] == call(
+            "https://example.atlassian.net/wiki/api/v2/pages/1/labels",
+            params={"limit": 250, "cursor": "abc"},
+        )
+
+    def test_get_page_labels_http_error(self, v2_adapter, mock_session):
+        """An HTTP error is reported as a ValueError."""
+        mock_response = Mock()
+        mock_response.status_code = 410
+        mock_response.text = "Gone"
+        mock_response.raise_for_status.side_effect = HTTPError(response=mock_response)
+        mock_session.get.return_value = mock_response
+
+        with pytest.raises(ValueError, match="Failed to get labels for page '1'"):
+            v2_adapter.get_page_labels("1")
