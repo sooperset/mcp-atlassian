@@ -1418,11 +1418,12 @@ class ConfluenceV2Adapter:
         version: int,
         expand: str | None = None,
     ) -> dict[str, Any]:
-        """Get a specific version of a page using the versions API.
+        """Get a specific version of a page using the v2 API.
 
-        Note: The v2 API uses version IDs, not version numbers. We need to:
-        1. List all versions to find the version ID for the given version number
-        2. Fetch the specific version using its version ID
+        ``GET /pages/{id}?version={n}`` returns the page as it was at that
+        version, body included, in the ordinary page shape. The versions
+        listing cannot be used for this: its entries carry a ``number`` but
+        no id, and ``/versions/{n}`` returns version metadata without a body.
 
         Args:
             page_id: The ID of page
@@ -1436,29 +1437,16 @@ class ConfluenceV2Adapter:
             ValueError: If page retrieval fails or version not found
         """
         try:
-            # Step 1: Get all versions to find the version ID
-            versions_list = self.get_page_versions_list(page_id)
-
-            # Find the version with the matching version number
-            version_id = None
-            for ver in versions_list:
-                if ver.get("number") == version:
-                    version_id = ver.get("id")
-                    break
-
-            if not version_id:
-                raise ValueError(f"Version {version} not found for page '{page_id}'")
-
-            # Step 2: Fetch the specific version using its version ID
-            url = f"{self.base_url}/api/v2/versions/{version_id}"
-
-            # Convert v1 expand parameters to v2 format
-            params = {"body-format": "storage"}
+            url = f"{self.base_url}/api/v2/pages/{page_id}"
+            params: dict[str, Any] = {"body-format": "storage", "version": version}
 
             response = self.session.get(url, params=params)
             response.raise_for_status()
 
             v2_response = response.json()
+            returned = (v2_response.get("version") or {}).get("number")
+            if returned is not None and int(returned) != int(version):
+                raise ValueError(f"Version {version} not found for page '{page_id}'")
             logger.debug(f"Successfully retrieved page '{page_id}' version {version}")
 
             # Get space key from space ID if present

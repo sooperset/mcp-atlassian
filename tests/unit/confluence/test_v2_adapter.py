@@ -717,6 +717,99 @@ class TestConfluenceV2AdapterComments:
         assert result["id"] == "333444555"
 
 
+class TestConfluenceV2AdapterPageByVersion:
+    """Tests for ConfluenceV2Adapter.get_page_by_version.
+
+    The versions listing carries a ``number`` but no id, and ``/versions/{n}``
+    returns metadata without a body, so the page is fetched at the version
+    with ``GET /pages/{id}?version={n}``.
+    """
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    @staticmethod
+    def _response(payload):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = payload
+        return response
+
+    def test_fetches_page_at_version(self, v2_adapter, mock_session):
+        """One page fetch with the version parameter, body included."""
+        mock_session.get.side_effect = [
+            self._response(
+                {
+                    "id": "1310359554",
+                    "status": "current",
+                    "title": "Scratch",
+                    "spaceId": "120193605",
+                    "authorId": "author-1",
+                    "createdAt": "2026-10-20T20:25:55.662Z",
+                    "version": {
+                        "number": 1,
+                        "message": "",
+                        "createdAt": "2026-10-20T20:25:55.662Z",
+                        "authorId": "author-1",
+                    },
+                    "body": {
+                        "storage": {
+                            "value": "<p>Version one of the body.</p>",
+                            "representation": "storage",
+                        }
+                    },
+                }
+            ),
+            self._response({"id": "120193605", "key": "~me", "name": "Me"}),
+        ]
+
+        result = v2_adapter.get_page_by_version("1310359554", 1)
+
+        assert mock_session.get.call_args_list[0] == call(
+            "https://example.atlassian.net/wiki/api/v2/pages/1310359554",
+            params={"body-format": "storage", "version": 1},
+        )
+        assert result["id"] == "1310359554"
+        assert result["version"]["number"] == 1
+        assert result["body"]["storage"]["value"] == "<p>Version one of the body.</p>"
+        assert result["space"] == {"key": "~me", "id": "120193605"}
+
+    def test_version_mismatch_is_not_found(self, v2_adapter, mock_session):
+        """A response for another version number is reported as not found."""
+        mock_session.get.return_value = self._response(
+            {
+                "id": "1",
+                "title": "Scratch",
+                "spaceId": "120193605",
+                "version": {"number": 2},
+                "body": {"storage": {"value": ""}},
+            }
+        )
+
+        with pytest.raises(ValueError, match="Version 1 not found for page '1'"):
+            v2_adapter.get_page_by_version("1", 1)
+
+    def test_http_error_is_reported(self, v2_adapter, mock_session):
+        """An HTTP error becomes a ValueError naming the page and version."""
+        response = Mock()
+        response.status_code = 404
+        response.text = "Not found"
+        response.raise_for_status.side_effect = HTTPError(response=response)
+        mock_session.get.return_value = response
+
+        with pytest.raises(ValueError, match="Failed to get page '1' version 7"):
+            v2_adapter.get_page_by_version("1", 7)
+
+
 class TestConfluenceV2AdapterSpacePagesForTree:
     """Tests for ConfluenceV2Adapter.get_space_pages_for_tree."""
 
