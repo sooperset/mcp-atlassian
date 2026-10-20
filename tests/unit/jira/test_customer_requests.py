@@ -911,6 +911,207 @@ def _route_get(
     return MagicMock(side_effect=side_effect)
 
 
+def _portal_unavailable() -> MagicMock:
+    """Simulate a Server/Data Center instance without the portal approval list."""
+    return MagicMock(side_effect=_make_http_error(status_code=404))
+
+
+def _portal_page(
+    issue_keys: list[str],
+    *,
+    selected_page: int = 1,
+    total_pages: int = 1,
+    per_page: int = 20,
+) -> dict:
+    """Build a portal approvalListFilter model response."""
+    return {
+        "xsrfToken": "token",
+        "approvalListFilter": {
+            "approvalFilterValue": "myPending",
+            "portalId": "",
+            "requestTypeId": "",
+            "selectedPage": selected_page,
+            "resultsPerPage": per_page,
+            "totalResults": len(issue_keys),
+            "totalPages": total_pages,
+            "requests": [
+                {"key": key, "summary": "Contract review", "status": "Waiting"}
+                for key in issue_keys
+            ],
+            "portalRequestTypes": [],
+        },
+    }
+
+
+def _route_get_by_key(approvals_by_key: dict[str, dict]) -> MagicMock:
+    """Route mocked GET calls for request details and approvals by issue key."""
+
+    def side_effect(endpoint: str, params=None, headers=None):  # noqa: ANN001, ANN202
+        issue_key = endpoint.split("/")[3]
+        if endpoint.endswith("/approval"):
+            return approvals_by_key[issue_key]
+        return _request_payload(issue_key)
+
+    return MagicMock(side_effect=side_effect)
+
+
+def test_get_my_pending_approvals_server_uses_portal_approval_list(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Server/Data Center should read the portal "My approvals" list."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.post = MagicMock(return_value=_portal_page(["PROJ-1", "PROJ-2"]))
+    fetcher.jira.get = _route_get_by_key(
+        {
+            "PROJ-1": _approvals_page(_approval_payload("42")),
+            "PROJ-2": _approvals_page(_approval_payload("43", can_answer=False)),
+        }
+    )
+
+    result = fetcher.get_my_pending_approvals()
+
+    fetcher.jira.post.assert_called_once_with(
+        "rest/servicedesk/1/customer/models",
+        data={
+            "models": ["approvalListFilter"],
+            "options": {
+                "approvalListFilter": {
+                    "approvalFilterValue": "myPending",
+                    "selectedPage": 1,
+                }
+            },
+        },
+        headers={"Accept": "application/json", "X-Atlassian-Token": "no-check"},
+    )
+    request_list_calls = [
+        call
+        for call in fetcher.jira.get.call_args_list
+        if call.args[0] == "rest/servicedeskapi/request"
+    ]
+    assert request_list_calls == []
+    simplified = result.to_simplified_dict()
+    assert [item["issue_key"] for item in simplified["requests"]] == ["PROJ-1"]
+    assert simplified["requests"][0]["approvals"] == [
+        {"id": "42", "name": "Manager approval"}
+    ]
+    assert simplified["is_last_page"] is True
+    assert "warnings" not in simplified
+
+
+def test_get_my_pending_approvals_server_portal_follows_pages(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """The portal list should be read page by page with continuation offsets."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.post = MagicMock(
+        side_effect=[
+            _portal_page(["PROJ-1", "PROJ-2"], total_pages=2, per_page=2),
+            _portal_page(["PROJ-3"], selected_page=2, total_pages=2, per_page=2),
+        ]
+    )
+    fetcher.jira.get = _route_get_by_key(
+        {
+            "PROJ-1": _approvals_page(_approval_payload("41")),
+            "PROJ-2": _approvals_page(_approval_payload("42")),
+            "PROJ-3": _approvals_page(_approval_payload("43")),
+        }
+    )
+
+    first = fetcher.get_my_pending_approvals(limit=2)
+
+    assert [item.request.issue_key for item in first.requests] == ["PROJ-1", "PROJ-2"]
+    assert first.next_start == 2
+    assert first.is_last_page is False
+
+    fetcher.jira.post = MagicMock(
+        side_effect=[
+            _portal_page(["PROJ-1", "PROJ-2"], total_pages=2, per_page=2),
+            _portal_page(["PROJ-3"], selected_page=2, total_pages=2, per_page=2),
+        ]
+    )
+    second = fetcher.get_my_pending_approvals(start_at=first.next_start, limit=2)
+
+    pages = [
+        call.kwargs["data"]["options"]["approvalListFilter"]["selectedPage"]
+        for call in fetcher.jira.post.call_args_list
+    ]
+    assert pages == [1, 2]
+    assert [item.request.issue_key for item in second.requests] == ["PROJ-3"]
+    assert second.is_last_page is True
+
+
+def test_get_my_pending_approvals_server_portal_stops_on_ignored_page(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """A page the portal does not honor must not be read twice."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.post = MagicMock(
+        side_effect=[
+            _portal_page(["PROJ-1"], total_pages=2, per_page=1),
+            _portal_page(["PROJ-1"], selected_page=1, total_pages=2, per_page=1),
+        ]
+    )
+    fetcher.jira.get = _route_get_by_key(
+        {"PROJ-1": _approvals_page(_approval_payload("41"))}
+    )
+
+    result = fetcher.get_my_pending_approvals()
+
+    assert [item.request.issue_key for item in result.requests] == ["PROJ-1"]
+    assert result.is_last_page is True
+
+
+@pytest.mark.parametrize(
+    "portal_response",
+    [
+        {"approvalListFilter": {"approvalFilterValue": "myPending"}},
+        {"unexpected": True},
+        _portal_page(["PROJ-1"])
+        | {
+            "approvalListFilter": {
+                **_portal_page(["PROJ-1"])["approvalListFilter"],
+                "approvalFilterValue": "myHistory",
+            }
+        },
+    ],
+)
+def test_get_my_pending_approvals_server_falls_back_on_unexpected_portal_shape(
+    jira_fetcher: JiraFetcher,
+    portal_response: dict,
+) -> None:
+    """An unexpected portal response should fall back to the scan with a warning."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.post = MagicMock(return_value=portal_response)
+    fetcher.jira.get = _route_get(
+        [_request_list_page(["PROJ-2"])],
+        {"PROJ-2": _approvals_page(_approval_payload("42"))},
+    )
+
+    result = fetcher.get_my_pending_approvals()
+
+    assert [item.request.issue_key for item in result.requests] == ["PROJ-2"]
+    assert len(result.warnings) == 1
+    assert "only an approver may be missing" in result.warnings[0]
+
+
+def test_get_my_pending_approvals_server_fallback_reports_http_status(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """A failing portal endpoint should be named in the fallback warning."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.post = _portal_unavailable()
+    fetcher.jira.get = _route_get([_request_list_page([])], {})
+
+    result = fetcher.get_my_pending_approvals()
+
+    assert result.requests == []
+    assert result.to_simplified_dict()["warnings"] == [
+        "The customer portal approval list is unavailable (HTTP 404); only open "
+        "requests you reported or participate in were checked, so requests "
+        "where you are only an approver may be missing."
+    ]
+
+
 def test_get_my_pending_approvals_cloud_uses_approver_filter(
     jira_fetcher: JiraFetcher,
 ) -> None:
@@ -927,8 +1128,11 @@ def test_get_my_pending_approvals_cloud_uses_approver_filter(
         },
     )
 
+    fetcher.jira.post = MagicMock()
+
     result = fetcher.get_my_pending_approvals(start_at=0, limit=2)
 
+    fetcher.jira.post.assert_not_called()
     list_call = fetcher.jira.get.call_args_list[0]
     assert list_call.args == ("rest/servicedeskapi/request",)
     assert list_call.kwargs["params"] == {
@@ -949,11 +1153,12 @@ def test_get_my_pending_approvals_cloud_uses_approver_filter(
     ]
 
 
-def test_get_my_pending_approvals_server_scans_open_requests(
+def test_get_my_pending_approvals_server_fallback_scans_open_requests(
     jira_fetcher: JiraFetcher,
 ) -> None:
     """Server/Data Center has no approver filter, so open requests are scanned."""
     fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.post = _portal_unavailable()
     fetcher.config.is_cloud = False
     fetcher.jira.get = _route_get(
         [_request_list_page(["PROJ-1", "PROJ-2", "PROJ-3"])],
@@ -983,11 +1188,12 @@ def test_get_my_pending_approvals_server_scans_open_requests(
     assert [item["issue_key"] for item in simplified["requests"]] == ["PROJ-2"]
 
 
-def test_get_my_pending_approvals_server_stops_at_limit(
+def test_get_my_pending_approvals_server_fallback_stops_at_limit(
     jira_fetcher: JiraFetcher,
 ) -> None:
     """The scan should stop at the limit and report where to continue."""
     fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.post = _portal_unavailable()
     fetcher.jira.get = _route_get(
         [_request_list_page(["PROJ-1", "PROJ-2", "PROJ-3"])],
         {
@@ -1007,11 +1213,12 @@ def test_get_my_pending_approvals_server_stops_at_limit(
     assert fetcher.jira.get.call_args_list[0].kwargs["params"]["start"] == 5
 
 
-def test_get_my_pending_approvals_server_follows_pages(
+def test_get_my_pending_approvals_server_fallback_follows_pages(
     jira_fetcher: JiraFetcher,
 ) -> None:
     """The scan should continue across request list pages."""
     fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.post = _portal_unavailable()
     first_page = _request_list_page(["PROJ-1"], is_last_page=False)
     second_page = _request_list_page(["PROJ-2"])
     fetcher.jira.get = _route_get(
@@ -1034,11 +1241,12 @@ def test_get_my_pending_approvals_server_follows_pages(
     assert result.is_last_page is True
 
 
-def test_get_my_pending_approvals_server_skips_unreadable_approvals(
+def test_get_my_pending_approvals_server_fallback_skips_unreadable_approvals(
     jira_fetcher: JiraFetcher,
 ) -> None:
     """A request whose approvals cannot be read should not fail the scan."""
     fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.post = _portal_unavailable()
     pages = iter([_request_list_page(["PROJ-1", "PROJ-2"])])
 
     def side_effect(endpoint: str, params=None, headers=None):  # noqa: ANN001, ANN202

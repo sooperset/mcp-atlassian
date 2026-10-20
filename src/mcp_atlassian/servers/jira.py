@@ -4070,8 +4070,9 @@ async def get_my_pending_approvals(
 
     Returns each request with the IDs of the pending approvals the user can
     answer. On Cloud this uses the native approver filter. On Server/Data
-    Center, where that filter is unavailable, open requests visible to the
-    user are scanned and their approvals checked.
+    Center, where that filter is unavailable, it reads the customer portal's
+    "My approvals" list; if that list is unavailable, it scans open requests
+    the user reported or participates in and adds a warning to the result.
 
     Args:
         ctx: The FastMCP context.

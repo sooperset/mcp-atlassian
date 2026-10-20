@@ -682,6 +682,7 @@ class JiraPendingApprovalsResult(ApiModel):
     next_start: int | None = None
     is_last_page: bool = True
     requests: list[JiraPendingApproval] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""
@@ -694,4 +695,6 @@ class JiraPendingApprovalsResult(ApiModel):
         }
         if self.next_start is not None:
             result["next_start"] = self.next_start
+        if self.warnings:
+            result["warnings"] = self.warnings
         return result

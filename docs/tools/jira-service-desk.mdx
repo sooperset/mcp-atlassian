@@ -161,7 +161,7 @@ Each request lists the pending approval IDs the current user can answer. When `i
 </Tip>
 
 <Warning>
-Cloud uses the native `requestOwnership=APPROVER` and `approvalStatus=MY_PENDING_APPROVAL` filters. Server/Data Center does not support the approver filter on the request list endpoint, so the tool scans open requests visible to the user (up to 500 per call) and checks their approvals.
+Cloud uses the native `requestOwnership=APPROVER` and `approvalStatus=MY_PENDING_APPROVAL` filters. Server/Data Center does not support the approver filter on the public request list endpoint (it returns HTTP 500), and `requestOwnership=ALL_REQUESTS` there only covers requests the user reported or participates in. The tool therefore reads the customer portal's "My approvals" list (`POST /rest/servicedesk/1/customer/models`, model `approvalListFilter`), an internal portal endpoint, and confirms every request through the public approval API. If the portal list is unavailable, it falls back to scanning open requests the user reported or participates in (up to 500 per call) and returns a `warnings` entry, because requests where the user is only an approver can be missed.
 </Warning>
 
 ---

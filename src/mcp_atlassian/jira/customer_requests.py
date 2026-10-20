@@ -26,10 +26,18 @@ logger = logging.getLogger("mcp-jira")
 APPROVAL_DECISIONS = ("approve", "decline")
 DEFAULT_CUSTOMER_REQUEST_EXPAND = "participant,status,requestType"
 
-# Server/Data Center has no approver filter on the request list endpoint, so
-# pending approvals are found by scanning open requests. Bound that scan.
+# Server/Data Center has no approver filter on the public request list
+# endpoint. The customer portal's "My approvals" page is built from the
+# approvalListFilter model, which is used first; if it is unavailable, open
+# requests the user reported or participates in are scanned instead.
+PORTAL_MODELS_ENDPOINT = "rest/servicedesk/1/customer/models"
 PENDING_APPROVALS_SCAN_LIMIT = 500
 PENDING_APPROVALS_PAGE_SIZE = 50
+PORTAL_FALLBACK_WARNING = (
+    "The customer portal approval list is unavailable ({reason}); only open "
+    "requests you reported or participate in were checked, so requests where "
+    "you are only an approver may be missing."
+)
 
 _SERVICEDESK_ERROR_HINTS = {
     403: "the current user is not allowed to view this request or approval",
@@ -983,9 +991,11 @@ class CustomerRequestsMixin(JiraClient):
 
         On Cloud this uses the native ``requestOwnership=APPROVER`` and
         ``approvalStatus=MY_PENDING_APPROVAL`` filters. Server/Data Center does
-        not support the approver filter on this endpoint, so open requests
-        visible to the user are scanned and their approvals checked. In both
-        cases ``start_at`` is an offset into the underlying request list; pass
+        not support the approver filter, so the customer portal's approval
+        list (the ``approvalListFilter`` model behind "My approvals") is used,
+        falling back to scanning open requests with a warning. Every request
+        is confirmed through the public approval endpoint. In all cases
+        ``start_at`` is an offset into the underlying list; pass
         ``next_start`` from a previous result to continue.
 
         Args:
@@ -1006,7 +1016,126 @@ class CustomerRequestsMixin(JiraClient):
 
         if self.config.is_cloud:
             return self._get_pending_approvals_cloud(start_at, limit)
-        return self._get_pending_approvals_server(start_at, limit)
+
+        try:
+            return self._get_pending_approvals_portal(start_at, limit)
+        except (HTTPError, TypeError, ValueError) as e:
+            status_code, error_text = self._extract_error_details(e)
+            reason = (
+                f"HTTP {status_code}"
+                if status_code is not None
+                else self._shorten_error_text(error_text, max_length=120)
+            )
+            logger.warning("Portal approval list unavailable: %s", reason)
+            result = self._get_pending_approvals_server(start_at, limit)
+            result.warnings.append(PORTAL_FALLBACK_WARNING.format(reason=reason))
+            return result
+
+    def _get_portal_pending_approval_page(
+        self, page: int
+    ) -> tuple[list[str], int, int]:
+        """Fetch one page of the portal "My approvals" list.
+
+        Args:
+            page: 1-based page number.
+
+        Returns:
+            A tuple of (issue keys, total pages, results per page).
+
+        Raises:
+            TypeError: If the portal response does not have the expected shape.
+        """
+        headers = {**self.jira.default_headers, "X-Atlassian-Token": "no-check"}
+        response = self.jira.post(
+            PORTAL_MODELS_ENDPOINT,
+            data={
+                "models": ["approvalListFilter"],
+                "options": {
+                    "approvalListFilter": {
+                        "approvalFilterValue": "myPending",
+                        "selectedPage": page,
+                    }
+                },
+            },
+            headers=headers,
+        )
+        model = (
+            response.get("approvalListFilter") if isinstance(response, dict) else None
+        )
+        if not isinstance(model, dict) or not isinstance(model.get("requests"), list):
+            msg = "unexpected approvalListFilter response"
+            raise TypeError(msg)
+        if model.get("approvalFilterValue") not in (None, "myPending"):
+            msg = "approvalListFilter ignored the myPending filter"
+            raise TypeError(msg)
+        selected_page = model.get("selectedPage", page)
+        if str(selected_page) != str(page):
+            return [], page - 1, len(model["requests"])
+
+        keys: list[str] = []
+        for item in model["requests"]:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("key") or item.get("issueKey")
+            if key:
+                keys.append(str(key))
+        try:
+            total_pages = int(model.get("totalPages", page))
+        except (TypeError, ValueError):
+            total_pages = page
+        try:
+            per_page = int(model.get("resultsPerPage") or len(keys) or 1)
+        except (TypeError, ValueError):
+            per_page = len(keys) or 1
+        return keys, total_pages, per_page
+
+    def _get_pending_approvals_portal(
+        self, start_at: int, limit: int
+    ) -> JiraPendingApprovalsResult:
+        """List pending approvals on Server/Data Center from the portal list."""
+        keys, total_pages, per_page = self._get_portal_pending_approval_page(1)
+        page = start_at // per_page + 1
+        skip = start_at % per_page
+        if page > 1:
+            keys, total_pages, _ = self._get_portal_pending_approval_page(page)
+
+        requests: list[JiraPendingApproval] = []
+        offset = start_at
+        while True:
+            for key in keys[skip:]:
+                offset += 1
+                try:
+                    approvals = self._get_answerable_approvals(key)
+                    request = (
+                        self.get_customer_request(key, expand="requestType")
+                        if approvals
+                        else None
+                    )
+                except ValueError as e:
+                    logger.debug("Skipping approvals for %s: %s", key, str(e))
+                    continue
+                if request is not None:
+                    requests.append(
+                        JiraPendingApproval(request=request, approvals=approvals)
+                    )
+                if len(requests) >= limit:
+                    return JiraPendingApprovalsResult(
+                        start=start_at,
+                        limit=limit,
+                        next_start=offset,
+                        is_last_page=False,
+                        requests=requests,
+                    )
+            skip = 0
+            if page >= total_pages or not keys:
+                return JiraPendingApprovalsResult(
+                    start=start_at,
+                    limit=limit,
+                    is_last_page=True,
+                    requests=requests,
+                )
+            page += 1
+            keys, total_pages, _ = self._get_portal_pending_approval_page(page)
 
     def _get_pending_approvals_cloud(
         self, start_at: int, limit: int
@@ -1043,7 +1172,11 @@ class CustomerRequestsMixin(JiraClient):
     def _get_pending_approvals_server(
         self, start_at: int, limit: int
     ) -> JiraPendingApprovalsResult:
-        """List pending approvals on Server/Data Center by scanning open requests."""
+        """List pending approvals on Server/Data Center by scanning open requests.
+
+        Only requests the user reported or participates in are visible here,
+        so this is a fallback for when the portal approval list is unavailable.
+        """
         requests: list[JiraPendingApproval] = []
         offset = start_at
         scanned = 0
