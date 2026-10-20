@@ -1,6 +1,6 @@
 """Toolset definitions and filtering utilities for MCP Atlassian.
 
-Groups 98 tools into 25 named toolsets controlled via the TOOLSETS env var.
+Groups 102 tools into 25 named toolsets controlled via the TOOLSETS env var.
 Supports 'all', 'default', and comma-separated toolset names.
 """
 
@@ -82,7 +82,7 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
     ),
     "jira_service_desk": ToolsetDefinition(
         name="jira_service_desk",
-        description="Jira Service Management requests, queues, and service desks",
+        description="Jira Service Management requests, approvals, queues, and service desks",
         default=False,
     ),
     "jira_forms": ToolsetDefinition(

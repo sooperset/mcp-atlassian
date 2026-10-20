@@ -450,3 +450,46 @@ class TestJiraCloudJSMComments:
         finally:
             for comment_id in comment_ids:
                 _delete_cloud_comment(jira_fetcher, issue_key, comment_id)
+
+
+class TestJiraCloudJSMApprovals:
+    """Customer request and approval reads through the portal API on Cloud."""
+
+    def test_reads_customer_request_and_its_approvals(
+        self,
+        jira_fetcher: JiraFetcher,
+    ) -> None:
+        issue_key = os.environ.get("CLOUD_E2E_JSM_ISSUE_KEY", "").strip()
+        if not issue_key:
+            pytest.skip(
+                "Cloud JSM approval e2e requires CLOUD_E2E_JSM_ISSUE_KEY "
+                "(a pre-seeded ServiceDesk request)"
+            )
+
+        request = jira_fetcher.get_customer_request(issue_key)
+        assert request.issue_key == issue_key
+        assert request.fields
+
+        approvals = jira_fetcher.get_request_approvals(issue_key)
+        assert approvals.issue_key == issue_key
+
+        pending = jira_fetcher.get_my_pending_approvals(limit=5)
+        assert isinstance(pending.is_last_page, bool)
+        for item in pending.requests:
+            assert item.approvals
+            assert all(
+                approval.is_pending and approval.can_answer_approval
+                for approval in item.approvals
+            )
+
+        unanswerable = next(
+            (
+                approval
+                for approval in approvals.approvals
+                if not approval.is_pending or not approval.can_answer_approval
+            ),
+            None,
+        )
+        if unanswerable is not None:
+            with pytest.raises(ValueError, match="already decided|cannot answer"):
+                jira_fetcher.answer_approval(issue_key, unanswerable.id, "approve")

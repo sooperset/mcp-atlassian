@@ -9,6 +9,9 @@ import mcp_atlassian.jira.customer_requests as customer_requests_module
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.models.jira import (
     JiraCustomerRequest,
+    JiraCustomerRequestDetails,
+    JiraRequestApproval,
+    JiraRequestApprovalsResult,
     JiraRequestTypeFieldsResult,
     JiraRequestTypesResult,
 )
@@ -627,3 +630,530 @@ def test_create_customer_request_attachment_failure_adds_warning(
     assert "JSM_CUSTOMER_REQUEST_ATTACH_ERROR" in result.warnings[0]
     assert "issue_key=SUP-101" in result.warnings[0]
     assert fetcher.jira.post.call_count == 1
+
+
+EXPERIMENTAL_HEADER = {"X-ExperimentalApi": "opt-in"}
+
+
+def _servicedesk_date(iso: str) -> dict:
+    """Build a Service Management date object."""
+    return {"iso8601": iso, "jira": iso, "friendly": "Today", "epochMillis": 0}
+
+
+def _servicedesk_user(name: str, display_name: str) -> dict:
+    """Build a Service Management user payload with noisy metadata."""
+    return {
+        "name": name,
+        "key": name,
+        "emailAddress": f"{name}@example.com",
+        "displayName": display_name,
+        "active": True,
+        "timeZone": "UTC",
+        "avatarUrls": {"48x48": "https://jira.example.com/avatar.png"},
+        "_links": {"self": "https://jira.example.com/rest/api/2/user"},
+    }
+
+
+def _approval_payload(
+    approval_id: str = "42",
+    final_decision: str = "pending",
+    can_answer: bool = True,
+) -> dict:
+    """Build an approval payload as returned by the approval endpoints."""
+    return {
+        "id": approval_id,
+        "name": "Manager approval",
+        "finalDecision": final_decision,
+        "canAnswerApproval": can_answer,
+        "approvers": [
+            {
+                "approver": _servicedesk_user("jdoe", "Jane Doe"),
+                "approverDecision": "pending",
+            }
+        ],
+        "createdDate": _servicedesk_date("2026-01-05T10:00:00+0000"),
+        "_links": {"self": "https://jira.example.com/rest/servicedeskapi/x"},
+    }
+
+
+def _approvals_page(*approvals: dict) -> dict:
+    """Wrap approvals in a paged response."""
+    return {
+        "start": 0,
+        "limit": 50,
+        "size": len(approvals),
+        "isLastPage": True,
+        "values": list(approvals),
+    }
+
+
+def _request_payload(issue_key: str, summary: str = "Contract review") -> dict:
+    """Build a customer request payload."""
+    return {
+        "issueId": "10001",
+        "issueKey": issue_key,
+        "requestTypeId": "23",
+        "serviceDeskId": "4",
+        "requestType": {
+            "id": "23",
+            "name": "Document approval",
+            "_links": {"self": "https://jira.example.com/x"},
+        },
+        "createdDate": _servicedesk_date("2026-01-05T09:00:00+0000"),
+        "reporter": _servicedesk_user("asmith", "Alex Smith"),
+        "currentStatus": {
+            "status": "Waiting for approval",
+            "statusDate": _servicedesk_date("2026-01-05T09:30:00+0000"),
+        },
+        "requestFieldValues": [
+            {"fieldId": "summary", "label": "Summary", "value": summary},
+            {
+                "fieldId": "customfield_10010",
+                "label": "Department",
+                "value": {
+                    "self": "https://jira.example.com/x",
+                    "value": "Finance",
+                    "id": "1",
+                },
+            },
+            {
+                "fieldId": "attachment",
+                "label": "Attachment",
+                "value": [
+                    {
+                        "self": "https://jira.example.com/x",
+                        "id": "500",
+                        "filename": "contract.pdf",
+                        "author": _servicedesk_user("asmith", "Alex Smith"),
+                        "size": 1024,
+                        "mimeType": "application/pdf",
+                        "content": "https://jira.example.com/secure/500",
+                    }
+                ],
+            },
+        ],
+        "participants": {
+            "size": 1,
+            "start": 0,
+            "limit": 50,
+            "isLastPage": True,
+            "values": [_servicedesk_user("bwong", "Bo Wong")],
+        },
+        "_links": {
+            "web": "https://jira.example.com/servicedesk/customer/portal/4/PROJ-1",
+            "self": "https://jira.example.com/rest/servicedeskapi/request/10001",
+        },
+    }
+
+
+def _request_list_page(issue_keys: list[str], *, is_last_page: bool = True) -> dict:
+    """Wrap customer requests in a paged list response."""
+    return {
+        "start": 0,
+        "limit": 50,
+        "size": len(issue_keys),
+        "isLastPage": is_last_page,
+        "values": [_request_payload(key) for key in issue_keys],
+    }
+
+
+def test_get_customer_request_returns_compact_details(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Customer request reads should drop links and avatars."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(return_value=_request_payload("PROJ-1"))
+
+    result = fetcher.get_customer_request(" PROJ-1 ")
+
+    assert isinstance(result, JiraCustomerRequestDetails)
+    fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/PROJ-1",
+        params={"expand": "participant,status,requestType"},
+        headers={"Accept": "application/json", **EXPERIMENTAL_HEADER},
+    )
+    simplified = result.to_simplified_dict()
+    assert simplified["issue_key"] == "PROJ-1"
+    assert simplified["request_type"] == {"id": "23", "name": "Document approval"}
+    assert simplified["status"] == "Waiting for approval"
+    assert simplified["reporter"]["display_name"] == "Alex Smith"
+    assert simplified["participants"][0]["name"] == "bwong"
+    assert simplified["portal_url"].endswith("/portal/4/PROJ-1")
+    values = {field["field_id"]: field["value"] for field in simplified["fields"]}
+    assert values["summary"] == "Contract review"
+    assert values["customfield_10010"] == "Finance"
+    assert values["attachment"] == [
+        {
+            "filename": "contract.pdf",
+            "id": "500",
+            "mime_type": "application/pdf",
+            "size": 1024,
+        }
+    ]
+    serialized = str(simplified)
+    assert "avatarUrls" not in serialized
+    assert "_links" not in serialized
+
+
+def test_get_customer_request_requires_issue_key(jira_fetcher: JiraFetcher) -> None:
+    """A blank issue key should fail before any API call."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock()
+
+    with pytest.raises(ValueError, match="Issue key is required"):
+        fetcher.get_customer_request("  ")
+
+    fetcher.jira.get.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("status_code", "hint"),
+    [
+        (403, "not allowed to view"),
+        (404, "does not exist or is not visible"),
+        (412, "experimental API opt-in"),
+    ],
+)
+def test_get_customer_request_explains_http_errors(
+    jira_fetcher: JiraFetcher,
+    status_code: int,
+    hint: str,
+) -> None:
+    """HTTP failures should surface the status code and a readable hint."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(
+        side_effect=_make_http_error(
+            status_code=status_code,
+            error_messages=["Jira said no"],
+        )
+    )
+
+    with pytest.raises(ValueError, match=f"HTTP {status_code}") as exc_info:
+        fetcher.get_customer_request("PROJ-1")
+
+    assert hint in str(exc_info.value)
+    assert "Jira said no" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("is_cloud", [False, True])
+def test_get_request_approvals_sends_experimental_header(
+    jira_fetcher: JiraFetcher,
+    is_cloud: bool,
+) -> None:
+    """Approval reads need the experimental opt-in on Server/Data Center."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.config.is_cloud = is_cloud
+    fetcher.jira.get = MagicMock(return_value=_approvals_page(_approval_payload()))
+
+    result = fetcher.get_request_approvals("PROJ-1", start_at=0, limit=10)
+
+    assert isinstance(result, JiraRequestApprovalsResult)
+    fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/PROJ-1/approval",
+        params={"start": 0, "limit": 10},
+        headers={"Accept": "application/json", **EXPERIMENTAL_HEADER},
+    )
+    approval = result.to_simplified_dict()["approvals"][0]
+    assert approval == {
+        "id": "42",
+        "name": "Manager approval",
+        "final_decision": "pending",
+        "can_answer_approval": True,
+        "approvers": [
+            {
+                "approver": {
+                    "display_name": "Jane Doe",
+                    "name": "jdoe",
+                    "email": "jdoe@example.com",
+                },
+                "decision": "pending",
+            }
+        ],
+        "created_date": "2026-01-05T10:00:00+0000",
+    }
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"start_at": -1}, "start_at must be >= 0"),
+        ({"limit": 0}, "limit must be >= 1"),
+    ],
+)
+def test_get_request_approvals_validates_pagination(
+    jira_fetcher: JiraFetcher,
+    kwargs: dict,
+    message: str,
+) -> None:
+    """Invalid pagination arguments should fail before any API call."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock()
+
+    with pytest.raises(ValueError, match=message):
+        fetcher.get_request_approvals("PROJ-1", **kwargs)
+
+    fetcher.jira.get.assert_not_called()
+
+
+def _route_get(
+    request_pages: list[dict],
+    approvals_by_key: dict[str, dict],
+) -> MagicMock:
+    """Route mocked GET calls to request list pages and approval payloads."""
+    pages = iter(request_pages)
+
+    def side_effect(endpoint: str, params=None, headers=None):  # noqa: ANN001, ANN202
+        if endpoint == "rest/servicedeskapi/request":
+            return next(pages)
+        issue_key = endpoint.split("/")[3]
+        return approvals_by_key[issue_key]
+
+    return MagicMock(side_effect=side_effect)
+
+
+def test_get_my_pending_approvals_cloud_uses_approver_filter(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Cloud should use the native approver and approval status filters."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.config.is_cloud = True
+    fetcher.jira.get = _route_get(
+        [_request_list_page(["PROJ-1", "PROJ-2"], is_last_page=False)],
+        {
+            "PROJ-1": _approvals_page(_approval_payload("42")),
+            "PROJ-2": _approvals_page(
+                _approval_payload("43", final_decision="approved", can_answer=False)
+            ),
+        },
+    )
+
+    result = fetcher.get_my_pending_approvals(start_at=0, limit=2)
+
+    list_call = fetcher.jira.get.call_args_list[0]
+    assert list_call.args == ("rest/servicedeskapi/request",)
+    assert list_call.kwargs["params"] == {
+        "requestOwnership": "APPROVER",
+        "approvalStatus": "MY_PENDING_APPROVAL",
+        "expand": "requestType",
+        "start": 0,
+        "limit": 2,
+    }
+    simplified = result.to_simplified_dict()
+    assert simplified["size"] == 1
+    assert simplified["is_last_page"] is False
+    assert simplified["next_start"] == 2
+    assert simplified["requests"][0]["issue_key"] == "PROJ-1"
+    assert simplified["requests"][0]["summary"] == "Contract review"
+    assert simplified["requests"][0]["approvals"] == [
+        {"id": "42", "name": "Manager approval"}
+    ]
+
+
+def test_get_my_pending_approvals_server_scans_open_requests(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """Server/Data Center has no approver filter, so open requests are scanned."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.config.is_cloud = False
+    fetcher.jira.get = _route_get(
+        [_request_list_page(["PROJ-1", "PROJ-2", "PROJ-3"])],
+        {
+            "PROJ-1": _approvals_page(),
+            "PROJ-2": _approvals_page(_approval_payload("42")),
+            "PROJ-3": _approvals_page(_approval_payload("43", can_answer=False)),
+        },
+    )
+
+    result = fetcher.get_my_pending_approvals()
+
+    list_call = fetcher.jira.get.call_args_list[0]
+    assert list_call.kwargs["params"] == {
+        "requestOwnership": "ALL_REQUESTS",
+        "requestStatus": "OPEN_REQUESTS",
+        "expand": "requestType",
+        "start": 0,
+        "limit": 50,
+    }
+    assert "APPROVER" not in str(list_call.kwargs["params"])
+    for call in fetcher.jira.get.call_args_list:
+        assert call.kwargs["headers"]["X-ExperimentalApi"] == "opt-in"
+    simplified = result.to_simplified_dict()
+    assert simplified["is_last_page"] is True
+    assert "next_start" not in simplified
+    assert [item["issue_key"] for item in simplified["requests"]] == ["PROJ-2"]
+
+
+def test_get_my_pending_approvals_server_stops_at_limit(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """The scan should stop at the limit and report where to continue."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = _route_get(
+        [_request_list_page(["PROJ-1", "PROJ-2", "PROJ-3"])],
+        {
+            "PROJ-1": _approvals_page(_approval_payload("41")),
+            "PROJ-2": _approvals_page(_approval_payload("42")),
+        },
+    )
+
+    result = fetcher.get_my_pending_approvals(start_at=5, limit=2)
+
+    assert result.is_last_page is False
+    assert result.next_start == 7
+    assert [item.request.issue_key for item in result.requests] == [
+        "PROJ-1",
+        "PROJ-2",
+    ]
+    assert fetcher.jira.get.call_args_list[0].kwargs["params"]["start"] == 5
+
+
+def test_get_my_pending_approvals_server_follows_pages(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """The scan should continue across request list pages."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    first_page = _request_list_page(["PROJ-1"], is_last_page=False)
+    second_page = _request_list_page(["PROJ-2"])
+    fetcher.jira.get = _route_get(
+        [first_page, second_page],
+        {
+            "PROJ-1": _approvals_page(),
+            "PROJ-2": _approvals_page(_approval_payload("42")),
+        },
+    )
+
+    result = fetcher.get_my_pending_approvals()
+
+    list_calls = [
+        call
+        for call in fetcher.jira.get.call_args_list
+        if call.args[0] == "rest/servicedeskapi/request"
+    ]
+    assert [call.kwargs["params"]["start"] for call in list_calls] == [0, 1]
+    assert [item.request.issue_key for item in result.requests] == ["PROJ-2"]
+    assert result.is_last_page is True
+
+
+def test_get_my_pending_approvals_server_skips_unreadable_approvals(
+    jira_fetcher: JiraFetcher,
+) -> None:
+    """A request whose approvals cannot be read should not fail the scan."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    pages = iter([_request_list_page(["PROJ-1", "PROJ-2"])])
+
+    def side_effect(endpoint: str, params=None, headers=None):  # noqa: ANN001, ANN202
+        if endpoint == "rest/servicedeskapi/request":
+            return next(pages)
+        if "PROJ-1" in endpoint:
+            raise _make_http_error(status_code=403, error_messages=["Forbidden"])
+        return _approvals_page(_approval_payload("42"))
+
+    fetcher.jira.get = MagicMock(side_effect=side_effect)
+
+    result = fetcher.get_my_pending_approvals()
+
+    assert [item.request.issue_key for item in result.requests] == ["PROJ-2"]
+
+
+@pytest.mark.parametrize("decision", ["approve", "DECLINE", " Approve "])
+def test_answer_approval_posts_normalized_decision(
+    jira_fetcher: JiraFetcher,
+    decision: str,
+) -> None:
+    """Valid decisions should be normalized and posted with the opt-in header."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    expected = decision.strip().lower()
+    fetcher.jira.get = MagicMock(return_value=_approval_payload("42"))
+    fetcher.jira.post = MagicMock(
+        return_value=_approval_payload(
+            "42",
+            final_decision="approved" if expected == "approve" else "declined",
+            can_answer=False,
+        )
+    )
+
+    result = fetcher.answer_approval("PROJ-1", "42", decision)
+
+    assert isinstance(result, JiraRequestApproval)
+    fetcher.jira.get.assert_called_once_with(
+        "rest/servicedeskapi/request/PROJ-1/approval/42",
+        params=None,
+        headers={"Accept": "application/json", **EXPERIMENTAL_HEADER},
+    )
+    fetcher.jira.post.assert_called_once_with(
+        "rest/servicedeskapi/request/PROJ-1/approval/42",
+        data={"decision": expected},
+        headers={"Accept": "application/json", **EXPERIMENTAL_HEADER},
+    )
+    assert result.final_decision in {"approved", "declined"}
+
+
+@pytest.mark.parametrize("decision", ["", "yes", "approved", "reject"])
+def test_answer_approval_rejects_invalid_decision(
+    jira_fetcher: JiraFetcher,
+    decision: str,
+) -> None:
+    """Only approve and decline are accepted, before any API call."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock()
+    fetcher.jira.post = MagicMock()
+
+    with pytest.raises(ValueError, match="Invalid decision"):
+        fetcher.answer_approval("PROJ-1", "42", decision)
+
+    fetcher.jira.get.assert_not_called()
+    fetcher.jira.post.assert_not_called()
+
+
+def test_answer_approval_requires_approval_id(jira_fetcher: JiraFetcher) -> None:
+    """A blank approval ID should fail before any API call."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.post = MagicMock()
+
+    with pytest.raises(ValueError, match="Approval ID is required"):
+        fetcher.answer_approval("PROJ-1", " ", "approve")
+
+    fetcher.jira.post.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("approval", "message"),
+    [
+        (
+            _approval_payload(final_decision="approved", can_answer=False),
+            "already decided",
+        ),
+        (_approval_payload(can_answer=False), "canAnswerApproval=false"),
+    ],
+)
+def test_answer_approval_refuses_unanswerable_approval(
+    jira_fetcher: JiraFetcher,
+    approval: dict,
+    message: str,
+) -> None:
+    """Decided or unanswerable approvals should never be posted."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(return_value=approval)
+    fetcher.jira.post = MagicMock()
+
+    with pytest.raises(ValueError, match=message):
+        fetcher.answer_approval("PROJ-1", "42", "approve")
+
+    fetcher.jira.post.assert_not_called()
+
+
+def test_answer_approval_explains_post_failure(jira_fetcher: JiraFetcher) -> None:
+    """A rejected decision should surface the HTTP status and Jira message."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.jira.get = MagicMock(return_value=_approval_payload("42"))
+    fetcher.jira.post = MagicMock(
+        side_effect=_make_http_error(
+            status_code=412,
+            error_messages=["This API is experimental"],
+        )
+    )
+
+    with pytest.raises(ValueError, match="HTTP 412") as exc_info:
+        fetcher.answer_approval("PROJ-1", "42", "approve")
+
+    assert "This API is experimental" in str(exc_info.value)

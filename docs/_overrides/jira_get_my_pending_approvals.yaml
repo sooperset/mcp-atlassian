@@ -1,0 +1,6 @@
+example: |
+  {"limit": 20}
+tips: |
+  Each request lists the pending approval IDs the current user can answer. When `is_last_page` is false, call again with `start_at` set to the returned `next_start`.
+platform_notes: |
+  Cloud uses the native `requestOwnership=APPROVER` and `approvalStatus=MY_PENDING_APPROVAL` filters. Server/Data Center does not support the approver filter on the request list endpoint, so the tool scans open requests visible to the user (up to 500 per call) and checks their approvals.

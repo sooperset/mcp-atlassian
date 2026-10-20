@@ -126,6 +126,7 @@ async def test_additive_write_tools_are_non_destructive(tool_name: str) -> None:
         "jira_remove_watcher",
         "jira_add_issues_to_sprint",
         "jira_add_worklog",
+        "jira_answer_approval",
     ],
 )
 async def test_state_changing_write_tools_are_destructive(tool_name: str) -> None:

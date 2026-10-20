@@ -90,3 +90,107 @@ Create a Jira Service Management customer request.
 | `strict_on_behalf` | `boolean` | No | If true, fail immediately when raiseOnBehalfOf cannot be applied. If false, retry without raiseOnBehalfOf and return a fallback warning. |
 
 ---
+
+### Get Customer Request
+
+Get a Jira Service Management request through the customer portal API.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Request issue key (e.g., 'PROJ-123') |
+| `expand` | `string` | No | (Optional) Comma-separated expand values. Defaults to 'participant,status,requestType'. |
+**Example:**
+
+```json
+{"issue_key": "PROJ-123"}
+```
+
+<Tip>
+Reads the request through the Service Management portal API, so it works for customers, request participants and approvers who get HTTP 403 from `jira_get_issue` because they lack the Browse Projects permission. Field values are compacted: select options become their value, users their display name, attachments `{id, filename, mime_type, size}`.
+</Tip>
+
+---
+
+### Get Request Approvals
+
+Get the approvals of a Jira Service Management request.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Request issue key (e.g., 'PROJ-123') |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+**Example:**
+
+```json
+{"issue_key": "PROJ-123"}
+```
+
+<Tip>
+Use the returned approval `id` with `jira_answer_approval`. Only approvals with `final_decision: pending` and `can_answer_approval: true` can be answered by the current user.
+</Tip>
+
+<Warning>
+On Server/Data Center the approval endpoints are experimental; the tool sends the required `X-ExperimentalApi: opt-in` header on both Cloud and Server/Data Center.
+</Warning>
+
+---
+
+### Get My Pending Approvals
+
+List Jira Service Management requests awaiting the current user's approval.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `start_at` | `integer` | No | Offset into the underlying request list (0-based). Pass next_start from a previous result to continue. |
+| `limit` | `integer` | No | Maximum number of requests (1-50) |
+**Example:**
+
+```json
+{"limit": 20}
+```
+
+<Tip>
+Each request lists the pending approval IDs the current user can answer. When `is_last_page` is false, call again with `start_at` set to the returned `next_start`.
+</Tip>
+
+<Warning>
+Cloud uses the native `requestOwnership=APPROVER` and `approvalStatus=MY_PENDING_APPROVAL` filters. Server/Data Center does not support the approver filter on the request list endpoint, so the tool scans open requests visible to the user (up to 500 per call) and checks their approvals.
+</Warning>
+
+---
+
+### Answer Approval
+
+Approve or decline a pending approval on a Jira Service Management request.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Request issue key (e.g., 'PROJ-123') |
+| `approval_id` | `string` | Yes | Approval ID from jira_get_request_approvals or jira_get_my_pending_approvals (e.g., '42') |
+| `decision` | `string` | Yes | Decision to submit: 'approve' or 'decline' |
+**Example:**
+
+```json
+{"issue_key": "PROJ-123", "approval_id": "42", "decision": "approve"}
+```
+
+<Tip>
+The decision is recorded as the authenticated user and cannot be undone. The tool reads the approval first and refuses, without submitting anything, when it is already decided or the user cannot answer it. Hidden when `READ_ONLY_MODE=true`.
+</Tip>
+
+<Warning>
+On Server/Data Center the approval endpoints are experimental; the tool sends the required `X-ExperimentalApi: opt-in` header on both Cloud and Server/Data Center.
+</Warning>
+
+---

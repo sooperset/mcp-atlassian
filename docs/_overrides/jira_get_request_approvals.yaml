@@ -1,0 +1,6 @@
+example: |
+  {"issue_key": "PROJ-123"}
+tips: |
+  Use the returned approval `id` with `jira_answer_approval`. Only approvals with `final_decision: pending` and `can_answer_approval: true` can be answered by the current user.
+platform_notes: |
+  On Server/Data Center the approval endpoints are experimental; the tool sends the required `X-ExperimentalApi: opt-in` header on both Cloud and Server/Data Center.
