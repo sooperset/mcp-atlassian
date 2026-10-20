@@ -91,18 +91,29 @@ class CommentsMixin(ConfluenceClient):
             List of ConfluenceComment models containing comment content and metadata
         """
         try:
-            # Get page info to extract space details
-            page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
-            space_key = page.get("space", {}).get("key", "")
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                # Cloud OAuth: the v1 page and comment reads are gone from the
+                # gateway (410), so take both the space key and the comments
+                # from v2. The v1 read returned footer and inline comments
+                # together; keep that.
+                page = v2_adapter.get_page(page_id)
+                space_key = page.get("space", {}).get("key", "")
+                raw_comments = v2_adapter.get_footer_comments(page_id)
+                raw_comments.extend(v2_adapter.get_inline_comments(page_id))
+            else:
+                # Get page info to extract space details
+                page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
+                space_key = page.get("space", {}).get("key", "")
 
-            # Get comments with expanded content
-            raw_comments = self._get_all_v1_page_comments(
-                page_id,
-                expand=(
-                    "body.view.value,version,container,ancestors,"
-                    "extensions.inlineProperties,extensions.resolution"
-                ),
-            )
+                # Get comments with expanded content
+                raw_comments = self._get_all_v1_page_comments(
+                    page_id,
+                    expand=(
+                        "body.view.value,version,container,ancestors,"
+                        "extensions.inlineProperties,extensions.resolution"
+                    ),
+                )
 
             # Process each comment
             comment_models = []

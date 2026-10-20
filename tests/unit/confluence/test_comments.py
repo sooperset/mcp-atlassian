@@ -1186,3 +1186,80 @@ class TestInlineCommentModel:
         assert comment.body == "<p>This is a v2 inline comment</p>"
         assert comment.author is not None
         assert comment.author.display_name == "Test User"
+
+
+class TestCommentsMixinCloudOAuthRead:
+    """Comment reads on Cloud OAuth go through the v2 API.
+
+    Atlassian answers 410 Gone for the v1 page and ``child/comment`` reads on
+    the OAuth gateway. The old path caught that error and returned an empty
+    list, so a page with comments looked uncommented.
+    """
+
+    @pytest.fixture
+    def oauth_comments_mixin(self, oauth_confluence_client):
+        """Create a CommentsMixin configured for Cloud OAuth."""
+        with patch(
+            "mcp_atlassian.confluence.comments.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = CommentsMixin()
+            mixin.confluence = oauth_confluence_client.confluence
+            mixin.config = oauth_confluence_client.config
+            mixin.preprocessor = oauth_confluence_client.preprocessor
+            return mixin
+
+    def test_get_page_comments_uses_v2_on_cloud_oauth(self, oauth_comments_mixin):
+        """Footer and inline comments come from v2; the v1 reads are not made."""
+        adapter = MagicMock()
+        adapter.get_page.return_value = {"id": "1", "space": {"key": "FDE"}}
+        adapter.get_footer_comments.return_value = [
+            {
+                "id": "1288142878",
+                "type": "comment",
+                "status": "current",
+                "title": "Re: Page",
+                "body": {"view": {"value": "<p>Footer</p>", "representation": "view"}},
+                "version": {"number": 1, "createdAt": "2026-10-19T11:45:01.000Z"},
+                "extensions": {"location": "footer"},
+            }
+        ]
+        adapter.get_inline_comments.return_value = [
+            {
+                "id": "1306492931",
+                "type": "comment",
+                "status": "current",
+                "title": "Re: Page",
+                "body": {"view": {"value": "<p>Inline</p>", "representation": "view"}},
+                "version": {"number": 1, "createdAt": "2026-10-19T11:45:01.000Z"},
+                "extensions": {"location": "inline"},
+            }
+        ]
+        with patch(
+            "mcp_atlassian.confluence.comments.ConfluenceV2Adapter",
+            return_value=adapter,
+        ):
+            result = oauth_comments_mixin.get_page_comments("1")
+
+        adapter.get_page.assert_called_once_with("1")
+        adapter.get_footer_comments.assert_called_once_with("1")
+        adapter.get_inline_comments.assert_called_once_with("1")
+        oauth_comments_mixin.confluence.get_page_by_id.assert_not_called()
+        oauth_comments_mixin.confluence.get_page_comments.assert_not_called()
+        assert [c.id for c in result] == ["1288142878", "1306492931"]
+        oauth_comments_mixin.preprocessor.process_html_content.assert_any_call(
+            "<p>Footer</p>",
+            space_key="FDE",
+            confluence_client=oauth_comments_mixin.confluence,
+        )
+
+    def test_get_page_comments_v2_failure_returns_empty(self, oauth_comments_mixin):
+        """An adapter failure still degrades to an empty list, as before."""
+        adapter = MagicMock()
+        adapter.get_page.return_value = {"id": "1", "space": {"key": "FDE"}}
+        adapter.get_footer_comments.side_effect = ValueError("boom")
+        with patch(
+            "mcp_atlassian.confluence.comments.ConfluenceV2Adapter",
+            return_value=adapter,
+        ):
+            assert oauth_comments_mixin.get_page_comments("1") == []

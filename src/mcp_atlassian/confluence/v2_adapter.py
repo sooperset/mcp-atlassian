@@ -741,6 +741,88 @@ class ConfluenceV2Adapter:
             msg = f"Failed to get inline comments for page '{page_id}': {e}"
             raise ValueError(msg) from e
 
+    def get_footer_comments(self, page_id: str) -> list[dict[str, Any]]:
+        """Get all footer comment threads for a page using the v2 API.
+
+        Confluence Cloud has removed ``GET /rest/api/content/{id}/child/comment``
+        from the OAuth gateway (410 Gone), so footer comments are read from
+        ``/pages/{id}/footer-comments`` and each thread's ``/children``.
+
+        Args:
+            page_id: The ID of the page to get footer comments from
+
+        Returns:
+            Root comments and replies in a flat, v1-compatible list
+
+        Raises:
+            ValueError: If the API request fails
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}/footer-comments"
+            params: dict[str, Any] = {"body-format": "storage"}
+
+            root_comments = self._get_all_comment_results(url, params=params)
+            comments: list[dict[str, Any]] = []
+            pending_parent_ids: list[str] = []
+            seen_comment_ids: set[str] = set()
+
+            for root_comment in root_comments:
+                comment = dict(root_comment)
+                comment_id = comment.get("id")
+                if comment_id is not None:
+                    comment_id = str(comment_id)
+                    if comment_id in seen_comment_ids:
+                        continue
+                    seen_comment_ids.add(comment_id)
+                    pending_parent_ids.append(comment_id)
+                comments.append(comment)
+
+            parent_index = 0
+            while parent_index < len(pending_parent_ids):
+                parent_id = pending_parent_ids[parent_index]
+                parent_index += 1
+                children_url = (
+                    f"{self.base_url}/api/v2/footer-comments/{parent_id}/children"
+                )
+                children = self._get_all_comment_results(
+                    children_url,
+                    params={"body-format": "storage"},
+                )
+
+                for raw_child in children:
+                    child = dict(raw_child)
+                    child.setdefault("parentCommentId", parent_id)
+                    child_id = child.get("id")
+                    if child_id is not None:
+                        child_id = str(child_id)
+                        if child_id in seen_comment_ids:
+                            continue
+                        seen_comment_ids.add(child_id)
+                        pending_parent_ids.append(child_id)
+                    comments.append(child)
+
+            return [self._convert_v2_comment_to_v1_format(c) for c in comments]
+
+        except HTTPError as e:
+            if e.response is not None:
+                logger.error(
+                    f"HTTP error getting footer comments for page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting footer comments for page '{page_id}': {e}")
+            msg = f"Failed to get footer comments for page '{page_id}': {e}"
+            raise ValueError(msg) from e
+        except (
+            requests.RequestException,
+            ValueError,
+            TypeError,
+            AttributeError,
+        ) as e:
+            logger.error(f"Error getting footer comments for page '{page_id}': {e}")
+            msg = f"Failed to get footer comments for page '{page_id}': {e}"
+            raise ValueError(msg) from e
+
     @staticmethod
     def _comment_next_cursor(
         response: requests.Response, data: dict[str, Any]

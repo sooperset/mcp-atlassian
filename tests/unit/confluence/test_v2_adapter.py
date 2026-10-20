@@ -717,6 +717,87 @@ class TestConfluenceV2AdapterComments:
         assert result["id"] == "333444555"
 
 
+class TestConfluenceV2AdapterFooterComments:
+    """Tests for ConfluenceV2Adapter.get_footer_comments."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    @staticmethod
+    def _response(results, next_link=None):
+        response = Mock()
+        response.status_code = 200
+        response.links = {}
+        links = {"next": next_link} if next_link else {}
+        response.json.return_value = {"results": results, "_links": links}
+        return response
+
+    def test_get_footer_comments_reads_threads_and_replies(
+        self, v2_adapter, mock_session
+    ):
+        """Roots come from the page endpoint, replies from each thread."""
+        mock_session.get.side_effect = [
+            self._response(
+                [
+                    {
+                        "id": "10",
+                        "status": "current",
+                        "title": "Re: Page",
+                        "body": {"storage": {"value": "<p>Root</p>"}},
+                        "version": {"number": 1, "createdAt": "2026-10-19T11:45:01Z"},
+                    }
+                ]
+            ),
+            self._response(
+                [
+                    {
+                        "id": "11",
+                        "status": "current",
+                        "title": "Re: Page",
+                        "body": {"storage": {"value": "<p>Reply</p>"}},
+                        "version": {"number": 1, "createdAt": "2026-10-19T12:00:00Z"},
+                    }
+                ]
+            ),
+            self._response([]),
+        ]
+
+        result = v2_adapter.get_footer_comments("1")
+
+        assert mock_session.get.call_args_list[0] == call(
+            "https://example.atlassian.net/wiki/api/v2/pages/1/footer-comments",
+            params={"body-format": "storage"},
+        )
+        assert mock_session.get.call_args_list[1] == call(
+            "https://example.atlassian.net/wiki/api/v2/footer-comments/10/children",
+            params={"body-format": "storage"},
+        )
+        assert [c["id"] for c in result] == ["10", "11"]
+        assert result[0]["body"]["view"]["value"] == "<p>Root</p>"
+        assert result[0]["extensions"] == {"location": "footer"}
+        assert result[1]["parentCommentId"] == "10"
+
+    def test_get_footer_comments_http_error(self, v2_adapter, mock_session):
+        """An HTTP error is reported as a ValueError."""
+        response = Mock()
+        response.status_code = 410
+        response.text = "Gone"
+        response.raise_for_status.side_effect = HTTPError(response=response)
+        mock_session.get.return_value = response
+
+        with pytest.raises(ValueError, match="Failed to get footer comments"):
+            v2_adapter.get_footer_comments("1")
+
+
 class TestConfluenceV2AdapterLabels:
     """Tests for ConfluenceV2Adapter.get_page_labels."""
 
