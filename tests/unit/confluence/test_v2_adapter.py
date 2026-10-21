@@ -352,6 +352,23 @@ class TestConfluenceV2Adapter:
         assert "/wiki/wiki/" not in url, f"Double /wiki in URL: {url}"
         assert url.endswith(expected_path), f"Expected {expected_path}, got {url}"
 
+    def test_update_page_with_version_number_skips_version_lookup(
+        self, v2_adapter, mock_session
+    ):
+        """A caller-bound version is submitted as is, without re-reading."""
+        mock_response = Mock()
+        mock_response.json.return_value = {"id": "123", "title": "T", "spaceId": None}
+        mock_session.put.return_value = mock_response
+        v2_adapter._get_page_version = Mock(return_value=9)
+
+        v2_adapter.update_page(
+            page_id="123", title="T", body="<p>b</p>", version_number=8
+        )
+
+        v2_adapter._get_page_version.assert_not_called()
+        payload = mock_session.put.call_args[1]["json"]
+        assert payload["version"]["number"] == 8
+
 
 class TestConfluenceV2AdapterComments:
     """Tests for v2 adapter comment operations."""

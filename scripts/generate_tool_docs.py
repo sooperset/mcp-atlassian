@@ -118,6 +118,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_get_space_page_tree",
         "confluence_get_page_history",
         "confluence_update_page_section",
+        "confluence_replace_page_content",
         "confluence_move_page",
         "confluence_copy_page",
         "confluence_get_page_restrictions",

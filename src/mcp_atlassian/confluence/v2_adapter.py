@@ -192,6 +192,7 @@ class ConfluenceV2Adapter:
         representation: str = "storage",
         version_comment: str = "",
         status: str = "current",
+        version_number: int | None = None,
     ) -> dict[str, Any]:
         """Update a page using the v2 API.
 
@@ -202,6 +203,8 @@ class ConfluenceV2Adapter:
             representation: Content representation format (default: "storage")
             version_comment: Optional comment for this version
             status: Page status (default: "current")
+            version_number: New version number to submit; when omitted, the
+                current version plus one is used
 
         Returns:
             The updated page data from the API response
@@ -210,9 +213,11 @@ class ConfluenceV2Adapter:
             ValueError: If page update fails
         """
         try:
-            # Get current version and increment it
-            current_version = self._get_page_version(page_id)
-            new_version = current_version + 1
+            # Get current version and increment it, unless the caller binds the
+            # write to the version it read (the API then rejects a stale write).
+            if version_number is None:
+                version_number = self._get_page_version(page_id) + 1
+            new_version = version_number
 
             # Prepare request data for v2 API
             data = {

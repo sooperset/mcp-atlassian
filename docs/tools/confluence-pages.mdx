@@ -78,7 +78,7 @@ Update an existing Confluence page.
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | The ID of the page to update |
 | `title` | `string` | Yes | The new title of the page |
-| `content` | `string` | No | The new content of the page. Format depends on content_format parameter and may be Markdown (default), wiki markup, storage format, or XHTML storage format. Either 'content' or 'content_file' must be provided, but not both. |
+| `content` | `string` | No | The new content of the page. Format depends on content_format parameter and may be Markdown (default), wiki markup, storage format, or XHTML storage format. Provide 'content' or 'content_file', not both. Omit both to keep the current body unchanged and only rename the page or change its parent, emoji or width. |
 | `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
 | `version_comment` | `string` | No | Optional comment for this version |
 | `parent_id` | `string` | No | Optional the new parent page ID |
@@ -193,6 +193,25 @@ Use this instead of `confluence_update_page` when the page contains macros, layo
 <Warning>
 `heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised without updating the page.
 </Warning>
+
+---
+
+### Replace Page Content
+
+Replace one exact fragment of a Confluence page without resending it.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | `string` | Yes | The ID of the page to edit |
+| `old_string` | `string` | Yes | Exact fragment of the page's raw storage XHTML to replace, copied from confluence_get_page with convert_to_markdown=false. It must occur exactly once in the page; include surrounding markup or text to make it unique. |
+| `new_string` | `string` | Yes | Storage XHTML that replaces old_string. To insert content, repeat old_string inside new_string with the addition before or after it. |
+| `expected_version` | `integer` | No | (Optional) Page version you read; the edit is refused if the page has changed since. |
+| `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
+| `version_comment` | `string` | No | Optional comment for this version |
 
 ---
 

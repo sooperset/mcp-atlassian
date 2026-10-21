@@ -3886,3 +3886,209 @@ class TestUpdatePageSection:
             )
 
         pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+
+class TestReplacePageContent:
+    """Tests for PagesMixin.replace_page_content."""
+
+    STORAGE = (
+        '<h1 style="text-align: left;"><strong>Title</strong></h1>'
+        '<p><ac:structured-macro ac:name="profile" ac:schema-version="1">'
+        '<ac:parameter ac:name="user"><ri:user ri:userkey="u1" /></ac:parameter>'
+        "</ac:structured-macro></p>"
+        '<p>Intro <ac:inline-comment-marker ac:ref="c1">marked'
+        "</ac:inline-comment-marker></p>"
+        '<p><ac:image ac:height="60"><ri:attachment ri:filename="a.png" />'
+        "</ac:image></p>"
+        "<table><tbody><tr><td>cell</td></tr></tbody></table>"
+    )
+
+    @pytest.fixture
+    def pages_mixin(self, confluence_client):
+        """Create a PagesMixin instance for testing."""
+        with patch(
+            "mcp_atlassian.confluence.pages.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = PagesMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    def _make_page(self, storage_html: str, version: int = 7) -> ConfluencePage:
+        return ConfluencePage(
+            id="123",
+            title="My Page",
+            content=storage_html,
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": version},
+        )
+
+    def test_inserts_before_first_heading_and_keeps_the_rest(self, pages_mixin):
+        """Only the matched fragment changes; the rest is written back verbatim."""
+        first = '<h1 style="text-align: left;"><strong>Title</strong></h1>'
+        updated = self._make_page("updated", version=8)
+        with (
+            patch.object(
+                pages_mixin,
+                "get_page_content",
+                return_value=self._make_page(self.STORAGE),
+            ) as mock_get,
+            patch.object(
+                pages_mixin, "update_page", return_value=updated
+            ) as mock_update,
+        ):
+            result = pages_mixin.replace_page_content(
+                page_id="123",
+                old_string=first,
+                new_string="<p>test text</p>" + first,
+                expected_version=7,
+                is_minor_edit=True,
+                version_comment="prepend",
+            )
+
+        assert result is updated
+        mock_get.assert_called_once_with("123", convert_to_markdown=False)
+        kwargs = mock_update.call_args.kwargs
+        assert kwargs["body"] == "<p>test text</p>" + self.STORAGE
+        assert kwargs["title"] == "My Page"
+        assert kwargs["is_markdown"] is False
+        assert kwargs["content_representation"] == "storage"
+        assert kwargs["is_minor_edit"] is True
+        assert kwargs["version_comment"] == "prepend"
+        assert kwargs["based_on_version"] == 7
+
+    @pytest.mark.parametrize(("old_string", "count"), [("missing", 0), ("<p>", 3)])
+    def test_requires_exactly_one_occurrence(self, pages_mixin, old_string, count):
+        """Zero or several matches are refused without writing."""
+        with (
+            patch.object(
+                pages_mixin,
+                "get_page_content",
+                return_value=self._make_page(self.STORAGE),
+            ),
+            patch.object(pages_mixin, "update_page") as mock_update,
+        ):
+            with pytest.raises(ValueError, match=f"occurs {count} times"):
+                pages_mixin.replace_page_content(
+                    page_id="123", old_string=old_string, new_string="x"
+                )
+        mock_update.assert_not_called()
+
+    def test_refuses_stale_expected_version(self, pages_mixin):
+        """An edit based on an older version is refused without writing."""
+        with (
+            patch.object(
+                pages_mixin,
+                "get_page_content",
+                return_value=self._make_page(self.STORAGE, version=9),
+            ),
+            patch.object(pages_mixin, "update_page") as mock_update,
+        ):
+            with pytest.raises(ValueError, match="at version 9, not 7"):
+                pages_mixin.replace_page_content(
+                    page_id="123",
+                    old_string="cell",
+                    new_string="new cell",
+                    expected_version=7,
+                )
+        mock_update.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("old_string", "new_string", "message"),
+        [("", "x", "must not be empty"), ("cell", "cell", "identical")],
+    )
+    def test_rejects_empty_or_noop_replacement(
+        self, pages_mixin, old_string, new_string, message
+    ):
+        """Empty or no-op replacements are refused before reading the page."""
+        with patch.object(pages_mixin, "get_page_content") as mock_get:
+            with pytest.raises(ValueError, match=message):
+                pages_mixin.replace_page_content(
+                    page_id="123", old_string=old_string, new_string=new_string
+                )
+        mock_get.assert_not_called()
+
+    def test_version_bound_update_puts_read_version_plus_one(self, pages_mixin):
+        """A bound write is numbered from the read version, not the latest one."""
+        with patch.object(
+            pages_mixin, "get_page_content", return_value=self._make_page("x")
+        ):
+            pages_mixin.update_page(
+                page_id="123",
+                title="My Page",
+                body="<p>new</p>",
+                is_markdown=False,
+                content_representation="storage",
+                is_minor_edit=True,
+                version_comment="c",
+                based_on_version=7,
+            )
+
+        pages_mixin.confluence.update_page.assert_not_called()
+        args, kwargs = pages_mixin.confluence.put.call_args
+        assert args[0] == "rest/api/content/123"
+        data = kwargs["data"]
+        assert data["version"] == {"number": 8, "minorEdit": True, "message": "c"}
+        assert data["body"] == {
+            "storage": {"value": "<p>new</p>", "representation": "storage"}
+        }
+        assert data["title"] == "My Page"
+        assert "metadata" not in data
+
+    def test_version_conflict_is_reported_not_overwritten(self, pages_mixin):
+        """A page published after the read makes the bound write fail."""
+        response = MagicMock(status_code=409)
+        pages_mixin.confluence.put.side_effect = HTTPError(
+            "409 Client Error: Conflict", response=response
+        )
+        with pytest.raises(Exception, match="409"):
+            pages_mixin.update_page(
+                page_id="123",
+                title="My Page",
+                body="<p>new</p>",
+                is_markdown=False,
+                content_representation="storage",
+                based_on_version=7,
+            )
+        pages_mixin.confluence.update_page.assert_not_called()
+
+    def test_version_bound_update_over_v2_passes_version_number(self, pages_mixin):
+        """The OAuth (v2) path submits the bound version too."""
+        adapter = MagicMock()
+        with (
+            patch.object(
+                type(pages_mixin),
+                "_v2_adapter",
+                new_callable=PropertyMock,
+                return_value=adapter,
+            ),
+            patch.object(
+                pages_mixin, "get_page_content", return_value=self._make_page("x")
+            ),
+        ):
+            pages_mixin.update_page(
+                page_id="123",
+                title="My Page",
+                body="<p>new</p>",
+                is_markdown=False,
+                content_representation="storage",
+                based_on_version=7,
+            )
+        assert adapter.update_page.call_args.kwargs["version_number"] == 8
+
+    def test_section_update_is_bound_to_read_version(self, pages_mixin):
+        """update_page_section writes on top of the version it read."""
+        page = self._make_page("<h2>S</h2><p>old</p>", version=4)
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=page),
+            patch.object(pages_mixin, "update_page") as mock_update,
+        ):
+            pages_mixin.update_page_section(
+                page_id="123",
+                heading_text="S",
+                new_content="<p>new</p>",
+                content_format="storage",
+            )
+        assert mock_update.call_args.kwargs["based_on_version"] == 4

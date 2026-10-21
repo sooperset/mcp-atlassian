@@ -886,8 +886,10 @@ async def update_page(
             description=(
                 "The new content of the page. Format depends on "
                 "content_format parameter and may be Markdown (default), wiki "
-                "markup, storage format, or XHTML storage format. Either "
-                "'content' or 'content_file' must be provided, but not both."
+                "markup, storage format, or XHTML storage format. Provide "
+                "'content' or 'content_file', not both. Omit both to keep the "
+                "current body unchanged and only rename the page or change its "
+                "parent, emoji or width."
             ),
             default=None,
         ),
@@ -979,8 +981,8 @@ async def update_page(
         page_id: The ID of the page to update.
         title: The new title of the page.
         content: The new content of the page (format depends on
-            content_format). Mutually exclusive with content_file; exactly
-            one must be supplied.
+            content_format). Mutually exclusive with content_file; omit both
+            to keep the current body (rename or move only).
         content_file: Filesystem path to read the new page body from
             (UTF-8). Useful for bodies too large to pass as an inline tool
             argument.
@@ -1010,7 +1012,19 @@ async def update_page(
             "'markdown', 'wiki', 'storage', or 'xhtml'"
         )
 
-    resolved_content = _resolve_page_content(content, content_file)
+    based_on_version = None
+    if content is None and not content_file:
+        # Rename or move only: write the stored body back unchanged, bound to
+        # the version read so an edit published in between is not reverted.
+        current_page = confluence_fetcher.get_page_content(
+            page_id, convert_to_markdown=False
+        )
+        resolved_content = current_page.content or ""
+        content_format = "storage"
+        if current_page.version:
+            based_on_version = current_page.version.number
+    else:
+        resolved_content = _resolve_page_content(content, content_file)
 
     # Determine parameters based on content format
     if content_format == "markdown":
@@ -1038,6 +1052,7 @@ async def update_page(
         emoji=emoji,
         page_width=page_width,
         table_layout=table_layout if content_format == "markdown" else None,
+        based_on_version=based_on_version,
     )
     page_data = updated_page.to_simplified_dict()
     if not include_content:
@@ -1146,6 +1161,97 @@ async def update_page_section(
             "message": f"Section '{heading_text}' updated successfully",
             "page": page_data,
         },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Replace Page Content", "destructiveHint": True},
+)
+@check_write_access
+async def replace_page_content(
+    ctx: Context,
+    page_id: Annotated[str, Field(description="The ID of the page to edit")],
+    old_string: Annotated[
+        str,
+        Field(
+            description=(
+                "Exact fragment of the page's raw storage XHTML to replace, copied "
+                "from confluence_get_page with convert_to_markdown=false. It must "
+                "occur exactly once in the page; include surrounding markup or "
+                "text to make it unique."
+            )
+        ),
+    ],
+    new_string: Annotated[
+        str,
+        Field(
+            description=(
+                "Storage XHTML that replaces old_string. To insert content, "
+                "repeat old_string inside new_string with the addition before "
+                "or after it."
+            )
+        ),
+    ],
+    *,
+    expected_version: Annotated[
+        int | None,
+        Field(
+            description=(
+                "(Optional) Page version you read; the edit is refused if the "
+                "page has changed since."
+            ),
+            default=None,
+        ),
+    ] = None,
+    is_minor_edit: Annotated[
+        bool, Field(description="Whether this is a minor edit", default=False)
+    ] = False,
+    version_comment: Annotated[
+        str | None,
+        Field(description="Optional comment for this version", default=None),
+    ] = None,
+) -> str:
+    """Replace one exact fragment of a Confluence page without resending it.
+
+    Use for small edits anywhere on a page, including text before the first
+    heading, tables and macro bodies: the server reads the page's raw storage,
+    replaces the single occurrence of old_string and writes everything else
+    back unchanged.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: The ID of the page to edit.
+        old_string: Exact storage fragment that occurs once in the page.
+        new_string: Replacement storage fragment.
+        expected_version: Optional version the edit is based on.
+        is_minor_edit: Whether to flag this as a minor edit.
+        version_comment: Optional version comment.
+
+    Returns:
+        JSON string representing the updated page metadata.
+
+    Raises:
+        ValueError: If Confluence client is not configured, old_string does not
+            occur exactly once, or the page moved past expected_version.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    updated_page = confluence_fetcher.replace_page_content(
+        page_id=page_id,
+        old_string=old_string,
+        new_string=new_string,
+        expected_version=expected_version,
+        is_minor_edit=is_minor_edit,
+        version_comment=version_comment or "",
+    )
+
+    page_data = updated_page.to_simplified_dict()
+    page_data.pop("content", None)
+    return json.dumps(
+        {"message": "Page content replaced successfully", "page": page_data},
         indent=2,
         ensure_ascii=False,
     )

@@ -64,6 +64,7 @@ def mock_confluence_fetcher():
     mock_fetcher.create_page.return_value = mock_page
     mock_fetcher.update_page.return_value = mock_page
     mock_fetcher.update_page_section.return_value = mock_page
+    mock_fetcher.replace_page_content.return_value = mock_page
     mock_fetcher.delete_page.return_value = True
 
     # Mock comment
@@ -251,6 +252,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
+        replace_page_content,
         search,
         search_user,
         update_page,
@@ -288,6 +290,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(create_page)
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)
+    confluence_sub_mcp.add_tool(replace_page_content)
     confluence_sub_mcp.add_tool(delete_page)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
@@ -334,6 +337,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
+        replace_page_content,
         search,
         search_user,
         update_page,
@@ -373,6 +377,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(create_page)
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)
+    confluence_sub_mcp.add_tool(replace_page_content)
     confluence_sub_mcp.add_tool(delete_page)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
@@ -1283,6 +1288,85 @@ async def test_update_page_section_default_version_comment(
 
     call_kwargs = mock_confluence_fetcher.update_page_section.call_args.kwargs
     assert call_kwargs["content_format"] == "markdown"
+    assert call_kwargs["is_minor_edit"] is False
+    assert call_kwargs["version_comment"] == ""
+
+
+@pytest.mark.anyio
+async def test_update_page_without_content_keeps_current_body(
+    client, mock_confluence_fetcher
+):
+    """A rename without content writes the stored body back as storage."""
+    mock_confluence_fetcher.get_page_content.return_value.content = "<p>raw</p>"
+    mock_confluence_fetcher.get_page_content.return_value.version = MagicMock(number=7)
+    await client.call_tool(
+        "confluence_update_page",
+        {"page_id": "999999", "title": "Renamed Page"},
+    )
+
+    mock_confluence_fetcher.get_page_content.assert_called_with(
+        "999999", convert_to_markdown=False
+    )
+    call_kwargs = mock_confluence_fetcher.update_page.call_args.kwargs
+    assert call_kwargs["title"] == "Renamed Page"
+    assert call_kwargs["body"] == "<p>raw</p>"
+    assert call_kwargs["is_markdown"] is False
+    assert call_kwargs["content_representation"] == "storage"
+    assert call_kwargs["based_on_version"] == 7
+
+
+@pytest.mark.anyio
+async def test_update_page_with_content_is_not_version_bound(
+    client, mock_confluence_fetcher
+):
+    """A full-body update keeps upstream numbering (latest version plus one)."""
+    await client.call_tool(
+        "confluence_update_page",
+        {"page_id": "999999", "title": "T", "content": "<p>new</p>"},
+    )
+
+    call_kwargs = mock_confluence_fetcher.update_page.call_args.kwargs
+    assert call_kwargs["based_on_version"] is None
+
+
+@pytest.mark.anyio
+async def test_replace_page_content(client, mock_confluence_fetcher):
+    """Test replace_page_content passes the fragment edit to the fetcher."""
+    response = await client.call_tool(
+        "confluence_replace_page_content",
+        {
+            "page_id": "999999",
+            "old_string": "<h1>Title</h1>",
+            "new_string": "<p>test</p><h1>Title</h1>",
+            "expected_version": 7,
+            "is_minor_edit": True,
+            "version_comment": "Prepend",
+        },
+    )
+
+    mock_confluence_fetcher.replace_page_content.assert_called_once_with(
+        page_id="999999",
+        old_string="<h1>Title</h1>",
+        new_string="<p>test</p><h1>Title</h1>",
+        expected_version=7,
+        is_minor_edit=True,
+        version_comment="Prepend",
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Page content replaced successfully"
+    assert "content" not in result_data["page"]
+
+
+@pytest.mark.anyio
+async def test_replace_page_content_defaults(client, mock_confluence_fetcher):
+    """Test replace_page_content defaults: no version check, empty comment."""
+    await client.call_tool(
+        "confluence_replace_page_content",
+        {"page_id": "999999", "old_string": "a", "new_string": "b"},
+    )
+
+    call_kwargs = mock_confluence_fetcher.replace_page_content.call_args.kwargs
+    assert call_kwargs["expected_version"] is None
     assert call_kwargs["is_minor_edit"] is False
     assert call_kwargs["version_comment"] == ""
 
