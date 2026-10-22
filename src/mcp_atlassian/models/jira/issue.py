@@ -81,6 +81,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     fix_versions: list[str] = Field(default_factory=list)
     versions: list[str] = Field(default_factory=list)
     custom_fields: dict[str, Any] = Field(default_factory=dict)
+    properties: dict[str, Any] | None = None
     requested_fields: Literal["*all"] | list[str] | None = None
     project: JiraProject | None = None
     resolution: JiraResolution | None = None
@@ -514,6 +515,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             fix_versions=fix_versions,
             versions=versions,
             custom_fields=custom_fields,
+            properties=data.get("properties"),
             requested_fields=requested_fields_param,
             changelogs=changelogs,
             issuelinks=cls._extract_issue_links(fields),
@@ -655,6 +657,9 @@ class JiraIssue(ApiModel, TimestampMixin):
             result["changelogs"] = [
                 changelog.to_simplified_dict() for changelog in self.changelogs
             ]
+
+        if self.properties is not None:
+            result["properties"] = self.properties
 
         # Add issue links if available and requested
         if self.issuelinks and should_include_field("issuelinks"):

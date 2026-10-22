@@ -23,6 +23,43 @@ from mcp_atlassian.models.jira import (
 )
 
 
+class TestJiraIssueProperties:
+    """Issue properties are top-level metadata, independent of selected fields."""
+
+    @pytest.mark.parametrize("requested_fields", [None, ["summary"], "*all"])
+    @pytest.mark.parametrize(
+        "properties",
+        [
+            {},
+            {
+                "com.railsware.SmartChecklist.checklist": "+ done\n- open\n",
+                "settings": {"enabled": False, "count": 0, "items": [None, "x"]},
+            },
+        ],
+    )
+    def test_preserves_returned_properties(self, requested_fields, properties):
+        issue = JiraIssue.from_api_response(
+            {
+                "id": "10001",
+                "key": "PROJ-123",
+                "fields": {"summary": "Checklist issue"},
+                "properties": properties,
+            },
+            requested_fields=requested_fields,
+        )
+
+        assert issue.to_simplified_dict()["properties"] == properties
+        assert issue.to_display_name_dict()["properties"] == properties
+
+    @pytest.mark.parametrize("metadata", [{}, {"properties": None}])
+    def test_omits_absent_properties(self, metadata):
+        issue = JiraIssue.from_api_response(
+            {"id": "10001", "key": "PROJ-123", "fields": {}, **metadata}
+        )
+
+        assert "properties" not in issue.to_simplified_dict()
+
+
 class TestJiraIssue:
     """Tests for the JiraIssue model."""
 

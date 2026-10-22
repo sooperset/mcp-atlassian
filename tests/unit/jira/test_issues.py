@@ -1746,13 +1746,18 @@ class TestIssuesMixin:
     def test_get_issue_with_properties(
         self, issues_mixin: IssuesMixin, make_issue_data
     ):
-        """Test get_issue with properties parameter."""
-        issues_mixin.jira.get_issue.return_value = make_issue_data(issue_id="10001")
+        """Request properties separately from fields and retain their values."""
+        properties = {"property1": {"enabled": False}, "property2": "checklist"}
+        issues_mixin.jira.get_issue.return_value = {
+            **make_issue_data(issue_id="10001"),
+            "properties": properties,
+        }
 
         # Test with properties parameter as string
-        issues_mixin.get_issue("TEST-123", properties="property1,property2")
+        issue = issues_mixin.get_issue("TEST-123", properties="property1,property2")
+        assert issue.to_simplified_dict()["properties"] == properties
 
-        # Verify API call - should include properties parameter and add 'properties' to fields
+        # Issue properties are a separate API parameter, not an issue field.
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
@@ -1760,12 +1765,18 @@ class TestIssuesMixin:
             properties="property1,property2",
             update_history=True,
         )
+        assert "properties" not in issues_mixin.jira.get_issue.call_args.kwargs[
+            "fields"
+        ].split(",")
 
         # Test with properties parameter as list
         issues_mixin.jira.get_issue.reset_mock()
-        issues_mixin.get_issue("TEST-123", properties=["property1", "property2"])
+        issue = issues_mixin.get_issue(
+            "TEST-123", properties=["property1", "property2"]
+        )
+        assert issue.to_simplified_dict()["properties"] == properties
 
-        # Verify API call - should include properties parameter as comma-separated string and add 'properties' to fields
+        # Lists are serialized to the comma-separated properties parameter.
         issues_mixin.jira.get_issue.assert_called_with(
             "TEST-123",
             expand=None,
