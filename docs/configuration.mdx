@@ -174,6 +174,8 @@ openssl rsa -in encrypted.key -out decrypted.key
 |----------|-------------|---------|
 | `JIRA_PROJECTS_FILTER` | Limit to specific Jira projects | `PROJ,DEV,SUPPORT` |
 | `CONFLUENCE_SPACES_FILTER` | Limit to specific Confluence spaces | `DEV,TEAM,DOC` |
+| `CONFLUENCE_PAGES_FILTER` | Also include specific Confluence pages (by numeric ID) | `123456789,987654321` |
+| `CONFLUENCE_TREES_FILTER` | Also include specific Confluence pages and all their descendants | `555555555` |
 | `ENABLED_TOOLS` | Enable only specific tools | `confluence_search,jira_get_issue` |
 | `TOOLSETS` | Enable tool groups (see [Toolset Filtering](#toolset-filtering)) | `default`, `legacy`, `all`, `default,jira_agile` |
 

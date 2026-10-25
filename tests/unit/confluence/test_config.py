@@ -443,3 +443,52 @@ def test_is_auth_configured_cert_missing():
         auth_type="cert",
     )
     assert config.is_auth_configured() is False
+
+
+def test_from_env_pages_and_trees_filters():
+    """Pages/trees filters are read from the environment."""
+    with patch.dict(
+        "os.environ",
+        {
+            "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "u",
+            "CONFLUENCE_API_TOKEN": "t",
+            "CONFLUENCE_PAGES_FILTER": "111,222",
+            "CONFLUENCE_TREES_FILTER": "500",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.pages_filter == "111,222"
+        assert config.trees_filter == "500"
+
+
+def test_from_env_pages_and_trees_filters_default_none():
+    with patch.dict(
+        "os.environ",
+        {
+            "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "u",
+            "CONFLUENCE_API_TOKEN": "t",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+        assert config.pages_filter is None
+        assert config.trees_filter is None
+
+
+@pytest.mark.parametrize("var", ["CONFLUENCE_PAGES_FILTER", "CONFLUENCE_TREES_FILTER"])
+def test_from_env_rejects_non_numeric_page_filter(var):
+    with patch.dict(
+        "os.environ",
+        {
+            "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "u",
+            "CONFLUENCE_API_TOKEN": "t",
+            var: "123,not-an-id",
+        },
+        clear=True,
+    ):
+        with pytest.raises(ValueError, match=var):
+            ConfluenceConfig.from_env()

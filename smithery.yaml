@@ -31,6 +31,12 @@ startCommand:
       confluenceSpacesFilter:
         type: string
         description: "(Optional) Comma-separated list of Confluence space keys to limit searches to (e.g., 'DEV,QA')."
+      confluencePagesFilter:
+        type: string
+        description: "(Optional) Comma-separated list of Confluence page IDs to include in searches (e.g., '123456789,987654321')."
+      confluenceTreesFilter:
+        type: string
+        description: "(Optional) Comma-separated list of Confluence page IDs to include in searches together with all their descendants."
 
       # Jira Config
       jiraUrl:
@@ -81,6 +87,8 @@ startCommand:
         CONFLUENCE_PERSONAL_TOKEN: config.confluencePersonalToken,
         CONFLUENCE_SSL_VERIFY: config.confluenceSslVerify !== undefined ? String(config.confluenceSslVerify) : 'true',
         CONFLUENCE_SPACES_FILTER: config.confluenceSpacesFilter,
+        CONFLUENCE_PAGES_FILTER: config.confluencePagesFilter,
+        CONFLUENCE_TREES_FILTER: config.confluenceTreesFilter,
 
         // Jira ENV VARS
         JIRA_URL: config.jiraUrl,

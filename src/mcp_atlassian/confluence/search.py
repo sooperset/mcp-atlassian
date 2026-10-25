@@ -16,7 +16,7 @@ from ..models.confluence.search import get_search_result_identifier
 from ..utils.decorators import handle_atlassian_api_errors
 from ..utils.pagination import clamp_limit
 from .client import ConfluenceClient
-from .utils import quote_cql_identifier_if_needed
+from .utils import parse_page_id_list, quote_cql_identifier_if_needed
 
 logger = logging.getLogger("mcp-atlassian")
 
@@ -24,28 +24,63 @@ logger = logging.getLogger("mcp-atlassian")
 class SearchMixin(ConfluenceClient):
     """Mixin for Confluence search operations."""
 
+    @staticmethod
+    def _spaces_clause(filter_to_use: str) -> str:
+        """Build ``space = A OR space = B`` from a comma-separated allowlist."""
+        spaces = [s.strip() for s in filter_to_use.split(",")]
+        return " OR ".join(
+            [f"space = {quote_cql_identifier_if_needed(space)}" for space in spaces]
+        )
+
+    @staticmethod
+    def _and_clause(cql: str, clause: str) -> str:
+        """AND ``clause`` into ``cql``, keeping any trailing ORDER BY valid."""
+        if not cql:
+            return clause
+        # Extract a trailing ORDER BY so the AND does not produce invalid CQL.
+        order_match = re.search(r"\s+(ORDER\s+BY\s+.*)$", cql, re.IGNORECASE)
+        if order_match:
+            order_clause = order_match.group(1)
+            cql_without_order = cql[: order_match.start()]
+            return f"({cql_without_order}) AND ({clause}) {order_clause}"
+        return f"({cql}) AND ({clause})"
+
     def _and_spaces_filter(self, cql: str, filter_to_use: str) -> str:
         """AND a single comma-separated spaces allowlist into ``cql``.
 
         Always ANDs the allowlist, even when the caller's CQL already names a
         space, so a caller-supplied ``space = X`` cannot escape it.
         """
-        spaces = [s.strip() for s in filter_to_use.split(",")]
-        space_query = " OR ".join(
-            [f"space = {quote_cql_identifier_if_needed(space)}" for space in spaces]
-        )
-        if not cql:
-            return space_query
-        # Extract a trailing ORDER BY so the AND does not produce invalid CQL.
-        order_match = re.search(r"\s+(ORDER\s+BY\s+.*)$", cql, re.IGNORECASE)
-        if order_match:
-            order_clause = order_match.group(1)
-            cql_without_order = cql[: order_match.start()]
-            cql = f"({cql_without_order}) AND ({space_query}) {order_clause}"
-        else:
-            cql = f"({cql}) AND ({space_query})"
+        cql = self._and_clause(cql, self._spaces_clause(filter_to_use))
         logger.info(f"Applied spaces filter to query: {cql}")
         return cql
+
+    def _config_scope_clause(self) -> str | None:
+        """Build the operator's content scope from the configured filters.
+
+        The spaces, pages and trees filters are unioned: content is in scope if
+        it lives in an allowed space, is an allowed page, or is an allowed
+        page's descendant (``CONFLUENCE_TREES_FILTER`` also includes the tree
+        root itself).
+
+        Returns:
+            A CQL clause, or None when no filter is configured.
+
+        Raises:
+            ValueError: If a page or tree entry is not a numeric page ID.
+        """
+        parts: list[str] = []
+        if self.config.spaces_filter:
+            parts.append(self._spaces_clause(self.config.spaces_filter))
+        for page_id in parse_page_id_list(
+            self.config.pages_filter, "CONFLUENCE_PAGES_FILTER"
+        ):
+            parts.append(f"id = {page_id}")
+        for root_id in parse_page_id_list(
+            self.config.trees_filter, "CONFLUENCE_TREES_FILTER"
+        ):
+            parts.append(f"id = {root_id} OR ancestor = {root_id}")
+        return " OR ".join(parts) if parts else None
 
     @staticmethod
     def _validate_search_response(response: Any, operation: str) -> dict[str, Any]:
@@ -94,7 +129,7 @@ class SearchMixin(ConfluenceClient):
             cql: Confluence Query Language string
             limit: Maximum number of results to return
             spaces_filter: Optional comma-separated list of space keys to narrow
-                results within the configured allowlist (ANDed with config,
+                results within the configured scope (ANDed with config,
                 never replaces it)
 
         Returns:
@@ -106,13 +141,17 @@ class SearchMixin(ConfluenceClient):
         """
         limit = clamp_limit(limit, context="confluence.search")
 
-        # config.spaces_filter is a hard boundary and is always applied; a
-        # caller-supplied spaces_filter may only *narrow* within it (both ANDed),
-        # never replace it — otherwise the tool argument would defeat the
-        # operator's allowlist in shared-credential deployments.
-        for filter_str in (self.config.spaces_filter, spaces_filter):
-            if filter_str:
-                cql = self._and_spaces_filter(cql, filter_str)
+        # The configured scope (spaces, pages and trees filters, unioned) is a
+        # hard boundary and is always applied; a caller-supplied spaces_filter
+        # may only *narrow* within it (both ANDed), never replace it —
+        # otherwise the tool argument would defeat the operator's allowlist in
+        # shared-credential deployments.
+        config_scope = self._config_scope_clause()
+        if config_scope:
+            cql = self._and_clause(cql, config_scope)
+            logger.info(f"Applied configured content scope to query: {cql}")
+        if spaces_filter:
+            cql = self._and_spaces_filter(cql, spaces_filter)
 
         # Execute the CQL search query. Expand content.history and
         # content.version so each result carries created/updated/author and

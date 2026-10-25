@@ -383,6 +383,91 @@ class TestSearchMixin:
             f"is supplied; CQL was {sent_cql!r}"
         )
 
+    def _sent_cql(self, search_mixin) -> str:
+        return search_mixin.confluence.cql.call_args.kwargs["cql"]
+
+    def test_pages_filter_only(self, search_mixin):
+        """CONFLUENCE_PAGES_FILTER restricts search to exactly those pages."""
+        search_mixin.confluence.cql.return_value = {"results": [], "size": 0}
+        search_mixin.config.pages_filter = "111, 222"
+
+        search_mixin.search("test query")
+
+        assert self._sent_cql(search_mixin) == "(test query) AND (id = 111 OR id = 222)"
+
+    def test_trees_filter_only(self, search_mixin):
+        """CONFLUENCE_TREES_FILTER includes the root and all its descendants."""
+        search_mixin.confluence.cql.return_value = {"results": [], "size": 0}
+        search_mixin.config.trees_filter = "500,600"
+
+        search_mixin.search("test query")
+
+        assert self._sent_cql(search_mixin) == (
+            "(test query) AND "
+            "(id = 500 OR ancestor = 500 OR id = 600 OR ancestor = 600)"
+        )
+
+    def test_spaces_pages_trees_are_unioned(self, search_mixin):
+        """All three config filters are ORed into one scope clause."""
+        search_mixin.confluence.cql.return_value = {"results": [], "size": 0}
+        search_mixin.config.spaces_filter = "DEV"
+        search_mixin.config.pages_filter = "111"
+        search_mixin.config.trees_filter = "500"
+
+        search_mixin.search("type = page ORDER BY created DESC")
+
+        assert self._sent_cql(search_mixin) == (
+            "(type = page) AND "
+            "(space = DEV OR id = 111 OR id = 500 OR ancestor = 500) "
+            "ORDER BY created DESC"
+        )
+
+    def test_spaces_filter_arg_narrows_union_scope(self, search_mixin):
+        """The tool arg is ANDed on top of the unioned config scope."""
+        search_mixin.confluence.cql.return_value = {"results": [], "size": 0}
+        search_mixin.config.pages_filter = "111"
+        search_mixin.config.trees_filter = "500"
+
+        search_mixin.search("test query", spaces_filter="DEV")
+
+        assert self._sent_cql(search_mixin) == (
+            "((test query) AND (id = 111 OR id = 500 OR ancestor = 500))"
+            " AND (space = DEV)"
+        )
+
+    def test_scope_applied_to_empty_cql(self, search_mixin):
+        search_mixin.confluence.cql.return_value = {"results": [], "size": 0}
+        search_mixin.config.pages_filter = "111"
+
+        search_mixin.search("")
+
+        assert self._sent_cql(search_mixin) == "id = 111"
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("field", ["pages_filter", "trees_filter"])
+    def test_page_scope_not_bypassed_by_caller_clause(self, search_mixin, field):
+        """A caller-supplied id/space/ancestor clause cannot escape the scope."""
+        search_mixin.confluence.cql.return_value = {"results": [], "size": 0}
+        setattr(search_mixin.config, field, "999")
+
+        search_mixin.search("id = 1 OR space = EVIL OR ancestor = 2")
+
+        sent_cql = self._sent_cql(search_mixin)
+        assert sent_cql.endswith("AND (id = 999)") or (
+            "AND (id = 999 OR ancestor = 999)" in sent_cql
+        ), f"scope must be ANDed around the caller's CQL; got {sent_cql!r}"
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("field", ["pages_filter", "trees_filter"])
+    def test_malformed_page_scope_fails_closed(self, search_mixin, field):
+        """A non-numeric entry raises instead of reaching the CQL string."""
+        setattr(search_mixin.config, field, "123 OR space = EVIL")
+
+        with pytest.raises(ValueError, match="numeric page IDs"):
+            search_mixin.search("test query")
+
+        search_mixin.confluence.cql.assert_not_called()
+
     def test_search_with_config_spaces_filter(self, search_mixin):
         """Test search using spaces filter from config."""
         # Prepare the mock

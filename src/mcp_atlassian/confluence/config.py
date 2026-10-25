@@ -18,6 +18,7 @@ from ..utils.oauth import (
 )
 from ..utils.proxy import get_proxy_settings_from_env
 from ..utils.urls import is_atlassian_cloud_url
+from .utils import parse_page_id_list
 
 
 @dataclass
@@ -39,6 +40,8 @@ class ConfluenceConfig:
     oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig | None = None
     ssl_verify: bool = True  # Whether to verify SSL certificates
     spaces_filter: str | None = None  # List of space keys to filter searches
+    pages_filter: str | None = None  # Page IDs to include in searches (exact pages)
+    trees_filter: str | None = None  # Page IDs to include with all descendants
     http_proxy: str | None = None  # HTTP proxy URL
     https_proxy: str | None = None  # HTTPS proxy URL
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
@@ -200,6 +203,11 @@ class ConfluenceConfig:
 
         # Get the spaces filter if provided
         spaces_filter = os.getenv("CONFLUENCE_SPACES_FILTER")
+        pages_filter = os.getenv("CONFLUENCE_PAGES_FILTER")
+        trees_filter = os.getenv("CONFLUENCE_TREES_FILTER")
+        # Fail fast on malformed page IDs rather than at first search.
+        parse_page_id_list(pages_filter, "CONFLUENCE_PAGES_FILTER")
+        parse_page_id_list(trees_filter, "CONFLUENCE_TREES_FILTER")
 
         # Proxy settings
         proxy_settings = get_proxy_settings_from_env("CONFLUENCE")
@@ -238,6 +246,8 @@ class ConfluenceConfig:
             oauth_config=oauth_config,
             ssl_verify=ssl_verify,
             spaces_filter=spaces_filter,
+            pages_filter=pages_filter,
+            trees_filter=trees_filter,
             http_proxy=proxy_settings["http_proxy"],
             https_proxy=proxy_settings["https_proxy"],
             no_proxy=proxy_settings["no_proxy"],

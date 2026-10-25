@@ -10,6 +10,12 @@ data:
   {{- if .Values.confluence.spacesFilter }}
   confluence-spaces-filter: {{ .Values.confluence.spacesFilter | quote }}
   {{- end }}
+  {{- if .Values.confluence.pagesFilter }}
+  confluence-pages-filter: {{ .Values.confluence.pagesFilter | quote }}
+  {{- end }}
+  {{- if .Values.confluence.treesFilter }}
+  confluence-trees-filter: {{ .Values.confluence.treesFilter | quote }}
+  {{- end }}
   {{- if .Values.confluence.passthroughHeaders }}
   confluence-passthrough-headers: {{ .Values.confluence.passthroughHeaders | quote }}
   {{- end }}

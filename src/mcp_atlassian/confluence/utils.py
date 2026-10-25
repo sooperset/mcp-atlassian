@@ -8,6 +8,32 @@ from .constants import RESERVED_CQL_WORDS
 logger = logging.getLogger(__name__)
 
 
+def parse_page_id_list(raw: str | None, name: str) -> list[str]:
+    """Parse a comma-separated list of Confluence page IDs.
+
+    Args:
+        raw: Comma-separated page IDs (e.g. ``"123, 456"``); None/empty yields [].
+        name: Setting name used in the error message.
+
+    Returns:
+        Page IDs with whitespace stripped and empty entries dropped.
+
+    Raises:
+        ValueError: If any entry is not a numeric page ID. Failing closed keeps
+            a malformed entry from being interpolated into CQL.
+    """
+    if not raw:
+        return []
+    ids = [part.strip() for part in raw.split(",") if part.strip()]
+    invalid = [i for i in ids if not i.isascii() or not i.isdigit()]
+    if invalid:
+        error_msg = (
+            f"{name} must contain only numeric page IDs; invalid entries: {invalid}"
+        )
+        raise ValueError(error_msg)
+    return ids
+
+
 def extract_emoji_from_property(value: Any) -> str | None:
     """Extract emoji character from a Confluence content property value.
 

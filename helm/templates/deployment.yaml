@@ -104,6 +104,20 @@ spec:
               name: {{ include "mcp-atlassian.fullname" . }}
               key: confluence-spaces-filter
         {{- end }}
+        {{- if .Values.confluence.pagesFilter }}
+        - name: CONFLUENCE_PAGES_FILTER
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-pages-filter
+        {{- end }}
+        {{- if .Values.confluence.treesFilter }}
+        - name: CONFLUENCE_TREES_FILTER
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "mcp-atlassian.fullname" . }}
+              key: confluence-trees-filter
+        {{- end }}
         {{- if .Values.confluence.customHeaders }}
         - name: CONFLUENCE_CUSTOM_HEADERS
           valueFrom:

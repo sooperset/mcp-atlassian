@@ -176,6 +176,17 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     help="Comma-separated list of Confluence space keys to filter search results",
 )
 @click.option(
+    "--confluence-pages-filter",
+    help="Comma-separated list of Confluence page IDs to include in search results",
+)
+@click.option(
+    "--confluence-trees-filter",
+    help=(
+        "Comma-separated list of Confluence page IDs to include in search "
+        "results together with all of their descendants"
+    ),
+)
+@click.option(
     "--jira-url",
     help="Jira URL (e.g., https://your-domain.atlassian.net or https://jira.your-company.com)",
 )
@@ -247,6 +258,8 @@ def main(
     confluence_personal_token: str | None,
     confluence_ssl_verify: bool,
     confluence_spaces_filter: str | None,
+    confluence_pages_filter: str | None,
+    confluence_trees_filter: str | None,
     jira_url: str | None,
     jira_username: str | None,
     jira_token: str | None,
@@ -409,6 +422,10 @@ def main(
         os.environ["CONFLUENCE_SSL_VERIFY"] = str(confluence_ssl_verify).lower()
     if click_ctx and was_option_provided(click_ctx, "confluence_spaces_filter"):
         os.environ["CONFLUENCE_SPACES_FILTER"] = confluence_spaces_filter
+    if click_ctx and was_option_provided(click_ctx, "confluence_pages_filter"):
+        os.environ["CONFLUENCE_PAGES_FILTER"] = confluence_pages_filter
+    if click_ctx and was_option_provided(click_ctx, "confluence_trees_filter"):
+        os.environ["CONFLUENCE_TREES_FILTER"] = confluence_trees_filter
     if click_ctx and was_option_provided(click_ctx, "jira_ssl_verify"):
         os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()
     if click_ctx and was_option_provided(click_ctx, "jira_projects_filter"):

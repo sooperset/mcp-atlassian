@@ -345,7 +345,11 @@ def _confluence_spec() -> _ServiceSpec:
         url_header="X-Atlassian-Confluence-Url",
         token_header="X-Atlassian-Confluence-Personal-Token",  # noqa: S106
         passthrough_env_var="CONFLUENCE_PASSTHROUGH_HEADERS",
-        filter_kwargs={"spaces_filter": None},
+        filter_kwargs={
+            "spaces_filter": None,
+            "pages_filter": None,
+            "trees_filter": None,
+        },
         get_session=lambda f: f.confluence._session,
         validate_fn=lambda f: f.get_current_user_info(),
         on_validated=_confluence_on_validated,
@@ -812,6 +816,8 @@ def _create_user_config_for_fetcher(
             base_config, **common_args
         )
         user_confluence_config.spaces_filter = base_config.spaces_filter
+        user_confluence_config.pages_filter = base_config.pages_filter
+        user_confluence_config.trees_filter = base_config.trees_filter
         return user_confluence_config
     else:
         raise TypeError(f"Unsupported base_config type: {type(base_config)}")

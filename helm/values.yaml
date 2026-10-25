@@ -129,6 +129,12 @@ confluence:
   # Space filter (comma-separated space keys)
   spacesFilter: ""
 
+  # Page filter (comma-separated page IDs, exact pages; unioned with spacesFilter)
+  pagesFilter: ""
+
+  # Tree filter (comma-separated page IDs, each page plus all its descendants)
+  treesFilter: ""
+
   # Custom headers (comma-separated key=value pairs)
   customHeaders: ""
 

@@ -93,6 +93,8 @@ def config_factory():
                 "proxy_wpad_enable": False,
                 "proxy_wpad_url": None,
                 "spaces_filter": ["TEST"],
+                "pages_filter": "111",
+                "trees_filter": "500",
             }
 
             if auth_type == "basic":
@@ -237,6 +239,8 @@ class TestCreateUserConfigForFetcher:
             assert result.projects_filter == ["TEST"]
         else:
             assert result.spaces_filter == ["TEST"]
+            assert result.pages_filter == "111"
+            assert result.trees_filter == "500"
 
     def test_oauth_auth_type_minimal_config_success(self):
         """Test OAuth auth type with minimal base config (user-provided tokens mode)."""

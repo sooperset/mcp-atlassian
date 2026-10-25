@@ -1,7 +1,12 @@
 """Tests for the Confluence utility functions."""
 
+import pytest
+
 from mcp_atlassian.confluence.constants import RESERVED_CQL_WORDS
-from mcp_atlassian.confluence.utils import quote_cql_identifier_if_needed
+from mcp_atlassian.confluence.utils import (
+    parse_page_id_list,
+    quote_cql_identifier_if_needed,
+)
 
 
 class TestCQLQuoting:
@@ -55,3 +60,22 @@ class TestCQLQuoting:
         assert quote_cql_identifier_if_needed("DEV") == "DEV"
         assert quote_cql_identifier_if_needed("MYSPACE") == "MYSPACE"
         assert quote_cql_identifier_if_needed("documentation") == "documentation"
+
+
+class TestParsePageIdList:
+    """Tests for parse_page_id_list."""
+
+    def test_empty_values(self):
+        assert parse_page_id_list(None, "X") == []
+        assert parse_page_id_list("", "X") == []
+        assert parse_page_id_list(" , ", "X") == []
+
+    def test_parses_and_strips(self):
+        assert parse_page_id_list("123, 456 ,789", "X") == ["123", "456", "789"]
+
+    @pytest.mark.parametrize(
+        "raw", ["abc", "123,abc", "12 3", "1;2", "123 OR space = X", "-1", "１２３"]
+    )
+    def test_rejects_non_numeric(self, raw):
+        with pytest.raises(ValueError, match="CONFLUENCE_PAGES_FILTER"):
+            parse_page_id_list(raw, "CONFLUENCE_PAGES_FILTER")
