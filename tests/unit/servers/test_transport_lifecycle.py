@@ -14,15 +14,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from mcp_atlassian import main
-from mcp_atlassian.utils.lifecycle import _shutdown_event
 
 
 class TestTransportLifecycleBehavior:
     """Test transport lifecycle behavior to prevent regression of issues #519 and #524."""
-
-    def setup_method(self):
-        """Reset state before each test."""
-        _shutdown_event.clear()
 
     def test_all_transports_use_direct_execution(self):
         """Verify all transports use direct execution without stdin monitoring.
@@ -176,22 +171,6 @@ class TestTransportLifecycleBehavior:
                         assert hasattr(called_coro, "cr_code") or "run_async" in str(
                             called_coro
                         )
-
-    @pytest.mark.anyio
-    async def test_shutdown_event_handling(self):
-        """Test that shutdown events are handled correctly for all transports."""
-        # Pre-set shutdown event
-        _shutdown_event.set()
-
-        async def mock_server(**kwargs):
-            # Should run even with shutdown event set
-            return "completed"
-
-        # Server runs directly now
-        result = await mock_server()
-
-        # Server should complete normally
-        assert result == "completed"
 
     def test_docker_stdio_scenario(self):
         """Test the specific Docker stdio scenario that caused the bug.

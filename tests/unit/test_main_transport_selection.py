@@ -141,9 +141,53 @@ class TestMainTransportSelection:
             with patch(
                 "mcp_atlassian._watch_parent_exit", side_effect=fake_watch_parent
             ):
-                await _run_stdio_with_stdin_guard({"transport": "stdio"})
+                # Parent exit ends the process without joining the stdin reader
+                with (
+                    patch("os._exit", side_effect=SystemExit) as exit_,
+                    patch("mcp_atlassian.start_shutdown_deadline"),
+                ):
+                    with pytest.raises(SystemExit):
+                        await _run_stdio_with_stdin_guard({"transport": "stdio"})
 
         assert server_cancelled.is_set()
+        exit_.assert_called_once_with(0)
+
+    @pytest.mark.asyncio
+    async def test_stdio_guard_stops_parent_watch_when_cancelled(self):
+        """Cancelling the guard (SIGTERM/SIGINT) must stop the watcher thread."""
+        watch_started = asyncio.Event()
+        stop_events = []
+        inner_tasks = []
+
+        async def fake_run_async(**kwargs):
+            del kwargs
+            inner_tasks.append(asyncio.current_task())
+            await asyncio.Event().wait()
+
+        async def fake_watch_parent(stop_event) -> None:
+            inner_tasks.append(asyncio.current_task())
+            stop_events.append(stop_event)
+            watch_started.set()
+            await asyncio.Event().wait()
+
+        with patch(
+            "mcp_atlassian.servers.main_mcp.run_async", side_effect=fake_run_async
+        ):
+            with patch(
+                "mcp_atlassian._watch_parent_exit", side_effect=fake_watch_parent
+            ):
+                guard = asyncio.create_task(
+                    _run_stdio_with_stdin_guard({"transport": "stdio"})
+                )
+                await watch_started.wait()
+                guard.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await guard
+
+        for task in inner_tasks:
+            task.cancel()
+        await asyncio.gather(*inner_tasks, return_exceptions=True)
+        assert stop_events[0].is_set()
 
     def test_signal_handlers_always_setup(self, mock_server):
         """Test that signal handlers are set up regardless of transport."""
@@ -188,3 +232,24 @@ class TestMainTransportSelection:
                             assert (
                                 mock_exit.call_args_list[1][0][0] == 0
                             )  # Finally exit
+
+    def test_signal_shutdown_exits_without_joining_stdin_reader(self, mock_server):
+        """Signal shutdown must not wait on the blocked stdin reader thread."""
+
+        def interrupted_run(coro):
+            coro.close()
+            raise KeyboardInterrupt
+
+        with patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=mock_server):
+            with patch("asyncio.run", side_effect=interrupted_run):
+                with patch("mcp_atlassian.setup_signal_handlers"):
+                    with patch.dict("os.environ", {"TRANSPORT": "stdio"}):
+                        with patch("sys.argv", ["mcp-atlassian"]):
+                            with (
+                                patch("os._exit", side_effect=SystemExit) as exit_,
+                                patch("mcp_atlassian.start_shutdown_deadline"),
+                            ):
+                                with pytest.raises(SystemExit):
+                                    main()
+
+        exit_.assert_called_once_with(0)

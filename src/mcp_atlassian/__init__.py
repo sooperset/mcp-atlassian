@@ -41,6 +41,7 @@ from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.lifecycle import (
     ensure_clean_exit,
     setup_signal_handlers,
+    start_shutdown_deadline,
 )
 from mcp_atlassian.utils.logging import setup_logging
 
@@ -60,6 +61,8 @@ logging_stream = sys.stdout if is_env_truthy("MCP_LOGGING_STDOUT") else sys.stde
 
 # Set up logging using the utility function
 logger = setup_logging(logging_level, logging_stream)
+
+_PARENT_EXIT_GRACE_SECONDS = 5
 
 
 async def _watch_parent_exit(stop_event: threading.Event) -> None:
@@ -89,15 +92,26 @@ async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     server_task = asyncio.create_task(main_mcp.run_async(**run_kwargs))
     parent_task = asyncio.create_task(_watch_parent_exit(parent_watch_stop))
 
-    done, pending = await asyncio.wait(
-        {server_task, parent_task},
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    parent_watch_stop.set()
+    try:
+        done, pending = await asyncio.wait(
+            {server_task, parent_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    finally:
+        # Also stop the watcher thread on cancellation (SIGTERM/SIGINT), or
+        # asyncio.run() blocks shutting down the default executor.
+        parent_watch_stop.set()
 
     if parent_task in done and not server_task.done():
         logger.info("Parent process exited. Shutting down STDIO server.")
+        start_shutdown_deadline()
         server_task.cancel()
+        # Cancellation never finishes while the AnyIO thread reading stdin is
+        # blocked (stdin can still be held open elsewhere), so give the server
+        # a moment to clean up, then exit without waiting on that thread.
+        await asyncio.wait({server_task}, timeout=_PARENT_EXIT_GRACE_SECONDS)
+        ensure_clean_exit()
+        os._exit(0)
 
     for task in pending:
         task.cancel()
@@ -470,6 +484,13 @@ def main(
             asyncio.run(main_mcp.run_async(**run_kwargs))
     except (KeyboardInterrupt, SystemExit) as e:
         logger.info(f"Server shutdown initiated: {type(e).__name__}")
+        if isinstance(e, KeyboardInterrupt):
+            start_shutdown_deadline()
+            ensure_clean_exit()
+            # SIGTERM/SIGINT: an AnyIO worker thread can still be blocked reading
+            # stdin (the client may keep it open), and interpreter shutdown
+            # would wait on it forever.
+            os._exit(0)
     except Exception as e:
         logger.error(f"Server encountered an error: {e}", exc_info=True)
         sys.exit(1)
