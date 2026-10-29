@@ -134,6 +134,31 @@ def test_clean_jira_text_user_mentions(preprocessor_with_jira):
     assert cleaned == "Hello User:123456!"
 
 
+def test_clean_jira_text_user_mentions_resolved():
+    """Mentions use the display name the resolver returns (#1758)."""
+    preprocessor = JiraPreprocessor(
+        base_url="https://example.atlassian.net",
+        user_resolver={"123456": "Jane Doe"}.get,
+    )
+    cleaned = preprocessor.clean_jira_text(
+        "Hello [~accountid:123456] and [~accountid:999]!"
+    )
+    assert cleaned == "Hello @Jane Doe and User:999!"
+
+
+def test_clean_jira_text_user_mentions_resolver_error():
+    """A resolver that raises leaves the User:<accountId> placeholder."""
+
+    def failing_resolver(account_id: str) -> str | None:
+        raise RuntimeError("lookup failed")
+
+    preprocessor = JiraPreprocessor(
+        base_url="https://example.atlassian.net", user_resolver=failing_resolver
+    )
+    cleaned = preprocessor.clean_jira_text("Hello [~accountid:123456]!")
+    assert cleaned == "Hello User:123456!"
+
+
 def test_clean_jira_text_smart_links(preprocessor_with_jira):
     """Test cleaning Jira text with smart links."""
     base_url = "https://example.atlassian.net"

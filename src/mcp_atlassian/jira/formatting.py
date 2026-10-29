@@ -49,7 +49,9 @@ class FormattingMixin(
         ):
             disable_translation = self.config.disable_jira_markup_translation
         self.preprocessor = JiraPreprocessor(
-            base_url=base_url, disable_translation=disable_translation
+            base_url=base_url,
+            disable_translation=disable_translation,
+            user_resolver=self._resolve_mention_display_name,
         )
 
     def markdown_to_jira(self, markdown_text: str) -> str:
