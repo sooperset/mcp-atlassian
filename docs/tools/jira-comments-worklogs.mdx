@@ -79,6 +79,41 @@ Add a worklog entry to a Jira issue.
 
 ---
 
+### Update Worklog
+
+Update an existing worklog entry on a Jira issue.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `worklog_id` | `string` | Yes | The ID of the worklog to update (from jira_get_worklog) |
+| `time_spent` | `string` | No | (Optional) New time spent in Jira format. Examples: '1h 30m', '1d', '30m', '4h' |
+| `comment` | `string` | No | (Optional) New worklog comment in Markdown format |
+| `started` | `string` | No | (Optional) New start time in ISO format. Example: '2023-08-01T12:00:00.000+0000' |
+| `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |
+
+---
+
+### Delete Worklog
+
+Delete a worklog entry from a Jira issue.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
+| `worklog_id` | `string` | Yes | The ID of the worklog to delete (from jira_get_worklog) |
+| `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |
+
+---
+
 ### Batch Get Changelogs
 
 Get changelogs for multiple Jira issues (Cloud only).

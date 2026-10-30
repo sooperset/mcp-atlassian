@@ -2898,6 +2898,138 @@ async def add_worklog(
 
 
 @jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_worklog"},
+    annotations={"title": "Update Worklog", "destructiveHint": True},
+)
+@check_write_access
+async def update_worklog(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    worklog_id: Annotated[
+        str,
+        Field(
+            description="The ID of the worklog to update (from jira_get_worklog)",
+            pattern=r"^\d+$",
+        ),
+    ],
+    time_spent: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) New time spent in Jira format. Examples: "
+                "'1h 30m', '1d', '30m', '4h'"
+            )
+        ),
+    ] = None,
+    comment: Annotated[
+        str | None,
+        Field(description="(Optional) New worklog comment in Markdown format"),
+    ] = None,
+    started: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) New start time in ISO format. "
+                "Example: '2023-08-01T12:00:00.000+0000'"
+            )
+        ),
+    ] = None,
+    remaining_estimate: Annotated[
+        str | None, Field(description="(Optional) New value for the remaining estimate")
+    ] = None,
+) -> str:
+    """Update an existing worklog entry on a Jira issue.
+
+    Only the provided values change; at least one of time_spent, comment or
+    started is required.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        worklog_id: The ID of the worklog to update.
+        time_spent: Optional new time spent in Jira format.
+        comment: Optional new comment in Markdown.
+        started: Optional new start time in ISO format.
+        remaining_estimate: Optional new remaining estimate.
+
+    Returns:
+        JSON string representing the updated worklog object.
+
+    Raises:
+        ValueError: If in read-only mode, Jira client unavailable, or nothing
+            to update is provided.
+    """
+    jira = await get_jira_fetcher(ctx)
+    worklog_result = jira.update_worklog(
+        issue_key=issue_key,
+        worklog_id=worklog_id,
+        time_spent=time_spent,
+        comment=comment,
+        started=started,
+        remaining_estimate=remaining_estimate,
+    )
+    result = {"message": "Worklog updated successfully", "worklog": worklog_result}
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_worklog"},
+    annotations={"title": "Delete Worklog", "destructiveHint": True},
+)
+@check_write_access
+async def delete_worklog(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(
+            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
+            pattern=ISSUE_KEY_PATTERN,
+        ),
+    ],
+    worklog_id: Annotated[
+        str,
+        Field(
+            description="The ID of the worklog to delete (from jira_get_worklog)",
+            pattern=r"^\d+$",
+        ),
+    ],
+    remaining_estimate: Annotated[
+        str | None, Field(description="(Optional) New value for the remaining estimate")
+    ] = None,
+) -> str:
+    """Delete a worklog entry from a Jira issue.
+
+    The deleted entry is returned so it can be re-created with jira_add_worklog.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Jira issue key.
+        worklog_id: The ID of the worklog to delete.
+        remaining_estimate: Optional new remaining estimate.
+
+    Returns:
+        JSON string representing the deleted worklog object.
+
+    Raises:
+        ValueError: If in read-only mode or Jira client unavailable.
+    """
+    jira = await get_jira_fetcher(ctx)
+    worklog_result = jira.delete_worklog(
+        issue_key=issue_key,
+        worklog_id=worklog_id,
+        remaining_estimate=remaining_estimate,
+    )
+    result = {"message": "Worklog deleted successfully", "worklog": worklog_result}
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_links"},
     annotations={"title": "Link to Epic", "destructiveHint": True},
 )

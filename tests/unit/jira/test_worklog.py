@@ -510,3 +510,152 @@ class TestWorklogMixin:
         server_worklog_mixin.jira.resource_url.assert_called_with("issue")
         server_worklog_mixin._post_api3.assert_not_called()
         assert result["id"] == "10003"
+
+    # --- update_worklog / delete_worklog ---
+
+    WORKLOG_URL = (
+        "https://example.atlassian.net/rest/api/2/issue/TEST-123/worklog/10001"
+    )
+
+    @pytest.fixture
+    def worklog_response(self):
+        return {
+            "id": "10001",
+            "comment": "Original comment",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "updated": "2024-01-02T10:00:00.000+0000",
+            "started": "2024-01-01T09:00:00.000+0400",
+            "timeSpent": "2h",
+            "timeSpentSeconds": 7200,
+            "author": {"displayName": "Test User"},
+        }
+
+    def test_update_worklog_time_and_started_uses_v2(
+        self, worklog_mixin, worklog_response
+    ):
+        """Without a comment the update goes through jira.put (v2)."""
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://example.atlassian.net/rest/api/2/issue"
+        )
+        worklog_mixin.jira.put.return_value = worklog_response
+        worklog_mixin._put_api3 = Mock()
+
+        result = worklog_mixin.update_worklog(
+            "TEST-123",
+            "10001",
+            time_spent="2h",
+            started="2024-01-01T09:00:00.000+0400",
+        )
+
+        worklog_mixin.jira.put.assert_called_once_with(
+            self.WORKLOG_URL,
+            data={
+                "timeSpentSeconds": 7200,
+                "started": "2024-01-01T09:00:00.000+0400",
+            },
+            params=None,
+        )
+        worklog_mixin._put_api3.assert_not_called()
+        assert result["id"] == "10001"
+        assert result["time_spent_seconds"] == 7200
+        assert result["remaining_estimate_updated"] is False
+
+    def test_update_worklog_cloud_adf_comment_uses_v3(
+        self, worklog_mixin, worklog_response
+    ):
+        """Cloud + ADF comment routes through _put_api3 with estimate params."""
+        adf_comment = {"type": "doc", "version": 1, "content": []}
+        worklog_mixin._markdown_to_jira = Mock(return_value=adf_comment)
+        worklog_mixin._put_api3 = Mock(
+            return_value={**worklog_response, "comment": adf_comment}
+        )
+
+        result = worklog_mixin.update_worklog(
+            "TEST-123", "10001", comment="new", remaining_estimate="1h"
+        )
+
+        worklog_mixin._put_api3.assert_called_once_with(
+            "issue/TEST-123/worklog/10001",
+            data={"comment": adf_comment},
+            params={"adjustEstimate": "new", "newEstimate": "1h"},
+        )
+        worklog_mixin.jira.put.assert_not_called()
+        assert result["remaining_estimate_updated"] is True
+
+    def test_update_worklog_server_comment_uses_v2(
+        self, server_worklog_mixin, worklog_response
+    ):
+        """Server/DC sends the wiki-markup comment through jira.put (v2)."""
+        server_worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+        server_worklog_mixin.jira.put.return_value = worklog_response
+        server_worklog_mixin._put_api3 = Mock()
+
+        server_worklog_mixin.update_worklog("TEST-123", "10001", comment="new")
+
+        server_worklog_mixin.jira.put.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/worklog/10001",
+            data={"comment": "wiki markup comment"},
+            params=None,
+        )
+        server_worklog_mixin._put_api3.assert_not_called()
+
+    def test_update_worklog_without_changes_raises(self, worklog_mixin):
+        """At least one value to update is required."""
+        with pytest.raises(ValueError, match="At least one of"):
+            worklog_mixin.update_worklog("TEST-123", "10001")
+        worklog_mixin.jira.put.assert_not_called()
+
+    def test_update_worklog_with_error(self, worklog_mixin):
+        """API errors are wrapped with context."""
+        worklog_mixin.jira.put.side_effect = Exception("API error")
+
+        with pytest.raises(Exception, match="Error updating worklog: API error"):
+            worklog_mixin.update_worklog("TEST-123", "10001", time_spent="1h")
+
+    def test_delete_worklog_returns_deleted_entry(
+        self, worklog_mixin, worklog_response
+    ):
+        """The worklog is read before deletion and returned to the caller."""
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://example.atlassian.net/rest/api/2/issue"
+        )
+        worklog_mixin.jira.get.return_value = worklog_response
+
+        result = worklog_mixin.delete_worklog("TEST-123", "10001")
+
+        worklog_mixin.jira.get.assert_called_once_with(self.WORKLOG_URL)
+        worklog_mixin.jira.delete.assert_called_once_with(self.WORKLOG_URL, params=None)
+        assert result["id"] == "10001"
+        assert result["started"] == "2024-01-01 09:00:00+04:00"
+        assert result["time_spent"] == "2h"
+        assert result["comment"] == "Original comment"
+        assert result["remaining_estimate_updated"] is False
+
+    def test_delete_worklog_with_remaining_estimate(
+        self, worklog_mixin, worklog_response
+    ):
+        """remaining_estimate sets adjustEstimate=new on the DELETE call."""
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://example.atlassian.net/rest/api/2/issue"
+        )
+        worklog_mixin.jira.get.return_value = worklog_response
+
+        result = worklog_mixin.delete_worklog(
+            "TEST-123", "10001", remaining_estimate="3h"
+        )
+
+        worklog_mixin.jira.delete.assert_called_once_with(
+            self.WORKLOG_URL,
+            params={"adjustEstimate": "new", "newEstimate": "3h"},
+        )
+        assert result["remaining_estimate_updated"] is True
+
+    def test_delete_worklog_not_found_skips_delete(self, worklog_mixin):
+        """A failed lookup raises and never sends the DELETE."""
+        worklog_mixin.jira.get.side_effect = Exception("404 Not Found")
+
+        with pytest.raises(Exception, match="Error deleting worklog: 404 Not Found"):
+            worklog_mixin.delete_worklog("TEST-123", "99999")
+        worklog_mixin.jira.delete.assert_not_called()

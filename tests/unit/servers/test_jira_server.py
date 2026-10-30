@@ -407,6 +407,30 @@ def mock_jira_fetcher():
         "remaining_estimate_updated": False,
     }
 
+    # Configure update_worklog / delete_worklog
+    mock_fetcher.update_worklog.return_value = {
+        "id": "10100",
+        "comment": "Worked on feature",
+        "created": "2024-01-01 10:00:00+00:00",
+        "updated": "2024-01-02 10:00:00+00:00",
+        "started": "2024-01-01 09:00:00+00:00",
+        "time_spent": "2h",
+        "time_spent_seconds": 7200,
+        "author": "Test User",
+        "remaining_estimate_updated": False,
+    }
+    mock_fetcher.delete_worklog.return_value = {
+        "id": "10100",
+        "comment": "Worked on feature",
+        "created": "2024-01-01 10:00:00+00:00",
+        "updated": "2024-01-01 10:00:00+00:00",
+        "started": "2024-01-01 09:00:00+00:00",
+        "time_spent": "1h 30m",
+        "time_spent_seconds": 5400,
+        "author": "Test User",
+        "remaining_estimate_updated": False,
+    }
+
     # Configure create_sprint
     mock_sprint = MagicMock()
     mock_sprint.to_simplified_dict.return_value = {
@@ -479,6 +503,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         create_remote_issue_link,
         create_sprint,
         delete_issue,
+        delete_worklog,
         download_attachments,
         edit_comment,
         get_agile_boards,
@@ -525,6 +550,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         update_proforma_form_answers,
         update_sprint,
         update_version,
+        update_worklog,
     )
 
     jira_sub_mcp = FastMCP(name="TestJiraSubMCP")
@@ -576,6 +602,8 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(add_comment)
     jira_sub_mcp.add_tool(edit_comment)
     jira_sub_mcp.add_tool(add_worklog)
+    jira_sub_mcp.add_tool(update_worklog)
+    jira_sub_mcp.add_tool(delete_worklog)
     jira_sub_mcp.add_tool(link_to_epic)
     jira_sub_mcp.add_tool(create_issue_link)
     jira_sub_mcp.add_tool(create_remote_issue_link)
@@ -3824,6 +3852,64 @@ async def test_add_worklog(jira_client, mock_jira_fetcher):
     result = json.loads(response.content[0].text)
     assert result["worklog"]["time_spent"] == "1h 30m"
     assert result["worklog"]["time_spent_seconds"] == 5400
+
+
+@pytest.mark.anyio
+async def test_update_worklog(jira_client, mock_jira_fetcher):
+    """update_worklog forwards only the values the caller provided."""
+    response = await jira_client.call_tool(
+        "jira_update_worklog",
+        {
+            "issue_key": "TEST-123",
+            "worklog_id": "10100",
+            "time_spent": "2h",
+            "started": "2024-01-01T09:00:00.000+0000",
+        },
+    )
+
+    mock_jira_fetcher.update_worklog.assert_called_once_with(
+        issue_key="TEST-123",
+        worklog_id="10100",
+        time_spent="2h",
+        comment=None,
+        started="2024-01-01T09:00:00.000+0000",
+        remaining_estimate=None,
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Worklog updated successfully"
+    assert result["worklog"]["time_spent_seconds"] == 7200
+
+
+@pytest.mark.anyio
+async def test_update_worklog_rejects_non_numeric_id(jira_client, mock_jira_fetcher):
+    """worklog_id is restricted to digits so it cannot alter the request path."""
+    with pytest.raises(ToolError):
+        await jira_client.call_tool(
+            "jira_update_worklog",
+            {"issue_key": "TEST-123", "worklog_id": "../10100", "time_spent": "1h"},
+        )
+    mock_jira_fetcher.update_worklog.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_delete_worklog(jira_client, mock_jira_fetcher):
+    """delete_worklog returns the deleted entry."""
+    response = await jira_client.call_tool(
+        "jira_delete_worklog",
+        {"issue_key": "TEST-123", "worklog_id": "10100"},
+    )
+
+    mock_jira_fetcher.delete_worklog.assert_called_once_with(
+        issue_key="TEST-123",
+        worklog_id="10100",
+        remaining_estimate=None,
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Worklog deleted successfully"
+    assert result["worklog"]["id"] == "10100"
+    assert result["worklog"]["time_spent"] == "1h 30m"
 
 
 @pytest.mark.anyio

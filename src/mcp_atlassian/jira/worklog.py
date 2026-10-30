@@ -142,28 +142,152 @@ class WorklogMixin(JiraClient):
                 logger.error(msg)
                 raise TypeError(msg)
 
-            # Format and return the result
-            comment_raw = result.get("comment", "")
-            comment_text = (
-                adf_to_text(comment_raw)
-                if isinstance(comment_raw, dict)
-                else comment_raw
-            )
             return {
-                "id": result.get("id"),
-                "comment": self._clean_text(comment_text or ""),
-                "created": str(parse_date(result.get("created", ""))),
-                "updated": str(parse_date(result.get("updated", ""))),
-                "started": str(parse_date(result.get("started", ""))),
-                "time_spent": result.get("timeSpent", ""),
-                "time_spent_seconds": result.get("timeSpentSeconds", 0),
-                "author": result.get("author", {}).get("displayName", "Unknown"),
+                **self._format_worklog(result),
                 "original_estimate_updated": original_estimate_updated,
                 "remaining_estimate_updated": remaining_estimate_updated,
             }
         except Exception as e:
             logger.error(f"Error adding worklog to issue {issue_key}: {str(e)}")
             raise Exception(f"Error adding worklog: {str(e)}") from e
+
+    def update_worklog(
+        self,
+        issue_key: str,
+        worklog_id: str,
+        time_spent: str | None = None,
+        comment: str | None = None,
+        started: str | None = None,
+        remaining_estimate: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update an existing worklog entry on a Jira issue.
+
+        Only the provided values are sent; omitted ones keep their current value.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            worklog_id: The ID of the worklog to update
+            time_spent: Optional new time spent (e.g. '1h 30m', '3h', '1d')
+            comment: Optional new comment in Markdown
+            started: Optional new ISO8601 date time string for when work began
+            remaining_estimate: Optional new value for the remaining estimate
+
+        Returns:
+            The updated worklog details
+
+        Raises:
+            ValueError: If none of time_spent, comment or started is provided
+            Exception: If there's an error updating the worklog
+        """
+        if time_spent is None and comment is None and started is None:
+            raise ValueError(
+                "At least one of time_spent, comment or started must be provided"
+            )
+
+        try:
+            worklog_data: dict[str, Any] = {}
+            if time_spent is not None:
+                worklog_data["timeSpentSeconds"] = self._parse_time_spent(time_spent)
+            if comment is not None:
+                worklog_data["comment"] = self._markdown_to_jira(comment)
+            if started is not None:
+                worklog_data["started"] = started
+
+            params = self._adjust_estimate_params(remaining_estimate)
+
+            if isinstance(worklog_data.get("comment"), dict) and self.config.is_cloud:
+                result = self._put_api3(
+                    f"issue/{issue_key}/worklog/{worklog_id}",
+                    data=worklog_data,
+                    params=params,
+                )
+            else:
+                url = self._worklog_url(issue_key, worklog_id)
+                result = self.jira.put(url, data=worklog_data, params=params)
+            if not isinstance(result, dict):
+                msg = f"Unexpected return value type from `jira.put`: {type(result)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
+            return {
+                **self._format_worklog(result),
+                "remaining_estimate_updated": params is not None,
+            }
+        except Exception as e:
+            logger.error(
+                f"Error updating worklog {worklog_id} on issue {issue_key}: {str(e)}"
+            )
+            raise Exception(f"Error updating worklog: {str(e)}") from e
+
+    def delete_worklog(
+        self,
+        issue_key: str,
+        worklog_id: str,
+        remaining_estimate: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Delete a worklog entry from a Jira issue.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            worklog_id: The ID of the worklog to delete
+            remaining_estimate: Optional new value for the remaining estimate
+
+        Returns:
+            The deleted worklog details, enough to re-create the entry
+
+        Raises:
+            Exception: If there's an error deleting the worklog
+        """
+        try:
+            url = self._worklog_url(issue_key, worklog_id)
+            worklog = self.jira.get(url)
+            if not isinstance(worklog, dict):
+                msg = f"Unexpected return value type from `jira.get`: {type(worklog)}"
+                logger.error(msg)
+                raise TypeError(msg)
+
+            params = self._adjust_estimate_params(remaining_estimate)
+            self.jira.delete(url, params=params)
+
+            return {
+                **self._format_worklog(worklog),
+                "remaining_estimate_updated": params is not None,
+            }
+        except Exception as e:
+            logger.error(
+                f"Error deleting worklog {worklog_id} from issue {issue_key}: {str(e)}"
+            )
+            raise Exception(f"Error deleting worklog: {str(e)}") from e
+
+    def _worklog_url(self, issue_key: str, worklog_id: str) -> str:
+        base_url = self.jira.resource_url("issue")
+        return f"{base_url}/{issue_key}/worklog/{worklog_id}"
+
+    @staticmethod
+    def _adjust_estimate_params(
+        remaining_estimate: str | None,
+    ) -> dict[str, str] | None:
+        if not remaining_estimate:
+            return None
+        return {"adjustEstimate": "new", "newEstimate": remaining_estimate}
+
+    def _format_worklog(self, worklog: dict[str, Any]) -> dict[str, Any]:
+        comment_raw = worklog.get("comment", "")
+        comment_text = (
+            adf_to_text(comment_raw) if isinstance(comment_raw, dict) else comment_raw
+        )
+        return {
+            "id": worklog.get("id"),
+            "comment": self._clean_text(comment_text or ""),
+            "created": str(parse_date(worklog.get("created", ""))),
+            "updated": str(parse_date(worklog.get("updated", ""))),
+            "started": str(parse_date(worklog.get("started", ""))),
+            "time_spent": worklog.get("timeSpent", ""),
+            "time_spent_seconds": worklog.get("timeSpentSeconds", 0),
+            "author": worklog.get("author", {}).get("displayName", "Unknown"),
+        }
 
     def get_worklog(self, issue_key: str) -> dict[str, Any]:
         """
