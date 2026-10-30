@@ -5,6 +5,7 @@ import base64
 import binascii
 import json
 import logging
+import os
 from typing import Annotated, Any
 
 from fastmcp import Context
@@ -336,6 +337,102 @@ def _parse_base64_attachments(
         decoded.append({"filename": filename, "content": content})
 
     return decoded
+
+
+def _parse_attachment_paths(attachments: str | None) -> list[str]:
+    """Parse issue attachment file paths from a JSON array or a comma list.
+
+    Args:
+        attachments: JSON array string or comma-separated list of file paths,
+            or None
+
+    Returns:
+        The list of file paths, empty if nothing was supplied
+
+    Raises:
+        ValueError: If the value is not a string, or is a JSON value that is
+            not an array
+    """
+    if not attachments:
+        return []
+    if not isinstance(attachments, str):
+        raise ValueError(
+            "attachments must be a JSON array string or comma-separated string."
+        )
+    try:
+        parsed = json.loads(attachments)
+    except json.JSONDecodeError:
+        # Assume comma-separated if not valid JSON array
+        return [p.strip() for p in attachments.split(",") if p.strip()]
+    if not isinstance(parsed, list):
+        raise ValueError("attachments JSON string must be an array.")
+    return [str(p) for p in parsed]
+
+
+def _upload_created_issue_attachments(
+    jira: Any,
+    issue_key: str,
+    attachment_paths: list[str],
+    inline_attachments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Upload attachments to an issue that has just been created.
+
+    The issue already exists when this runs, so an upload error must not be
+    raised: it is recorded as a failure in the report instead, and the caller
+    tells the user which files did not make it.
+
+    Args:
+        jira: The Jira fetcher
+        issue_key: Key of the created issue
+        attachment_paths: File paths for the server to read
+        inline_attachments: ``{"filename", "content"}`` dicts with raw bytes
+
+    Returns:
+        One report in the shape of ``JiraFetcher.upload_attachments``, merging
+        both sources
+    """
+    reports: list[dict[str, Any]] = []
+    sources = (
+        (
+            attachment_paths,
+            [os.path.basename(path) for path in attachment_paths],
+            jira.upload_attachments,
+        ),
+        (
+            inline_attachments,
+            [item["filename"] for item in inline_attachments],
+            jira.upload_attachments_from_content,
+        ),
+    )
+    for items, filenames, upload in sources:
+        if not items:
+            continue
+        try:
+            reports.append(upload(issue_key, items))
+        except Exception as e:  # noqa: BLE001 - the issue is already created
+            logger.error(
+                f"Error uploading attachments to {issue_key}: {str(e)}",
+                exc_info=True,
+            )
+            reports.append(
+                {
+                    "uploaded": [],
+                    "failed": [
+                        {"filename": name, "error": str(e)} for name in filenames
+                    ],
+                    "total": len(filenames),
+                }
+            )
+
+    uploaded = [entry for report in reports for entry in report.get("uploaded", [])]
+    failed = [entry for report in reports for entry in report.get("failed", [])]
+    return {
+        "success": bool(uploaded),
+        "issue_key": issue_key,
+        "total": sum(report.get("total", 0) for report in reports),
+        "uploaded": uploaded,
+        "failed": failed,
+    }
 
 
 @jira_mcp.tool(
@@ -1864,8 +1961,38 @@ async def create_issue(
             default=None,
         ),
     ] = None,
+    attachments: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON string array or comma-separated list of file paths to attach to the new issue. "
+                "Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt']. "
+                "Requires the server to be able to read the paths; for remote or "
+                "containerized servers use 'attachments_base64' instead."
+            ),
+            default=None,
+        ),
+    ] = None,
+    attachments_base64: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON string array of files to attach to the new issue as "
+                "base64-encoded content, without the server reading from disk. Use "
+                "this when the server cannot access host file paths (e.g. a remote or "
+                "containerized MCP server). Each entry needs 'filename' and "
+                "'content_base64'. Example: "
+                '\'[{"filename": "hello.txt", "content_base64": "SGVsbG8="}]\'. '
+                "Can be combined with 'attachments'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Create a new Jira issue with optional Epic link or parent for subtasks.
+
+    Attachments are uploaded after the issue is created. If an upload fails the
+    issue is kept and the response says which files were not attached.
 
     Args:
         ctx: The FastMCP context.
@@ -1876,12 +2003,17 @@ async def create_issue(
         description: Issue description in Markdown format.
         components: Comma-separated list of component names.
         additional_fields: JSON string of additional fields.
+        attachments: Optional JSON array string or comma-separated list of file paths.
+        attachments_base64: Optional JSON array string of {'filename',
+            'content_base64'} objects uploaded without server filesystem access.
 
     Returns:
-        JSON string representing the created issue object.
+        JSON string representing the created issue object and, when attachments
+        were requested, the attachment results.
 
     Raises:
-        ValueError: If in read-only mode or Jira client is unavailable.
+        ValueError: If in read-only mode or Jira client is unavailable, or if the
+            attachments are invalid (checked before the issue is created).
     """
     jira = await get_jira_fetcher(ctx)
     # Parse components from comma-separated string to list
@@ -1893,6 +2025,11 @@ async def create_issue(
 
     extra_fields = _parse_additional_fields(additional_fields)
 
+    # Validate attachments before creating anything, so bad input does not
+    # leave an issue behind.
+    attachment_paths = _parse_attachment_paths(attachments)
+    inline_attachments = _parse_base64_attachments(attachments_base64)
+
     issue = jira.create_issue(
         project_key=project_key,
         summary=summary,
@@ -1903,11 +2040,24 @@ async def create_issue(
         **extra_fields,
     )
     result = issue.to_simplified_dict()
-    return json.dumps(
-        {"message": "Issue created successfully", "issue": result},
-        indent=2,
-        ensure_ascii=False,
-    )
+    response: dict[str, Any] = {
+        "message": "Issue created successfully",
+        "issue": result,
+    }
+
+    if attachment_paths or inline_attachments:
+        attachment_results = _upload_created_issue_attachments(
+            jira, issue.key, attachment_paths, inline_attachments
+        )
+        response["attachment_results"] = attachment_results
+        if attachment_results["failed"]:
+            response["message"] = (
+                "Issue created successfully, but some attachments were not "
+                if attachment_results["uploaded"]
+                else "Issue created successfully, but attachments were not "
+            ) + "uploaded. Retry the failed files with jira_update_issue."
+
+    return json.dumps(response, indent=2, ensure_ascii=False)
 
 
 @jira_mcp.tool(
@@ -2253,26 +2403,7 @@ async def update_issue(
 
     extra_fields = _parse_additional_fields(additional_fields)
 
-    # Parse attachments
-    attachment_paths = []
-    if attachments:
-        if isinstance(attachments, str):
-            try:
-                parsed = json.loads(attachments)
-                if isinstance(parsed, list):
-                    attachment_paths = [str(p) for p in parsed]
-                else:
-                    raise ValueError("attachments JSON string must be an array.")
-            except json.JSONDecodeError:
-                # Assume comma-separated if not valid JSON array
-                attachment_paths = [
-                    p.strip() for p in attachments.split(",") if p.strip()
-                ]
-        else:
-            raise ValueError(
-                "attachments must be a JSON array string or comma-separated string."
-            )
-
+    attachment_paths = _parse_attachment_paths(attachments)
     inline_attachments = _parse_base64_attachments(attachments_base64)
 
     # Combine fields and additional_fields

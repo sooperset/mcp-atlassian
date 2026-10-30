@@ -132,6 +132,7 @@ def mock_jira_fetcher():
             elif isinstance(components, list):
                 components_list = components
         mock_issue = MagicMock()
+        mock_issue.key = f"{project_key}-456"
         response_data = {
             "key": f"{project_key}-456",
             "summary": summary,
@@ -1148,6 +1149,226 @@ async def test_create_issue_additional_fields_non_dict_json(jira_client):
             },
         )
     assert "not a JSON object" in str(excinfo.value)
+
+
+CREATE_ISSUE_ARGS = {
+    "project_key": "TEST",
+    "summary": "Issue with files",
+    "issue_type": "Bug",
+}
+HELLO_BASE64 = '[{"filename": "hello.txt", "content_base64": "SGVsbG8="}]'
+
+
+def _upload_report(
+    uploaded: list[str] | None = None, failed: dict[str, str] | None = None
+) -> dict:
+    """Build a fetcher upload report like ``JiraFetcher.upload_attachments``."""
+    uploaded = uploaded or []
+    failed = failed or {}
+    return {
+        "success": bool(uploaded),
+        "issue_key": "TEST-456",
+        "total": len(uploaded) + len(failed),
+        "uploaded": [
+            {"filename": name, "size": 10, "id": str(i)}
+            for i, name in enumerate(uploaded)
+        ],
+        "failed": [
+            {"filename": name, "error": error} for name, error in failed.items()
+        ],
+    }
+
+
+@pytest.mark.anyio
+async def test_create_issue_without_attachments_does_not_upload(
+    jira_client, mock_jira_fetcher
+):
+    """No attachment parameters means no upload call and no results entry."""
+    response = await jira_client.call_tool("jira_create_issue", CREATE_ISSUE_ARGS)
+
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue created successfully"
+    assert "attachment_results" not in content
+    mock_jira_fetcher.upload_attachments.assert_not_called()
+    mock_jira_fetcher.upload_attachments_from_content.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "attachments",
+    ['["/tmp/a.png", "/tmp/b.mp4"]', "/tmp/a.png, /tmp/b.mp4"],
+    ids=["json-array", "comma-separated"],
+)
+async def test_create_issue_uploads_attachment_paths(
+    jira_client, mock_jira_fetcher, attachments
+):
+    """File paths are uploaded to the created issue, not passed as fields."""
+    mock_jira_fetcher.upload_attachments.return_value = _upload_report(
+        ["a.png", "b.mp4"]
+    )
+
+    response = await jira_client.call_tool(
+        "jira_create_issue", {**CREATE_ISSUE_ARGS, "attachments": attachments}
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue created successfully"
+    assert content["issue"]["key"] == "TEST-456"
+    assert [f["filename"] for f in content["attachment_results"]["uploaded"]] == [
+        "a.png",
+        "b.mp4",
+    ]
+    mock_jira_fetcher.upload_attachments.assert_called_once_with(
+        "TEST-456", ["/tmp/a.png", "/tmp/b.mp4"]
+    )
+    assert "attachments" not in mock_jira_fetcher.create_issue.call_args[1]
+
+
+@pytest.mark.anyio
+async def test_create_issue_uploads_base64_attachments(jira_client, mock_jira_fetcher):
+    """Base64 attachments are decoded and uploaded without touching paths."""
+    mock_jira_fetcher.upload_attachments_from_content.return_value = _upload_report(
+        ["hello.txt"]
+    )
+
+    response = await jira_client.call_tool(
+        "jira_create_issue", {**CREATE_ISSUE_ARGS, "attachments_base64": HELLO_BASE64}
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue created successfully"
+    mock_jira_fetcher.upload_attachments_from_content.assert_called_once_with(
+        "TEST-456", [{"filename": "hello.txt", "content": b"Hello"}]
+    )
+    mock_jira_fetcher.upload_attachments.assert_not_called()
+    assert "attachments_base64" not in mock_jira_fetcher.create_issue.call_args[1]
+
+
+@pytest.mark.anyio
+async def test_create_issue_combines_path_and_base64_attachments(
+    jira_client, mock_jira_fetcher
+):
+    """Both sources are uploaded and reported as one result."""
+    mock_jira_fetcher.upload_attachments.return_value = _upload_report(["a.png"])
+    mock_jira_fetcher.upload_attachments_from_content.return_value = _upload_report(
+        ["hello.txt"]
+    )
+
+    response = await jira_client.call_tool(
+        "jira_create_issue",
+        {
+            **CREATE_ISSUE_ARGS,
+            "attachments": "/tmp/a.png",
+            "attachments_base64": HELLO_BASE64,
+        },
+    )
+
+    results = json.loads(response.content[0].text)["attachment_results"]
+    assert results["total"] == 2
+    assert [f["filename"] for f in results["uploaded"]] == ["a.png", "hello.txt"]
+    assert results["failed"] == []
+
+
+@pytest.mark.anyio
+async def test_create_issue_reports_failed_attachments(jira_client, mock_jira_fetcher):
+    """A failed upload keeps the issue and says the files were not attached."""
+    mock_jira_fetcher.upload_attachments.return_value = _upload_report(
+        failed={"missing.png": "File not found"}
+    )
+
+    response = await jira_client.call_tool(
+        "jira_create_issue", {**CREATE_ISSUE_ARGS, "attachments": "/tmp/missing.png"}
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["message"] == (
+        "Issue created successfully, but attachments were not uploaded. "
+        "Retry the failed files with jira_update_issue."
+    )
+    assert content["issue"]["key"] == "TEST-456"
+    assert content["attachment_results"]["failed"] == [
+        {"filename": "missing.png", "error": "File not found"}
+    ]
+
+
+@pytest.mark.anyio
+async def test_create_issue_reports_partial_attachment_failure(
+    jira_client, mock_jira_fetcher
+):
+    """A mixed result names what was uploaded and what was not."""
+    mock_jira_fetcher.upload_attachments.return_value = _upload_report(
+        ["a.png"], {"missing.png": "File not found"}
+    )
+
+    response = await jira_client.call_tool(
+        "jira_create_issue",
+        {**CREATE_ISSUE_ARGS, "attachments": "/tmp/a.png,/tmp/missing.png"},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["message"].startswith(
+        "Issue created successfully, but some attachments were not uploaded."
+    )
+    results = content["attachment_results"]
+    assert [f["filename"] for f in results["uploaded"]] == ["a.png"]
+    assert [f["filename"] for f in results["failed"]] == ["missing.png"]
+
+
+@pytest.mark.anyio
+async def test_create_issue_upload_exception_does_not_lose_the_issue(
+    jira_client, mock_jira_fetcher
+):
+    """An upload that raises is reported per file; the created issue is returned."""
+    mock_jira_fetcher.upload_attachments.side_effect = RuntimeError("Jira is down")
+
+    response = await jira_client.call_tool(
+        "jira_create_issue",
+        {**CREATE_ISSUE_ARGS, "attachments": "/tmp/a.png,/tmp/b.png"},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["issue"]["key"] == "TEST-456"
+    assert "were not uploaded" in content["message"]
+    assert content["attachment_results"]["uploaded"] == []
+    assert content["attachment_results"]["total"] == 2
+    assert content["attachment_results"]["failed"] == [
+        {"filename": "a.png", "error": "Jira is down"},
+        {"filename": "b.png", "error": "Jira is down"},
+    ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("arguments", "expected_error"),
+    [
+        pytest.param(
+            {"attachments_base64": '[{"filename": "x.txt", "content_base64": "!!"}]'},
+            "attachments_base64[0]",
+            id="invalid-base64",
+        ),
+        pytest.param(
+            {"attachments_base64": "not json"},
+            "attachments_base64 is not valid JSON",
+            id="invalid-base64-json",
+        ),
+        pytest.param(
+            {"attachments": '{"path": "/tmp/a.png"}'},
+            "attachments JSON string must be an array",
+            id="paths-json-not-array",
+        ),
+    ],
+)
+async def test_create_issue_rejects_invalid_attachments_before_creating(
+    jira_client, mock_jira_fetcher, arguments, expected_error
+):
+    """Bad attachment input fails up front, so no issue is left behind."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue", {**CREATE_ISSUE_ARGS, **arguments}
+        )
+
+    assert expected_error in str(excinfo.value)
+    mock_jira_fetcher.create_issue.assert_not_called()
 
 
 @pytest.mark.anyio
