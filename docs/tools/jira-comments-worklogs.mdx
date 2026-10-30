@@ -91,7 +91,7 @@ Update an existing worklog entry on a Jira issue.
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `worklog_id` | `string` | Yes | The ID of the worklog to update (from jira_get_worklog) |
-| `time_spent` | `string` | No | (Optional) New time spent in Jira format. Examples: '1h 30m', '1d', '30m', '4h' |
+| `time_spent` | `string` | No | (Optional) New time spent in Jira format. Examples: '1h 30m', '1d', '30m', '4h'. Jira validates it and converts days and weeks using the site's time tracking settings. |
 | `comment` | `string` | No | (Optional) New worklog comment in Markdown format |
 | `started` | `string` | No | (Optional) New start time in ISO format. Example: '2023-08-01T12:00:00.000+0000' |
 | `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |

@@ -543,14 +543,14 @@ class TestWorklogMixin:
         result = worklog_mixin.update_worklog(
             "TEST-123",
             "10001",
-            time_spent="2h",
+            time_spent=" 2h ",
             started="2024-01-01T09:00:00.000+0400",
         )
 
         worklog_mixin.jira.put.assert_called_once_with(
             self.WORKLOG_URL,
             data={
-                "timeSpentSeconds": 7200,
+                "timeSpent": "2h",
                 "started": "2024-01-01T09:00:00.000+0400",
             },
             params=None,
@@ -606,6 +606,31 @@ class TestWorklogMixin:
         with pytest.raises(ValueError, match="At least one of"):
             worklog_mixin.update_worklog("TEST-123", "10001")
         worklog_mixin.jira.put.assert_not_called()
+
+    @pytest.mark.parametrize("time_spent", ["", "   "])
+    def test_update_worklog_empty_time_spent_raises(self, worklog_mixin, time_spent):
+        """An empty duration is rejected before any request is sent."""
+        worklog_mixin._put_api3 = Mock()
+
+        with pytest.raises(ValueError, match="time_spent must not be empty"):
+            worklog_mixin.update_worklog("TEST-123", "10001", time_spent=time_spent)
+        worklog_mixin.jira.put.assert_not_called()
+        worklog_mixin._put_api3.assert_not_called()
+
+    def test_update_worklog_passes_duration_to_jira_unparsed(
+        self, worklog_mixin, worklog_response
+    ):
+        """Durations are not parsed locally, so Jira rejects invalid ones."""
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://example.atlassian.net/rest/api/2/issue"
+        )
+        worklog_mixin.jira.put.return_value = worklog_response
+
+        worklog_mixin.update_worklog("TEST-123", "10001", time_spent="1.5h")
+
+        worklog_mixin.jira.put.assert_called_once_with(
+            self.WORKLOG_URL, data={"timeSpent": "1.5h"}, params=None
+        )
 
     def test_update_worklog_with_error(self, worklog_mixin):
         """API errors are wrapped with context."""

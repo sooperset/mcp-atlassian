@@ -2923,8 +2923,10 @@ async def update_worklog(
         Field(
             description=(
                 "(Optional) New time spent in Jira format. Examples: "
-                "'1h 30m', '1d', '30m', '4h'"
-            )
+                "'1h 30m', '1d', '30m', '4h'. Jira validates it and converts "
+                "days and weeks using the site's time tracking settings."
+            ),
+            min_length=1,
         ),
     ] = None,
     comment: Annotated[

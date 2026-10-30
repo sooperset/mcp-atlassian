@@ -3893,6 +3893,17 @@ async def test_update_worklog_rejects_non_numeric_id(jira_client, mock_jira_fetc
 
 
 @pytest.mark.anyio
+async def test_update_worklog_rejects_empty_time_spent(jira_client, mock_jira_fetcher):
+    """An empty time_spent fails schema validation instead of reaching Jira."""
+    with pytest.raises(ToolError):
+        await jira_client.call_tool(
+            "jira_update_worklog",
+            {"issue_key": "TEST-123", "worklog_id": "10100", "time_spent": ""},
+        )
+    mock_jira_fetcher.update_worklog.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_delete_worklog(jira_client, mock_jira_fetcher):
     """delete_worklog returns the deleted entry."""
     response = await jira_client.call_tool(

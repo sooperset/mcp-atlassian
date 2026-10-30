@@ -177,18 +177,24 @@ class WorklogMixin(JiraClient):
             The updated worklog details
 
         Raises:
-            ValueError: If none of time_spent, comment or started is provided
+            ValueError: If none of time_spent, comment or started is provided,
+                or time_spent is empty
             Exception: If there's an error updating the worklog
         """
         if time_spent is None and comment is None and started is None:
             raise ValueError(
                 "At least one of time_spent, comment or started must be provided"
             )
+        if time_spent is not None and not time_spent.strip():
+            raise ValueError("time_spent must not be empty")
 
         try:
             worklog_data: dict[str, Any] = {}
             if time_spent is not None:
-                worklog_data["timeSpentSeconds"] = self._parse_time_spent(time_spent)
+                # Jira validates the duration and converts days/weeks with the
+                # site's time tracking settings; _parse_time_spent would turn
+                # an invalid value into 60s and overwrite the logged time.
+                worklog_data["timeSpent"] = time_spent.strip()
             if comment is not None:
                 worklog_data["comment"] = self._markdown_to_jira(comment)
             if started is not None:
