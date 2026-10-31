@@ -11,9 +11,9 @@ import anyio
 import pytest
 
 from src.mcp_atlassian.servers.async_utils import (
+    CONFLUENCE_FETCHER_MAX_WORKERS_ENV,
     DEFAULT_CONFLUENCE_FETCHER_MAX_WORKERS,
     DEFAULT_JIRA_FETCHER_MAX_WORKERS,
-    CONFLUENCE_FETCHER_MAX_WORKERS_ENV,
     JIRA_FETCHER_MAX_WORKERS_ENV,
     get_confluence_fetcher_max_workers,
     get_jira_fetcher_max_workers,

@@ -3,6 +3,7 @@
 import inspect
 import json
 import logging
+import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1449,6 +1450,26 @@ async def test_delete_attachment(client, mock_confluence_fetcher):
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Attachment deleted successfully"
     assert result_data["attachment_id"] == "att123"
+
+
+@pytest.mark.anyio
+async def test_delete_attachment_runs_off_the_event_loop(
+    client, mock_confluence_fetcher
+):
+    """The blocking delete call must not run on the event loop thread."""
+    loop_thread = threading.get_ident()
+    call_threads: list[int] = []
+
+    def record_thread(attachment_id: str) -> dict[str, object]:
+        call_threads.append(threading.get_ident())
+        return {"success": True, "attachment_id": attachment_id}
+
+    mock_confluence_fetcher.delete_attachment.side_effect = record_thread
+
+    await client.call_tool("confluence_delete_attachment", {"attachment_id": "att123"})
+
+    assert call_threads, "delete_attachment was never called"
+    assert call_threads[0] != loop_thread
 
 
 @pytest.mark.anyio
