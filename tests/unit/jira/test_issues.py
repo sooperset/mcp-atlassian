@@ -2433,6 +2433,27 @@ class TestIssuesMixin:
         assert result.key == "DEV-123"
         assert result.summary == "Test issue"
 
+    def test_get_issue_with_config_projects_filter_moved_issue(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """An allowed old key resolving to an issue moved out of the filter."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(
+            issue_id="10001",
+            key="TEST-7",
+            summary="Moved issue",
+        )
+        issues_mixin.config.url = "https://example.atlassian.net"
+        issues_mixin.config.projects_filter = "DEV"
+
+        with pytest.raises(
+            Exception,
+            match=(
+                "Error retrieving issue DEV-123: "
+                "Issue with project prefix 'TEST' are restricted by configuration"
+            ),
+        ):
+            issues_mixin.get_issue("DEV-123")
+
     def test_get_issue_with_multiple_projects_filter(
         self, issues_mixin: IssuesMixin, make_issue_data
     ):

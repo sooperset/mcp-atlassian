@@ -19,6 +19,28 @@ logger = logging.getLogger("mcp-jira")
 class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
     """Mixin for Jira attachment operations."""
 
+    def _get_issue_with_attachments(self, issue_key: str) -> Any:
+        """Fetch an issue's attachment field, enforcing the projects filter.
+
+        The filter is checked on the requested key before calling Jira and on
+        the key Jira returns, since the old key of an issue moved to another
+        project resolves to the moved issue.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123').
+
+        Returns:
+            The raw issue data returned by ``jira.issue``.
+
+        Raises:
+            ValueError: If the issue is outside JIRA_PROJECTS_FILTER.
+        """
+        self._check_projects_filter(issue_key)
+        issue_data = self.jira.issue(issue_key, fields="attachment")
+        if isinstance(issue_data, dict) and issue_data.get("key"):
+            self._check_projects_filter(str(issue_data["key"]))
+        return issue_data
+
     def download_attachment(self, url: str, target_path: str) -> bool:
         """
         Download a Jira attachment to the specified path.
@@ -125,7 +147,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             A list of JiraAttachment instances.
         """
         logger.info(f"Fetching attachment metadata for {issue_key}")
-        issue_data = self.jira.issue(issue_key, fields="attachment")
+        issue_data = self._get_issue_with_attachments(issue_key)
 
         if not isinstance(issue_data, dict):
             msg = f"Unexpected return value type from `jira.issue`: {type(issue_data)}"
@@ -166,7 +188,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         """
         logger.info(f"Fetching attachment contents for {issue_key}")
 
-        issue_data = self.jira.issue(issue_key, fields="attachment")
+        issue_data = self._get_issue_with_attachments(issue_key)
 
         if not isinstance(issue_data, dict):
             msg = f"Unexpected return value type from `jira.issue`: {type(issue_data)}"
@@ -290,7 +312,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
 
         # Get the issue with attachments
         logger.info(f"Fetching issue {issue_key} with attachments")
-        issue_data = self.jira.issue(issue_key, fields="attachment")
+        issue_data = self._get_issue_with_attachments(issue_key)
 
         if not isinstance(issue_data, dict):
             msg = f"Unexpected return value type from `jira.issue`: {type(issue_data)}"

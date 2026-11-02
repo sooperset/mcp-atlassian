@@ -107,25 +107,9 @@ class IssuesMixin(
             Exception: If there is an error retrieving the issue
         """
         try:
-            # Obtain the projects filter from the config.
-            # These should NOT be overridden by the request.
-            filter_to_use = self.config.projects_filter
-
-            # Apply projects filter if present
-            if filter_to_use:
-                # Split projects filter by commas and handle possible whitespace
-                projects = [p.strip() for p in filter_to_use.split(",")]
-
-                # Obtain the project key from issue_key
-                issue_key_project = issue_key.split("-")[0]
-
-                if issue_key_project not in projects:
-                    # If the project key not in the filter, return an empty issue
-                    msg = (
-                        "Issue with project prefix "
-                        f"'{issue_key_project}' are restricted by configuration"
-                    )
-                    raise ValueError(msg)
+            # The projects filter comes from the config and is NOT overridden
+            # by the request.
+            self._check_projects_filter(issue_key)
 
             # Determine fields_param: use provided fields or default from constant
             fields_param = fields
@@ -210,6 +194,11 @@ class IssuesMixin(
                 )
                 logger.error(msg)
                 raise TypeError(msg)
+
+            # The old key of an issue moved to another project resolves to the
+            # moved issue, so check the key Jira returned as well.
+            if issue.get("key"):
+                self._check_projects_filter(str(issue["key"]))
 
             # Extract fields data, safely handling None
             fields_data = issue.get("fields", {}) or {}

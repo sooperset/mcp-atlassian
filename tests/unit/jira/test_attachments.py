@@ -1588,3 +1588,86 @@ class TestUploadPathTraversalRegression:
             "download targeting the CWD (where Python imports modules) must be "
             "confined to a dedicated directory, not allowed to overwrite source files"
         )
+
+
+class TestAttachmentsProjectsFilter:
+    """Attachment reads must honour JIRA_PROJECTS_FILTER like get_issue does."""
+
+    @pytest.fixture
+    def attachments_mixin(self, jira_fetcher: JiraFetcher) -> AttachmentsMixin:
+        attachments_mixin = jira_fetcher
+        attachments_mixin.jira = MagicMock()
+        attachments_mixin.jira._session = MagicMock()
+        attachments_mixin.config.projects_filter = "BLOG, DA"
+        return attachments_mixin
+
+    @staticmethod
+    def _call(mixin: AttachmentsMixin, method: str, issue_key: str) -> object:
+        if method == "download_issue_attachments":
+            with (
+                patch("pathlib.Path.mkdir"),
+                patch("os.getcwd", return_value="/tmp"),
+            ):
+                return mixin.download_issue_attachments(issue_key, "/tmp/attachments")
+        return getattr(mixin, method)(issue_key)
+
+    METHODS = [
+        "get_issue_attachments",
+        "get_issue_attachment_contents",
+        "download_issue_attachments",
+    ]
+
+    @pytest.mark.parametrize("method", METHODS)
+    def test_rejects_project_outside_filter_without_calling_jira(
+        self, attachments_mixin: AttachmentsMixin, method: str
+    ) -> None:
+        with pytest.raises(ValueError, match="'SECRET' are restricted"):
+            self._call(attachments_mixin, method, "SECRET-1")
+        attachments_mixin.jira.issue.assert_not_called()
+
+    @pytest.mark.parametrize("method", METHODS)
+    def test_rejects_issue_moved_out_of_filter(
+        self, attachments_mixin: AttachmentsMixin, method: str
+    ) -> None:
+        """An old allowed key that resolves to a moved issue is rejected."""
+        attachments_mixin.jira.issue.return_value = {
+            "key": "SECRET-7",
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "secret.txt",
+                        "content": "https://test.url/attachment1",
+                        "size": 10,
+                        "mimeType": "text/plain",
+                    }
+                ]
+            },
+        }
+        with pytest.raises(ValueError, match="'SECRET' are restricted"):
+            self._call(attachments_mixin, method, "BLOG-1")
+        attachments_mixin.jira._session.get.assert_not_called()
+
+    @pytest.mark.parametrize("method", METHODS)
+    def test_allows_project_in_filter(
+        self, attachments_mixin: AttachmentsMixin, method: str
+    ) -> None:
+        attachments_mixin.jira.issue.return_value = {
+            "key": "DA-5",
+            "fields": {"attachment": []},
+        }
+        self._call(attachments_mixin, method, "DA-5")
+        attachments_mixin.jira.issue.assert_called_once_with(
+            "DA-5", fields="attachment"
+        )
+
+    @pytest.mark.parametrize("method", METHODS)
+    def test_no_filter_allows_any_project(
+        self, attachments_mixin: AttachmentsMixin, method: str
+    ) -> None:
+        attachments_mixin.config.projects_filter = None
+        attachments_mixin.jira.issue.return_value = {
+            "key": "SECRET-7",
+            "fields": {"attachment": []},
+        }
+        self._call(attachments_mixin, method, "SECRET-7")
+        attachments_mixin.jira.issue.assert_called_once()

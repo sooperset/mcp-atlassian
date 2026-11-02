@@ -375,6 +375,31 @@ class JiraClient:
             in self.config.internal_only_projects
         )
 
+    def _check_projects_filter(self, issue_key: str) -> None:
+        """Raise if the issue key's project is outside JIRA_PROJECTS_FILTER.
+
+        Callers that fetch a single issue should check both the requested key
+        and the key Jira returns: the old key of an issue moved to another
+        project resolves to the moved issue.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123').
+
+        Raises:
+            ValueError: If a projects filter is configured and the key's
+                project is not in it.
+        """
+        if not self.config.projects_filter:
+            return
+        projects = {p.strip() for p in self.config.projects_filter.split(",")}
+        issue_key_project = issue_key.split("-")[0]
+        if issue_key_project not in projects:
+            msg = (
+                "Issue with project prefix "
+                f"'{issue_key_project}' are restricted by configuration"
+            )
+            raise ValueError(msg)
+
     def _post_api3(
         self,
         resource: str,
