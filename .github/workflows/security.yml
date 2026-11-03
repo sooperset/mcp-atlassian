@@ -24,4 +24,4 @@ jobs:
     permissions:
       contents: read
       issues: write
-    uses: crunchtools/constitution/.github/workflows/dependency-audit.yml@v1.28.0
+    uses: crunchtools/constitution/.github/workflows/dependency-audit.yml@v1.29.0

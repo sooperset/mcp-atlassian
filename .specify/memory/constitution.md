@@ -4,7 +4,7 @@
 > **Ratified:** 2026-09-20
 > **Amended:** 2026-10-02
 > **Status:** Active
-> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.28.0
+> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.29.0
 > **Profile:** Forked MCP Server
 
 This file holds what is specific to the crunchtools fork of mcp-atlassian. The
