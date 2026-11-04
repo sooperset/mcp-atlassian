@@ -69,6 +69,48 @@ class TestSearchMixin:
         assert result[0].title == "Test Page"
         assert result[0].content == "Processed content"
 
+    def test_search_strips_lone_surrogate_from_excerpt(self, search_mixin):
+        """A truncated emoji in an excerpt must not break the response.
+
+        Regression guard: Confluence Cloud cuts excerpts at a fixed length,
+        and the cut can land inside an emoji, leaving a lone surrogate such as
+        ``\\ud83d``. That string cannot be encoded as UTF-8, so serializing
+        the result raised ``PydanticSerializationError`` and the tool call
+        never returned.
+        """
+        search_mixin.confluence.cql.return_value = {
+            "results": [
+                {
+                    "content": {
+                        "id": "123456789",
+                        "title": "Test Page",
+                        "type": "page",
+                        "space": {"key": "SPACE", "name": "Test Space"},
+                        "version": {"number": 1},
+                    },
+                    "excerpt": "Goal \ud83d",
+                    "url": "https://confluence.example.com/pages/123456789",
+                }
+            ]
+        }
+        # Echo the excerpt back so the assertion covers what reaches the model.
+        search_mixin.preprocessor.process_html_content.side_effect = (
+            lambda html, **kwargs: (html, html)
+        )
+
+        result = search_mixin.search("test query")
+
+        # The lone surrogate is gone before the excerpt is processed...
+        search_mixin.preprocessor.process_html_content.assert_called_once_with(
+            "Goal ",
+            space_key="SPACE",
+            confluence_client=search_mixin.confluence,
+        )
+        # ...and the result serializes to UTF-8 JSON without raising.
+        assert len(result) == 1
+        assert result[0].content == "Goal "
+        result[0].model_dump_json().encode("utf-8")
+
     def test_search_expands_content_metadata(self, search_mixin):
         """Search results should carry created/updated/author and version metadata.
 
