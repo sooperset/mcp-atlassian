@@ -192,6 +192,7 @@ class ConfluenceV2Adapter:
         representation: str = "storage",
         version_comment: str = "",
         status: str = "current",
+        parent_id: str | None = None,
     ) -> dict[str, Any]:
         """Update a page using the v2 API.
 
@@ -202,6 +203,7 @@ class ConfluenceV2Adapter:
             representation: Content representation format (default: "storage")
             version_comment: Optional comment for this version
             status: Page status (default: "current")
+            parent_id: Optional new parent page ID (moves the page)
 
         Returns:
             The updated page data from the API response
@@ -231,6 +233,8 @@ class ConfluenceV2Adapter:
             # Add version comment if provided
             if version_comment:
                 data["version"]["message"] = version_comment
+            if parent_id:
+                data["parentId"] = parent_id
 
             # Make the v2 API call
             url = f"{self.base_url}/api/v2/pages/{page_id}"
@@ -303,6 +307,51 @@ class ConfluenceV2Adapter:
         """Get space key from space ID using v2 API."""
         return self._get_space_from_id(space_id)["key"]
 
+    def _normalize_v2_page(self, v2_response: dict[str, Any]) -> dict[str, Any]:
+        """Convert a v2 page payload (fetched with storage body) to v1 format.
+
+        Args:
+            v2_response: A page object from a v2 ``/pages`` endpoint
+
+        Returns:
+            The page in v1-compatible format, including ``body.storage``,
+            ``space`` and ``children.attachment``.
+        """
+        page_id = str(v2_response.get("id", ""))
+        space_id = v2_response.get("spaceId")
+        space = (
+            self._get_space_from_id(str(space_id))
+            if space_id
+            else {"key": "unknown", "name": "unknown"}
+        )
+
+        v1_compatible = self._convert_v2_to_v1_format(v2_response, space["key"])
+
+        # Add body.storage structure if body content exists
+        body = v2_response.get("body") or {}
+        if isinstance(body, dict) and body.get("storage"):
+            storage_value = body["storage"].get("value", "")
+            v1_compatible["body"] = {
+                "storage": {"value": storage_value, "representation": "storage"}
+            }
+
+        if space_id:
+            v1_compatible["space"] = space
+
+        # v1 callers expand children.attachment; the markdown preprocessor uses
+        # it to resolve images. v2 exposes attachments as a separate endpoint.
+        attachments: list[dict[str, Any]] = []
+        if page_id:
+            try:
+                attachments = self.get_page_attachments(page_id).get("results", [])
+            except (HTTPError, ValueError) as e:
+                logger.warning(
+                    f"Could not fetch attachments for page '{page_id}' via v2 API: {e}"
+                )
+        v1_compatible["children"] = {"attachment": {"results": attachments}}
+
+        return v1_compatible
+
     def get_page(
         self,
         page_id: str,
@@ -321,10 +370,7 @@ class ConfluenceV2Adapter:
             ValueError: If page retrieval fails
         """
         try:
-            # Make the v2 API call to get the page
             url = f"{self.base_url}/api/v2/pages/{page_id}"
-
-            # Convert v1 expand parameters to v2 format
             params = {"body-format": "storage"}
 
             response = self.session.get(url, params=params)
@@ -333,28 +379,7 @@ class ConfluenceV2Adapter:
             v2_response = response.json()
             logger.debug(f"Successfully retrieved page '{page_id}' with v2 API")
 
-            # Get space key from space ID
-            space_id = v2_response.get("spaceId")
-            space_key = self._get_space_key_from_id(space_id) if space_id else "unknown"
-
-            # Convert v2 response to v1-compatible format
-            v1_compatible = self._convert_v2_to_v1_format(v2_response, space_key)
-
-            # Add body.storage structure if body content exists
-            if "body" in v2_response and v2_response["body"].get("storage"):
-                storage_value = v2_response["body"]["storage"].get("value", "")
-                v1_compatible["body"] = {
-                    "storage": {"value": storage_value, "representation": "storage"}
-                }
-
-            # Add space information with more details
-            if space_id:
-                v1_compatible["space"] = {
-                    "key": space_key,
-                    "id": space_id,
-                }
-
-            return v1_compatible
+            return self._normalize_v2_page(v2_response)
 
         except Exception as e:
             if isinstance(e, HTTPError) and e.response is not None:
@@ -365,6 +390,56 @@ class ConfluenceV2Adapter:
             else:
                 logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
+
+    def get_page_by_title(self, space_key: str, title: str) -> dict[str, Any] | None:
+        """Get a page by its exact title within a space using the v2 API.
+
+        Args:
+            space_key: The key of the space containing the page
+            title: The exact page title
+
+        Returns:
+            The page in v1-compatible format, or None if no page matches
+
+        Raises:
+            ValueError: If the space lookup or page request fails
+        """
+        space_id = self._get_space_id(space_key)
+        try:
+            url = f"{self.base_url}/api/v2/pages"
+            params: dict[str, Any] = {
+                "space-id": space_id,
+                "title": title,
+                "status": "current",
+                "body-format": "storage",
+                "limit": 1,
+            }
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            results = response.json().get("results", [])
+            if not results:
+                return None
+
+            logger.debug(
+                f"Successfully retrieved page '{title}' in space '{space_key}' "
+                "with v2 API"
+            )
+            return self._normalize_v2_page(results[0])
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting page '{title}' in space '{space_key}': "
+                    f"{e}\nResponse: {e.response.text}"
+                )
+            else:
+                logger.error(
+                    f"Error getting page '{title}' in space '{space_key}': {e}"
+                )
+            raise ValueError(
+                f"Failed to get page '{title}' in space '{space_key}': {e}"
+            ) from e
 
     def get_page_direct_children(
         self,

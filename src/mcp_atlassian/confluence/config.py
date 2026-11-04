@@ -59,6 +59,12 @@ class ConfluenceConfig:
     #   True  -> always v1
     #   False -> always the legacy link
     attachment_download_use_v1: bool | None = None
+    # Controls whether page get/update operations use the REST API v2
+    # (/api/v2/pages) instead of v1 (/rest/api/content). v2 exists only on Cloud:
+    #   None  -> auto: v2 on Cloud, v1 on Server/DC (default)
+    #   True  -> v2 wherever available (still v1 on Server/DC)
+    #   False -> always v1
+    pages_use_v2: bool | None = None
 
     @property
     def is_cloud(self) -> bool:
@@ -228,6 +234,12 @@ class ConfluenceConfig:
             if _use_v1_raw is None or not _use_v1_raw.strip()
             else is_env_truthy("CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1")
         )
+        _pages_v2_raw = os.getenv("CONFLUENCE_PAGES_USE_V2")
+        pages_use_v2 = (
+            None
+            if _pages_v2_raw is None or not _pages_v2_raw.strip()
+            else is_env_truthy("CONFLUENCE_PAGES_USE_V2")
+        )
 
         return cls(
             url=url or "",
@@ -251,6 +263,7 @@ class ConfluenceConfig:
             client_key_password=client_key_password,
             timeout=timeout,
             attachment_download_use_v1=attachment_download_use_v1,
+            pages_use_v2=pages_use_v2,
         )
 
     def is_auth_configured(self) -> bool:

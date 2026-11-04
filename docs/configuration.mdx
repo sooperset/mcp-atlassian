@@ -210,6 +210,7 @@ JIRA_PROJECT_KEY_PATTERN=^[A-Z0-9][A-Z0-9_]*$
 | `MCP_VERY_VERBOSE` | Enable debug logging (`true`/`false`) |
 | `MCP_LOGGING_STDOUT` | Log to stdout instead of stderr (`true`/`false`) |
 | `CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1` | Download Confluence attachments via the v1 REST endpoint instead of the legacy `/download/` link (removed on Cloud). Unset = auto (v1 on Cloud, legacy on Server/DC); `true`/`false` to force. |
+| `CONFLUENCE_PAGES_USE_V2` | Get and update Confluence pages via REST API v2 (`/api/v2/pages`) instead of v1. Unset = auto (v2 on Cloud, v1 on Server/DC, which has no v2 API); `false` forces v1. `is_minor_edit` is ignored on v2. |
 | `ATLASSIAN_OAUTH_PROXY_ENABLE` | Enable OAuth proxy + DCR + `/.well-known/*` routes (`true`/`false`) |
 | `PUBLIC_BASE_URL` | Public base URL for OAuth discovery metadata |
 | `ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS` | Comma-separated allowed redirect URI patterns for DCR clients |
