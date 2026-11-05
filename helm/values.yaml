@@ -184,6 +184,7 @@ oauthProxy:
   enabled: false
 
   # Optional restrictions (comma-separated values)
+  # Empty omits the env var (built-in allowlist); "*" enables open DCR registration.
   allowedClientRedirectUris: ""
   allowedGrantTypes: ""
 

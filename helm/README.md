@@ -133,6 +133,12 @@ This sets:
 - `ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS`
 - `ATLASSIAN_OAUTH_ALLOWED_GRANT_TYPES`
 
+Set `oauthProxy.allowedClientRedirectUris: "*"` to enable open DCR registration
+without a server-wide callback allowlist. Keep `oauthProxy.requireConsent: true`.
+Registered-callback validation, PKCE, and unsafe redirect scheme checks remain
+enabled. An empty chart value omits the environment variable and uses the built-in
+allowlist; it does not block all callbacks.
+
 ### Custom OAuth Client Storage (factory mode)
 
 For advanced deployments, you can provide a custom storage backend factory

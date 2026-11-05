@@ -177,6 +177,28 @@ This mode is opt-in. Existing API token, PAT, and header-based OAuth flows conti
 to work without enabling the proxy.
 </Note>
 
+To onboard clients without maintaining a server-wide callback allowlist, set:
+
+```bash
+ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS="*"
+ATLASSIAN_OAUTH_REQUIRE_CONSENT=true
+```
+
+The standalone `*` passes `None` to FastMCP, allowing clients to register their
+callback URIs through DCR. Authorization remains bound to each client's registered
+redirect URIs, with FastMCP's loopback-port compatibility. PKCE, unsafe redirect
+scheme checks, and proxy callback-collision protection remain in place.
+
+<Warning>
+This explicitly removes the server-wide redirect allowlist. Keep consent enabled
+and only authorize trusted clients; an internal network does not replace OAuth
+consent and callback validation. The server logs a warning when this mode is used.
+</Warning>
+
+Leaving the variable unset keeps the built-in allowlist; an explicitly empty
+value permits no redirect URIs. `*` must be the only list entry. The string `None`
+does not enable open registration.
+
 <Warning>
 The callback configured in `ATLASSIAN_OAUTH_REDIRECT_URI` is for the upstream
 Atlassian identity provider, not a dynamically registered MCP client. A DCR
