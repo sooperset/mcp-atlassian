@@ -196,8 +196,10 @@ consent and callback validation. The server logs a warning when this mode is use
 </Warning>
 
 Leaving the variable unset keeps the built-in allowlist; an explicitly empty
-value permits no redirect URIs. `*` must be the only list entry. The string `None`
-does not enable open registration.
+value permits no redirect URIs. Only the standalone value `*` enables open
+registration. Comma- or whitespace-separated lists are passed to FastMCP as
+before, including any `*` entries; they do not enable this mode. The string `None`
+does not enable open registration either.
 
 <Warning>
 The callback configured in `ATLASSIAN_OAUTH_REDIRECT_URI` is for the upstream

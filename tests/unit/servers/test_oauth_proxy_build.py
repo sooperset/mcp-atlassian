@@ -237,6 +237,17 @@ def test_build_auth_provider_uses_env_redirect_uris(monkeypatch):
             "https://client.example/callback,http://localhost:*",
             ["https://client.example/callback", "http://localhost:*"],
         ),
+        (
+            "*,https://client.example/callback",
+            ["*", "https://client.example/callback"],
+        ),
+        (
+            "https://client.example/callback *",
+            ["https://client.example/callback", "*"],
+        ),
+        ("*,*", ["*", "*"]),
+        (",*,", ["*"]),
+        ("*,", ["*"]),
     ],
 )
 def test_allowed_redirect_uri_configuration(
@@ -254,15 +265,35 @@ def test_allowed_redirect_uri_configuration(
 
 @pytest.mark.parametrize(
     "raw",
-    ["*,https://client.example/callback", "https://client.example/callback *", "*,*"],
+    ["*,https://client.example/callback", "https://client.example/callback *"],
 )
-def test_allowed_redirect_uris_reject_mixed_wildcard(
-    monkeypatch: pytest.MonkeyPatch, raw: str
+@pytest.mark.anyio
+async def test_build_auth_provider_preserves_mixed_redirect_lists(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, raw: str
 ) -> None:
     monkeypatch.setenv("ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS", raw)
+    monkeypatch.setenv("JIRA_URL", "https://jira.example.com")
+    _set_required_oauth_env(
+        monkeypatch, redirect_uri="https://mcp.example.com/mcp-atlassian/callback"
+    )
+    provider = _build_auth_provider()
 
-    with pytest.raises(ValueError, match="must be used alone"):
-        _get_allowed_redirect_uris()
+    assert provider is not None
+    assert provider._allowed_client_redirect_uris is not None
+    assert "server-wide redirect URI allowlist" not in caplog.text
+    await provider.register_client(
+        OAuthClientInformationFull(
+            client_id="legacy-client",
+            redirect_uris=["https://client.example/callback"],
+        )
+    )
+    with pytest.raises(RegistrationError):
+        await provider.register_client(
+            OAuthClientInformationFull(
+                client_id="disallowed-client",
+                redirect_uris=["https://other.example/callback"],
+            )
+        )
 
 
 @pytest.mark.anyio

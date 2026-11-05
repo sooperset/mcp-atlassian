@@ -790,11 +790,7 @@ def _get_allowed_redirect_uris() -> list[str] | None:
     parsed = parse_env_list(raw)
     if parsed is None:
         return DEFAULT_ALLOWED_REDIRECT_URIS
-    if "*" in parsed:
-        if parsed != ["*"]:
-            raise ValueError(
-                "ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS: '*' must be used alone"
-            )
+    if raw is not None and raw.strip() == "*":
         logger.warning(
             "OAuth proxy server-wide redirect URI allowlist is disabled; "
             "keep OAuth consent enabled and only authorize trusted clients."
