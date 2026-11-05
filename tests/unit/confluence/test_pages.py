@@ -26,6 +26,8 @@ class TestPagesMixin:
             # Copy the necessary attributes from our mocked client
             mixin.confluence = confluence_client.confluence
             mixin.config = confluence_client.config
+            # Pin to v1; v2 routing is covered by TestPagesV2Routing
+            mixin.config.pages_use_v2 = False
             mixin.preprocessor = confluence_client.preprocessor
             return mixin
 
@@ -1974,6 +1976,7 @@ class TestPagesOAuthMixin:
                     body=body,
                     representation="storage",
                     version_comment=version_comment,
+                    parent_id=None,
                 )
 
                 # Verify v1 API was NOT called
@@ -2286,6 +2289,8 @@ class TestPageEmoji:
             mixin = PagesMixin()
             mixin.confluence = confluence_client.confluence
             mixin.config = confluence_client.config
+            # Pin to v1; v2 routing is covered by TestPagesV2Routing
+            mixin.config.pages_use_v2 = False
             mixin.preprocessor = confluence_client.preprocessor
             return mixin
 
@@ -3004,6 +3009,8 @@ class TestPageWidth:
             mixin = PagesMixin()
             mixin.confluence = confluence_client.confluence
             mixin.config = confluence_client.config
+            # Pin to v1; v2 routing is covered by TestPagesV2Routing
+            mixin.config.pages_use_v2 = False
             mixin.preprocessor = confluence_client.preprocessor
             return mixin
 
@@ -3886,3 +3893,195 @@ class TestUpdatePageSection:
             )
 
         pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+
+class TestPagesV2Routing:
+    """Tests for CONFLUENCE_PAGES_USE_V2 routing of page get/update calls."""
+
+    CLOUD_URL = "https://example.atlassian.net/wiki"
+    SERVER_URL = "https://confluence.example.com"
+
+    V2_PAGE = {
+        "id": "123",
+        "type": "page",
+        "title": "V2 Page",
+        "status": "current",
+        "space": {"key": "TEST", "id": "789", "name": "Test"},
+        "body": {"storage": {"value": "<p>v2</p>", "representation": "storage"}},
+        "version": {"number": 3},
+        "children": {"attachment": {"results": []}},
+        "_links": {},
+    }
+
+    @pytest.fixture
+    def make_mixin(self, confluence_config_factory, confluence_client):
+        """Build a PagesMixin with a real config for the given deployment."""
+
+        def _make(
+            *, url: str, auth_type: str = "basic", pages_use_v2: bool | None = None
+        ) -> PagesMixin:
+            overrides: dict[str, object] = {
+                "url": url,
+                "auth_type": auth_type,
+                "pages_use_v2": pages_use_v2,
+            }
+            if auth_type == "pat":
+                overrides.update(
+                    username=None, api_token=None, personal_token="pat-token"
+                )
+            with patch(
+                "mcp_atlassian.confluence.pages.ConfluenceClient.__init__",
+                return_value=None,
+            ):
+                mixin = PagesMixin()
+            mixin.config = confluence_config_factory(**overrides)
+            mixin.confluence = confluence_client.confluence
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+        return _make
+
+    @pytest.fixture
+    def mock_v2(self):
+        """Patch the v2 adapter class used by PagesMixin."""
+        with patch("mcp_atlassian.confluence.pages.ConfluenceV2Adapter") as cls:
+            adapter = cls.return_value
+            adapter.get_page.return_value = dict(self.V2_PAGE)
+            adapter.get_page_by_title.return_value = dict(self.V2_PAGE)
+            adapter.update_page.return_value = {"id": "123"}
+            yield cls
+
+    @staticmethod
+    def _stub_properties(mixin: PagesMixin) -> None:
+        """Avoid emoji/width property lookups hitting either API."""
+        mixin._get_page_emoji = MagicMock(return_value=None)  # type: ignore[method-assign]
+        mixin._get_page_width = MagicMock(return_value=None)  # type: ignore[method-assign]
+
+    @pytest.mark.parametrize("auth_type", ["basic", "pat", "oauth"])
+    @pytest.mark.parametrize("pages_use_v2", [None, True])
+    def test_cloud_get_page_content_uses_v2(
+        self, make_mixin, mock_v2, auth_type, pages_use_v2
+    ):
+        """Cloud uses v2 for every auth type unless explicitly disabled."""
+        mixin = make_mixin(
+            url=self.CLOUD_URL, auth_type=auth_type, pages_use_v2=pages_use_v2
+        )
+        self._stub_properties(mixin)
+
+        page = mixin.get_page_content("123", convert_to_markdown=False)
+
+        mock_v2.return_value.get_page.assert_called_once()
+        mixin.confluence.get_page_by_id.assert_not_called()
+        assert page.title == "V2 Page"
+        assert page.content == "<p>v2</p>"
+
+    def test_cloud_basic_auth_v2_uses_config_url(self, make_mixin, mock_v2):
+        """Non-OAuth Cloud builds the v2 adapter against the configured URL."""
+        mixin = make_mixin(url=self.CLOUD_URL)
+        self._stub_properties(mixin)
+
+        mixin.get_page_content("123", convert_to_markdown=False)
+
+        assert mock_v2.call_args.kwargs["base_url"] == self.CLOUD_URL
+
+    @pytest.mark.parametrize(
+        ("url", "pages_use_v2"),
+        [
+            (CLOUD_URL, False),
+            (SERVER_URL, None),
+            (SERVER_URL, True),
+            (SERVER_URL, False),
+        ],
+    )
+    def test_get_page_content_uses_v1(self, make_mixin, mock_v2, url, pages_use_v2):
+        """v1 is used when disabled, and always on Server/DC (no v2 API)."""
+        mixin = make_mixin(url=url, pages_use_v2=pages_use_v2)
+        self._stub_properties(mixin)
+
+        mixin.get_page_content("123", convert_to_markdown=False)
+
+        mixin.confluence.get_page_by_id.assert_called_once()
+        mock_v2.return_value.get_page.assert_not_called()
+
+    def test_cloud_update_page_uses_v2_with_parent(self, make_mixin, mock_v2):
+        """Cloud updates go through v2 and forward parent_id."""
+        mixin = make_mixin(url=self.CLOUD_URL, auth_type="pat")
+        self._stub_properties(mixin)
+
+        mixin.update_page(
+            "123",
+            "New Title",
+            "<p>body</p>",
+            is_markdown=False,
+            version_comment="msg",
+            parent_id="456",
+        )
+
+        mock_v2.return_value.update_page.assert_called_once_with(
+            page_id="123",
+            title="New Title",
+            body="<p>body</p>",
+            representation="storage",
+            version_comment="msg",
+            parent_id="456",
+        )
+        mixin.confluence.update_page.assert_not_called()
+
+    def test_cloud_update_page_minor_edit_warns(self, make_mixin, mock_v2, caplog):
+        """v2 cannot honor minor edits, so a warning is logged."""
+        mixin = make_mixin(url=self.CLOUD_URL)
+        self._stub_properties(mixin)
+
+        with caplog.at_level("WARNING", logger="mcp-atlassian"):
+            mixin.update_page(
+                "123", "T", "<p>b</p>", is_markdown=False, is_minor_edit=True
+            )
+
+        mock_v2.return_value.update_page.assert_called_once()
+        assert "does not support minor edits" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("url", "pages_use_v2"), [(CLOUD_URL, False), (SERVER_URL, None)]
+    )
+    def test_update_page_uses_v1(self, make_mixin, mock_v2, url, pages_use_v2):
+        """v1 update keeps minor_edit support when v2 is not used."""
+        mixin = make_mixin(url=url, pages_use_v2=pages_use_v2)
+        self._stub_properties(mixin)
+
+        mixin.update_page("123", "T", "<p>b</p>", is_markdown=False, is_minor_edit=True)
+
+        mixin.confluence.update_page.assert_called_once()
+        assert mixin.confluence.update_page.call_args.kwargs["minor_edit"] is True
+        mock_v2.return_value.update_page.assert_not_called()
+
+    def test_cloud_get_page_by_title_uses_v2(self, make_mixin, mock_v2):
+        """Cloud title lookups go through v2."""
+        mixin = make_mixin(url=self.CLOUD_URL)
+        self._stub_properties(mixin)
+
+        page = mixin.get_page_by_title("TEST", "V2 Page", convert_to_markdown=False)
+
+        mock_v2.return_value.get_page_by_title.assert_called_once_with(
+            "TEST", "V2 Page"
+        )
+        mixin.confluence.get_page_by_title.assert_not_called()
+        assert page is not None
+        assert page.content == "<p>v2</p>"
+
+    def test_cloud_get_page_by_title_not_found(self, make_mixin, mock_v2):
+        """A missing page on v2 returns None."""
+        mixin = make_mixin(url=self.CLOUD_URL)
+        self._stub_properties(mixin)
+        mock_v2.return_value.get_page_by_title.return_value = None
+
+        assert mixin.get_page_by_title("TEST", "Missing") is None
+
+    def test_server_get_page_by_title_uses_v1(self, make_mixin, mock_v2):
+        """Server/DC title lookups stay on v1."""
+        mixin = make_mixin(url=self.SERVER_URL)
+        self._stub_properties(mixin)
+
+        mixin.get_page_by_title("TEST", "Some Page")
+
+        mixin.confluence.get_page_by_title.assert_called_once()
+        mock_v2.return_value.get_page_by_title.assert_not_called()

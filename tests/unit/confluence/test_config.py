@@ -58,6 +58,31 @@ def test_from_env_attachment_download_use_v1_tristate():
         assert ConfluenceConfig.from_env().attachment_download_use_v1 is False
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, None),
+        ("", None),
+        ("   ", None),
+        ("true", True),
+        ("1", True),
+        ("false", False),
+        ("0", False),
+    ],
+)
+def test_from_env_pages_use_v2_tristate(raw: str | None, expected: bool | None):
+    """unset/empty -> None (auto); only an explicit value forces True/False."""
+    env = {
+        "CONFLUENCE_URL": "https://test.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "test_username",
+        "CONFLUENCE_API_TOKEN": "test_token",
+    }
+    if raw is not None:
+        env["CONFLUENCE_PAGES_USE_V2"] = raw
+    with patch.dict("os.environ", env, clear=True):
+        assert ConfluenceConfig.from_env().pages_use_v2 is expected
+
+
 def test_from_env_missing_url():
     """Test that from_env raises ValueError when URL is missing."""
     original_env = os.environ.copy()

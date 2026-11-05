@@ -51,6 +51,30 @@ class PagesMixin(ConfluenceClient):
         )
 
     @property
+    def _pages_v2_adapter(self) -> ConfluenceV2Adapter | None:
+        """Get a v2 API adapter for page get/update operations.
+
+        Controlled by ``config.pages_use_v2`` (``CONFLUENCE_PAGES_USE_V2``):
+
+        - ``None`` (default): auto — v2 on Cloud, v1 on Server/DC.
+        - ``True``: v2 wherever available (Server/DC has no v2 API, so v1).
+        - ``False``: always v1.
+
+        Returns:
+            ConfluenceV2Adapter instance when v2 should be used, None otherwise.
+        """
+        if self.config.pages_use_v2 is False:
+            return None
+        if not self.config.is_cloud:
+            if self.config.pages_use_v2:
+                logger.debug(
+                    "CONFLUENCE_PAGES_USE_V2 is set but the REST API v2 is only "
+                    "available on Confluence Cloud; using v1"
+                )
+            return None
+        return self._cloud_v2_adapter()
+
+    @property
     def _page_children_v2_adapter(self) -> ConfluenceV2Adapter | None:
         """Get v2 API adapter for Cloud page-children lookups.
 
@@ -201,21 +225,15 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error retrieving the page
         """
         try:
-            # Use v2 API for OAuth, v1 API for token/basic auth
-            v2_adapter = self._v2_adapter
+            v2_adapter = self._pages_v2_adapter
             if v2_adapter:
-                logger.debug(
-                    f"Using v2 API for OAuth authentication to get page '{page_id}'"
-                )
+                logger.debug(f"Using v2 API to get page '{page_id}'")
                 page = v2_adapter.get_page(
                     page_id=page_id,
                     expand="body.storage,version,space,children.attachment,history",
                 )
             else:
-                logger.debug(
-                    "Using v1 API for token/basic"
-                    f" authentication to get page '{page_id}'"
-                )
+                logger.debug(f"Using v1 API to get page '{page_id}'")
                 page = self.confluence.get_page_by_id(
                     page_id=page_id,
                     expand="body.storage,version,space,children.attachment,history",
@@ -576,9 +594,15 @@ class PagesMixin(ConfluenceClient):
         """
         try:
             # Directly try to find the page by title
-            page = self.confluence.get_page_by_title(
-                space_key, title, expand="body.storage,version"
-            )
+            page: Any
+            v2_adapter = self._pages_v2_adapter
+            if v2_adapter:
+                logger.debug(f"Using v2 API to get page '{title}' in '{space_key}'")
+                page = v2_adapter.get_page_by_title(space_key, title)
+            else:
+                page = self.confluence.get_page_by_title(
+                    space_key, title, expand="body.storage,version"
+                )
             if isinstance(page, dict) and isinstance(page.get("results"), list):
                 page = page["results"][0] if page["results"] else None
 
@@ -881,23 +905,25 @@ class PagesMixin(ConfluenceClient):
 
             logger.debug(f"Updating page {page_id} with title '{title}'")
 
-            # Use v2 API for OAuth authentication, v1 API for token/basic auth
-            v2_adapter = self._v2_adapter
+            v2_adapter = self._pages_v2_adapter
             if v2_adapter:
-                logger.debug(
-                    f"Using v2 API for OAuth authentication to update page '{page_id}'"
-                )
-                response = v2_adapter.update_page(
+                logger.debug(f"Using v2 API to update page '{page_id}'")
+                if is_minor_edit:
+                    logger.warning(
+                        "Confluence REST API v2 does not support minor edits; "
+                        f"page '{page_id}' will be updated as a regular edit "
+                        "(set CONFLUENCE_PAGES_USE_V2=false to use v1)"
+                    )
+                v2_adapter.update_page(
                     page_id=page_id,
                     title=title,
                     body=final_body,
                     representation=representation,
                     version_comment=version_comment,
+                    parent_id=parent_id,
                 )
             else:
-                logger.debug(
-                    f"Using v1 API for token/basic authentication to update page '{page_id}'"
-                )
+                logger.debug(f"Using v1 API to update page '{page_id}'")
                 update_kwargs = {
                     "page_id": page_id,
                     "title": title,

@@ -53,17 +53,42 @@ class TestConfluenceV2Adapter:
         space_response = Mock()
         space_response.status_code = 200
         space_response.json.return_value = {"key": "TEST"}
-        mock_session.get.side_effect = [mock_response, space_response]
+
+        # Mock attachments lookup
+        attachments_response = Mock()
+        attachments_response.status_code = 200
+        attachments_response.json.return_value = {
+            "results": [
+                {
+                    "id": "att1",
+                    "title": "diagram.png",
+                    "mediaType": "image/png",
+                    "fileSize": 42,
+                }
+            ]
+        }
+        mock_session.get.side_effect = [
+            mock_response,
+            space_response,
+            attachments_response,
+        ]
 
         # Call the method
         result = v2_adapter.get_page("123456")
 
-        # Verify the API call
-        assert mock_session.get.call_count == 2
+        # Verify the API calls
+        assert mock_session.get.call_count == 3
         mock_session.get.assert_any_call(
             "https://example.atlassian.net/wiki/api/v2/pages/123456",
             params={"body-format": "storage"},
         )
+        mock_session.get.assert_any_call(
+            "https://example.atlassian.net/wiki/api/v2/pages/123456/attachments",
+            params={"start": 0, "limit": 50},
+        )
+        attachments = result["children"]["attachment"]["results"]
+        assert [a["title"] for a in attachments] == ["diagram.png"]
+        assert attachments[0]["extensions"]["mediaType"] == "image/png"
 
         # Verify the response format
         assert result["id"] == "123456"
@@ -180,14 +205,141 @@ class TestConfluenceV2Adapter:
         # Call with expand parameter
         result = v2_adapter.get_page("123456", expand="body.storage,version")
 
-        # Verify the API call doesn't include expand in params
-        mock_session.get.assert_called_once_with(
+        # Verify the page API call doesn't include expand in params
+        assert mock_session.get.call_args_list[0] == call(
             "https://example.atlassian.net/wiki/api/v2/pages/123456",
             params={"body-format": "storage"},
         )
 
         # Verify we still get a result
         assert result["id"] == "123456"
+
+    @staticmethod
+    def _json_response(payload: dict) -> Mock:
+        """Build a successful mock response returning ``payload``."""
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = payload
+        return response
+
+    def test_get_page_attachment_failure_falls_back_to_empty(
+        self, v2_adapter, mock_session
+    ):
+        """A failed attachments lookup must not fail the page fetch."""
+        page_response = self._json_response(
+            {"id": "123456", "title": "Test Page", "spaceId": "789"}
+        )
+        space_response = self._json_response({"key": "TEST"})
+        attachments_response = Mock()
+        attachments_response.status_code = 500
+        attachments_response.raise_for_status.side_effect = HTTPError(
+            response=attachments_response
+        )
+        mock_session.get.side_effect = [
+            page_response,
+            space_response,
+            attachments_response,
+        ]
+
+        result = v2_adapter.get_page("123456")
+
+        assert result["id"] == "123456"
+        assert result["children"] == {"attachment": {"results": []}}
+
+    def test_update_page_sends_parent_id_and_increments_version(
+        self, v2_adapter, mock_session
+    ):
+        """parentId and version message are included in the v2 PUT payload."""
+        mock_session.get.side_effect = [
+            self._json_response({"id": "123", "version": {"number": 4}}),
+            self._json_response({"key": "TEST"}),
+        ]
+        mock_session.put.return_value = self._json_response(
+            {"id": "123", "title": "T", "spaceId": "789", "version": {"number": 5}}
+        )
+
+        v2_adapter.update_page(
+            page_id="123",
+            title="T",
+            body="<p>b</p>",
+            version_comment="msg",
+            parent_id="456",
+        )
+
+        url = mock_session.put.call_args.args[0]
+        payload = mock_session.put.call_args.kwargs["json"]
+        assert url == "https://example.atlassian.net/wiki/api/v2/pages/123"
+        assert payload["parentId"] == "456"
+        assert payload["version"] == {"number": 5, "message": "msg"}
+        assert payload["body"] == {"representation": "storage", "value": "<p>b</p>"}
+
+    def test_update_page_without_parent_id_omits_it(self, v2_adapter, mock_session):
+        """parentId is not sent when no new parent is given."""
+        mock_session.get.side_effect = [
+            self._json_response({"id": "123", "version": {"number": 1}}),
+            self._json_response({"key": "TEST"}),
+        ]
+        mock_session.put.return_value = self._json_response(
+            {"id": "123", "spaceId": "789"}
+        )
+
+        v2_adapter.update_page(page_id="123", title="T", body="<p>b</p>")
+
+        assert "parentId" not in mock_session.put.call_args.kwargs["json"]
+
+    def test_get_page_by_title_found(self, v2_adapter, mock_session):
+        """Title lookup resolves the space ID and normalizes the first match."""
+        mock_session.get.side_effect = [
+            self._json_response({"results": [{"id": "789", "key": "TEST"}]}),
+            self._json_response(
+                {
+                    "results": [
+                        {
+                            "id": "123",
+                            "title": "My Page",
+                            "spaceId": "789",
+                            "body": {"storage": {"value": "<p>hi</p>"}},
+                            "version": {"number": 2},
+                        }
+                    ]
+                }
+            ),
+            self._json_response({"key": "TEST", "name": "Test Space"}),
+            self._json_response({"results": []}),
+        ]
+
+        result = v2_adapter.get_page_by_title("TEST", "My Page")
+
+        assert result is not None
+        assert result["id"] == "123"
+        assert result["space"]["key"] == "TEST"
+        assert result["body"]["storage"]["value"] == "<p>hi</p>"
+        assert mock_session.get.call_args_list[1] == call(
+            "https://example.atlassian.net/wiki/api/v2/pages",
+            params={
+                "space-id": "789",
+                "title": "My Page",
+                "status": "current",
+                "body-format": "storage",
+                "limit": 1,
+            },
+        )
+
+    def test_get_page_by_title_not_found(self, v2_adapter, mock_session):
+        """No matching page returns None."""
+        mock_session.get.side_effect = [
+            self._json_response({"results": [{"id": "789", "key": "TEST"}]}),
+            self._json_response({"results": []}),
+        ]
+
+        assert v2_adapter.get_page_by_title("TEST", "Missing") is None
+
+    def test_get_page_by_title_unknown_space_raises(self, v2_adapter, mock_session):
+        """An unknown space key raises ValueError."""
+        mock_session.get.return_value = self._json_response({"results": []})
+
+        with pytest.raises(ValueError, match="not found"):
+            v2_adapter.get_page_by_title("NOPE", "Any")
 
     def test_get_page_direct_children_resolves_space_key(
         self, v2_adapter, mock_session
