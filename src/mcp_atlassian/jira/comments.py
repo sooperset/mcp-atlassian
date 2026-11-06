@@ -374,8 +374,9 @@ class CommentsMixin(JiraClient):
         Raises:
             ValueError: If both public and visibility are set, if
                 issue_key's project is internal-only and public is not
-                exactly False, or if parent_id is set together with public
-                or on Jira Server/Data Center
+                exactly False, or if parent_id is set together with public,
+                is not a numeric comment ID, or is used on Jira
+                Server/Data Center
             Exception: If there is an error adding the comment
         """
         # The guard names a project, but the leak it prevents is per issue.

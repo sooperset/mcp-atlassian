@@ -875,7 +875,7 @@ class TestCommentsMixin:
     def test_add_comment_parent_id_rejects_non_ascii_digit_ids(
         self, comments_mixin, bad_id
     ):
-        """Only plain ASCII digits are accepted, so int() can never fail later."""
+        """Only plain ASCII digits are accepted as a comment ID."""
         comments_mixin.jira.get = Mock()
         comments_mixin._post_api3 = Mock()
 
