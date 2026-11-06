@@ -773,16 +773,60 @@ class TestCommentsMixin:
         server_comments_mixin.jira.issue_add_comment.assert_not_called()
 
     def test_add_comment_parent_id_result_reports_what_jira_returned(
-        self, comments_mixin
+        self, comments_mixin, caplog
     ):
-        """The returned parent_id comes from Jira's response, not the request."""
+        """The returned parent_id is Jira's value; a different root is logged."""
         comments_mixin.jira.get = Mock(return_value={"id": "10000"})
         comments_mixin._post_api3 = Mock(return_value=self._reply_response(77777))
 
-        result = comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
+        with caplog.at_level("WARNING"):
+            result = comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
 
         assert comments_mixin._post_api3.call_args[0][1]["parentId"] == 10000
         assert result["parent_id"] == "77777"
+        assert "did not confirm the thread" in caplog.text
+        assert "sent parentId 10000, got 77777" in caplog.text
+
+    def test_add_comment_parent_id_matching_root_logs_no_warning(
+        self, comments_mixin, caplog
+    ):
+        """When Jira confirms the thread root, nothing is logged."""
+        comments_mixin.jira.get = Mock(return_value={"id": "10000"})
+        comments_mixin._post_api3 = Mock(return_value=self._reply_response(10000))
+
+        with caplog.at_level("WARNING"):
+            comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
+
+        assert "did not confirm the thread" not in caplog.text
+
+    def test_add_comment_parent_id_non_numeric_confirmation_does_not_raise(
+        self, comments_mixin
+    ):
+        """A comment that was posted is never reported as a failure afterwards."""
+        response = self._reply_response(10000)
+        response["parentId"] = "not-a-number"
+        comments_mixin.jira.get = Mock(return_value={"id": "10000"})
+        comments_mixin._post_api3 = Mock(return_value=response)
+
+        result = comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
+
+        assert result["id"] == "10002"
+        assert result["parent_id"] == "not-a-number"
+
+    def test_add_comment_parent_id_accepts_int_and_normalises_leading_zeros(
+        self, comments_mixin
+    ):
+        """The lookup URL and the posted parentId use the same integer."""
+        comments_mixin.jira.get = Mock(return_value={"id": "100"})
+        comments_mixin._post_api3 = Mock(return_value=self._reply_response(100))
+
+        comments_mixin.add_comment("TEST-123", "Reply", parent_id="0100")
+        comments_mixin.add_comment("TEST-123", "Reply", parent_id=100)
+
+        urls = [c.args[0] for c in comments_mixin.jira.resource_url.call_args_list]
+        assert urls == ["issue/TEST-123/comment/100"] * 2
+        payloads = [c.args[1] for c in comments_mixin._post_api3.call_args_list]
+        assert [p["parentId"] for p in payloads] == [100, 100]
 
     @pytest.mark.parametrize("returned", [None, "missing"])
     def test_add_comment_parent_id_omitted_when_jira_does_not_confirm(
@@ -815,7 +859,19 @@ class TestCommentsMixin:
         )
         assert comments_mixin._post_api3.call_args[0][1]["parentId"] == 10000
 
-    @pytest.mark.parametrize("bad_id", ["abc", "", "12a", "-5", "\u00b2", "1.5"])
+    @pytest.mark.parametrize(
+        "bad_id",
+        [
+            "abc",
+            "",
+            "12a",
+            "-5",
+            "\u00b2",
+            "1.5",
+            "\u0661\u0662\u0663",
+            "\uff11\uff12",
+        ],
+    )
     def test_add_comment_parent_id_rejects_non_ascii_digit_ids(
         self, comments_mixin, bad_id
     ):

@@ -3757,13 +3757,14 @@ async def test_add_comment_forwards_parent_id(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("blank", ["", "   "])
 async def test_add_comment_treats_empty_parent_id_as_omitted(
-    jira_client, mock_jira_fetcher
+    jira_client, mock_jira_fetcher, blank
 ):
-    """Test a client's default empty parent_id posts a top-level comment."""
+    """Test a client's default empty or blank parent_id posts a top-level comment."""
     await jira_client.call_tool(
         "jira_add_comment",
-        {"issue_key": "TEST-123", "body": "Top level", "parent_id": ""},
+        {"issue_key": "TEST-123", "body": "Top level", "parent_id": blank},
     )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(

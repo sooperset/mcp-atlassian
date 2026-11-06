@@ -347,13 +347,6 @@ class CommentsMixin(JiraClient):
             comment: Comment text to add (in Markdown format)
             visibility: (optional) Restrict comment visibility
                 (e.g. {"type":"group","value":"jira-users"})
-            parent_id: (optional, Jira Cloud only) ID of the comment to
-                reply to, so the new comment is posted in that comment's
-                thread. Jira threads are one level deep: when parent_id is
-                itself a reply, the reply is attached to that thread's top
-                comment, which places it in the same thread. Cannot be
-                combined with public, because the ServiceDesk comment API
-                has no threaded replies.
             public: (optional) For JSM issues only. True for
                 customer-visible, False for internal/agent-only. Posted
                 via the ServiceDesk API as a raw string; Jira Cloud
@@ -366,6 +359,14 @@ class CommentsMixin(JiraClient):
                 customer request, in which case it has no portal audience,
                 this argument is ignored, and the comment posts through
                 the ordinary path.
+
+            parent_id: (optional, Jira Cloud only) ID of the comment to
+                reply to, so the new comment is posted in that comment's
+                thread. Jira threads are one level deep: when parent_id is
+                itself a reply, the reply is attached to that thread's top
+                comment, which places it in the same thread. Cannot be
+                combined with public, because the ServiceDesk comment API
+                has no threaded replies.
 
         Returns:
             The created comment details
@@ -469,7 +470,9 @@ class CommentsMixin(JiraClient):
             if thread_root is not None:
                 # Report only what Jira confirmed, never what was requested.
                 confirmed_parent = result.get("parentId")
-                if confirmed_parent is None or int(confirmed_parent) != thread_root:
+                if confirmed_parent is None or str(confirmed_parent).strip() != str(
+                    thread_root
+                ):
                     logger.warning(
                         f"Jira did not confirm the thread for new comment "
                         f"{result.get('id')} on {issue_key}: sent parentId "
@@ -492,26 +495,26 @@ class CommentsMixin(JiraClient):
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
-            parent_id: ID of the comment being replied to
+            parent_id: ID of the comment being replied to (digits only)
 
         Returns:
             The thread's top comment ID, as the integer the API expects
         """
+        comment_id = int(str(parent_id).strip())
         url = self.jira.resource_url(
-            f"issue/{issue_key}/comment/{str(parent_id).strip()}", api_version="3"
+            f"issue/{issue_key}/comment/{comment_id}", api_version="3"
         )
         try:
             parent = self.jira.get(url)
         except Exception as e:
             raise Exception(
-                f"Could not read parent comment {str(parent_id).strip()} "
-                f"on {issue_key}: {e}"
+                f"Could not read parent comment {comment_id} on {issue_key}: {e}"
             ) from e
         if not isinstance(parent, dict):
             msg = f"Unexpected response looking up comment {parent_id}: {type(parent)}"
             raise TypeError(msg)
         root = parent.get("parentId")
-        return int(root) if root is not None else int(str(parent_id).strip())
+        return int(root) if root is not None else comment_id
 
     def _add_servicedesk_comment(
         self,

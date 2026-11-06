@@ -2665,7 +2665,9 @@ async def add_comment(
     Raises:
         ValueError: If in read-only mode, Jira client unavailable, or
             the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
-            and public is not exactly False.
+            and public is not exactly False, or parent_id is combined
+            with public, is not a numeric comment ID, or is used on
+            Jira Server/Data Center.
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
