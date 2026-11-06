@@ -394,6 +394,17 @@ class TestAdfToMarkdown:
         )
         assert adf_to_markdown(doc) == "[see **docs**](https://example.com) here"
 
+    def test_link_destination_percent_encodes_parentheses(self):
+        doc = _doc(_para(_text("wiki", _link("https://e.x/Foo_(bar)?q=)"))))
+        assert adf_to_markdown(doc) == "[wiki](https://e.x/Foo_%28bar%29?q=%29)"
+
+    def test_link_with_parentheses_round_trips_href(self):
+        href = "https://e.x/Foo_(bar)"
+        doc = _doc(_para(_text("wiki", _link(href))))
+        back = markdown_to_adf(adf_to_markdown(doc) or "")
+        stored = back["content"][0]["content"][0]["marks"][0]["attrs"]["href"]
+        assert stored == "https://e.x/Foo_%28bar%29"
+
     def test_link_with_code_label(self):
         doc = _doc(_para(_text("run_job", _link("https://e.x/j"), _CODE)))
         assert adf_to_markdown(doc) == "[`run_job`](https://e.x/j)"
@@ -454,6 +465,28 @@ class TestAdfToMarkdown:
             }
         )
         assert adf_to_markdown(doc) == "3. a\n   - inner\n4. b"
+
+    def test_list_item_paragraphs_keep_blank_line(self):
+        nested = {
+            "type": "bulletList",
+            "content": [{"type": "listItem", "content": [_para(_text("inner"))]}],
+        }
+        doc = _doc(
+            {
+                "type": "bulletList",
+                "content": [
+                    {
+                        "type": "listItem",
+                        "content": [
+                            _para(_text("first")),
+                            _para(_text("second")),
+                            nested,
+                        ],
+                    }
+                ],
+            }
+        )
+        assert adf_to_markdown(doc) == "- first\n\n  second\n  - inner"
 
     def test_task_list(self):
         doc = _doc(

@@ -641,6 +641,7 @@ def adf_to_text(adf_content: dict | list | str | None) -> str | None:
 
 _ATOM_INLINE_TYPES = frozenset({"mention", "emoji", "date", "status", "inlineCard"})
 _MARK_DELIMITERS = {"strong": "**", "em": "*", "strike": "~~"}
+_LIST_TYPES = frozenset({"bulletList", "orderedList", "taskList"})
 
 
 def _code_span(text: str) -> str:
@@ -729,7 +730,8 @@ def _render_inline(nodes: list[Any]) -> str:
         ):
             label_parts.append(_render_text_node(nodes[i]))
             i += 1
-        parts.append(f"[{''.join(label_parts)}]({href})")
+        destination = href.replace("(", "%28").replace(")", "%29")
+        parts.append(f"[{''.join(label_parts)}]({destination})")
     return "".join(parts)
 
 
@@ -739,8 +741,22 @@ def _indent(text: str, prefix: str) -> str:
 
 
 def _render_list_item(item: dict[str, Any], marker: str) -> str:
-    """Render a list item, indenting its continuation under the marker."""
-    body = _render_blocks(item.get("content") or [], tight=True)
+    """Render a list item, indenting its continuation under the marker.
+
+    A blank line separates paragraphs inside the item. A nested list follows
+    the line before it directly.
+    """
+    body = ""
+    for child in item.get("content") or []:
+        if not isinstance(child, dict):
+            continue
+        block = _render_block(child)
+        if not block:
+            continue
+        if body:
+            nested = child.get("type") in _LIST_TYPES
+            body += "\n" if nested else "\n\n"
+        body += block
     continuation = " " * len(marker)
     lines = body.split("\n")
     rest = _indent("\n".join(lines[1:]), continuation) if len(lines) > 1 else ""
@@ -824,7 +840,7 @@ def _render_block(node: dict[str, Any]) -> str:
         level = attrs.get("level", 1)
         level = level if isinstance(level, int) and 1 <= level <= 6 else 1
         return f"{'#' * level} {_render_inline(content)}"
-    if node_type in ("bulletList", "orderedList", "taskList"):
+    if node_type in _LIST_TYPES:
         return _render_list(node)
     if node_type == "codeBlock":
         return _render_code_block(node)
