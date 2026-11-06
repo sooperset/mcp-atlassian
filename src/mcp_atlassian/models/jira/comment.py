@@ -12,7 +12,7 @@ from ..constants import (
     EMPTY_STRING,
     JIRA_DEFAULT_ID,
 )
-from .adf import adf_to_text
+from .adf import adf_to_markdown
 from .common import JiraUser
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class JiraComment(ApiModel, TimestampMixin):
         body = data.get("body")
         if isinstance(body, dict):
             # Handle Atlassian Document Format (ADF)
-            converted = adf_to_text(body)
+            converted = adf_to_markdown(body)
             body_content = converted if converted else EMPTY_STRING
         elif body:
             # Handle plain text or HTML content

@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.mcp_atlassian.models.jira.adf import (
+    adf_to_markdown,
     adf_to_text,
     extract_top_level_media_nodes,
     markdown_to_adf,
@@ -309,6 +310,244 @@ class TestAdfToText:
             ],
         }
         assert adf_to_text(node) == "Item 1"
+
+
+def _doc(*blocks: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "doc", "version": 1, "content": list(blocks)}
+
+
+def _para(*inline: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "paragraph", "content": list(inline)}
+
+
+def _text(text: str, *marks: dict[str, Any]) -> dict[str, Any]:
+    node: dict[str, Any] = {"type": "text", "text": text}
+    if marks:
+        node["marks"] = list(marks)
+    return node
+
+
+_CODE = {"type": "code"}
+_STRONG = {"type": "strong"}
+_EM = {"type": "em"}
+
+
+def _link(href: str) -> dict[str, Any]:
+    return {"type": "link", "attrs": {"href": href}}
+
+
+class TestAdfToMarkdown:
+    """Tests for the adf_to_markdown function."""
+
+    def test_none_input(self):
+        assert adf_to_markdown(None) is None
+
+    def test_string_input(self):
+        assert adf_to_markdown("already text") == "already text"
+
+    def test_empty_doc(self):
+        assert adf_to_markdown(_doc()) is None
+
+    def test_inline_text_stays_on_one_line(self):
+        doc = _doc(_para(_text("see "), _text("this", _STRONG), _text(" now")))
+        assert adf_to_markdown(doc) == "see **this** now"
+
+    def test_code_mark_keeps_underscores(self):
+        """Regression for #1340: identifiers in code spans must survive."""
+        doc = _doc(
+            _para(_text("see "), _text("classify_check_reach", _CODE), _text(" ok"))
+        )
+        assert adf_to_markdown(doc) == "see `classify_check_reach` ok"
+
+    def test_plain_underscores_plus_and_tilde_are_kept(self):
+        doc = _doc(_para(_text("parameter_group_sync took ~155s, +0.095")))
+        assert adf_to_markdown(doc) == "parameter_group_sync took ~155s, +0.095"
+
+    def test_code_span_containing_backtick(self):
+        doc = _doc(_para(_text("a`b", _CODE)))
+        assert adf_to_markdown(doc) == "``a`b``"
+
+    def test_code_span_starting_with_backtick(self):
+        doc = _doc(_para(_text("`x", _CODE)))
+        assert adf_to_markdown(doc) == "`` `x ``"
+
+    def test_emphasis_keeps_edge_whitespace_outside(self):
+        doc = _doc(_para(_text("a"), _text(" bold ", _STRONG), _text("b")))
+        assert adf_to_markdown(doc) == "a **bold** b"
+
+    def test_combined_marks(self):
+        doc = _doc(_para(_text("x", _STRONG, _EM, {"type": "strike"})))
+        assert adf_to_markdown(doc) == "~~***x***~~"
+
+    def test_link(self):
+        doc = _doc(_para(_text("PR", _link("https://example.com/pr/1"))))
+        assert adf_to_markdown(doc) == "[PR](https://example.com/pr/1)"
+
+    def test_link_spanning_styled_nodes_renders_once(self):
+        href = "https://example.com"
+        doc = _doc(
+            _para(
+                _text("see ", _link(href)),
+                _text("docs", _link(href), _STRONG),
+                _text(" here"),
+            )
+        )
+        assert adf_to_markdown(doc) == "[see **docs**](https://example.com) here"
+
+    def test_link_with_code_label(self):
+        doc = _doc(_para(_text("run_job", _link("https://e.x/j"), _CODE)))
+        assert adf_to_markdown(doc) == "[`run_job`](https://e.x/j)"
+
+    def test_hard_break(self):
+        doc = _doc(_para(_text("one"), {"type": "hardBreak"}, _text("two")))
+        assert adf_to_markdown(doc) == "one\ntwo"
+
+    def test_paragraphs_are_separated_by_blank_line(self):
+        doc = _doc(_para(_text("one")), _para(_text("two")))
+        assert adf_to_markdown(doc) == "one\n\ntwo"
+
+    def test_inline_atoms(self):
+        doc = _doc(
+            _para(
+                {"type": "mention", "attrs": {"id": "1", "text": "@Ann"}},
+                _text(" "),
+                {"type": "status", "attrs": {"text": "DONE"}},
+                _text(" "),
+                {"type": "inlineCard", "attrs": {"url": "https://e.x/c"}},
+            )
+        )
+        assert adf_to_markdown(doc) == "@Ann [DONE] https://e.x/c"
+
+    def test_heading(self):
+        doc = _doc(
+            {"type": "heading", "attrs": {"level": 2}, "content": [_text("Fix")]}
+        )
+        assert adf_to_markdown(doc) == "## Fix"
+
+    def test_code_block_with_language(self):
+        doc = _doc(
+            {
+                "type": "codeBlock",
+                "attrs": {"language": "sql"},
+                "content": [_text("SELECT a_b\nFROM t;")],
+            }
+        )
+        assert adf_to_markdown(doc) == "```sql\nSELECT a_b\nFROM t;\n```"
+
+    def test_code_block_containing_fence(self):
+        doc = _doc({"type": "codeBlock", "content": [_text("```\nx\n```")]})
+        assert adf_to_markdown(doc) == "````\n```\nx\n```\n````"
+
+    def test_ordered_list_with_start_and_nested_bullets(self):
+        nested = {
+            "type": "bulletList",
+            "content": [{"type": "listItem", "content": [_para(_text("inner"))]}],
+        }
+        doc = _doc(
+            {
+                "type": "orderedList",
+                "attrs": {"order": 3},
+                "content": [
+                    {"type": "listItem", "content": [_para(_text("a")), nested]},
+                    {"type": "listItem", "content": [_para(_text("b"))]},
+                ],
+            }
+        )
+        assert adf_to_markdown(doc) == "3. a\n   - inner\n4. b"
+
+    def test_task_list(self):
+        doc = _doc(
+            {
+                "type": "taskList",
+                "content": [
+                    {
+                        "type": "taskItem",
+                        "attrs": {"state": "DONE"},
+                        "content": [_text("done")],
+                    },
+                    {
+                        "type": "taskItem",
+                        "attrs": {"state": "TODO"},
+                        "content": [_text("todo")],
+                    },
+                ],
+            }
+        )
+        assert adf_to_markdown(doc) == "- [x] done\n- [ ] todo"
+
+    def test_blockquote(self):
+        doc = _doc(
+            {"type": "blockquote", "content": [_para(_text("a")), _para(_text("b"))]}
+        )
+        assert adf_to_markdown(doc) == "> a\n>\n> b"
+
+    def test_table_escapes_pipes(self):
+        def cell(kind: str, text: str) -> dict[str, Any]:
+            return {"type": kind, "content": [_para(_text(text))]}
+
+        doc = _doc(
+            {
+                "type": "table",
+                "content": [
+                    {
+                        "type": "tableRow",
+                        "content": [cell("tableHeader", "k"), cell("tableHeader", "v")],
+                    },
+                    {
+                        "type": "tableRow",
+                        "content": [cell("tableCell", "a|b"), cell("tableCell", "c")],
+                    },
+                ],
+            }
+        )
+        assert adf_to_markdown(doc) == "| k | v |\n| --- | --- |\n| a\\|b | c |"
+
+    def test_rule_panel_and_expand(self):
+        doc = _doc(
+            {"type": "rule"},
+            {
+                "type": "panel",
+                "attrs": {"panelType": "warning"},
+                "content": [_para(_text("careful"))],
+            },
+            {
+                "type": "expand",
+                "attrs": {"title": "More"},
+                "content": [_para(_text("hidden"))],
+            },
+        )
+        assert adf_to_markdown(doc) == (
+            "---\n\n:::warning\ncareful\n:::\n\n{expand:More}\nhidden\n{expand}"
+        )
+
+    def test_media_is_skipped(self):
+        doc = _doc(
+            _para(_text("before")),
+            {
+                "type": "mediaSingle",
+                "content": [{"type": "media", "attrs": {"id": "1", "type": "file"}}],
+            },
+        )
+        assert adf_to_markdown(doc) == "before"
+
+    @pytest.mark.parametrize(
+        "markdown",
+        [
+            "see `classify_check_reach` ok",
+            "The function `find_provider_by_url` in `provider_conflict_checker.py`",
+            "A **bold** and *italic* and ~~gone~~ word",
+            "Read [the docs](https://example.com/a_b_c) first",
+            "## Heading\n\nBody text",
+            "- one\n- two",
+            "1. first\n2. second",
+            "- [ ] open\n- [x] closed",
+            "```sql\nUPDATE t SET a_b = 1;\n```",
+            "> quoted",
+            "| a | b |\n| --- | --- |\n| 1 | 2 |",
+        ],
+    )
+    def test_round_trip_from_markdown(self, markdown: str):
+        assert adf_to_markdown(markdown_to_adf(markdown)) == markdown
 
 
 class TestMarkdownToAdf:

@@ -301,6 +301,39 @@ class TestJiraIssue:
         assert issue.environment == "Cloud ADF"
         assert issue.to_simplified_dict()["environment"] == "Cloud ADF"
 
+    def test_from_api_response_converts_adf_description_to_markdown(self):
+        """Inline marks in a Cloud ADF description render as Markdown."""
+        local_issue_data = {
+            "id": "10003",
+            "key": "PROJ-125",
+            "fields": {
+                "summary": "Cloud issue",
+                "description": {
+                    "type": "doc",
+                    "version": 1,
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [
+                                {"type": "text", "text": "Call "},
+                                {
+                                    "type": "text",
+                                    "text": "get_user_id",
+                                    "marks": [{"type": "code"}],
+                                },
+                                {"type": "text", "text": " first."},
+                            ],
+                        }
+                    ],
+                },
+            },
+        }
+        issue = JiraIssue.from_api_response(
+            local_issue_data, requested_fields="description"
+        )
+
+        assert issue.description == "Call `get_user_id` first."
+
     def test_from_api_response_builds_browse_url(self, jira_issue_data):
         """Test creating a browser URL from the configured Jira base URL."""
         issue = JiraIssue.from_api_response(

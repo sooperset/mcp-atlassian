@@ -637,3 +637,261 @@ def adf_to_text(adf_content: dict | list | str | None) -> str | None:
         return None
 
     return None
+
+
+_ATOM_INLINE_TYPES = frozenset({"mention", "emoji", "date", "status", "inlineCard"})
+_MARK_DELIMITERS = {"strong": "**", "em": "*", "strike": "~~"}
+
+
+def _code_span(text: str) -> str:
+    """Wrap text in a code span with a fence longer than any backtick run in it."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    if text.startswith("`") or text.endswith("`"):
+        text = f" {text} "
+    return f"{fence}{text}{fence}"
+
+
+def _wrap_delimiter(text: str, delimiter: str) -> str:
+    """Wrap text in an emphasis delimiter, keeping edge whitespace outside."""
+    stripped = text.strip()
+    if not stripped:
+        return text
+    leading = text[: len(text) - len(text.lstrip())]
+    trailing = text[len(text.rstrip()) :]
+    return f"{leading}{delimiter}{stripped}{delimiter}{trailing}"
+
+
+def _link_href(node: dict[str, Any]) -> str | None:
+    """Return the href of a text node's link mark, if it has one."""
+    for mark in node.get("marks") or []:
+        if mark.get("type") == "link":
+            href = (mark.get("attrs") or {}).get("href")
+            return str(href) if href else None
+    return None
+
+
+def _render_text_node(node: dict[str, Any]) -> str:
+    """Render one ADF text node with its non-link marks as Markdown."""
+    text = node.get("text", "")
+    if not text:
+        return ""
+    mark_types = [mark.get("type") for mark in node.get("marks") or []]
+    if "code" in mark_types:
+        text = _code_span(text)
+    for mark_type, delimiter in _MARK_DELIMITERS.items():
+        if mark_type in mark_types:
+            text = _wrap_delimiter(text, delimiter)
+    return text
+
+
+def _render_inline_node(node: dict[str, Any]) -> str:
+    """Render one non-text inline ADF node as Markdown."""
+    node_type = node.get("type")
+    if node_type == "hardBreak":
+        return "\n"
+    if node_type in _ATOM_INLINE_TYPES:
+        return adf_to_text(node) or ""
+    content = node.get("content")
+    if isinstance(content, list):
+        return _render_inline(content)
+    return ""
+
+
+def _render_inline(nodes: list[Any]) -> str:
+    """Render a list of inline ADF nodes as Markdown.
+
+    Consecutive text nodes that share a link render as one ``[label](href)``,
+    even when the label mixes styles.
+    """
+    parts: list[str] = []
+    i = 0
+    while i < len(nodes):
+        node = nodes[i]
+        if not isinstance(node, dict):
+            i += 1
+            continue
+        if node.get("type") != "text":
+            parts.append(_render_inline_node(node))
+            i += 1
+            continue
+        href = _link_href(node)
+        if href is None:
+            parts.append(_render_text_node(node))
+            i += 1
+            continue
+        label_parts: list[str] = []
+        while (
+            i < len(nodes)
+            and isinstance(nodes[i], dict)
+            and nodes[i].get("type") == "text"
+            and _link_href(nodes[i]) == href
+        ):
+            label_parts.append(_render_text_node(nodes[i]))
+            i += 1
+        parts.append(f"[{''.join(label_parts)}]({href})")
+    return "".join(parts)
+
+
+def _indent(text: str, prefix: str) -> str:
+    """Prefix every non-empty line of text."""
+    return "\n".join(f"{prefix}{line}" if line else line for line in text.split("\n"))
+
+
+def _render_list_item(item: dict[str, Any], marker: str) -> str:
+    """Render a list item, indenting its continuation under the marker."""
+    body = _render_blocks(item.get("content") or [], tight=True)
+    continuation = " " * len(marker)
+    lines = body.split("\n")
+    rest = _indent("\n".join(lines[1:]), continuation) if len(lines) > 1 else ""
+    first = f"{marker}{lines[0]}".rstrip()
+    return f"{first}\n{rest}" if rest else first
+
+
+def _render_list(node: dict[str, Any]) -> str:
+    """Render a bulletList, orderedList or taskList node as Markdown."""
+    node_type = node.get("type")
+    items = [item for item in node.get("content") or [] if isinstance(item, dict)]
+    rendered: list[str] = []
+    if node_type == "orderedList":
+        start = (node.get("attrs") or {}).get("order", 1)
+        number = start if isinstance(start, int) else 1
+        for item in items:
+            rendered.append(_render_list_item(item, f"{number}. "))
+            number += 1
+    elif node_type == "taskList":
+        for item in items:
+            if item.get("type") == "taskList":
+                rendered.append(_indent(_render_list(item), "  "))
+                continue
+            done = (item.get("attrs") or {}).get("state") == "DONE"
+            checkbox = "[x]" if done else "[ ]"
+            label = _render_inline(item.get("content") or [])
+            rendered.append(f"- {checkbox} {label}".rstrip())
+    else:
+        for item in items:
+            rendered.append(_render_list_item(item, "- "))
+    return "\n".join(rendered)
+
+
+def _render_table(node: dict[str, Any]) -> str:
+    """Render an ADF table as a GitHub-flavored Markdown table."""
+    rows: list[list[str]] = []
+    for row in node.get("content") or []:
+        if not isinstance(row, dict):
+            continue
+        cells: list[str] = []
+        for cell in row.get("content") or []:
+            if not isinstance(cell, dict):
+                continue
+            text = _render_blocks(cell.get("content") or [], tight=True)
+            cells.append(text.replace("|", "\\|").replace("\n", " ").strip())
+        rows.append(cells)
+    if not rows:
+        return ""
+    width = max(len(cells) for cells in rows)
+    lines: list[str] = []
+    for index, cells in enumerate(rows):
+        padded = cells + [""] * (width - len(cells))
+        lines.append("| " + " | ".join(padded) + " |")
+        if index == 0:
+            lines.append("|" + "|".join([" --- "] * width) + "|")
+    return "\n".join(lines)
+
+
+def _render_code_block(node: dict[str, Any]) -> str:
+    """Render a codeBlock node as a fenced Markdown code block."""
+    code = "".join(
+        child.get("text", "")
+        for child in node.get("content") or []
+        if isinstance(child, dict)
+    )
+    language = (node.get("attrs") or {}).get("language") or ""
+    longest = max((len(run) for run in re.findall(r"`{3,}", code)), default=2)
+    fence = "`" * (longest + 1)
+    return f"{fence}{language}\n{code}\n{fence}"
+
+
+def _render_block(node: dict[str, Any]) -> str:
+    """Render one block-level ADF node as Markdown."""
+    node_type = node.get("type")
+    content = node.get("content") or []
+    attrs = node.get("attrs") or {}
+
+    if node_type == "paragraph":
+        return _render_inline(content)
+    if node_type == "heading":
+        level = attrs.get("level", 1)
+        level = level if isinstance(level, int) and 1 <= level <= 6 else 1
+        return f"{'#' * level} {_render_inline(content)}"
+    if node_type in ("bulletList", "orderedList", "taskList"):
+        return _render_list(node)
+    if node_type == "codeBlock":
+        return _render_code_block(node)
+    if node_type == "blockquote":
+        inner = _render_blocks(content)
+        return "\n".join(f"> {line}" if line else ">" for line in inner.split("\n"))
+    if node_type == "rule":
+        return "---"
+    if node_type == "table":
+        return _render_table(node)
+    if node_type == "panel":
+        panel_type = attrs.get("panelType") or "info"
+        return f":::{panel_type}\n{_render_blocks(content)}\n:::"
+    if node_type in ("expand", "nestedExpand"):
+        title = attrs.get("title") or ""
+        header = f"{{expand:{title}}}" if title else "{expand}"
+        return f"{header}\n{_render_blocks(content)}\n{{expand}}"
+    if node_type in ("blockCard", "embedCard"):
+        url = attrs.get("url")
+        return str(url) if url else ""
+    if node_type == "text" or node_type in _ATOM_INLINE_TYPES:
+        return _render_inline([node])
+    if isinstance(content, list) and content:
+        return _render_blocks(content)
+    return ""
+
+
+def _render_blocks(nodes: list[Any], tight: bool = False) -> str:
+    """Render a list of block-level ADF nodes, separated by blank lines.
+
+    Args:
+        nodes: ADF block nodes.
+        tight: Separate blocks with one newline, as inside list items and
+            table cells.
+    """
+    separator = "\n" if tight else "\n\n"
+    rendered = (_render_block(node) for node in nodes if isinstance(node, dict))
+    return separator.join(block for block in rendered if block)
+
+
+def adf_to_markdown(adf_content: dict | list | str | None) -> str | None:
+    """Convert Atlassian Document Format (ADF) content to Markdown.
+
+    Unlike :func:`adf_to_text`, this keeps inline marks (code, bold, italic,
+    strikethrough, links) and block structure (headings, lists, code blocks,
+    quotes, tables). The output keeps text exactly as stored, without
+    escaping. Don't run it through the Jira wiki markup converter: that
+    converter reads ``_``, ``+`` and ``~`` in identifiers as formatting.
+
+    Args:
+        adf_content: ADF document (dict), content list, string, or None
+
+    Returns:
+        Markdown string, or None if there is no content
+    """
+    if adf_content is None:
+        return None
+    if isinstance(adf_content, str):
+        return adf_content
+    if isinstance(adf_content, list):
+        markdown = _render_blocks(adf_content)
+    elif isinstance(adf_content, dict):
+        if adf_content.get("type") == "doc":
+            markdown = _render_blocks(adf_content.get("content") or [])
+        else:
+            markdown = _render_block(adf_content)
+    else:
+        return None
+    markdown = markdown.strip("\n")
+    return markdown or None

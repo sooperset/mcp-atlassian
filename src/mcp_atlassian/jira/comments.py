@@ -26,7 +26,6 @@ from typing import Any
 
 from requests.exceptions import HTTPError
 
-from ..models.jira.adf import adf_to_text
 from ..utils import parse_date
 from .client import JiraClient
 from .config import normalize_project_key
@@ -125,19 +124,10 @@ class CommentsMixin(JiraClient):
 
             processed_comments = []
             for comment in comments.get("comments", [])[:limit]:
-                # On Jira Cloud (REST API v3) comment bodies are returned as ADF
-                # (Atlassian Document Format) dicts. convert to plain text before
-                # passing to _clean_text -> clean_jira_text -> _process_mentions,
-                # which calls re.sub() and would otherwise raise TypeError on the
-                # dict. Mirrors the pattern used in add_comment / edit_comment
-                # above. Fixes #1488.
-                body_raw = comment.get("body", "")
-                body_text = (
-                    adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
-                )
+                # REST v3 returns ADF dicts, REST v2 returns wiki markup strings.
                 processed_comment = {
                     "id": comment.get("id"),
-                    "body": self._clean_text(body_text or ""),
+                    "body": self._body_to_markdown(comment.get("body", "")),
                     "created": str(parse_date(comment.get("created"))),
                     "updated": str(parse_date(comment.get("updated"))),
                     "author": comment.get("author", {}).get("displayName", "Unknown"),
@@ -421,13 +411,9 @@ class CommentsMixin(JiraClient):
                 logger.error(msg)
                 raise TypeError(msg)
 
-            body_raw = result.get("body", "")
-            body_text = (
-                adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
-            )
             return {
                 "id": result.get("id"),
-                "body": self._clean_text(body_text or ""),
+                "body": self._body_to_markdown(result.get("body", "")),
                 "created": str(parse_date(result.get("created"))),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }
@@ -576,13 +562,9 @@ class CommentsMixin(JiraClient):
                 logger.error(msg)
                 raise TypeError(msg)
 
-            body_raw = result.get("body", "")
-            body_text = (
-                adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
-            )
             return {
                 "id": result.get("id"),
-                "body": self._clean_text(body_text or ""),
+                "body": self._body_to_markdown(result.get("body", "")),
                 "updated": str(parse_date(result.get("updated"))),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }

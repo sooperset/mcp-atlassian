@@ -155,11 +155,8 @@ class TestCommentsMixin:
             comments_mixin.get_issue_comments("TEST-123")
 
     def test_get_issue_comments_adf_body(self, comments_mixin):
-        """Regression test for #1488: Jira Cloud (REST API v3) returns
-        comment bodies as ADF dicts; get_issue_comments previously raised
-        TypeError from re.sub() in _process_mentions because the dict was
-        passed straight to _clean_text. adf_to_text() must be applied
-        first, matching the pattern in add_comment / edit_comment."""
+        """Regression test for #1488: ADF dict bodies from REST v3 must not
+        reach _clean_text, whose regexes raise TypeError on a dict."""
         comments_mixin.jira.issue_get_comments.return_value = {
             "comments": [
                 {
@@ -197,13 +194,65 @@ class TestCommentsMixin:
         result = comments_mixin.get_issue_comments("TEST-123")
 
         assert len(result) == 2
-        # ADF body converted to plain text and forwarded to _clean_text.
-        # The fixture's mock _clean_text is the identity function, so the
-        # plain-text extraction result is what comes back.
-        assert "Hello from ADF" in result[0]["body"]
-        assert "doc" not in result[0]["body"]
-        # Plain string body passes through adf_to_text unchanged.
+        assert result[0]["body"] == "Hello from ADF"
         assert result[1]["body"] == "This is a plain text comment"
+        comments_mixin._clean_text.assert_called_once_with(
+            "This is a plain text comment"
+        )
+
+    _ADF_WITH_CODE = {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": "see "},
+                    {
+                        "type": "text",
+                        "text": "classify_check_reach",
+                        "marks": [{"type": "code"}],
+                    },
+                    {"type": "text", "text": " ok"},
+                ],
+            }
+        ],
+    }
+
+    def test_add_comment_adf_response_keeps_code_span(self, comments_mixin):
+        """Regression for #1340: the v3 response body must not go through
+        the wiki markup converter, which turned ``a_b_c`` into ``a*b*c``."""
+        comments_mixin._post_api3 = Mock(
+            return_value={
+                "id": "10001",
+                "body": self._ADF_WITH_CODE,
+                "created": "2024-01-01T10:00:00.000+0000",
+                "author": {"displayName": "John Doe"},
+            }
+        )
+
+        result = comments_mixin.add_comment("TEST-123", "see `classify_check_reach` ok")
+
+        assert result["body"] == "see `classify_check_reach` ok"
+        comments_mixin._clean_text.assert_not_called()
+
+    def test_edit_comment_adf_response_keeps_code_span(self, comments_mixin):
+        """Regression for #1340 on the edit path."""
+        comments_mixin._put_api3 = Mock(
+            return_value={
+                "id": "10001",
+                "body": self._ADF_WITH_CODE,
+                "updated": "2024-01-01T12:00:00.000+0000",
+                "author": {"displayName": "John Doe"},
+            }
+        )
+
+        result = comments_mixin.edit_comment(
+            "TEST-123", "10001", "see `classify_check_reach` ok"
+        )
+
+        assert result["body"] == "see `classify_check_reach` ok"
+        comments_mixin._clean_text.assert_not_called()
 
     def test_add_comment_basic(self, comments_mixin):
         """Test add_comment with basic data (Cloud → ADF via v3 API)."""

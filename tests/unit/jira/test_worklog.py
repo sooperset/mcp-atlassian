@@ -446,6 +446,44 @@ class TestWorklogMixin:
         worklog_mixin.jira.post.assert_not_called()
         assert result["id"] == "10001"
 
+    def test_add_worklog_cloud_adf_response_is_markdown(self, worklog_mixin):
+        """The ADF comment in the v3 response converts to Markdown directly."""
+        adf_comment = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [
+                        {"type": "text", "text": "ran "},
+                        {
+                            "type": "text",
+                            "text": "sync_job",
+                            "marks": [{"type": "code"}],
+                        },
+                    ],
+                }
+            ],
+        }
+        worklog_mixin._markdown_to_jira = Mock(return_value=adf_comment)
+        worklog_mixin._post_api3 = Mock(
+            return_value={
+                "id": "10001",
+                "comment": adf_comment,
+                "created": "2024-01-01T10:00:00.000+0000",
+                "updated": "2024-01-01T10:00:00.000+0000",
+                "started": "2024-01-01T09:00:00.000+0000",
+                "timeSpent": "1h",
+                "timeSpentSeconds": 3600,
+                "author": {"displayName": "Test User"},
+            }
+        )
+
+        result = worklog_mixin.add_worklog("TEST-123", "1h", comment="x")
+
+        assert result["comment"] == "ran `sync_job`"
+        worklog_mixin._clean_text.assert_not_called()
+
     def test_add_worklog_cloud_adf_with_remaining_estimate(self, worklog_mixin):
         """Cloud + ADF + remaining_estimate passes params to v3."""
         adf_comment = {
