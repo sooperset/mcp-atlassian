@@ -2633,6 +2633,19 @@ async def add_comment(
             )
         ),
     ] = None,
+    parent_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional, Jira Cloud only) ID of the comment to "
+                "reply to. The new comment is posted in that "
+                "comment's thread instead of as a new top-level "
+                "comment. Any comment in a thread can be given; a "
+                "reply to a reply is placed in the same thread. "
+                "Cannot be combined with public."
+            )
+        ),
+    ] = None,
 ) -> str:
     """Add a comment to a Jira issue.
 
@@ -2643,6 +2656,8 @@ async def add_comment(
         visibility: (Optional) Comment visibility as JSON string.
         public: (Optional) For JSM issues. True = customer-visible,
             False = internal/agent-only. Uses ServiceDesk API.
+        parent_id: (Optional, Jira Cloud only) ID of the comment to
+            reply to, so the comment is posted in its thread.
 
     Returns:
         JSON string representing the added comment object.
@@ -2650,7 +2665,9 @@ async def add_comment(
     Raises:
         ValueError: If in read-only mode, Jira client unavailable, or
             the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
-            and public is not exactly False.
+            and public is not exactly False, or parent_id is combined
+            with public, is not a numeric comment ID, or is used on
+            Jira Server/Data Center.
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
@@ -2665,7 +2682,16 @@ async def add_comment(
     public_value = public
     if public is False and not jira._is_internal_only_project(issue_key):
         public_value = None
-    result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
+    # Some MCP clients fill an omitted optional string with "", which would
+    # otherwise reach Jira as an invalid parent comment ID.
+    parent_value = parent_id.strip() if parent_id and parent_id.strip() else None
+    result = jira.add_comment(
+        issue_key,
+        body,
+        visibility_dict,
+        public=public_value,
+        parent_id=parent_value,
+    )
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
