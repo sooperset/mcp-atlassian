@@ -3563,7 +3563,7 @@ async def test_add_comment(jira_client, mock_jira_fetcher):
     )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(
-        "TEST-123", "Test comment body", None, public=None
+        "TEST-123", "Test comment body", None, public=None, parent_id=None
     )
 
     result = json.loads(response.content[0].text)
@@ -3589,7 +3589,7 @@ async def test_add_comment_ignores_empty_optional_fields(
     )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(
-        "TEST-123", "Test comment body", None, public=None
+        "TEST-123", "Test comment body", None, public=None, parent_id=None
     )
 
     result = json.loads(response.content[0].text)
@@ -3606,7 +3606,7 @@ async def test_add_comment_accepts_comment_alias(jira_client, mock_jira_fetcher)
     )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(
-        "TEST-123", "Test comment body", None, public=None
+        "TEST-123", "Test comment body", None, public=None, parent_id=None
     )
 
     result = json.loads(response.content[0].text)
@@ -3641,6 +3641,7 @@ async def test_add_comment_restricted_visibility_with_client_default_false(
         "Test comment body",
         {"type": "role", "value": "Developer"},
         public=None,
+        parent_id=None,
     )
 
     result = json.loads(response.content[0].text)
@@ -3664,9 +3665,27 @@ async def test_add_comment_forwards_false_for_internal_only_project(
     await jira_client.call_tool("jira_add_comment", base_args)
 
     assert mock_jira_fetcher.add_comment.call_args_list == [
-        call("TEST-123", "Test comment body", None, public=False),
-        call("TEST-123", "Test comment body", None, public=True),
-        call("TEST-123", "Test comment body", None, public=None),
+        call(
+            "TEST-123",
+            "Test comment body",
+            None,
+            public=False,
+            parent_id=None,
+        ),
+        call(
+            "TEST-123",
+            "Test comment body",
+            None,
+            public=True,
+            parent_id=None,
+        ),
+        call(
+            "TEST-123",
+            "Test comment body",
+            None,
+            public=None,
+            parent_id=None,
+        ),
     ]
 
 
@@ -3687,8 +3706,20 @@ async def test_add_comment_drops_client_default_false_on_ordinary_project(
     await jira_client.call_tool("jira_add_comment", {**base_args, "public": True})
 
     assert mock_jira_fetcher.add_comment.call_args_list == [
-        call("TEST-123", "Test comment body", None, public=None),
-        call("TEST-123", "Test comment body", None, public=True),
+        call(
+            "TEST-123",
+            "Test comment body",
+            None,
+            public=None,
+            parent_id=None,
+        ),
+        call(
+            "TEST-123",
+            "Test comment body",
+            None,
+            public=True,
+            parent_id=None,
+        ),
     ]
 
 
@@ -3708,7 +3739,35 @@ async def test_add_comment_public_true_keeps_servicedesk_routing(
     )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(
-        "TEST-123", "Test comment body", None, public=True
+        "TEST-123", "Test comment body", None, public=True, parent_id=None
+    )
+
+
+@pytest.mark.anyio
+async def test_add_comment_forwards_parent_id(jira_client, mock_jira_fetcher):
+    """Test add_comment passes parent_id through so the reply is threaded."""
+    await jira_client.call_tool(
+        "jira_add_comment",
+        {"issue_key": "TEST-123", "body": "A reply", "parent_id": " 10000 "},
+    )
+
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "A reply", None, public=None, parent_id="10000"
+    )
+
+
+@pytest.mark.anyio
+async def test_add_comment_treats_empty_parent_id_as_omitted(
+    jira_client, mock_jira_fetcher
+):
+    """Test a client's default empty parent_id posts a top-level comment."""
+    await jira_client.call_tool(
+        "jira_add_comment",
+        {"issue_key": "TEST-123", "body": "Top level", "parent_id": ""},
+    )
+
+    mock_jira_fetcher.add_comment.assert_called_once_with(
+        "TEST-123", "Top level", None, public=None, parent_id=None
     )
 
 

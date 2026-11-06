@@ -338,6 +338,7 @@ class CommentsMixin(JiraClient):
         comment: str,
         visibility: dict[str, str] | None = None,
         public: bool | None = None,
+        parent_id: str | None = None,
     ) -> dict[str, Any]:
         """Add a comment to an issue.
 
@@ -346,6 +347,13 @@ class CommentsMixin(JiraClient):
             comment: Comment text to add (in Markdown format)
             visibility: (optional) Restrict comment visibility
                 (e.g. {"type":"group","value":"jira-users"})
+            parent_id: (optional, Jira Cloud only) ID of the comment to
+                reply to, so the new comment is posted in that comment's
+                thread. Jira threads are one level deep: when parent_id is
+                itself a reply, the reply is attached to that thread's top
+                comment, which places it in the same thread. Cannot be
+                combined with public, because the ServiceDesk comment API
+                has no threaded replies.
             public: (optional) For JSM issues only. True for
                 customer-visible, False for internal/agent-only. Posted
                 via the ServiceDesk API as a raw string; Jira Cloud
@@ -363,9 +371,10 @@ class CommentsMixin(JiraClient):
             The created comment details
 
         Raises:
-            ValueError: If both public and visibility are set, or if
+            ValueError: If both public and visibility are set, if
                 issue_key's project is internal-only and public is not
-                exactly False
+                exactly False, or if parent_id is set together with public
+                or on Jira Server/Data Center
             Exception: If there is an error adding the comment
         """
         # The guard names a project, but the leak it prevents is per issue.
@@ -387,6 +396,22 @@ class CommentsMixin(JiraClient):
         else:
             self._enforce_internal_only_add(issue_key, public)
 
+        if parent_id is not None:
+            if public is not None:
+                raise ValueError(
+                    "Cannot use both 'parent_id' and 'public'. "
+                    "'public' uses the ServiceDesk API, which "
+                    "does not support threaded replies."
+                )
+            if not self.config.is_cloud:
+                raise ValueError(
+                    "'parent_id' (threaded replies) is only supported on Jira Cloud."
+                )
+            if not str(parent_id).strip().isdigit():
+                raise ValueError(
+                    f"'parent_id' must be a numeric comment ID: {parent_id!r}"
+                )
+
         # ServiceDesk API path for internal/public comments
         if public is not None:
             if visibility is not None:
@@ -402,6 +427,7 @@ class CommentsMixin(JiraClient):
             # it fails.
             return self._add_servicedesk_comment(issue_key, comment, public)
 
+        thread_root: int | None = None
         try:
             # Convert Markdown to Jira's markup format
             jira_formatted_comment = self._markdown_to_jira(comment)
@@ -411,6 +437,9 @@ class CommentsMixin(JiraClient):
                 data: dict[str, Any] = {"body": jira_formatted_comment}
                 if visibility:
                     data["visibility"] = visibility
+                if parent_id is not None:
+                    thread_root = self._resolve_thread_root(issue_key, parent_id)
+                    data["parentId"] = thread_root
                 result = self._post_api3(f"issue/{issue_key}/comment", data)
             else:
                 result = self.jira.issue_add_comment(
@@ -425,15 +454,43 @@ class CommentsMixin(JiraClient):
             body_text = (
                 adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
             )
-            return {
+            added: dict[str, Any] = {
                 "id": result.get("id"),
                 "body": self._clean_text(body_text or ""),
                 "created": str(parse_date(result.get("created"))),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }
+            if thread_root is not None:
+                added["parent_id"] = str(result.get("parentId", thread_root))
+            return added
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
             raise Exception(f"Error adding comment: {str(e)}") from e
+
+    def _resolve_thread_root(self, issue_key: str, parent_id: str) -> int:
+        """Return the ID of the top comment of the thread parent_id is in.
+
+        Jira Cloud threads are one level deep, and creating a reply to a
+        comment that is itself a reply fails ("Parent comment not found,
+        and no child comments exist"). Looking up the parent first lets a
+        caller reply to any comment in a thread.
+
+        Args:
+            issue_key: The issue key (e.g. 'PROJ-123')
+            parent_id: ID of the comment being replied to
+
+        Returns:
+            The thread's top comment ID, as the integer the API expects
+        """
+        url = self.jira.resource_url(
+            f"issue/{issue_key}/comment/{str(parent_id).strip()}", api_version="3"
+        )
+        parent = self.jira.get(url)
+        if not isinstance(parent, dict):
+            msg = f"Unexpected response looking up comment {parent_id}: {type(parent)}"
+            raise TypeError(msg)
+        root = parent.get("parentId")
+        return int(root) if root is not None else int(str(parent_id).strip())
 
     def _add_servicedesk_comment(
         self,

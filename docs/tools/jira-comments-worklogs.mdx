@@ -17,6 +17,7 @@ Add a comment to a Jira issue.
 | `body` | `string` | Yes | Comment text in Markdown format |
 | `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '`{"type":"group","value":"jira-users"}`') |
 | `public` | `boolean` | No | (Optional) For JSM/Service Desk issues only. Set to true for customer-visible comment, false for internal agent-only comment. Posted via the ServiceDesk API as a raw string; Jira Cloud renders it server-side and stores ADF (markdown observed to render on Cloud, without the client-side markdown-to-ADF guarantees of the regular comment path). Cannot be combined with visibility. If the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS, only public=false is accepted — public=true or omitting this field is rejected. Issues in such a project that are not JSM customer requests (e.g. an agent-created Task) have no portal audience and are exempt: they post through the ordinary comment path and ignore this field. |
+| `parent_id` | `string` | No | (Optional, Jira Cloud only) ID of the comment to reply to. The new comment is posted in that comment's thread instead of as a new top-level comment. Any comment in a thread can be given; a reply to a reply is placed in the same thread. Cannot be combined with public. |
 **Example:**
 
 ```json

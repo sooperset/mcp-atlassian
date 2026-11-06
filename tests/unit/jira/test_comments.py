@@ -682,6 +682,93 @@ class TestCommentsMixin:
         comments_mixin.jira.post.assert_not_called()
         assert result["id"] == "10001"
 
+    def _reply_response(self, parent_id: int) -> dict:
+        return {
+            "id": "10002",
+            "body": "Reply",
+            "created": "2024-01-01T10:00:00.000+0000",
+            "author": {"displayName": "John Doe"},
+            "parentId": parent_id,
+        }
+
+    def test_add_comment_reply_to_top_level_comment(self, comments_mixin):
+        """A reply to a top-level comment is posted with that comment as parent."""
+        comments_mixin.jira.get = Mock(return_value={"id": "10000"})
+        comments_mixin._post_api3 = Mock(return_value=self._reply_response(10000))
+
+        result = comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
+
+        comments_mixin.jira.resource_url.assert_called_once_with(
+            "issue/TEST-123/comment/10000", api_version="3"
+        )
+        payload = comments_mixin._post_api3.call_args[0][1]
+        assert payload["parentId"] == 10000
+        assert isinstance(payload["body"], dict)
+        assert result["parent_id"] == "10000"
+
+    def test_add_comment_reply_to_a_reply_uses_thread_root(self, comments_mixin):
+        """Threads are one level deep, so a reply to a reply goes to the root."""
+        comments_mixin.jira.get = Mock(return_value={"id": "10001", "parentId": 10000})
+        comments_mixin._post_api3 = Mock(return_value=self._reply_response(10000))
+
+        result = comments_mixin.add_comment("TEST-123", "Reply", parent_id="10001")
+
+        payload = comments_mixin._post_api3.call_args[0][1]
+        assert payload["parentId"] == 10000
+        assert result["parent_id"] == "10000"
+
+    def test_add_comment_without_parent_id_is_top_level(self, comments_mixin):
+        """Without parent_id there is no lookup and no parentId in the payload."""
+        comments_mixin.jira.get = Mock()
+        comments_mixin._post_api3 = Mock(return_value=self._reply_response(0))
+
+        result = comments_mixin.add_comment("TEST-123", "Top level")
+
+        comments_mixin.jira.get.assert_not_called()
+        assert "parentId" not in comments_mixin._post_api3.call_args[0][1]
+        assert "parent_id" not in result
+
+    def test_add_comment_parent_id_with_public_raises(self, comments_mixin):
+        """parent_id + public raises before anything is sent."""
+        comments_mixin.jira.get = Mock()
+        comments_mixin._post_api3 = Mock()
+
+        with pytest.raises(ValueError, match="'parent_id' and 'public'"):
+            comments_mixin.add_comment(
+                "TEST-123", "Reply", public=True, parent_id="10000"
+            )
+
+        comments_mixin.jira.get.assert_not_called()
+        comments_mixin._post_api3.assert_not_called()
+
+    def test_add_comment_parent_id_rejects_non_numeric_id(self, comments_mixin):
+        """A parent_id that is not a comment ID fails without posting."""
+        comments_mixin.jira.get = Mock()
+        comments_mixin._post_api3 = Mock()
+
+        with pytest.raises(ValueError, match="numeric comment ID"):
+            comments_mixin.add_comment("TEST-123", "Reply", parent_id="abc")
+
+        comments_mixin.jira.get.assert_not_called()
+        comments_mixin._post_api3.assert_not_called()
+
+    def test_add_comment_parent_id_unknown_comment_does_not_post(self, comments_mixin):
+        """If the parent comment cannot be read, no comment is posted."""
+        comments_mixin.jira.get = Mock(side_effect=HTTPError("404 Not Found"))
+        comments_mixin._post_api3 = Mock()
+
+        with pytest.raises(Exception, match="404"):
+            comments_mixin.add_comment("TEST-123", "Reply", parent_id="99999")
+
+        comments_mixin._post_api3.assert_not_called()
+
+    def test_add_comment_parent_id_server_dc_raises(self, server_comments_mixin):
+        """Threaded replies are Cloud-only; Server/DC fails loudly."""
+        with pytest.raises(ValueError, match="only supported on Jira Cloud"):
+            server_comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
+
+        server_comments_mixin.jira.issue_add_comment.assert_not_called()
+
 
 class TestInternalCommentPublicParam:
     """Regression tests for add_comment public parameter (internal comments).
