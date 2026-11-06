@@ -407,7 +407,7 @@ class CommentsMixin(JiraClient):
                 raise ValueError(
                     "'parent_id' (threaded replies) is only supported on Jira Cloud."
                 )
-            if not str(parent_id).strip().isdigit():
+            if not re.fullmatch(r"[0-9]+", str(parent_id).strip()):
                 raise ValueError(
                     f"'parent_id' must be a numeric comment ID: {parent_id!r}"
                 )
@@ -442,6 +442,12 @@ class CommentsMixin(JiraClient):
                     data["parentId"] = thread_root
                 result = self._post_api3(f"issue/{issue_key}/comment", data)
             else:
+                if parent_id is not None:
+                    # Never post a top-level comment when a reply was asked for.
+                    raise ValueError(
+                        "Cannot post a threaded reply: the comment body could "
+                        "not be converted to the Jira Cloud comment format."
+                    )
                 result = self.jira.issue_add_comment(
                     issue_key, jira_formatted_comment, visibility
                 )
@@ -461,7 +467,16 @@ class CommentsMixin(JiraClient):
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }
             if thread_root is not None:
-                added["parent_id"] = str(result.get("parentId", thread_root))
+                # Report only what Jira confirmed, never what was requested.
+                confirmed_parent = result.get("parentId")
+                if confirmed_parent is None or int(confirmed_parent) != thread_root:
+                    logger.warning(
+                        f"Jira did not confirm the thread for new comment "
+                        f"{result.get('id')} on {issue_key}: sent parentId "
+                        f"{thread_root}, got {confirmed_parent!r}"
+                    )
+                if confirmed_parent is not None:
+                    added["parent_id"] = str(confirmed_parent)
             return added
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
@@ -485,7 +500,13 @@ class CommentsMixin(JiraClient):
         url = self.jira.resource_url(
             f"issue/{issue_key}/comment/{str(parent_id).strip()}", api_version="3"
         )
-        parent = self.jira.get(url)
+        try:
+            parent = self.jira.get(url)
+        except Exception as e:
+            raise Exception(
+                f"Could not read parent comment {str(parent_id).strip()} "
+                f"on {issue_key}: {e}"
+            ) from e
         if not isinstance(parent, dict):
             msg = f"Unexpected response looking up comment {parent_id}: {type(parent)}"
             raise TypeError(msg)

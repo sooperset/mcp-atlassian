@@ -701,6 +701,9 @@ class TestCommentsMixin:
         comments_mixin.jira.resource_url.assert_called_once_with(
             "issue/TEST-123/comment/10000", api_version="3"
         )
+        comments_mixin.jira.get.assert_called_once_with(
+            comments_mixin.jira.resource_url.return_value
+        )
         payload = comments_mixin._post_api3.call_args[0][1]
         assert payload["parentId"] == 10000
         assert isinstance(payload["body"], dict)
@@ -757,7 +760,7 @@ class TestCommentsMixin:
         comments_mixin.jira.get = Mock(side_effect=HTTPError("404 Not Found"))
         comments_mixin._post_api3 = Mock()
 
-        with pytest.raises(Exception, match="404"):
+        with pytest.raises(Exception, match="Could not read parent comment 99999.*404"):
             comments_mixin.add_comment("TEST-123", "Reply", parent_id="99999")
 
         comments_mixin._post_api3.assert_not_called()
@@ -768,6 +771,101 @@ class TestCommentsMixin:
             server_comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
 
         server_comments_mixin.jira.issue_add_comment.assert_not_called()
+
+    def test_add_comment_parent_id_result_reports_what_jira_returned(
+        self, comments_mixin
+    ):
+        """The returned parent_id comes from Jira's response, not the request."""
+        comments_mixin.jira.get = Mock(return_value={"id": "10000"})
+        comments_mixin._post_api3 = Mock(return_value=self._reply_response(77777))
+
+        result = comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
+
+        assert comments_mixin._post_api3.call_args[0][1]["parentId"] == 10000
+        assert result["parent_id"] == "77777"
+
+    @pytest.mark.parametrize("returned", [None, "missing"])
+    def test_add_comment_parent_id_omitted_when_jira_does_not_confirm(
+        self, comments_mixin, returned, caplog
+    ):
+        """If Jira returns no parentId, none is reported, and a warning is logged."""
+        response = self._reply_response(10000)
+        if returned is None:
+            response["parentId"] = None
+        else:
+            del response["parentId"]
+        comments_mixin.jira.get = Mock(return_value={"id": "10000"})
+        comments_mixin._post_api3 = Mock(return_value=response)
+
+        with caplog.at_level("WARNING"):
+            result = comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
+
+        assert "parent_id" not in result
+        assert "did not confirm the thread" in caplog.text
+
+    def test_add_comment_parent_id_strips_whitespace(self, comments_mixin):
+        """Surrounding whitespace in parent_id is ignored."""
+        comments_mixin.jira.get = Mock(return_value={"id": "10000"})
+        comments_mixin._post_api3 = Mock(return_value=self._reply_response(10000))
+
+        comments_mixin.add_comment("TEST-123", "Reply", parent_id=" 10000 ")
+
+        comments_mixin.jira.resource_url.assert_called_once_with(
+            "issue/TEST-123/comment/10000", api_version="3"
+        )
+        assert comments_mixin._post_api3.call_args[0][1]["parentId"] == 10000
+
+    @pytest.mark.parametrize("bad_id", ["abc", "", "12a", "-5", "\u00b2", "1.5"])
+    def test_add_comment_parent_id_rejects_non_ascii_digit_ids(
+        self, comments_mixin, bad_id
+    ):
+        """Only plain ASCII digits are accepted, so int() can never fail later."""
+        comments_mixin.jira.get = Mock()
+        comments_mixin._post_api3 = Mock()
+
+        with pytest.raises(ValueError, match="numeric comment ID"):
+            comments_mixin.add_comment("TEST-123", "Reply", parent_id=bad_id)
+
+        comments_mixin.jira.get.assert_not_called()
+        comments_mixin._post_api3.assert_not_called()
+
+    def test_add_comment_parent_id_with_visibility_sends_both(self, comments_mixin):
+        """visibility and parent_id are both sent to Jira unchanged."""
+        visibility = {"type": "group", "value": "jira-users"}
+        comments_mixin.jira.get = Mock(return_value={"id": "10000"})
+        comments_mixin._post_api3 = Mock(return_value=self._reply_response(10000))
+
+        comments_mixin.add_comment(
+            "TEST-123", "Reply", visibility=visibility, parent_id="10000"
+        )
+
+        payload = comments_mixin._post_api3.call_args[0][1]
+        assert payload["visibility"] == visibility
+        assert payload["parentId"] == 10000
+
+    def test_add_comment_parent_id_unexpected_parent_response_does_not_post(
+        self, comments_mixin
+    ):
+        """A non-object parent lookup response fails without posting."""
+        comments_mixin.jira.get = Mock(return_value="not a dict")
+        comments_mixin._post_api3 = Mock()
+
+        with pytest.raises(Exception, match="Unexpected response looking up comment"):
+            comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
+
+        comments_mixin._post_api3.assert_not_called()
+
+    def test_add_comment_parent_id_never_falls_back_to_top_level(self, comments_mixin):
+        """If the body cannot be sent as ADF, a requested reply must not post."""
+        comments_mixin._markdown_to_jira = Mock(return_value="plain wiki markup")
+        comments_mixin.jira.issue_add_comment = Mock()
+        comments_mixin._post_api3 = Mock()
+
+        with pytest.raises(Exception, match="Cannot post a threaded reply"):
+            comments_mixin.add_comment("TEST-123", "Reply", parent_id="10000")
+
+        comments_mixin.jira.issue_add_comment.assert_not_called()
+        comments_mixin._post_api3.assert_not_called()
 
 
 class TestInternalCommentPublicParam:
