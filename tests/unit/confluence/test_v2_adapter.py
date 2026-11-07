@@ -368,6 +368,33 @@ class TestConfluenceV2AdapterComments:
             session=mock_session, base_url="https://example.atlassian.net/wiki"
         )
 
+    def test_create_inline_comment_reply(self, v2_adapter, mock_session):
+        """Inline replies post to inline-comments with only the parent ID."""
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "id": "reply-1",
+            "status": "current",
+            "parentCommentId": "parent-1",
+            "body": {"storage": {"value": "<p>Reply</p>", "representation": "storage"}},
+            "version": {"number": 1},
+            "_links": {},
+        }
+        mock_session.post.return_value = mock_response
+
+        result = v2_adapter.create_inline_comment_reply(
+            parent_comment_id="parent-1", body="<p>Reply</p>"
+        )
+
+        mock_session.post.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/inline-comments",
+            json={
+                "parentCommentId": "parent-1",
+                "body": {"representation": "storage", "value": "<p>Reply</p>"},
+            },
+        )
+        assert result["extensions"] == {"location": "inline"}
+        assert result["parentCommentId"] == "parent-1"
+
     def test_get_inline_comments_includes_nested_replies(
         self, v2_adapter, mock_session
     ):

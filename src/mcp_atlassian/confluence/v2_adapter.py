@@ -866,6 +866,49 @@ class ConfluenceV2Adapter:
             msg = f"Failed to create inline comment: {e}"
             raise ValueError(msg) from e
 
+    def create_inline_comment_reply(
+        self,
+        *,
+        parent_comment_id: str,
+        body: str,
+        representation: str = "storage",
+    ) -> dict[str, Any]:
+        """Reply to an inline comment thread using the v2 API.
+
+        Args:
+            parent_comment_id: The ID of the inline comment to reply to
+            body: The reply content
+            representation: Content representation format (default: "storage")
+
+        Returns:
+            The created inline comment data in v1-compatible format
+
+        Raises:
+            ValueError: If creation fails
+        """
+        try:
+            data: dict[str, Any] = {
+                "parentCommentId": parent_comment_id,
+                "body": {
+                    "representation": representation,
+                    "value": body,
+                },
+            }
+
+            url = f"{self.base_url}/api/v2/inline-comments"
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+
+            result = response.json()
+            logger.debug("Successfully created inline comment reply with v2 API")
+
+            return self._convert_v2_inline_comment_to_v1_format(result)
+
+        except (requests.RequestException, ValueError, TypeError) as e:
+            logger.error(f"Error creating inline comment reply: {e}")
+            msg = f"Failed to create inline comment reply: {e}"
+            raise ValueError(msg) from e
+
     def _convert_v2_inline_comment_to_v1_format(
         self, v2_response: dict[str, Any]
     ) -> dict[str, Any]:
