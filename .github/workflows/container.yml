@@ -42,7 +42,9 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            # `latest` is the newest RELEASE, not the newest build of the branch,
+            # which has its own tag above (constitution 1.33.0, RT#1559).
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -60,7 +62,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.QUAY_IMAGE }}:latest
+          image-ref: ${{ env.QUAY_IMAGE }}:${{ steps.meta.outputs.version }}
           format: "table"
           exit-code: "0"
           severity: "CRITICAL,HIGH"
