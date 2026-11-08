@@ -2669,9 +2669,7 @@ async def add_comment(
     public_value = public
     if public is False and visibility_dict is not None:
         public_value = None
-    result = jira.add_comment(
-        issue_key, body, visibility_dict, public=public_value
-    )
+    result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
