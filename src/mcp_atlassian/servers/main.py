@@ -30,7 +30,10 @@ from mcp_atlassian.utils.credential_command import (
 )
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.environment import get_available_services
-from mcp_atlassian.utils.io import is_read_only_mode
+from mcp_atlassian.utils.io import (
+    configure_file_root_for_transport,
+    is_read_only_mode,
+)
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.oauth import (
     CLOUD_AUTHORIZE_URL,
@@ -462,6 +465,13 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         allowed_hosts: list[str] | None = None,
         allowed_origins: list[str] | None = None,
     ) -> StarletteWithLifespan:
+        # The CLI sets the file-path boundary before starting, but an ASGI
+        # server that imports this app directly (``uvicorn module:app``) never
+        # runs the CLI. Every HTTP app serves remote callers, so set the
+        # remote boundary here as well; it raises on a root/home directory.
+        configure_file_root_for_transport(
+            "sse" if transport == "sse" else "streamable-http"
+        )
         final_path = path
         auth_paths: frozenset[str]
         auth_mounts: frozenset[str] = frozenset()

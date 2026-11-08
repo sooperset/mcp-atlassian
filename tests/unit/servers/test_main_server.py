@@ -1131,3 +1131,26 @@ async def test_oauth_provider_missing_credentials_returns_discovery_challenge(
     metadata_body = metadata.json()
     assert metadata_body["resource"] == "https://testserver/mcp"
     assert metadata_body["authorization_servers"] == ["https://testserver/"]
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize("transport_name", ["sse", "streamable-http", "http"])
+def test_http_app_confines_file_paths_without_cli(transport_name, monkeypatch):
+    """An ASGI server that imports the app directly gets the remote file root."""
+    from mcp_atlassian.utils import io as io_mod
+
+    monkeypatch.delenv(io_mod.FILES_DIR_ENV, raising=False)
+    io_mod.set_remote_transport(False)
+
+    main_mcp.http_app(transport=transport_name)
+
+    assert io_mod.get_file_root() == io_mod.default_files_dir().resolve()
+
+
+@pytest.mark.security_regression
+def test_http_app_refuses_wide_file_root(monkeypatch):
+    from mcp_atlassian.utils import io as io_mod
+
+    monkeypatch.setenv(io_mod.FILES_DIR_ENV, "/")
+    with pytest.raises(ValueError, match="filesystem root"):
+        main_mcp.http_app(transport="streamable-http")
