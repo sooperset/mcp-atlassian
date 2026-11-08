@@ -197,6 +197,20 @@ Both transport types support per-request authentication where each user provides
   </Tab>
 </Tabs>
 
+### Restrict Request-Supplied URLs
+
+Over HTTP, clients can name their own instance with the
+`X-Atlassian-Jira-Url` / `X-Atlassian-Confluence-Url` headers (header-based PAT).
+Set `MCP_ALLOWED_URL_DOMAINS` to the domains your users connect to:
+
+```bash
+MCP_ALLOWED_URL_DOMAINS=atlassian.net,jira.example.com
+```
+
+Without it, any public host is accepted and the server logs a warning at
+startup. The allowlist will be required for HTTP transports with header-based
+URLs in v0.25.
+
 ### Server Setup for Multi-User
 
 <Steps>

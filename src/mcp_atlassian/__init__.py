@@ -181,6 +181,25 @@ def _warn_secret_cli_options(ctx: click.Context) -> None:
         )
 
 
+def _warn_unrestricted_header_urls() -> None:
+    """Warn once when HTTP transport accepts request-supplied URLs unrestricted.
+
+    Over HTTP, callers can name their own Jira/Confluence URL through
+    ``X-Atlassian-Jira-Url`` / ``X-Atlassian-Confluence-Url`` (header-based
+    PAT). Without ``MCP_ALLOWED_URL_DOMAINS`` any public host is accepted.
+    The allowlist becomes mandatory in v0.25.
+    """
+    if os.getenv("MCP_ALLOWED_URL_DOMAINS", "").strip():
+        return
+    logger.warning(
+        "MCP_ALLOWED_URL_DOMAINS is not set: HTTP clients may send "
+        "X-Atlassian-Jira-Url / X-Atlassian-Confluence-Url headers pointing at "
+        "any public host. Set it to the domains your users connect to, e.g. "
+        "MCP_ALLOWED_URL_DOMAINS=atlassian.net,jira.example.com. It will be "
+        "required for HTTP transports with header-based URLs in v0.25."
+    )
+
+
 @click.version_option(__version__, prog_name="mcp-atlassian")
 @click.command()
 @click.option(
@@ -644,6 +663,7 @@ def main(
                 log_display_path = fastmcp_settings.streamable_http_path or "/mcp"
 
         run_kwargs["stateless_http"] = final_stateless
+        _warn_unrestricted_header_urls()
 
         if final_ssl_enabled:
             run_kwargs["uvicorn_config"] = {

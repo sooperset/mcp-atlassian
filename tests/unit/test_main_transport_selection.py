@@ -1091,3 +1091,59 @@ class TestSecretCliOptionWarning:
         }
         for option, _env_var in SECRET_CLI_OPTIONS.values():
             assert option in option_names
+
+
+class TestUnrestrictedHeaderUrlWarning:
+    """HTTP deployments without MCP_ALLOWED_URL_DOMAINS get one startup warning."""
+
+    def test_warns_when_allowlist_unset(self, monkeypatch):
+        from mcp_atlassian import _warn_unrestricted_header_urls
+
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        with patch("mcp_atlassian.logger.warning") as warning:
+            _warn_unrestricted_header_urls()
+
+        warning.assert_called_once()
+        message = warning.call_args.args[0]
+        assert "v0.25" in message
+        assert "MCP_ALLOWED_URL_DOMAINS=" in message
+
+    @pytest.mark.parametrize("value", ["atlassian.net", " jira.example.com "])
+    def test_silent_when_allowlist_set(self, monkeypatch, value):
+        from mcp_atlassian import _warn_unrestricted_header_urls
+
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", value)
+        with patch("mcp_atlassian.logger.warning") as warning:
+            _warn_unrestricted_header_urls()
+
+        warning.assert_not_called()
+
+    def test_whitespace_allowlist_counts_as_unset(self, monkeypatch):
+        from mcp_atlassian import _warn_unrestricted_header_urls
+
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "  ")
+        with patch("mcp_atlassian.logger.warning") as warning:
+            _warn_unrestricted_header_urls()
+
+        warning.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("transport", "expected_calls"),
+        [("streamable-http", 1), ("sse", 1), ("stdio", 0)],
+    )
+    def test_main_checks_only_http_transports(self, transport, expected_calls):
+        server = MagicMock()
+        server.run_async = AsyncMock(return_value=None)
+        with (
+            patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=server),
+            patch("mcp_atlassian._warn_unrestricted_header_urls") as warn,
+            patch("asyncio.run", side_effect=lambda coro: coro.close()),
+            patch.dict("os.environ", {"TRANSPORT": transport}),
+            patch("sys.argv", ["mcp-atlassian"]),
+        ):
+            try:
+                main()
+            except SystemExit:
+                pass
+
+        assert warn.call_count == expected_calls
