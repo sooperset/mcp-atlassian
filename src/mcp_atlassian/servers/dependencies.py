@@ -31,11 +31,8 @@ from mcp_atlassian.utils.env import (
 )
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.proxy import get_proxy_settings_from_env
-from mcp_atlassian.utils.ssrf_adapter import _operator_trusted_hosts
-from mcp_atlassian.utils.urls import (
-    _hostname_matches_allowlist,
-    validate_url_for_ssrf,
-)
+from mcp_atlassian.utils.ssrf_adapter import is_operator_trusted_url
+from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 if TYPE_CHECKING:
     from mcp_atlassian.confluence.config import (
@@ -458,9 +455,10 @@ def _header_url_passthrough_names(url: str, spec: _ServiceSpec) -> list[str]:
     """Passthrough header names that may travel to a request-supplied URL.
 
     Passthrough headers are injected by a trusted gateway, so the caller may
-    not know their values. They are forwarded only when the destination is a
-    host the operator trusts: the configured service host or an
-    ``MCP_ALLOWED_URL_DOMAINS`` entry. Otherwise none are attached.
+    not know their values. They are forwarded only when the destination is
+    one the operator trusts: the exact origin of the configured service URL,
+    or a host under an ``MCP_ALLOWED_URL_DOMAINS`` entry. Otherwise none are
+    attached.
 
     Args:
         url: The service URL taken from the request header.
@@ -472,12 +470,12 @@ def _header_url_passthrough_names(url: str, spec: _ServiceSpec) -> list[str]:
     names = get_header_names(spec.passthrough_env_var)
     if not names:
         return names
-    hostname = (urlparse(url).hostname or "").lower()
-    if hostname and _hostname_matches_allowlist(hostname, _operator_trusted_hosts()):
+    if is_operator_trusted_url(url):
         return names
+    hostname = (urlparse(url).hostname or "").lower()
     logger.warning(
-        "Not forwarding %s passthrough headers to %s: the host is not "
-        "JIRA_URL/CONFLUENCE_URL or in MCP_ALLOWED_URL_DOMAINS.",
+        "Not forwarding %s passthrough headers to %s: the URL is not the "
+        "JIRA_URL/CONFLUENCE_URL origin or in MCP_ALLOWED_URL_DOMAINS.",
         spec.name,
         hostname or "<no host>",
     )

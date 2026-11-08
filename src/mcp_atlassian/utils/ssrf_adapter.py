@@ -36,22 +36,77 @@ from urllib3.poolmanager import PoolManager
 
 from .urls import _check_ip_address, _get_domain_allowlist, _hostname_matches_allowlist
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+Origin = tuple[str, str, int]
+
+
+def url_origin(url: object) -> Origin | None:
+    """Return ``(scheme, host, effective port)`` for an http(s) URL, or None.
+
+    The host is lower-cased and a missing port becomes the scheme's default,
+    so ``https://Jira.example.com`` and ``https://jira.example.com:443`` are
+    the same origin while ``http://jira.example.com`` and
+    ``https://jira.example.com:8443`` are not.
+    """
+    if not isinstance(url, str):
+        return None
+    try:
+        parsed = urlparse(url.strip())
+        port = parsed.port
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or "").lower()
+    if scheme not in _DEFAULT_PORTS or not hostname:
+        return None
+    return scheme, hostname, port if port is not None else _DEFAULT_PORTS[scheme]
+
+
+def _configured_service_urls() -> list[str]:
+    return [
+        raw
+        for raw in (
+            os.environ.get(env, "").strip() for env in ("JIRA_URL", "CONFLUENCE_URL")
+        )
+        if raw
+    ]
+
 
 def _configured_service_hosts() -> list[str]:
     """Exact service hosts the operator configured via environment."""
     hosts = []
-    for env in ("JIRA_URL", "CONFLUENCE_URL"):
-        raw = os.environ.get(env, "").strip()
-        if raw:
-            hostname = urlparse(raw).hostname
-            if hostname:
-                hosts.append(hostname.lower())
+    for raw in _configured_service_urls():
+        hostname = urlparse(raw).hostname
+        if hostname:
+            hosts.append(hostname.lower())
     return hosts
 
 
-def _operator_trusted_hosts() -> list[str]:
-    """Hosts the operator explicitly configured or allowlisted via environment."""
-    return [*_configured_service_hosts(), *(_get_domain_allowlist() or [])]
+def _configured_service_origins() -> set[Origin]:
+    """Exact service origins the operator configured via environment."""
+    return {
+        origin
+        for origin in (url_origin(raw) for raw in _configured_service_urls())
+        if origin is not None
+    }
+
+
+def is_operator_trusted_url(url: object, extra_origins: Iterable[Origin] = ()) -> bool:
+    """Return True when ``url`` is a destination the operator trusts.
+
+    Trusted means the exact origin (scheme, host, port) of ``JIRA_URL``,
+    ``CONFLUENCE_URL`` or one of ``extra_origins``, or a host under an
+    ``MCP_ALLOWED_URL_DOMAINS`` entry (domain and its subdomains, as
+    documented for that variable). Subdomains, other schemes and other ports
+    of a configured service host are not trusted through the service URL.
+    """
+    origin = url_origin(url)
+    if origin is None:
+        return False
+    if origin in _configured_service_origins() or origin in set(extra_origins):
+        return True
+    return _hostname_matches_allowlist(origin[1], _get_domain_allowlist() or [])
 
 
 def _is_configured_service_host(host: str) -> bool:
@@ -150,17 +205,17 @@ class SsrfPinningAdapter(HTTPAdapter):
     def __init__(
         self, *args: Any, trusted_urls: Iterable[str] = (), **kwargs: Any
     ) -> None:
-        self._trusted_hosts: set[str] = set()
+        self._trusted_origins: set[Origin] = set()
         self._trust_urls(trusted_urls)
-        self._credential_hosts: set[str] = set()
+        self._credential_origins: set[Origin] = set()
         self._credential_headers: set[str] = set()
         super().__init__(*args, **kwargs)
 
     def _trust_urls(self, urls: Iterable[str]) -> None:
         for url in urls:
-            hostname = urlparse(url).hostname
-            if hostname:
-                self._trusted_hosts.add(hostname.lower())
+            origin = url_origin(url)
+            if origin is not None:
+                self._trusted_origins.add(origin)
 
     def send(
         self,
@@ -179,18 +234,19 @@ class SsrfPinningAdapter(HTTPAdapter):
         deployment proxy; other destinations connect directly through this
         adapter's validating pool.
         """
-        hostname = (urlparse(request.url or "").hostname or "").lower()
-        if self._credential_hosts and not _hostname_matches_allowlist(
-            hostname, [*self._credential_hosts, *(_get_domain_allowlist() or [])]
+        url = request.url or ""
+        if self._credential_origins and not (
+            url_origin(url) in self._credential_origins
+            or _hostname_matches_allowlist(
+                (urlparse(url).hostname or "").lower(), _get_domain_allowlist() or []
+            )
         ):
             # Off-host request (absolute attachment link, redirect hop): send it
             # without the service credentials or the operator's custom headers.
             for name in (*_CREDENTIAL_HEADERS, *self._credential_headers):
                 request.headers.pop(name, None)
             cert = None
-        if proxies and not _hostname_matches_allowlist(
-            hostname, [*_operator_trusted_hosts(), *self._trusted_hosts]
-        ):
+        if proxies and not is_operator_trusted_url(url, self._trusted_origins):
             proxies = {}
         return super().send(
             request,
@@ -242,24 +298,26 @@ def mount_ssrf_pinning(session: Session, *trusted_urls: str) -> None:
 def bind_credentials_to_host(
     session: Session, service_url: str, header_names: Iterable[str] = ()
 ) -> None:
-    """Send ``session`` credentials only to the service host.
+    """Send ``session`` credentials only to the service origin.
 
-    Requests to any other host (an absolute attachment URL, or a redirect hop
+    The origin is the exact scheme, host and port of ``service_url``. Requests
+    to any other origin (an absolute attachment URL, or a redirect hop
     such as a CDN) go out without ``Authorization``, ``Cookie``, the client
     certificate or the named custom headers. ``requests`` itself drops only
     ``Authorization`` on a cross-host redirect, and nothing on an initial
-    request to another host. Hosts under ``MCP_ALLOWED_URL_DOMAINS`` count as
-    the service host, so an operator can allow a known alternate base URL.
+    request to another host. Hosts under ``MCP_ALLOWED_URL_DOMAINS`` (a domain
+    and its subdomains) count as the service, so an operator can allow a known
+    alternate base URL.
 
     Args:
         session: Session whose SSRF pinning adapters carry the credentials.
         service_url: The URL the credentials belong to.
         header_names: Custom or passthrough header names to treat as secrets.
     """
-    hostname = urlparse(service_url).hostname if isinstance(service_url, str) else None
-    if not hostname:
+    origin = url_origin(service_url)
+    if origin is None:
         return
     for adapter in session.adapters.values():
         if isinstance(adapter, SsrfPinningAdapter):
-            adapter._credential_hosts.add(hostname.lower())
+            adapter._credential_origins.add(origin)
             adapter._credential_headers.update(header_names)

@@ -1610,6 +1610,9 @@ class TestGetConfluenceFetcher:
             ({"MCP_ALLOWED_URL_DOMAINS": "corp.example.com"}, False),
             ({"MCP_ALLOWED_URL_DOMAINS": "atlassian.net"}, True),
             ({"CONFLUENCE_URL": "https://test.atlassian.net/wiki"}, True),
+            ({"CONFLUENCE_URL": "https://atlassian.net/wiki"}, False),
+            ({"CONFLUENCE_URL": "http://test.atlassian.net/wiki"}, False),
+            ({"CONFLUENCE_URL": "https://test.atlassian.net:8443/wiki"}, False),
         ],
     )
     @patch("mcp_atlassian.servers.dependencies.get_http_request")

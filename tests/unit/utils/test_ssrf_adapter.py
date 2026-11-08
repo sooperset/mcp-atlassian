@@ -385,3 +385,75 @@ def test_allowlisted_alternate_host_keeps_credentials(monkeypatch):
 
     assert headers["Authorization"] == "Bearer SERVICE-PAT"
     assert headers["X-Gateway-Secret"] == "GATEWAY-SECRET"
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.jira.example.test/file",
+        "http://jira.example.test/file",
+        "https://jira.example.test:8443/file",
+    ],
+    ids=["subdomain", "scheme", "port"],
+)
+def test_credentials_bound_to_exact_service_origin(url, monkeypatch):
+    """Credentials for https://jira.example.test do not travel to a subdomain,
+    another scheme or another port of that host."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    session = _credentialed_session()
+
+    [(_, headers, cert)] = _sent_requests(session, [_response(200, url)], url)
+
+    assert "Authorization" not in headers
+    assert "X-Gateway-Secret" not in headers
+    assert cert is None
+
+
+def test_credentials_kept_for_same_origin_with_explicit_default_port(monkeypatch):
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    session = _credentialed_session()
+    url = "https://JIRA.example.test:443/rest/api/2/myself"
+
+    [(_, headers, _cert)] = _sent_requests(session, [_response(200, url)], url)
+
+    assert headers["Authorization"] == "Bearer SERVICE-PAT"
+
+
+def test_allowlisted_domain_still_covers_subdomains(monkeypatch):
+    """MCP_ALLOWED_URL_DOMAINS keeps its documented domain-and-subdomain match."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "example.test")
+    session = _credentialed_session()
+    url = "https://files.example.test/blob"
+
+    [(_, headers, _cert)] = _sent_requests(session, [_response(200, url)], url)
+
+    assert headers["Authorization"] == "Bearer SERVICE-PAT"
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://evil.jira.internal/rest/api/2",
+        "http://jira.internal/rest/api/2",
+        "https://jira.internal:8443/rest/api/2",
+    ],
+    ids=["subdomain", "scheme", "port"],
+)
+def test_proxy_trust_is_exact_service_origin(target, monkeypatch):
+    monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+    monkeypatch.delenv("CONFLUENCE_URL", raising=False)
+    monkeypatch.setenv("JIRA_URL", "https://jira.internal")
+    adapter = SsrfPinningAdapter(trusted_urls=["https://gw.internal"])
+    request = requests.Request("GET", target).prepare()
+    proxies = {"https": "http://proxy.example.test:8080"}
+
+    with patch.object(HTTPAdapter, "send", return_value=requests.Response()) as send:
+        adapter.send(request, proxies=proxies)
+
+    assert send.call_args.kwargs["proxies"] == {}
