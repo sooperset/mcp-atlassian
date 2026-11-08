@@ -90,6 +90,9 @@ def mock_jira_fetcher():
     mock_fetcher.get_available_transitions.return_value = []
     mock_fetcher.get_issue_watchers.return_value = {"watchCount": 0, "watchers": []}
     mock_fetcher.get_worklogs.return_value = []
+    # Default: the fixture issue is not an Epic, so epic_summary is
+    # reported not-applicable and get_epic_summary is never called.
+    mock_fetcher._is_epic_issue_type.return_value = False
 
     # Configure search_issues to return fixture data
     def mock_search_issues(jql, **kwargs):
@@ -325,6 +328,14 @@ def mock_jira_fetcher():
 
     mock_get_user_profile.side_effect = side_effect_func
     mock_fetcher.get_user_profile_by_identifier = mock_get_user_profile
+    mock_fetcher.get_current_user_profile.return_value = {
+        "account_id": "5b10ac8d82e05b22cc7d4ef5",
+        "display_name": "Current User",
+        "name": "Current User",
+        "email": "current.user@example.com",
+        "avatar_url": None,
+        "groups": {"size": 1, "items": [{"name": "jira-users"}]},
+    }
 
     mock_service_desk = MagicMock()
     mock_service_desk.to_simplified_dict.return_value = {
@@ -1221,6 +1232,24 @@ async def test_get_user_profile_tool_success(jira_client, mock_jira_fetcher):
         user_info["avatar_url"]
         == "https://test.atlassian.net/avatar/test.profile@example.com"
     )
+
+
+@pytest.mark.anyio
+async def test_get_user_profile_tool_me_uses_myself_once(
+    jira_client, mock_jira_fetcher
+):
+    """The existing profile tool returns the current user in one lookup."""
+    response = await jira_client.call_tool(
+        "jira_get_user_profile",
+        {"user_identifier": "me", "expand": "groups"},
+    )
+
+    mock_jira_fetcher.get_current_user_profile.assert_called_once_with(expand="groups")
+    mock_jira_fetcher.get_user_profile_by_identifier.assert_not_called()
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is True
+    assert result_data["user"]["account_id"] == ("5b10ac8d82e05b22cc7d4ef5")
+    assert result_data["user"]["groups"]["size"] == 1
 
 
 @pytest.mark.anyio
@@ -3575,7 +3604,7 @@ async def test_add_comment(jira_client, mock_jira_fetcher):
 async def test_add_comment_ignores_empty_optional_fields(
     jira_client, mock_jira_fetcher
 ):
-    """Test add_comment treats a client's default empty fields as omitted."""
+    """Empty visibility is omitted; explicit public=false is preserved (#1726)."""
     mock_jira_fetcher._is_internal_only_project.return_value = False
 
     response = await jira_client.call_tool(
@@ -3589,7 +3618,7 @@ async def test_add_comment_ignores_empty_optional_fields(
     )
 
     mock_jira_fetcher.add_comment.assert_called_once_with(
-        "TEST-123", "Test comment body", None, public=None
+        "TEST-123", "Test comment body", None, public=False
     )
 
     result = json.loads(response.content[0].text)
@@ -3621,8 +3650,9 @@ async def test_add_comment_restricted_visibility_with_client_default_false(
     """A client's default public=false must not break a restricted comment.
 
     Some MCP clients auto-fill omitted optional fields, sending public=false
-    alongside a real visibility. Forwarding that false would trip the
-    public/visibility conflict and break a restricted comment that used to work.
+    alongside a real visibility. That pairing cannot be intentional (public and
+    visibility are mutually exclusive), so the false is dropped while an
+    explicit false without visibility is preserved (#1726).
     """
     mock_jira_fetcher._is_internal_only_project.return_value = False
 
@@ -3671,24 +3701,25 @@ async def test_add_comment_forwards_false_for_internal_only_project(
 
 
 @pytest.mark.anyio
-async def test_add_comment_drops_client_default_false_on_ordinary_project(
+async def test_add_comment_preserves_explicit_false_on_ordinary_project(
     jira_client, mock_jira_fetcher
 ):
-    """On an unlisted project, a bare false stays "omitted".
+    """Explicit public=false must reach the client even off the internal-only list.
 
-    Some MCP clients auto-fill an omitted optional boolean as false. Forwarding
-    that would route ordinary Jira comments through the ServiceDesk API, which
-    answers 403 for non-JSM issues. public=true still routes, as before.
+    Dropping False to None here made JSM internal comments customer-visible
+    (#1726). public=true and an omitted public keep their prior routing.
     """
     mock_jira_fetcher._is_internal_only_project.return_value = False
     base_args = {"issue_key": "TEST-123", "body": "Test comment body"}
 
     await jira_client.call_tool("jira_add_comment", {**base_args, "public": False})
     await jira_client.call_tool("jira_add_comment", {**base_args, "public": True})
+    await jira_client.call_tool("jira_add_comment", base_args)
 
     assert mock_jira_fetcher.add_comment.call_args_list == [
-        call("TEST-123", "Test comment body", None, public=None),
+        call("TEST-123", "Test comment body", None, public=False),
         call("TEST-123", "Test comment body", None, public=True),
+        call("TEST-123", "Test comment body", None, public=None),
     ]
 
 
@@ -4257,6 +4288,88 @@ async def test_get_issue_include_worklogs(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+async def test_get_issue_include_epic_summary_on_epic(jira_client, mock_jira_fetcher):
+    """include=epic_summary aggregates children when the issue is an Epic."""
+    mock_jira_fetcher._is_epic_issue_type.return_value = True
+    mock_jira_fetcher.get_epic_summary.return_value = {
+        "total_children": 3,
+        "by_status": {"Done": 2, "Open": 1},
+        "by_assignee": {"acc-1": 2, "unassigned": 1},
+        "assignee_names": {"acc-1": "Alice"},
+        "by_type": {"Story": 3},
+        "completion_percentage": 66.7,
+        "partial": False,
+        "truncated": False,
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "epic_summary"},
+    )
+    content = json.loads(response.content[0].text)
+    assert content["epic_summary"]["applicable"] is True
+    assert content["epic_summary"]["completion_percentage"] == 66.7
+    assert content["epic_summary"]["by_assignee"] == {"acc-1": 2, "unassigned": 1}
+    # Aggregate-only by default: no child list unless opted in.
+    assert "children" not in content["epic_summary"]
+    mock_jira_fetcher.get_epic_summary.assert_called_once_with(
+        epic_key="TEST-123", max_children=100, include_children=False
+    )
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_epic_summary_children_opt_in(
+    jira_client, mock_jira_fetcher
+):
+    """epic_summary_children opts into the compact child list."""
+    mock_jira_fetcher._is_epic_issue_type.return_value = True
+    mock_jira_fetcher.get_epic_summary.return_value = {
+        "total_children": 1,
+        "by_status": {"Done": 1},
+        "by_assignee": {"acc-1": 1},
+        "assignee_names": {"acc-1": "Alice"},
+        "by_type": {"Story": 1},
+        "completion_percentage": 100.0,
+        "partial": False,
+        "truncated": False,
+        "children": [{"key": "TEST-1", "status": "Done", "assignee": "Alice"}],
+    }
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "include": "epic_summary",
+            "epic_summary_children": True,
+            "max_epic_children": 25,
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["epic_summary"]["children"] == [
+        {"key": "TEST-1", "status": "Done", "assignee": "Alice"}
+    ]
+    mock_jira_fetcher.get_epic_summary.assert_called_once_with(
+        epic_key="TEST-123", max_children=25, include_children=True
+    )
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_epic_summary_non_epic_makes_zero_calls(
+    jira_client, mock_jira_fetcher
+):
+    """A non-Epic reports applicable=false and fetches no children."""
+    mock_jira_fetcher._is_epic_issue_type.return_value = False
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {"issue_key": "TEST-123", "include": "epic_summary"},
+    )
+    content = json.loads(response.content[0].text)
+    assert content["epic_summary"] == {"applicable": False, "reason": "not_epic"}
+    mock_jira_fetcher.get_epic_summary.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_get_issue_include_multiple(jira_client, mock_jira_fetcher):
     """get_issue with multiple include sections."""
     mock_jira_fetcher.get_remote_issue_links.return_value = []
@@ -4306,6 +4419,10 @@ async def test_get_issue_include_all(jira_client, mock_jira_fetcher):
     assert content["worklogs"] == [{"id": "10001"}]
     assert content["comments"] == []
     assert content["changelogs"] == []
+    # The fixture issue is not an Epic, so epic_summary is not-applicable
+    # and no children are fetched.
+    assert content["epic_summary"] == {"applicable": False, "reason": "not_epic"}
+    mock_jira_fetcher.get_epic_summary.assert_not_called()
 
     call_args = mock_jira_fetcher.get_issue.call_args
     assert call_args.kwargs["fields"] == ["summary", "status", "comment"]

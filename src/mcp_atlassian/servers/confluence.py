@@ -7,21 +7,26 @@ import logging
 import mimetypes
 import re
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import parse_qs, urlsplit
 
 from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import BeforeValidator, Field
 
+from mcp_atlassian.confluence.attachments import (
+    ATTACHMENT_ID_PATTERN,
+    validate_attachment_id,
+)
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluenceAttachment
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
 from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
+from mcp_atlassian.servers.scope_guard import CONFLUENCE_SCOPE_POLICY, ToolScopeGuard
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
-from mcp_atlassian.utils.io import validate_safe_path
+from mcp_atlassian.utils.io import open_confined, validate_safe_path
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
@@ -176,12 +181,19 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
     if not path.is_file():
         msg = f"content_file does not exist or is not a regular file: {path}"
         raise ValueError(msg)
-    return path.read_text(encoding="utf-8")
+    with open_confined(path, "rb") as f:
+        return f.read().decode("utf-8")
+
+
+async def _scope_fetcher(ctx: Context) -> Any:
+    # Looked up at call time so the guard uses the same dependency as the tools.
+    return await get_confluence_fetcher(ctx)
 
 
 confluence_mcp = ErrorPreservingFastMCP(
     name="Confluence MCP Service",
     instructions="Provides tools for interacting with Atlassian Confluence.",
+    tool_guard=ToolScopeGuard(CONFLUENCE_SCOPE_POLICY, _scope_fetcher),
 )
 
 
@@ -1102,8 +1114,10 @@ async def update_page_section(
 
     Replaces only the content beneath a named heading, leaving all other
     sections, macros, layouts, and Confluence-specific elements completely
-    intact. This avoids the data loss that occurs when a full page is
-    downloaded as Markdown, edited, and re-uploaded.
+    intact. A following excerpt, expand, or layout that contains a heading of
+    the same or higher level ends the section — that wrapper is not replaced.
+    This avoids the data loss that occurs when a full page is downloaded as
+    Markdown, edited, and re-uploaded.
 
     Args:
         ctx: The FastMCP context.
@@ -2184,7 +2198,8 @@ async def download_attachment(
                 "The ID of the attachment to download (e.g., 'att123456789'). "
                 "Find attachment IDs using get_attachments tool. "
                 "Example workflow: get_attachments(content_id) → use returned ID here."
-            )
+            ),
+            pattern=ATTACHMENT_ID_PATTERN,
         ),
     ],
 ) -> TextContent | EmbeddedResource:
@@ -2207,6 +2222,7 @@ async def download_attachment(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     try:
+        validate_attachment_id(attachment_id)
         v2_adapter = confluence_fetcher._v2_adapter
 
         if v2_adapter:
@@ -2490,7 +2506,8 @@ async def delete_attachment(
                 "The ID of the attachment to delete. Attachment IDs can be found using the "
                 "get_attachments tool. Example: 'att123456789'. "
                 "**Warning**: This permanently deletes the attachment and all its versions."
-            )
+            ),
+            pattern=ATTACHMENT_ID_PATTERN,
         ),
     ],
 ) -> str:

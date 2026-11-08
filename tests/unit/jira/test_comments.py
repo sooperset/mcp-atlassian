@@ -1110,6 +1110,167 @@ class TestInternalOnlyNonRequestIssues:
         guarded_mixin.jira.get.assert_not_called()
 
 
+class TestPublicOnUnlistedProjects:
+    """`public` on a project outside JIRA_INTERNAL_ONLY_PROJECTS.
+
+    Since #1748 an explicit `public` always routed to the ServiceDesk API,
+    so on an issue that is not a JSM customer request the call errored where
+    it used to post an ordinary comment. A definite non-request has no
+    portal audience, so `public` is ignored there; anything else keeps the
+    ServiceDesk path with no fallback.
+    """
+
+    ORDINARY_RESPONSE = {
+        "id": "1",
+        "body": "note",
+        "created": "2024-01-01T10:00:00.000+0000",
+        "author": {"displayName": "A"},
+    }
+
+    @pytest.fixture
+    def mixin(self, jira_config_factory):
+        mixin = CommentsMixin(config=jira_config_factory())
+        mixin.jira = Mock()
+        mixin.jira.default_headers = {}
+        mixin.jira.issue_add_comment = Mock()
+        mixin.preprocessor = Mock()
+        mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
+        mixin._clean_text = Mock(side_effect=lambda x: x)
+        mixin._post_api3 = Mock(return_value=self.ORDINARY_RESPONSE)
+        return mixin
+
+    @staticmethod
+    def _lookup_url(mixin) -> str:
+        return mixin.jira.get.call_args.args[0]
+
+    @pytest.mark.parametrize("public", [True, False])
+    def test_non_request_posts_ordinary_comment(self, mixin, public):
+        """A definite 404 drops `public` and uses the ordinary path."""
+        mixin.jira.get.side_effect = HTTPError(response=Mock(status_code=404))
+
+        result = mixin.add_comment("TEST-1", "note", public=public)
+
+        mixin.jira.get.assert_called_once()
+        assert self._lookup_url(mixin) == "rest/servicedeskapi/request/TEST-1"
+        mixin._post_api3.assert_called_once()
+        mixin.jira.post.assert_not_called()
+        assert result["id"] == "1"
+
+    def test_non_request_applies_visibility(self, mixin):
+        """With `public` dropped, `visibility` restricts the ordinary comment."""
+        mixin.jira.get.side_effect = HTTPError(response=Mock(status_code=404))
+        visibility = {"type": "role", "value": "Developers"}
+
+        mixin.add_comment("TEST-1", "note", visibility=visibility, public=False)
+
+        mixin._post_api3.assert_called_once()
+        assert mixin._post_api3.call_args.args[1]["visibility"] == visibility
+        mixin.jira.post.assert_not_called()
+
+    def test_request_public_false_uses_servicedesk(self, mixin):
+        """A confirmed request keeps the ServiceDesk path."""
+        mixin.jira.get.return_value = {"issueId": "10001"}
+        mixin.jira.post.return_value = {
+            "id": 7,
+            "body": "Internal note",
+            "public": False,
+            "created": {"iso8601": "2024-01-01T10:00:00.000+0000"},
+            "author": {"displayName": "A"},
+        }
+
+        result = mixin.add_comment("TEST-1", "Internal note", public=False)
+
+        mixin.jira.post.assert_called_once()
+        assert mixin.jira.post.call_args.args[0] == (
+            "rest/servicedeskapi/request/TEST-1/comment"
+        )
+        assert mixin.jira.post.call_args.kwargs["data"] == {
+            "body": "Internal note",
+            "public": False,
+        }
+        mixin._post_api3.assert_not_called()
+        assert result["public"] is False
+
+    @pytest.mark.parametrize("status_code", [403, 404, 500])
+    def test_request_servicedesk_failure_never_falls_back(self, mixin, status_code):
+        """A failed ServiceDesk call on a request never becomes ordinary."""
+        mixin.jira.get.return_value = {"issueId": "10001"}
+        mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=status_code))
+
+        with pytest.raises(Exception, match="ServiceDesk|JSM service desk"):
+            mixin.add_comment("TEST-1", "Internal note", public=False)
+
+        mixin._post_api3.assert_not_called()
+        mixin.jira.issue_add_comment.assert_not_called()
+
+    def test_request_public_with_visibility_still_raises(self, mixin):
+        """The public + visibility conflict is unchanged for real requests."""
+        mixin.jira.get.return_value = {"issueId": "10001"}
+        with pytest.raises(ValueError, match="Cannot use both"):
+            mixin.add_comment(
+                "TEST-1",
+                "note",
+                visibility={"type": "group", "value": "jira-users"},
+                public=False,
+            )
+        mixin.jira.post.assert_not_called()
+        mixin._post_api3.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "lookup_error",
+        [
+            HTTPError(response=Mock(status_code=403)),
+            HTTPError(response=Mock(status_code=500)),
+            Exception("connection reset"),
+        ],
+    )
+    def test_inconclusive_lookup_fails_closed(self, mixin, lookup_error):
+        """Anything short of a definite 404 keeps the ServiceDesk path."""
+        mixin.jira.get.side_effect = lookup_error
+        mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=404))
+
+        with pytest.raises(Exception, match="ServiceDesk|JSM service desk"):
+            mixin.add_comment("TEST-1", "Internal note", public=False)
+
+        mixin.jira.post.assert_called_once()
+        mixin._post_api3.assert_not_called()
+        mixin.jira.issue_add_comment.assert_not_called()
+
+    @pytest.mark.parametrize("response", [{}, {"issueId": None}, "not a dict", None])
+    def test_unexpected_lookup_body_fails_closed(self, mixin, response):
+        """An unrecognisable lookup response is not proof of a non-request."""
+        mixin.jira.get.return_value = response
+        mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=404))
+
+        with pytest.raises(Exception, match="ServiceDesk|JSM service desk"):
+            mixin.add_comment("TEST-1", "Internal note", public=False)
+
+        mixin._post_api3.assert_not_called()
+
+    @pytest.mark.parametrize("issue_key", ["test-1", " TEST-1", "TEST%2D1"])
+    def test_noncanonical_key_skips_lookup_and_keeps_servicedesk(
+        self, mixin, issue_key
+    ):
+        """A 404 for a non-canonical spelling would not prove a non-request,
+        so such keys are not probed and keep the ServiceDesk routing."""
+        mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=404))
+
+        with pytest.raises(Exception, match="ServiceDesk|JSM service desk"):
+            mixin.add_comment(issue_key, "Internal note", public=False)
+
+        mixin.jira.get.assert_not_called()
+        mixin._post_api3.assert_not_called()
+
+    def test_public_none_pays_no_lookup(self, mixin):
+        """An ordinary comment never makes the extra request lookup."""
+        result = mixin.add_comment("TEST-1", "note")
+
+        mixin.jira.get.assert_not_called()
+        mixin.jira.post.assert_not_called()
+        mixin._post_api3.assert_called_once()
+        assert result["id"] == "1"
+
+
 class TestServiceDeskErrorStatusDetection:
     """Status classification must not depend on the exception's text.
 
