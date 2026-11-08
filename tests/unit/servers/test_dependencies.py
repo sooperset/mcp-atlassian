@@ -646,7 +646,7 @@ class TestGetJiraFetcher:
         assert called_config.no_proxy == "localhost,127.0.0.1"
         assert called_config.socks_proxy is None
         assert called_config.custom_headers is None
-        assert called_config.projects_filter is None
+        assert called_config.projects_filter == ["GLOBAL"]
         assert called_config.proxy_wpad_enable is True
         assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
 
@@ -710,7 +710,7 @@ class TestGetJiraFetcher:
         assert called_config.no_proxy == "localhost,127.0.0.1"
         assert called_config.socks_proxy == "socks5://proxy.example.com:1080"
         assert called_config.custom_headers is None
-        assert called_config.projects_filter is None
+        assert called_config.projects_filter == ["GLOBAL"]
         assert called_config.proxy_wpad_enable is False
         assert called_config.proxy_wpad_url is None
 
@@ -760,6 +760,7 @@ class TestGetJiraFetcher:
                 return None
 
         mock_context.request_context.lifespan_context = {}
+        monkeypatch.setenv("JIRA_PROJECTS_FILTER", "ALLOW")
         monkeypatch.setenv("ATLASSIAN_PROXY_WPAD_ENABLE", "true")
         monkeypatch.setenv(
             "ATLASSIAN_PROXY_WPAD_URL", "http://wpad.example.com/wpad.dat"
@@ -776,6 +777,7 @@ class TestGetJiraFetcher:
         assert called_config.proxy_wpad_enable is True
         assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
         assert called_config.no_proxy is None
+        assert called_config.projects_filter == "ALLOW"
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
@@ -1485,7 +1487,7 @@ class TestGetConfluenceFetcher:
         assert called_config.no_proxy == "localhost,127.0.0.1"
         assert called_config.socks_proxy is None
         assert called_config.custom_headers is None
-        assert called_config.spaces_filter is None
+        assert called_config.spaces_filter == ["GLOBAL"]
         assert called_config.proxy_wpad_enable is True
         assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
 
@@ -1516,6 +1518,7 @@ class TestGetConfluenceFetcher:
             "CONFLUENCE_CUSTOM_HEADERS", "X-Instance-Secret=do-not-forward"
         )
         mock_context.request_context.lifespan_context = {}
+        monkeypatch.setenv("CONFLUENCE_SPACES_FILTER", "ALLOW")
         service_headers = {
             "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
             "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
@@ -1552,6 +1555,7 @@ class TestGetConfluenceFetcher:
         assert called_config.proxy_wpad_enable is True
         assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
         assert called_config.custom_headers is None
+        assert called_config.spaces_filter == "ALLOW"
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")

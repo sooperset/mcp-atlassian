@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
@@ -62,6 +63,8 @@ class ScopePolicy:
         service: Service name used in messages.
         filter_attr: Config attribute holding the allowlist.
         lifespan_config_attr: ``MainAppContext`` attribute holding the config.
+        env_var: Environment variable holding the operator allowlist, read
+            when the server has no global config for the service.
         checks: Argument name to check, called as ``check(fetcher, value)``.
         unscoped_params: Argument names that do not identify a project/space
             object, or whose object is already checked through another
@@ -71,6 +74,7 @@ class ScopePolicy:
     service: str
     filter_attr: str
     lifespan_config_attr: str
+    env_var: str
     checks: Mapping[str, ScopeCheck]
     unscoped_params: frozenset[str]
 
@@ -89,6 +93,7 @@ JIRA_SCOPE_POLICY = ScopePolicy(
     service="Jira",
     filter_attr="projects_filter",
     lifespan_config_attr="full_jira_config",
+    env_var="JIRA_PROJECTS_FILTER",
     checks={
         "issue_key": _method("ensure_issue_allowed"),
         "inward_issue_key": _method("ensure_issue_allowed"),
@@ -207,6 +212,7 @@ CONFLUENCE_SCOPE_POLICY = ScopePolicy(
     service="Confluence",
     filter_attr="spaces_filter",
     lifespan_config_attr="full_confluence_config",
+    env_var="CONFLUENCE_SPACES_FILTER",
     checks={
         "page_id": _method("ensure_content_allowed"),
         "parent_id": _method("ensure_content_allowed"),
@@ -284,6 +290,17 @@ def _is_empty(value: Any) -> bool:
     return value is None or (isinstance(value, str | list | tuple) and not value)
 
 
+def _filter_keys(value: Any) -> frozenset[str]:
+    """Normalize an allowlist (comma string or list) to upper-cased keys."""
+    if isinstance(value, str):
+        items: list[Any] = value.split(",")
+    elif isinstance(value, list | tuple | set | frozenset):
+        items = list(value)
+    else:
+        return frozenset()
+    return frozenset(str(k).strip().upper() for k in items if str(k).strip())
+
+
 class ToolScopeGuard:
     """Check a tool call's arguments against the configured allowlist."""
 
@@ -298,8 +315,7 @@ class ToolScopeGuard:
         self.policy = policy
         self._fetcher_getter = fetcher_getter
 
-    def _lifespan_filter(self, ctx: Any) -> tuple[bool, Any]:
-        """Return ``(known, filter_value)`` from the server lifespan config."""
+    def _lifespan_config(self, ctx: Any) -> Any:
         try:
             lifespan = ctx.request_context.lifespan_context
             app_ctx = (
@@ -308,13 +324,23 @@ class ToolScopeGuard:
                 else None
             )
         except (AttributeError, LookupError, ValueError):
-            return False, None
+            return None
         if app_ctx is None:
-            return False, None
-        config = getattr(app_ctx, self.policy.lifespan_config_attr, None)
-        if config is None:
-            return False, None
-        return True, getattr(config, self.policy.filter_attr, None)
+            return None
+        return getattr(app_ctx, self.policy.lifespan_config_attr, None)
+
+    def operator_filter(self, ctx: Any) -> frozenset[str]:
+        """Return the operator allowlist, independent of the request's credentials.
+
+        The server's global config is the source when it exists; otherwise
+        (for example a header-only deployment without ``JIRA_URL``) the
+        environment variable is read directly. The per-request fetcher config
+        is never consulted here, because it is built from caller input.
+        """
+        config = self._lifespan_config(ctx)
+        if config is not None:
+            return _filter_keys(getattr(config, self.policy.filter_attr, None))
+        return _filter_keys(os.getenv(self.policy.env_var))
 
     async def __call__(self, tool_name: str, arguments: Mapping[str, Any]) -> None:
         """Raise ScopeViolationError if an argument is outside the allowlist.
@@ -331,18 +357,33 @@ class ToolScopeGuard:
                 unknown.append(name)
             elif kind == "scoped" and not _is_empty(value):
                 targets.append((name, value))
-        if not targets and not unknown:
-            return
 
         ctx = arguments.get("ctx")
-        known, lifespan_filter = self._lifespan_filter(ctx)
-        if known and not (isinstance(lifespan_filter, str) and lifespan_filter):
+        operator = self.operator_filter(ctx)
+        if not operator and self._lifespan_config(ctx) is not None:
+            # The server config is known and sets no allowlist.
+            return
+        if not operator and not targets and not unknown:
             return
 
         fetcher = await self._fetcher_getter(ctx)
-        configured = getattr(fetcher.config, self.policy.filter_attr, None)
-        if not (isinstance(configured, str) and configured.strip()):
+        configured = _filter_keys(
+            getattr(fetcher.config, self.policy.filter_attr, None)
+        )
+        if not operator and not configured:
             return
+        if operator and configured != operator:
+            # The fetcher serving this request does not carry the operator's
+            # allowlist, so its searches and checks would not be bounded.
+            logger.error(
+                f"{self.policy.service} fetcher for tool '{tool_name}' does not "
+                f"carry the operator {self.policy.env_var}; refusing."
+            )
+            raise ScopeViolationError(
+                f"{self.policy.service} tool '{tool_name}' cannot be used: the "
+                f"request's configuration does not apply the configured "
+                f"{self.policy.env_var}."
+            )
 
         if unknown:
             # A tool argument nobody classified could address anything; refuse

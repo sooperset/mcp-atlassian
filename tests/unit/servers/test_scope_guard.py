@@ -349,3 +349,53 @@ async def test_guard_ignores_empty_optional_targets() -> None:
         {"ctx": _ctx(None), "project_key": None, "board_name": "b"},
     )
     assert fetcher.jira.method_calls == []
+
+
+@pytest.mark.anyio
+async def test_guard_refuses_fetcher_without_operator_filter() -> None:
+    """A per-request fetcher whose config lost the operator filter is refused."""
+    fetcher = _jira_fetcher()
+    fetcher.config.projects_filter = None
+    guard = ToolScopeGuard(JIRA_SCOPE_POLICY, AsyncMock(return_value=fetcher))
+    app = MainAppContext(
+        full_jira_config=JiraConfig(
+            url="https://example.atlassian.net",
+            auth_type="basic",
+            username="u",
+            api_token="t",
+            projects_filter="ALLOWED",
+        )
+    )
+    with pytest.raises(ScopeViolationError):
+        await guard("get_issue", {"ctx": _ctx(app), "issue_key": f"{FORBIDDEN}-1"})
+
+
+@pytest.mark.anyio
+async def test_guard_reads_operator_filter_from_env_without_lifespan_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Header-only deployments have no lifespan config; the env var still binds."""
+    monkeypatch.setenv("JIRA_PROJECTS_FILTER", "ALLOWED")
+    fetcher = _jira_fetcher()
+    fetcher.config.projects_filter = None
+    guard = ToolScopeGuard(JIRA_SCOPE_POLICY, AsyncMock(return_value=fetcher))
+    with pytest.raises(ScopeViolationError):
+        await guard("get_issue", {"ctx": _ctx(None), "issue_key": f"{FORBIDDEN}-1"})
+
+
+@pytest.mark.anyio
+async def test_guard_refuses_fetcher_with_different_filter() -> None:
+    fetcher = _jira_fetcher()
+    fetcher.config.projects_filter = f"ALLOWED,{FORBIDDEN}"
+    guard = ToolScopeGuard(JIRA_SCOPE_POLICY, AsyncMock(return_value=fetcher))
+    app = MainAppContext(
+        full_jira_config=JiraConfig(
+            url="https://example.atlassian.net",
+            auth_type="basic",
+            username="u",
+            api_token="t",
+            projects_filter="ALLOWED",
+        )
+    )
+    with pytest.raises(ScopeViolationError):
+        await guard("get_issue", {"ctx": _ctx(app), "issue_key": f"{FORBIDDEN}-1"})

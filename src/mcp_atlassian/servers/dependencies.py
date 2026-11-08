@@ -63,7 +63,8 @@ class _ServiceSpec:
     url_header: str  # X-Atlassian-{Service}-Url
     token_header: str  # X-Atlassian-{Service}-Personal-Token
     passthrough_env_var: str  # {SERVICE}_PASSTHROUGH_HEADERS
-    filter_kwargs: dict[str, Any]  # e.g. {"projects_filter": None}
+    filter_attr: str  # "projects_filter" / "spaces_filter"
+    filter_env_var: str  # JIRA_PROJECTS_FILTER / CONFLUENCE_SPACES_FILTER
     get_session: Callable[[Any], Any]  # fetcher → session
     validate_fn: Callable[[Any], Any]  # fetcher → validation data
     on_validated: Callable[
@@ -330,7 +331,8 @@ def _jira_spec() -> _ServiceSpec:
         url_header="X-Atlassian-Jira-Url",
         token_header="X-Atlassian-Jira-Personal-Token",  # noqa: S106
         passthrough_env_var="JIRA_PASSTHROUGH_HEADERS",
-        filter_kwargs={"projects_filter": None},
+        filter_attr="projects_filter",
+        filter_env_var="JIRA_PROJECTS_FILTER",
         get_session=lambda f: f.jira._session,
         validate_fn=lambda f: f.get_current_user_account_id(),
         on_validated=_jira_on_validated,
@@ -352,7 +354,8 @@ def _confluence_spec() -> _ServiceSpec:
         url_header="X-Atlassian-Confluence-Url",
         token_header="X-Atlassian-Confluence-Personal-Token",  # noqa: S106
         passthrough_env_var="CONFLUENCE_PASSTHROUGH_HEADERS",
-        filter_kwargs={"spaces_filter": None},
+        filter_attr="spaces_filter",
+        filter_env_var="CONFLUENCE_SPACES_FILTER",
         get_session=lambda f: f.confluence._session,
         validate_fn=lambda f: f.get_current_user_info(),
         on_validated=_confluence_on_validated,
@@ -511,6 +514,28 @@ def _get_header_pat_network_config(ctx: Context, spec: _ServiceSpec) -> dict[str
         "proxy_wpad_enable": global_config.proxy_wpad_enable,
         "proxy_wpad_url": global_config.proxy_wpad_url,
     }
+
+
+def _get_operator_filter_kwargs(ctx: Context, spec: _ServiceSpec) -> dict[str, Any]:
+    """Return the operator's project/space allowlist for a per-request config.
+
+    The allowlist is operator policy and must bound every request, whatever
+    credentials the caller supplied. It comes from the global config when
+    available, otherwise from the environment variable.
+
+    Args:
+        ctx: FastMCP request context.
+        spec: Service specification for Jira or Confluence.
+
+    Returns:
+        Keyword arguments for the service config constructor.
+    """
+    try:
+        global_config = _get_global_config(ctx, spec)
+    except ValueError:
+        value = os.getenv(spec.filter_env_var)
+        return {spec.filter_attr: value if value and value.strip() else None}
+    return {spec.filter_attr: getattr(global_config, spec.filter_attr, None)}
 
 
 def _create_and_validate(
@@ -908,7 +933,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 # selected per request.
                 custom_headers=None,
                 passthrough_headers=_header_url_passthrough_names(url_header_val, spec),
-                **spec.filter_kwargs,
+                **_get_operator_filter_kwargs(ctx, spec),
             )
             return _create_and_validate(
                 request,
