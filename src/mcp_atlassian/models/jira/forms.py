@@ -110,6 +110,22 @@ class ProFormaForm(ApiModel):
     lock: bool | None = Field(None, description="Whether form is locked")
     design: dict[str, Any] | None = Field(None, description="ADF design data")
 
+    @staticmethod
+    def _answer_value(answer: dict[str, Any]) -> Any:
+        """
+        Extract the value of a single ProForma answer.
+
+        Args:
+            answer: One entry of the ``state.answers`` mapping
+
+        Returns:
+            The answer payload, or the whole entry for shapes not yet known
+        """
+        for key in ("text", "choices", "adf", "date", "time", "users"):
+            if key in answer:
+                return answer[key]
+        return answer
+
     @classmethod
     def from_api_response(cls, data: dict[str, Any], **kwargs: Any) -> "ProFormaForm":
         """
@@ -132,8 +148,20 @@ class ProFormaForm(ApiModel):
             status=status, version=None, submitted_at=None, submitted_by=None
         )
 
-        # Fields are not included in list responses
-        fields: list[ProFormaFormField] = []
+        # List responses carry no answers; detail responses keep them in
+        # state.answers, keyed by the question id used in design.questions
+        answers = (data.get("state") or {}).get("answers") or {}
+        questions = (data.get("design") or {}).get("questions") or {}
+        fields = [
+            ProFormaFormField(
+                id=question_id,
+                name=(questions.get(question_id) or {}).get("label", question_id),
+                type=(questions.get(question_id) or {}).get("type", "text"),
+                value=cls._answer_value(answer),
+                required=(questions.get(question_id) or {}).get("required", False),
+            )
+            for question_id, answer in answers.items()
+        ]
 
         # Store the design data
         design = data.get("design")
