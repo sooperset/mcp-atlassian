@@ -685,6 +685,9 @@ async def test_get_issue(jira_client, mock_jira_fetcher):
 @pytest.mark.anyio
 async def test_transition_issue_with_update_data(jira_client, mock_jira_fetcher):
     """Test transition update data is parsed and forwarded to JiraFetcher."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
     transitioned_issue = MagicMock()
     transitioned_issue.to_simplified_dict.return_value = {"key": "TEST-123"}
     mock_jira_fetcher.transition_issue.return_value = transitioned_issue
@@ -2844,7 +2847,11 @@ async def test_transition_issue_resolves_name_to_id(jira_client, mock_jira_fetch
     )
 
     mock_jira_fetcher.transition_issue.assert_called_once_with(
-        issue_key="TEST-123", transition_id="31", fields={}, comment=None
+        issue_key="TEST-123",
+        transition_id="31",
+        fields={},
+        comment=None,
+        update_data=None,
     )
 
 
@@ -2931,7 +2938,11 @@ async def test_transition_issue_still_accepts_numeric_id(
     )
 
     mock_jira_fetcher.transition_issue.assert_called_once_with(
-        issue_key="TEST-123", transition_id="31", fields={}, comment=None
+        issue_key="TEST-123",
+        transition_id="31",
+        fields={},
+        comment=None,
+        update_data=None,
     )
 
 
