@@ -4,9 +4,12 @@ Unit tests for Jira Forms REST API (FormsApiMixin).
 Tests the new Jira Forms API at https://api.atlassian.com/jira/forms/cloud/{cloudId}.
 """
 
+import io
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
+import requests.adapters
 from requests.exceptions import HTTPError
 
 from src.mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
@@ -291,7 +294,9 @@ class TestFormsApiAuthenticationMethods:
             mixin = FormsApiMixin(config)
             mixin._cloud_id = MOCK_CLOUD_ID
 
-            with patch("src.mcp_atlassian.jira.forms_api.requests.request") as mock_req:
+            with patch(
+                "src.mcp_atlassian.jira.forms_api.requests.Session.request"
+            ) as mock_req:
                 mock_response = Mock()
                 mock_response.content = b'{"success": true}'
                 mock_response.json.return_value = {"success": True}
@@ -323,7 +328,9 @@ class TestFormsApiAuthenticationMethods:
             mixin.jira.username = "test@example.com"
             mixin.jira.password = "test-api-token"
 
-            with patch("src.mcp_atlassian.jira.forms_api.requests.request") as mock_req:
+            with patch(
+                "src.mcp_atlassian.jira.forms_api.requests.Session.request"
+            ) as mock_req:
                 mock_response = Mock()
                 mock_response.content = b'{"success": true}'
                 mock_response.json.return_value = {"success": True}
@@ -335,6 +342,63 @@ class TestFormsApiAuthenticationMethods:
                 # Verify HTTPBasicAuth was used
                 call_args = mock_req.call_args
                 assert call_args[1]["auth"] is not None
+
+
+@pytest.mark.security_regression
+class TestFormsApiSsrfHardening:
+    """PAT/Basic Forms calls must use the hardened session, not bare requests."""
+
+    @pytest.mark.parametrize("auth_type", ["pat", "basic"])
+    def test_session_has_pinning_and_redirect_hook(self, auth_type):
+        from src.mcp_atlassian.utils.ssrf_adapter import SsrfPinningAdapter
+
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type=auth_type,
+            personal_token="pat" if auth_type == "pat" else None,
+            username="u@example.com" if auth_type == "basic" else None,
+            api_token="t" if auth_type == "basic" else None,
+        )
+        with patch("atlassian.Jira"):
+            mixin = FormsApiMixin(config)
+        mixin._cloud_id = MOCK_CLOUD_ID
+        mixin.jira = Mock(username="u@example.com", password="t")
+
+        with patch("requests.Session.request", autospec=True) as mock_req:
+            mock_req.return_value = Mock(content=b"", status_code=204)
+            mixin._make_forms_api_request("GET", "/issue/TEST-1/form")
+
+        session = mixin._forms_session()
+        assert mock_req.call_args.args[0] is session
+        assert isinstance(
+            session.get_adapter("https://api.atlassian.com/"), SsrfPinningAdapter
+        )
+        assert session.hooks["response"]
+
+    def test_redirect_to_metadata_is_blocked(self):
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            auth_type="pat",
+            personal_token="pat",
+        )
+        with patch("atlassian.Jira"):
+            mixin = FormsApiMixin(config)
+        mixin._cloud_id = MOCK_CLOUD_ID
+
+        redirect = requests.Response()
+        redirect.status_code = 302
+        redirect.raw = io.BytesIO(b"")
+        redirect.headers["Location"] = "http://169.254.169.254/latest/meta-data/"
+        redirect.url = f"https://api.atlassian.com/jira/forms/cloud/{MOCK_CLOUD_ID}/x"
+        redirect.request = requests.Request("PUT", redirect.url).prepare()
+
+        with patch.object(
+            requests.adapters.HTTPAdapter, "send", return_value=redirect
+        ) as send:
+            with pytest.raises(ValueError, match="Redirect blocked"):
+                mixin._make_forms_api_request("PUT", "/x", {"a": 1})
+
+        assert send.call_count == 1
 
 
 class TestFormsApiErrorHandling:
@@ -510,7 +574,9 @@ class TestFormsApiHttpErrorHandling:
         self, mixin_with_cloud_id
     ):
         """Test that 403 errors are converted to MCPAtlassianAuthenticationError."""
-        with patch("src.mcp_atlassian.jira.forms_api.requests.request") as mock_req:
+        with patch(
+            "src.mcp_atlassian.jira.forms_api.requests.Session.request"
+        ) as mock_req:
             mock_response = Mock()
             mock_response.status_code = 403
             mock_response.text = "Forbidden"
@@ -524,7 +590,9 @@ class TestFormsApiHttpErrorHandling:
 
     def test_make_forms_api_request_handles_404_not_found(self, mixin_with_cloud_id):
         """Test that 404 errors are converted to ValueError."""
-        with patch("src.mcp_atlassian.jira.forms_api.requests.request") as mock_req:
+        with patch(
+            "src.mcp_atlassian.jira.forms_api.requests.Session.request"
+        ) as mock_req:
             mock_response = Mock()
             mock_response.status_code = 404
             mock_response.text = "Not Found"
@@ -540,7 +608,9 @@ class TestFormsApiHttpErrorHandling:
 
     def test_make_forms_api_request_handles_empty_response(self, mixin_with_cloud_id):
         """Test that empty responses (like DELETE) are handled correctly."""
-        with patch("src.mcp_atlassian.jira.forms_api.requests.request") as mock_req:
+        with patch(
+            "src.mcp_atlassian.jira.forms_api.requests.Session.request"
+        ) as mock_req:
             mock_response = Mock()
             mock_response.content = b""
             mock_req.return_value = mock_response

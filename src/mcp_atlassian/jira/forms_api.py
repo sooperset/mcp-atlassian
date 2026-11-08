@@ -19,10 +19,14 @@ from requests.auth import HTTPBasicAuth
 from requests.exceptions import HTTPError
 
 from ..models.jira import ProFormaForm
+from ..utils.ssrf_adapter import mount_ssrf_pinning
+from ..utils.urls import make_ssrf_redirect_hook
 from .client import JiraClient
 from .forms_common import handle_forms_http_error
 
 logger = logging.getLogger("mcp-jira")
+
+FORMS_API_BASE_URL = "https://api.atlassian.com/jira/forms/cloud"
 
 
 class FormsApiMixin(JiraClient):
@@ -46,6 +50,26 @@ class FormsApiMixin(JiraClient):
         else:
             # For non-OAuth auth types, check environment variable
             self._cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
+        self._forms_http_session: requests.Session | None = None
+
+    def _forms_session(self) -> requests.Session:
+        """Return the session used for PAT and Basic Forms API calls.
+
+        The Forms API lives on ``api.atlassian.com``, not on the Jira host the
+        client session is bound to, so it gets its own session instead of a
+        bare ``requests.request``. That session carries the same SSRF redirect
+        hook and DNS-pinning adapter as every other outbound session; only the
+        fixed Forms API host is registered as proxy-trusted.
+
+        Returns:
+            The cached hardened session.
+        """
+        if self._forms_http_session is None:
+            session = requests.Session()
+            session.hooks["response"].append(make_ssrf_redirect_hook())
+            mount_ssrf_pinning(session, FORMS_API_BASE_URL)
+            self._forms_http_session = session
+        return self._forms_http_session
 
     def _make_forms_api_request(
         self,
@@ -81,7 +105,7 @@ class FormsApiMixin(JiraClient):
             )
             raise ValueError(error_msg)
 
-        url = f"https://api.atlassian.com/jira/forms/cloud/{self._cloud_id}{endpoint}"
+        url = f"{FORMS_API_BASE_URL}/{self._cloud_id}{endpoint}"
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
         # Determine authentication method based on config
@@ -136,7 +160,7 @@ class FormsApiMixin(JiraClient):
         # For PAT and basic auth, make the request with requests library
         if self.config.auth_type in ["pat", "basic"]:
             try:
-                response = requests.request(
+                response = self._forms_session().request(
                     method=method,
                     url=url,
                     auth=auth,
