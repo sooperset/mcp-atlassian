@@ -23,6 +23,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.credential_command import (
+    deferred_pat_outranks,
+    get_resolver,
+)
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
@@ -139,6 +143,9 @@ async def health_check(request: Request) -> JSONResponse:
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
     services = get_available_services()
+    resolver = get_resolver()
+    has_deferred_jira_auth = resolver.has_deferred_credentials("jira")
+    has_deferred_confluence_auth = resolver.has_deferred_credentials("confluence")
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
     enabled_toolsets = get_enabled_toolsets()
@@ -158,6 +165,11 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.warning(
                     "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
                 )
+        except ValueError as e:
+            if has_deferred_jira_auth:
+                logger.info("Jira credential resolution deferred until first use.")
+            else:
+                logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
 
@@ -173,12 +185,43 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.warning(
                     "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
                 )
+        except ValueError as e:
+            if has_deferred_confluence_auth:
+                logger.info(
+                    "Confluence credential resolution deferred until first use."
+                )
+            else:
+                logger.error(
+                    f"Failed to load Confluence configuration: {e}", exc_info=True
+                )
         except Exception as e:
             logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
+
+    # A deferred credential wins when nothing loaded eagerly, or when it would
+    # have outranked what did load (Server/DC personal tokens beat Basic and
+    # OAuth in from_env, but a deferred one is invisible to it at startup).
+    deferred_jira_wins = has_deferred_jira_auth and (
+        loaded_jira_config is None
+        or deferred_pat_outranks(
+            "jira",
+            is_cloud=loaded_jira_config.is_cloud,
+            auth_type=loaded_jira_config.auth_type,
+        )
+    )
+    deferred_confluence_wins = has_deferred_confluence_auth and (
+        loaded_confluence_config is None
+        or deferred_pat_outranks(
+            "confluence",
+            is_cloud=loaded_confluence_config.is_cloud,
+            auth_type=loaded_confluence_config.auth_type,
+        )
+    )
 
     app_context = MainAppContext(
         full_jira_config=loaded_jira_config,
         full_confluence_config=loaded_confluence_config,
+        has_deferred_jira_auth=deferred_jira_wins,
+        has_deferred_confluence_auth=deferred_confluence_wins,
         read_only=read_only,
         enabled_tools=enabled_tools,
         enabled_toolsets=enabled_toolsets,
@@ -259,11 +302,25 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         )
 
         header_based_services = {"jira": False, "confluence": False}
+        service_headers: dict[str, str] = {}
         request = getattr(req_context, "request", None)
         if request is not None:
-            service_headers = getattr(request.state, "atlassian_service_headers", {})
-            if service_headers:
+            request_service_headers = getattr(
+                request.state, "atlassian_service_headers", {}
+            )
+            if isinstance(request_service_headers, dict) and request_service_headers:
+                service_headers = request_service_headers
                 header_based_services = get_available_services(service_headers)
+
+        jira_config = (
+            app_lifespan_state.full_jira_config if app_lifespan_state else None
+        )
+        jira_url_header = service_headers.get("X-Atlassian-Jira-Url")
+        jira_is_cloud: bool | None = None
+        if jira_url_header:
+            jira_is_cloud = is_atlassian_cloud_url(jira_url_header)
+        elif jira_config is not None:
+            jira_is_cloud = bool(jira_config.is_cloud)
 
         return {
             "read_only": read_only,
@@ -271,6 +328,7 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
             "enabled_toolsets_filter": enabled_toolsets_filter,
             "app_lifespan_state": app_lifespan_state,
             "header_based_services": header_based_services,
+            "jira_is_cloud": jira_is_cloud,
         }
 
     def _is_tool_authorized(
@@ -294,12 +352,24 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
             return False
         return True
 
+    @staticmethod
+    def _is_tool_supported_on_deployment(
+        tool_obj: FastMCPTool, ctx: dict[str, Any]
+    ) -> bool:
+        """Return whether a tool is supported by the configured deployment."""
+        tool_tags = tool_obj.tags
+        if "cloud_only" in tool_tags and "jira" in tool_tags:
+            return ctx["jira_is_cloud"] is not False
+        return True
+
     def _is_tool_enabled(
         self, registered_name: str, tool_obj: FastMCPTool, ctx: dict[str, Any]
     ) -> bool:
         """Listing filter: the tool is authorized AND its backing service is
         configured/available (the latter is a listing-only graceful-hide)."""
         if not self._is_tool_authorized(registered_name, tool_obj, ctx):
+            return False
+        if not self._is_tool_supported_on_deployment(tool_obj, ctx):
             return False
 
         app_lifespan_state = ctx["app_lifespan_state"]
@@ -311,9 +381,11 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         if app_lifespan_state:
             jira_available = (
                 app_lifespan_state.full_jira_config is not None
+                or app_lifespan_state.has_deferred_jira_auth
             ) or header_based_services.get("jira", False)
             confluence_available = (
                 app_lifespan_state.full_confluence_config is not None
+                or app_lifespan_state.has_deferred_confluence_auth
             ) or header_based_services.get("confluence", False)
             if is_jira_tool and not jira_available:
                 return False
@@ -361,14 +433,18 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
     async def _call_tool_mcp(self, key: str, arguments: dict[str, Any]) -> Any:
         # Enforce the same enablement filter at call time as at listing time, so a
         # tool hidden from the listing (read-only mode, not in ENABLED_TOOLS, toolset
-        # disabled, or service unavailable) cannot be invoked directly by name.
+        # disabled, or deployment-incompatible) cannot be invoked directly by name.
         # Under an active filter context, denials and genuinely unknown tools raise
         # byte-identical messages here (no exists-but-disabled leak), decoupled from
         # upstream's error format (FastMCP uses a repr-quoted name).
         ctx = self._tool_filter_context()
         if ctx is not None:
             tool_obj = await self.get_tool(key)
-            if tool_obj is None or not self._is_tool_authorized(key, tool_obj, ctx):
+            if (
+                tool_obj is None
+                or not self._is_tool_authorized(key, tool_obj, ctx)
+                or not self._is_tool_supported_on_deployment(tool_obj, ctx)
+            ):
                 raise NotFoundError(f"Unknown tool: {key}")
         return await super()._call_tool_mcp(key, arguments)
 

@@ -1,0 +1,2 @@
+notes: |
+  Each inline comment includes `parent_comment_id`, `marker_ref`, `original_selection`, and `resolution_status` when Confluence provides those values.

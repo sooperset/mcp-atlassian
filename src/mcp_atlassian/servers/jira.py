@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import binascii
 import json
 import logging
 from typing import Annotated, Any
@@ -160,11 +161,13 @@ def _parse_visibility(
 
 def _parse_additional_fields(
     additional_fields: dict[str, Any] | str | None,
+    param_name: str = "additional_fields",
 ) -> dict[str, Any]:
     """Parse additional_fields from dict or JSON string.
 
     Args:
         additional_fields: Dict, JSON string, or None.
+        param_name: Argument name used in error messages.
 
     Returns:
         Parsed dict of additional fields.
@@ -177,22 +180,26 @@ def _parse_additional_fields(
     if isinstance(additional_fields, dict):
         return additional_fields
     if isinstance(additional_fields, str):
+        if not additional_fields.strip():
+            return {}
         try:
             parsed = json.loads(additional_fields)
             if not isinstance(parsed, dict):
-                raise ValueError(
-                    "Parsed additional_fields is not a JSON object (dict)."
-                )
+                raise ValueError(f"{param_name} is not a JSON object (dict).")
             return parsed
         except json.JSONDecodeError as e:
-            raise ValueError(f"additional_fields is not valid JSON: {e}") from e
-    raise ValueError("additional_fields must be a dictionary or JSON string.")
+            raise ValueError(f"{param_name} is not valid JSON: {e}") from e
+    raise ValueError(f"{param_name} must be a dictionary or JSON string.")
 
 
 def _parse_request_field_values(
     request_field_values: dict[str, Any] | str,
 ) -> dict[str, Any]:
     """Parse request_field_values from dict or JSON string."""
+    if isinstance(request_field_values, str) and not request_field_values.strip():
+        raise ValueError(
+            "request_field_values is not valid JSON: value must not be blank."
+        )
     try:
         return _parse_additional_fields(request_field_values)
     except ValueError as e:
@@ -256,6 +263,81 @@ def _parse_attachments(
     return parsed
 
 
+def _parse_base64_attachments(
+    attachments_base64: str | None,
+) -> list[dict[str, Any]]:
+    """Parse and decode issue attachments supplied as base64 content.
+
+    Each entry must be an object with a ``filename`` and base64-encoded
+    ``content_base64``. Decoding happens here so the client layer only ever
+    deals with raw bytes, never with the server's filesystem.
+
+    Args:
+        attachments_base64: JSON array string of attachment objects, or None
+
+    Returns:
+        A list of ``{"filename": str, "content": bytes}`` dicts, empty if
+        nothing was supplied
+
+    Raises:
+        ValueError: If the JSON, an entry or a filename is invalid, or if the
+            content is undecodable, empty, or over ``ATTACHMENT_MAX_BYTES``
+    """
+    stripped = (attachments_base64 or "").strip()
+    if not stripped:
+        return []
+
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as e:
+        msg = f"attachments_base64 is not valid JSON: {e}"
+        raise ValueError(msg) from e
+
+    if not isinstance(parsed, list):
+        raise ValueError(
+            "attachments_base64 must be a JSON array of attachment objects."
+        )
+
+    decoded: list[dict[str, Any]] = []
+    for index, item in enumerate(parsed):
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"attachments_base64[{index}] must be an object with "
+                "'filename' and 'content_base64'."
+            )
+
+        filename = item.get("filename")
+        if not filename or not isinstance(filename, str):
+            raise ValueError(f"attachments_base64[{index}] requires a 'filename'.")
+
+        content_base64 = item.get("content_base64")
+        if not isinstance(content_base64, str):
+            raise ValueError(
+                f"attachments_base64[{index}] ({filename}) requires 'content_base64'."
+            )
+
+        try:
+            content = base64.b64decode(content_base64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            msg = (
+                f"attachments_base64[{index}] ({filename}) has invalid "
+                f"base64 content: {e}"
+            )
+            raise ValueError(msg) from e
+
+        if not content:
+            raise ValueError(f"attachments_base64[{index}] ({filename}) is empty.")
+        if len(content) > ATTACHMENT_MAX_BYTES:
+            raise ValueError(
+                f"attachments_base64[{index}] ({filename}) exceeds the "
+                f"{ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB inline limit."
+            )
+
+        decoded.append({"filename": filename, "content": content})
+
+    return decoded
+
+
 @jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_users"},
     annotations={"title": "Get User Profile", "readOnlyHint": True},
@@ -268,13 +350,29 @@ async def get_user_profile(
             description="Identifier for the user (e.g., email address 'user@example.com', username 'johndoe', account ID 'accountid:...', or key for Server/DC)."
         ),
     ],
+    expand: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional comma-separated sections to include when "
+                "user_identifier is 'me', e.g. 'groups' or "
+                "'groups,applicationRoles'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """
-    Retrieve profile information for a specific Jira user.
+    Retrieve profile information for a Jira user.
+
+    Use ``user_identifier="me"`` to return the account authenticated for the
+    current request directly from Jira's ``/myself`` endpoint. This path does
+    not require Browse Users permission.
 
     Args:
         ctx: The FastMCP context.
         user_identifier: User identifier (email, username, key, or account ID).
+        expand: Optional sections to include for the ``me`` lookup.
 
     Returns:
         JSON string representing the Jira user profile object, or an error object if not found.
@@ -284,8 +382,11 @@ async def get_user_profile(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        user: JiraUser = jira.get_user_profile_by_identifier(user_identifier)
-        result = user.to_simplified_dict()
+        if user_identifier.lower() == "me":
+            result = jira.get_current_user_profile(expand=expand)
+        else:
+            user: JiraUser = jira.get_user_profile_by_identifier(user_identifier)
+            result = user.to_simplified_dict()
         response_data = {"success": True, "user": result}
     except Exception as e:
         error_message = ""
@@ -585,9 +686,9 @@ async def get_issue(
                 "You may also provide a single field as a string (e.g., 'duedate'). "
                 "Use '*all' for all fields (including custom fields), or omit for essential fields only."
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     expand: Annotated[
         str | None,
         Field(
@@ -772,9 +873,9 @@ async def search(
                 "(Optional) Comma-separated fields to return in the results. "
                 "Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     limit: Annotated[
         int,
         Field(description="Maximum number of results (1-50)", default=10, ge=1),
@@ -1536,9 +1637,9 @@ async def get_board_issues(
                 "Use '*all' for all fields, or specify individual "
                 "fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     start_at: Annotated[
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),
@@ -1641,9 +1742,9 @@ async def get_sprint_issues(
                 "Use '*all' for all fields, or specify individual "
                 "fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     start_at: Annotated[
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),
@@ -1753,7 +1854,9 @@ async def create_issue(
         Field(
             description=(
                 "Issue description in Markdown format. On Jira Cloud, use "
-                "'{expand:Title}...{expand}' for a collapsible section."
+                "'{expand:Title}...{expand}' for a collapsible section and "
+                "'{status:color=green|title=Done}' for an inline status "
+                "lozenge."
             ),
             default=None,
         ),
@@ -1899,7 +2002,7 @@ async def batch_create_issues(
 
 
 @jira_mcp.tool(
-    tags={"jira", "read", "toolset:jira_issues"},
+    tags={"jira", "read", "cloud_only", "toolset:jira_issues"},
     annotations={"title": "Batch Get Changelogs", "readOnlyHint": True},
 )
 async def batch_get_changelogs(
@@ -1999,7 +2102,13 @@ async def update_issue(
             description=(
                 "JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). "
                 "For 'description', provide text in Markdown format; on Jira Cloud, "
-                "use '{expand:Title}...{expand}' for a collapsible section. "
+                "use '{expand:Title}...{expand}' for a collapsible section "
+                "and '{status:color=green|title=Done}' for an inline status "
+                "lozenge. "
+                "On Jira Cloud only, for 'parent', provide an issue key or "
+                '{"key": "PROJ-123"} to set the parent, or null to clear it. '
+                "On Server/DC, clear an Epic Link by updating its custom field "
+                'directly, such as {"customfield_10014": null}. '
                 'Example: \'{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\\nMarkdown text"}\''
             ),
             default=None,
@@ -2011,7 +2120,11 @@ async def update_issue(
             description=(
                 "(Optional) JSON string of additional fields to update. "
                 "Use this for custom fields or more complex updates. "
-                'Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}.'
+                'Link to epic: {"epicKey": "EPIC-123"} or {"epic_link": "EPIC-123"}. '
+                'On Jira Cloud, set a parent with {"parent": "PROJ-123"} and '
+                'clear it with {"parent": null}. On Server/DC, clear an Epic Link '
+                "by updating its custom field directly, such as "
+                '{"customfield_10014": null}.'
             ),
             default=None,
         ),
@@ -2031,7 +2144,24 @@ async def update_issue(
         Field(
             description=(
                 "(Optional) JSON string array or comma-separated list of file paths to attach to the issue. "
-                "Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt']"
+                "Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt']. "
+                "Requires the server to be able to read the paths; for remote or "
+                "containerized servers use 'attachments_base64' instead."
+            ),
+            default=None,
+        ),
+    ] = None,
+    attachments_base64: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON string array of files to attach as base64-encoded "
+                "content, without the server reading from disk. Use this when the "
+                "server cannot access host file paths (e.g. a remote or "
+                "containerized MCP server). Each entry needs 'filename' and "
+                "'content_base64'. Example: "
+                '\'[{"filename": "hello.txt", "content_base64": "SGVsbG8="}]\'. '
+                "Can be combined with 'attachments'."
             ),
             default=None,
         ),
@@ -2103,10 +2233,16 @@ async def update_issue(
         ctx: The FastMCP context.
         issue_key: Jira issue key.
         fields: Optional JSON string of fields to update. Text fields like
-            'description' should use Markdown format.
-        additional_fields: Optional JSON string of additional fields.
+            'description' should use Markdown format. On Jira Cloud only, use
+            ``{"parent": null}`` to clear an issue's parent. On Server/DC,
+            update the Epic Link custom field directly, such as
+            ``{"customfield_10014": null}``.
+        additional_fields: Optional JSON string of additional fields. The same
+            Cloud-only parent clearing and Server/DC Epic Link guidance applies.
         components: Comma-separated list of component names.
         attachments: Optional JSON array string or comma-separated list of file paths.
+        attachments_base64: Optional JSON array string of {'filename',
+            'content_base64'} objects uploaded without server filesystem access.
         transition: Optional transition name or ID.
         comment: Optional issue comment in Markdown format.
         comment_visibility: Optional JSON string restricting comment visibility.
@@ -2121,7 +2257,7 @@ async def update_issue(
         ValueError: If in read-only mode or Jira client unavailable, or invalid input.
     """
     jira = await get_jira_fetcher(ctx)
-    update_fields = _parse_additional_fields(fields)
+    update_fields = _parse_additional_fields(fields, param_name="fields")
 
     return_fields_list: str | list[str] | None = return_fields
     if return_fields and return_fields != "*all":
@@ -2156,12 +2292,16 @@ async def update_issue(
                 "attachments must be a JSON array string or comma-separated string."
             )
 
+    inline_attachments = _parse_base64_attachments(attachments_base64)
+
     # Combine fields and additional_fields
     all_updates = {**update_fields, **extra_fields}
     if components_list:
         all_updates["components"] = components_list
     if attachment_paths:
         all_updates["attachments"] = attachment_paths
+    if inline_attachments:
+        all_updates["attachments_base64"] = inline_attachments
 
     # Jira handles status changes through transitions. Avoid sending both a
     # status field and a requested transition, which would result in two
@@ -2180,7 +2320,9 @@ async def update_issue(
             issue = jira.update_issue(
                 issue_key=issue_key, return_fields=return_fields_list, **all_updates
             )
-            if any(key != "attachments" for key in all_updates):
+            if any(
+                key not in ("attachments", "attachments_base64") for key in all_updates
+            ):
                 operations_performed.append("fields_updated")
             if (
                 hasattr(issue, "custom_fields")
@@ -2385,7 +2527,7 @@ async def delete_issue(
 
 
 @jira_mcp.tool(
-    tags={"jira", "write", "toolset:jira_issues"},
+    tags={"jira", "write", "cloud_only", "toolset:jira_issues"},
     annotations={"title": "Move Issue to Project", "destructiveHint": True},
 )
 @check_write_access
@@ -2531,16 +2673,20 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    # A bare false is ambiguous here in a way it is not in the client API: some
-    # MCP clients auto-fill an omitted optional boolean as false. Honor it only
-    # for a project the operator declared internal-only, where it can only mean
-    # "internal" — that is the case the guard exists for, and dropping it there
-    # is what blocked internal comments entirely. Anywhere else, keep treating it
-    # as omitted, so those clients don't start routing ordinary Jira comments
-    # through the ServiceDesk API (which answers 403 for non-JSM issues) or
-    # tripping the public/visibility conflict on a restricted comment.
+    # Preserve the tri-state ``public`` value at the MCP boundary (#1726).
+    #
+    # Rewriting every bare ``public=False`` to ``None`` for projects outside
+    # ``JIRA_INTERNAL_ONLY_PROJECTS`` made an explicit internal JSM comment
+    # land as customer-visible. Keep ``False`` so ServiceDesk routing can
+    # honor it.
+    #
+    # One compatibility carve-out remains: some MCP clients auto-fill omitted
+    # optional booleans as false. When the caller also supplied a real
+    # ``visibility`` restriction, that false cannot be intentional (the two
+    # are mutually exclusive on the ServiceDesk path) — drop it so restricted
+    # ordinary comments keep working.
     public_value = public
-    if public is False and not jira._is_internal_only_project(issue_key):
+    if public is False and visibility_dict is not None:
         public_value = None
     result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -2944,8 +3090,10 @@ async def transition_issue(
         str,
         Field(
             description=(
-                "ID of the transition to perform. Use the jira_get_transitions tool first "
-                "to get the available transition IDs for the issue. Example values: '11', '21', '31'"
+                "ID or name of the transition to perform (case-insensitive name match, "
+                "e.g. 'In Progress', 'Done'). Use the jira_get_transitions tool first to "
+                "see the available transitions for the issue. Example values: '11', '21', "
+                "'31', 'In Progress'"
             )
         ),
     ],
@@ -2969,7 +3117,9 @@ async def transition_issue(
                 "listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be "
                 "customer-visible on JSM and cannot be forced internal): transition "
                 "without a comment, then post an internal note with "
-                "jira_add_comment(public=false)."
+                "jira_add_comment(public=false). On Jira Cloud, the workflow "
+                "transition's screen must include a Comment field; if Jira omits "
+                "the comment, add it separately with jira_add_comment."
             ),
         ),
     ] = None,
@@ -2979,7 +3129,7 @@ async def transition_issue(
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        transition_id: ID of the transition.
+        transition_id: ID or name of the transition.
         fields: Optional JSON string of fields to update during transition.
         comment: Optional comment for the transition in Markdown format.
 
@@ -2996,11 +3146,14 @@ async def transition_issue(
         raise ValueError("issue_key and transition_id are required.")
 
     # Parse fields from JSON string
-    update_fields = _parse_additional_fields(fields)
+    update_fields = _parse_additional_fields(fields, param_name="fields")
+
+    available_transitions = jira.get_available_transitions(issue_key)
+    resolved_transition_id = resolve_transition(available_transitions, transition_id)
 
     issue = jira.transition_issue(
         issue_key=issue_key,
-        transition_id=transition_id,
+        transition_id=resolved_transition_id,
         fields=update_fields,
         comment=comment,
     )

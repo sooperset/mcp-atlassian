@@ -267,6 +267,42 @@ class TestFieldsMixin:
             project="TEST", issue_type_id="10001"
         )
 
+    def test_get_required_fields_accepts_issue_type_id(self, fields_mixin: FieldsMixin):
+        """Resolve required fields by stable ID for localized issue types."""
+        fields_mixin.get_project_issue_types = MagicMock(
+            return_value=[{"id": "10001", "name": "Эпик"}]
+        )
+        fields_mixin.jira.issue_createmeta_fieldtypes.return_value = {
+            "values": [
+                {
+                    "required": True,
+                    "fieldId": "customfield_10103",
+                    "name": "Epic Name",
+                    "schema": {
+                        "type": "string",
+                        "custom": "com.pyxis.greenhopper.jira:gh-epic-label",
+                    },
+                }
+            ]
+        }
+
+        result = fields_mixin.get_required_fields("10001", "TEST")
+
+        assert result == {
+            "customfield_10103": {
+                "required": True,
+                "fieldId": "customfield_10103",
+                "name": "Epic Name",
+                "schema": {
+                    "type": "string",
+                    "custom": "com.pyxis.greenhopper.jira:gh-epic-label",
+                },
+            }
+        }
+        fields_mixin.jira.issue_createmeta_fieldtypes.assert_called_once_with(
+            project="TEST", issue_type_id="10001"
+        )
+
     def test_get_required_fields_not_found(self, fields_mixin: FieldsMixin):
         """Test get_required_fields handles project/issue type not found."""
         # Scenario 1: Issue type not found in project

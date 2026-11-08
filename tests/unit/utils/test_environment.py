@@ -1,6 +1,8 @@
 """Tests for the environment utilities module."""
 
 import logging
+import os
+from unittest.mock import patch
 
 import pytest
 
@@ -162,6 +164,64 @@ class TestGetAvailableServices:
                 caplog, "not_configured", ["confluence", "jira"]
             )
             assert "mTLS client certificate authentication" not in caplog.text
+
+    def test_cloud_api_token_commands_make_services_available(self, caplog):
+        """Cloud services are listed without running deferred token commands."""
+        env = {
+            "JIRA_URL": "https://company.atlassian.net",
+            "JIRA_USERNAME": "user@company.com",
+            "JIRA_API_TOKEN_COMMAND": "get-jira-token",
+            "CONFLUENCE_URL": "https://company.atlassian.net/wiki",
+            "CONFLUENCE_USERNAME": "user@company.com",
+            "CONFLUENCE_API_TOKEN_COMMAND": "get-confluence-token",
+        }
+        with MockEnvironment.clean_env(), patch.dict(os.environ, env):
+            result = get_available_services()
+
+        _assert_service_availability(
+            result, confluence_expected=True, jira_expected=True
+        )
+        assert "credentials will be resolved on first use" in caplog.text
+
+    def test_server_personal_token_commands_make_services_available(self):
+        """Server/DC PAT commands don't require usernames."""
+        env = {
+            "JIRA_URL": "https://jira.company.com",
+            "JIRA_PERSONAL_TOKEN_COMMAND": "get-jira-token",
+            "CONFLUENCE_URL": "https://confluence.company.com",
+            "CONFLUENCE_PERSONAL_TOKEN_COMMAND": "get-confluence-token",
+        }
+        with MockEnvironment.clean_env(), patch.dict(os.environ, env):
+            result = get_available_services()
+
+        _assert_service_availability(
+            result, confluence_expected=True, jira_expected=True
+        )
+
+    @pytest.mark.parametrize(
+        "env",
+        [
+            {"JIRA_API_TOKEN_COMMAND": "get-token"},
+            {
+                "JIRA_URL": "https://company.atlassian.net",
+                "JIRA_API_TOKEN_COMMAND": "get-token",
+            },
+            {
+                "JIRA_URL": "https://company.atlassian.net",
+                "JIRA_PERSONAL_TOKEN_COMMAND": "get-token",
+            },
+        ],
+    )
+    def test_incomplete_deferred_auth_does_not_make_service_available(
+        self, env: dict[str, str]
+    ) -> None:
+        """Deferred credentials still require URL, username, and edition fit."""
+        with MockEnvironment.clean_env(), patch.dict(os.environ, env):
+            result = get_available_services()
+
+        _assert_service_availability(
+            result, confluence_expected=False, jira_expected=False
+        )
 
     @pytest.mark.parametrize(
         "missing_oauth_var",
@@ -532,3 +592,35 @@ class TestGetAvailableServicesWithHeaders:
             _assert_service_availability(
                 result, confluence_expected=False, jira_expected=False
             )
+
+
+class TestMockEnvironmentCleanEnv:
+    """Regression tests for MockEnvironment.clean_env().
+
+    clean_env() previously only cleared JIRA_URL/USERNAME/API_TOKEN and the
+    Confluence/OAuth equivalents, silently leaving PERSONAL_TOKEN and
+    CLIENT_CERT/CLIENT_KEY* vars untouched. Any developer with real PAT or
+    mTLS credentials already exported in their shell (e.g. for manual
+    testing against a live instance) would have those values leak into
+    parametrized auth-scenario tests that assume a clean environment,
+    causing spurious failures unrelated to the code under test.
+    """
+
+    @pytest.mark.parametrize(
+        "var_name",
+        [
+            "JIRA_PERSONAL_TOKEN",
+            "JIRA_CLIENT_CERT",
+            "JIRA_CLIENT_KEY",
+            "JIRA_CLIENT_KEY_PASSWORD",
+            "CONFLUENCE_PERSONAL_TOKEN",
+            "CONFLUENCE_CLIENT_CERT",
+            "CONFLUENCE_CLIENT_KEY",
+            "CONFLUENCE_CLIENT_KEY_PASSWORD",
+        ],
+    )
+    def test_clean_env_clears_pat_and_mtls_vars(self, var_name, monkeypatch):
+        """clean_env() must clear PAT and mTLS-related env vars too."""
+        monkeypatch.setenv(var_name, "leaked-from-developer-shell")
+        with MockEnvironment.clean_env():
+            assert os.environ.get(var_name) is None
