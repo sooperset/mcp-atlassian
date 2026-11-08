@@ -1,4 +1,6 @@
 example: |
   {"issue_key": "PROJ-123", "body": "## Investigation\n\nFound the root cause in module X."}
 tips: |
-  Supports Markdown formatting. On Jira Cloud, mention users with `[~accountid:ACCOUNT_ID]` or `@[Display Name](accountid:ACCOUNT_ID)`. Use `visibility` parameter for restricted comments (e.g., service desk internal notes). The generated schema lists `body`, but callers may use `comment` as an equivalent input alias for the same comment text.
+  Supports Markdown formatting. On Jira Cloud, mention users with `[~accountid:ACCOUNT_ID]` or `@[Display Name](accountid:ACCOUNT_ID)`. Use `visibility` to restrict a comment to a Jira group or project role. The generated schema lists `body`, but callers may use `comment` as an equivalent input alias for the same comment text.
+
+  For an ordinary comment, omit `public`. Setting `public` to `true` or `false` always sends the comment through the Jira Service Management ServiceDesk API, so on an issue that is not a JSM customer request the call returns an error instead of posting a normal comment. There is no fallback to the regular comment API. Use `public: false` only for internal (agent-only) notes on JSM requests, and `public: true` for customer-visible replies. `public` cannot be combined with `visibility`. The one exception is a project listed in `JIRA_INTERNAL_ONLY_PROJECTS`: there, issues that are not JSM customer requests ignore `public` and post as ordinary comments.

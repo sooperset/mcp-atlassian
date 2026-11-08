@@ -156,6 +156,8 @@ For mTLS, replace the personal token variables with client certificate variables
 | `CONFLUENCE_CLIENT_KEY_PASSWORD` | Not supported for encrypted private keys; decrypt the key before use |
 | `CONFLUENCE_SSL_VERIFY` | SSL verification (`true`/`false`) |
 | `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE` | Use OS native trust store (`true`/`false`, default: `true`) |
+| `REQUESTS_CA_BUNDLE` | Path to a PEM CA bundle file (or OpenSSL hashed CA directory) used to verify Jira and Confluence certificates. Applies to every auth mode, including PAT and OAuth sessions. See [Private CA bundle](#private-ca-bundle) |
+| `CURL_CA_BUNDLE` | Fallback for `REQUESTS_CA_BUNDLE`; used only when `REQUESTS_CA_BUNDLE` is unset or empty |
 | `MCP_ATLASSIAN_VALIDATION_CACHE_TTL` | Multi-user credential validation cache lifetime in seconds (`0` disables, default: `300`) |
 | `MCP_ATLASSIAN_VALIDATION_CACHE_MAXSIZE` | Maximum cached multi-user credential validations (default: `100`) |
 
@@ -167,6 +169,30 @@ at startup. Decrypt the key first:
 openssl rsa -in encrypted.key -out decrypted.key
 ```
 </Warning>
+
+### Private CA bundle
+
+When `REQUESTS_CA_BUNDLE` (or, if that is unset, `CURL_CA_BUNDLE`) is set and SSL
+verification is on, the Jira and Confluence sessions verify server certificates
+against that bundle instead of the default CA set. This also covers PAT and OAuth
+sessions, which ignore other environment-provided `requests` settings so that
+`.netrc` cannot override explicit credentials. Because the bundle replaces the
+default CAs, it must also contain the public roots if you connect to Atlassian
+Cloud.
+
+The path must be an existing file or directory. If it is not, the Jira or
+Confluence client refuses to start with `CA bundle configuration is invalid; see
+server logs.` and the offending path is logged server-side only. The check runs
+when the client is created, so check the server logs if the first tool call fails
+this way. The variables have no effect when `JIRA_SSL_VERIFY` or
+`CONFLUENCE_SSL_VERIFY` is `false`.
+
+For the OAuth proxy paths, which use `httpx`, also set `SSL_CERT_FILE` to the same
+bundle. See [HTTP Transport](/docs/http-transport#tls-https-listener) for the
+HTTPS listener setup (`MCP_SSL_CERTFILE` / `MCP_SSL_KEYFILE`), which requires
+`MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE=false` and usually goes together with a
+private CA bundle.
+
 
 ### Deferred Credentials
 
@@ -267,6 +293,19 @@ See [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.exa
 
 These optional safeguards are useful for protecting self-hosted Server/Data Center
 instances from runaway request loops. They are disabled by default.
+
+<Warning>
+**Upgrading to v0.24.0:** responses with HTTP `429` are no longer retried
+automatically. Earlier releases also used the Atlassian client library's built-in
+retry, which slept for the server's `Retry-After` value and retried without a
+limit. A gateway that sent `Retry-After: 0` could cause an endless retry loop.
+That retry is now turned off, and `ATLASSIAN_RETRY_TOTAL` (default `0`) is the
+only retry setting. To keep retrying rate-limited requests, set it to a bounded
+value such as `ATLASSIAN_RETRY_TOTAL=5`. Retries then honor `Retry-After`, unless
+you set `ATLASSIAN_RETRY_IGNORE_RETRY_AFTER=true`, which uses exponential backoff
+(`ATLASSIAN_RETRY_BACKOFF`) instead. Only read methods are retried unless
+`ATLASSIAN_RETRY_INCLUDE_WRITES=true`.
+</Warning>
 
 | Variable | Description |
 |----------|-------------|
