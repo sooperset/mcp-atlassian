@@ -25,7 +25,10 @@ from mcp_atlassian.utils.logging import (
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.proxy import apply_proxy_configuration
 from mcp_atlassian.utils.ssl import configure_ssl_verification
-from mcp_atlassian.utils.ssrf_adapter import mount_ssrf_pinning
+from mcp_atlassian.utils.ssrf_adapter import (
+    bind_credentials_to_host,
+    mount_ssrf_pinning,
+)
 from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
 from mcp_atlassian.utils.user_agent import get_default_user_agent
 
@@ -233,6 +236,13 @@ class JiraClient:
         # Apply custom headers if configured
         if self.config.custom_headers:
             self._apply_custom_headers()
+        # Credentials and custom headers belong to the service host only.
+        custom_headers = self.config.custom_headers
+        bind_credentials_to_host(
+            self.jira._session,
+            transport_url,
+            list(custom_headers) if isinstance(custom_headers, dict) else [],
+        )
 
         # Initialize the text preprocessor for text processing capabilities
         self.preprocessor = JiraPreprocessor(

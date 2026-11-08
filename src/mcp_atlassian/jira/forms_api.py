@@ -19,7 +19,7 @@ from requests.auth import HTTPBasicAuth
 from requests.exceptions import HTTPError
 
 from ..models.jira import ProFormaForm
-from ..utils.ssrf_adapter import mount_ssrf_pinning
+from ..utils.ssrf_adapter import bind_credentials_to_host, mount_ssrf_pinning
 from ..utils.urls import make_ssrf_redirect_hook
 from .client import JiraClient
 from .forms_common import handle_forms_http_error
@@ -68,6 +68,7 @@ class FormsApiMixin(JiraClient):
             session = requests.Session()
             session.hooks["response"].append(make_ssrf_redirect_hook())
             mount_ssrf_pinning(session, FORMS_API_BASE_URL)
+            bind_credentials_to_host(session, FORMS_API_BASE_URL)
             self._forms_http_session = session
         return self._forms_http_session
 

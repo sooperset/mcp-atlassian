@@ -141,6 +141,9 @@ class _PinnedHTTPSConnectionPool(HTTPSConnectionPool):
     ConnectionCls = _PinnedHTTPSConnection
 
 
+_CREDENTIAL_HEADERS = ("Authorization", "Cookie", "Proxy-Authorization")
+
+
 class SsrfPinningAdapter(HTTPAdapter):
     """A requests adapter that validates and pins DNS resolution for every call."""
 
@@ -149,6 +152,8 @@ class SsrfPinningAdapter(HTTPAdapter):
     ) -> None:
         self._trusted_hosts: set[str] = set()
         self._trust_urls(trusted_urls)
+        self._credential_hosts: set[str] = set()
+        self._credential_headers: set[str] = set()
         super().__init__(*args, **kwargs)
 
     def _trust_urls(self, urls: Iterable[str]) -> None:
@@ -174,7 +179,15 @@ class SsrfPinningAdapter(HTTPAdapter):
         deployment proxy; other destinations connect directly through this
         adapter's validating pool.
         """
-        hostname = urlparse(request.url or "").hostname or ""
+        hostname = (urlparse(request.url or "").hostname or "").lower()
+        if self._credential_hosts and not _hostname_matches_allowlist(
+            hostname, [*self._credential_hosts, *(_get_domain_allowlist() or [])]
+        ):
+            # Off-host request (absolute attachment link, redirect hop): send it
+            # without the service credentials or the operator's custom headers.
+            for name in (*_CREDENTIAL_HEADERS, *self._credential_headers):
+                request.headers.pop(name, None)
+            cert = None
         if proxies and not _hostname_matches_allowlist(
             hostname, [*_operator_trusted_hosts(), *self._trusted_hosts]
         ):
@@ -224,3 +237,29 @@ def mount_ssrf_pinning(session: Session, *trusted_urls: str) -> None:
     for adapter in session.adapters.values():
         if isinstance(adapter, SsrfPinningAdapter):
             adapter._trust_urls(trusted_urls)
+
+
+def bind_credentials_to_host(
+    session: Session, service_url: str, header_names: Iterable[str] = ()
+) -> None:
+    """Send ``session`` credentials only to the service host.
+
+    Requests to any other host (an absolute attachment URL, or a redirect hop
+    such as a CDN) go out without ``Authorization``, ``Cookie``, the client
+    certificate or the named custom headers. ``requests`` itself drops only
+    ``Authorization`` on a cross-host redirect, and nothing on an initial
+    request to another host. Hosts under ``MCP_ALLOWED_URL_DOMAINS`` count as
+    the service host, so an operator can allow a known alternate base URL.
+
+    Args:
+        session: Session whose SSRF pinning adapters carry the credentials.
+        service_url: The URL the credentials belong to.
+        header_names: Custom or passthrough header names to treat as secrets.
+    """
+    hostname = urlparse(service_url).hostname if isinstance(service_url, str) else None
+    if not hostname:
+        return
+    for adapter in session.adapters.values():
+        if isinstance(adapter, SsrfPinningAdapter):
+            adapter._credential_hosts.add(hostname.lower())
+            adapter._credential_headers.update(header_names)

@@ -291,3 +291,97 @@ def test_global_address_connects_to_the_validated_ip():
         _pinned_create_connection(("example.com", 443))
 
     assert connected["addr"][0] == "93.184.216.34"
+
+
+def _credentialed_session(**config_kwargs):
+    from mcp_atlassian.jira import JiraConfig
+    from mcp_atlassian.jira.client import JiraClient
+
+    config = JiraConfig(
+        url="https://jira.example.test",
+        auth_type="pat",
+        personal_token="SERVICE-PAT",
+        custom_headers={"X-Gateway-Secret": "GATEWAY-SECRET"},
+        **config_kwargs,
+    )
+    return JiraClient(config=config).jira._session
+
+
+def _sent_requests(session, responses, url):
+    sent = []
+
+    def fake_send(self, request, **kwargs):
+        sent.append((request.url, dict(request.headers), kwargs.get("cert")))
+        return responses.pop(0)
+
+    public = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    with (
+        patch.object(HTTPAdapter, "send", fake_send),
+        patch("mcp_atlassian.utils.urls.socket.getaddrinfo", return_value=public),
+    ):
+        session.get(url, allow_redirects=True)
+    return sent
+
+
+def _response(status, url, location=None):
+    import io
+
+    response = requests.Response()
+    response.status_code = status
+    response.url = url
+    response.raw = io.BytesIO(b"")
+    response.request = requests.Request("GET", url).prepare()
+    if location:
+        response.headers["Location"] = location
+    return response
+
+
+@pytest.mark.security_regression
+def test_off_host_request_carries_no_service_credentials(monkeypatch):
+    """An absolute off-host URL (e.g. attachment metadata) gets no credentials."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    session = _credentialed_session()
+    url = "https://download.attacker.test/file"
+
+    [(sent_url, headers, cert)] = _sent_requests(session, [_response(200, url)], url)
+
+    assert sent_url == url
+    assert "Authorization" not in headers
+    assert "X-Gateway-Secret" not in headers
+    assert cert is None
+
+
+@pytest.mark.security_regression
+def test_cross_host_redirect_drops_custom_secret_headers(monkeypatch):
+    """requests drops Authorization on a cross-host redirect, but not custom
+    headers; the adapter drops both."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    session = _credentialed_session()
+    first = "https://jira.example.test/rest/api/2/attachment/content/1"
+    cdn = "https://cdn.attacker.test/blob"
+
+    sent = _sent_requests(
+        session, [_response(302, first, cdn), _response(200, cdn)], first
+    )
+
+    assert sent[0][1]["Authorization"] == "Bearer SERVICE-PAT"
+    assert sent[0][1]["X-Gateway-Secret"] == "GATEWAY-SECRET"
+    assert sent[1][0] == cdn
+    assert "Authorization" not in sent[1][1]
+    assert "X-Gateway-Secret" not in sent[1][1]
+
+
+def test_allowlisted_alternate_host_keeps_credentials(monkeypatch):
+    """An operator can allow a known alternate base URL via the allowlist."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "jira-alt.example.test")
+    session = _credentialed_session()
+    url = "https://jira-alt.example.test/secure/attachment/1/file"
+
+    [(_, headers, _cert)] = _sent_requests(session, [_response(200, url)], url)
+
+    assert headers["Authorization"] == "Bearer SERVICE-PAT"
+    assert headers["X-Gateway-Secret"] == "GATEWAY-SECRET"

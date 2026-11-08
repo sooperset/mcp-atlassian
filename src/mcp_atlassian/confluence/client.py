@@ -18,7 +18,7 @@ from ..utils.logging import get_masked_session_headers, log_config_param, mask_s
 from ..utils.oauth import configure_oauth_session
 from ..utils.proxy import apply_proxy_configuration
 from ..utils.ssl import configure_ssl_verification
-from ..utils.ssrf_adapter import mount_ssrf_pinning
+from ..utils.ssrf_adapter import bind_credentials_to_host, mount_ssrf_pinning
 from ..utils.urls import make_ssrf_redirect_hook
 from ..utils.user_agent import get_default_user_agent
 from .config import ConfluenceConfig
@@ -219,6 +219,13 @@ class ConfluenceClient:
         # Apply custom headers if configured
         if self.config.custom_headers:
             self._apply_custom_headers()
+        # Credentials and custom headers belong to the service host only.
+        custom_headers = self.config.custom_headers
+        bind_credentials_to_host(
+            self.confluence._session,
+            transport_url,
+            list(custom_headers) if isinstance(custom_headers, dict) else [],
+        )
 
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor
