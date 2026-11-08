@@ -291,28 +291,31 @@ See [.env.example](https://github.com/sooperset/mcp-atlassian/blob/main/.env.exa
 
 ### HTTP Hardening
 
-These optional safeguards are useful for protecting self-hosted Server/Data Center
-instances from runaway request loops. They are disabled by default.
+These safeguards are useful for protecting self-hosted Server/Data Center
+instances from runaway request loops. Read requests are retried a few times by
+default; the other safeguards are disabled by default.
 
 <Warning>
-**Upgrading to v0.24.0:** responses with HTTP `429` are no longer retried
-automatically. Earlier releases also used the Atlassian client library's built-in
-retry, which slept for the server's `Retry-After` value and retried without a
-limit. A gateway that sent `Retry-After: 0` could cause an endless retry loop.
-That retry is now turned off, and `ATLASSIAN_RETRY_TOTAL` (default `0`) is the
-only retry setting. To keep retrying rate-limited requests, set it to a bounded
-value such as `ATLASSIAN_RETRY_TOTAL=5`. Retries then honor `Retry-After`, unless
-you set `ATLASSIAN_RETRY_IGNORE_RETRY_AFTER=true`, which uses exponential backoff
-(`ATLASSIAN_RETRY_BACKOFF`) instead. Only read methods are retried unless
-`ATLASSIAN_RETRY_INCLUDE_WRITES=true`.
+**Upgrading to v0.24.0:** earlier releases also used the Atlassian client
+library's built-in retry, which slept for the server's `Retry-After` value and
+retried without a limit. A gateway that sent `Retry-After: 0` could cause an
+endless retry loop. That retry is now turned off, and the `ATLASSIAN_RETRY_*`
+settings below are the only retry layer. By default, read requests
+(`GET`/`HEAD`/`OPTIONS`) that get `429/502/503/504` or a connection error are
+retried up to 3 times with exponential backoff. When the server sends
+`Retry-After`, the wait honors it up to 60 seconds but is never shorter than the
+backoff (1 s, 2 s, 4 s), so `Retry-After: 0` cannot cause a tight loop. Writes are not retried unless
+`ATLASSIAN_RETRY_INCLUDE_WRITES=true`. Other errors such as `401` and `403` are
+never retried. Set `ATLASSIAN_RETRY_TOTAL=0` to turn retries off.
 </Warning>
 
 | Variable | Description |
 |----------|-------------|
-| `ATLASSIAN_RETRY_TOTAL` | Enable retries for transient `429/502/503/504` responses and connection errors. `0` or unset disables retries. |
-| `ATLASSIAN_RETRY_BACKOFF` | Retry exponential backoff factor in seconds (default: `1.0` when retries are enabled). |
+| `ATLASSIAN_RETRY_TOTAL` | Maximum retries for transient `429/502/503/504` responses and connection errors (default: `3`). `0` disables retries. |
+| `ATLASSIAN_RETRY_BACKOFF` | Retry exponential backoff factor in seconds (default: `1.0`). |
 | `ATLASSIAN_RETRY_INCLUDE_WRITES` | Also retry write methods (`POST`/`PUT`/`PATCH`/`DELETE`). Use only when writes are known to be idempotent. |
-| `ATLASSIAN_RETRY_IGNORE_RETRY_AFTER` | Ignore the server's `Retry-After` header and use exponential backoff instead. Enable this for gateways that emit bogus values such as `Retry-After: 0`. |
+| `ATLASSIAN_RETRY_IGNORE_RETRY_AFTER` | Ignore the server's `Retry-After` header and use exponential backoff only. |
+| `ATLASSIAN_RETRY_MAX_RETRY_AFTER` | Longest wait in seconds taken from a `Retry-After` header; longer values are capped (default: `60`). |
 | `ATLASSIAN_MAX_CONCURRENT_REQUESTS` | Process-wide cap for concurrent Jira and Confluence requests. `0` or unset disables the cap. |
 | `ATLASSIAN_REQUESTS_PER_SECOND` | Process-wide outbound request rate limit. `0` or unset disables the limit. |
 | `ATLASSIAN_MAX_PAGINATION_LIMIT` | Clamp user-supplied page sizes for high-fanout list/search calls. `0` or unset disables clamping. |
