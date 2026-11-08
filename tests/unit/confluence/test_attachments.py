@@ -540,7 +540,11 @@ class TestAttachmentsMixin:
         assert call_args[1]["headers"]["X-Atlassian-Token"] == "no-check"
         assert call_args[1]["data"]["minorEdit"] == "false"
         # The raw bytes are sent directly as the multipart file payload
-        assert call_args[1]["files"]["file"] == ("test_file.txt", b"test content")
+        assert call_args[1]["files"]["file"] == (
+            "test_file.txt",
+            b"test content",
+            "text/plain",
+        )
 
     def test_upload_attachment_from_content_no_content_id(
         self, attachments_mixin: AttachmentsMixin
@@ -633,7 +637,13 @@ class TestAttachmentsMixin:
         assert attachments_mixin.confluence._session.post.call_count == 2
         second_call = attachments_mixin.confluence._session.post.call_args_list[1]
         assert "/child/attachment/att12345/data" in second_call[0][0]
-        assert second_call[1]["files"]["file"] == (filename, b"updated content")
+        # Cloud returns 415 for a new-version upload whose file part has no
+        # Content-Type, so the part must always carry one.
+        assert second_call[1]["files"]["file"] == (
+            filename,
+            b"updated content",
+            "text/plain",
+        )
 
     # Tests for download_attachment method
 
