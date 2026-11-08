@@ -189,10 +189,10 @@ class ConfluenceClient:
         # urllib3 Retry policy is the single source of retry truth.
         self.confluence.retry_with_header = False
 
-        # Apply opt-in HTTP hardening after SSL setup and after the pinning
-        # adapter is mounted: these wrappers patch send() in place on whatever
-        # adapters are mounted now, so mounting the pinning adapter later would
-        # silently drop them.
+        # Apply HTTP hardening (bounded read retries by default, the rest opt-in)
+        # after SSL setup and after the pinning adapter is mounted: these
+        # wrappers patch send() in place on whatever adapters are mounted now,
+        # so mounting the pinning adapter later would silently drop them.
         configure_retry(self.confluence._session, service="Confluence")
         configure_concurrency(self.confluence._session, service="Confluence")
         configure_rate_limit(self.confluence._session, service="Confluence")
