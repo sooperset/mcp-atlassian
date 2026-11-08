@@ -130,7 +130,7 @@ class IssuesMixin(
             # Determine fields_param: use provided fields or default from constant
             fields_param = fields
             if fields_param is None:
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+                fields_param = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS))
             elif isinstance(fields_param, list | tuple | set):
                 fields_param = ",".join(fields_param)
 

@@ -350,13 +350,29 @@ async def get_user_profile(
             description="Identifier for the user (e.g., email address 'user@example.com', username 'johndoe', account ID 'accountid:...', or key for Server/DC)."
         ),
     ],
+    expand: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional comma-separated sections to include when "
+                "user_identifier is 'me', e.g. 'groups' or "
+                "'groups,applicationRoles'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """
-    Retrieve profile information for a specific Jira user.
+    Retrieve profile information for a Jira user.
+
+    Use ``user_identifier="me"`` to return the account authenticated for the
+    current request directly from Jira's ``/myself`` endpoint. This path does
+    not require Browse Users permission.
 
     Args:
         ctx: The FastMCP context.
         user_identifier: User identifier (email, username, key, or account ID).
+        expand: Optional sections to include for the ``me`` lookup.
 
     Returns:
         JSON string representing the Jira user profile object, or an error object if not found.
@@ -366,8 +382,11 @@ async def get_user_profile(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        user: JiraUser = jira.get_user_profile_by_identifier(user_identifier)
-        result = user.to_simplified_dict()
+        if user_identifier.lower() == "me":
+            result = jira.get_current_user_profile(expand=expand)
+        else:
+            user: JiraUser = jira.get_user_profile_by_identifier(user_identifier)
+            result = user.to_simplified_dict()
         response_data = {"success": True, "user": result}
     except Exception as e:
         error_message = ""
@@ -667,9 +686,9 @@ async def get_issue(
                 "You may also provide a single field as a string (e.g., 'duedate'). "
                 "Use '*all' for all fields (including custom fields), or omit for essential fields only."
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     expand: Annotated[
         str | None,
         Field(
@@ -854,9 +873,9 @@ async def search(
                 "(Optional) Comma-separated fields to return in the results. "
                 "Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     limit: Annotated[
         int,
         Field(description="Maximum number of results (1-50)", default=10, ge=1),
@@ -1618,9 +1637,9 @@ async def get_board_issues(
                 "Use '*all' for all fields, or specify individual "
                 "fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     start_at: Annotated[
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),
@@ -1723,9 +1742,9 @@ async def get_sprint_issues(
                 "Use '*all' for all fields, or specify individual "
                 "fields like 'summary,status,assignee,priority'"
             ),
-            default=",".join(DEFAULT_READ_JIRA_FIELDS),
+            default=",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
         ),
-    ] = ",".join(DEFAULT_READ_JIRA_FIELDS),
+    ] = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
     start_at: Annotated[
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),
@@ -2654,16 +2673,20 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    # A bare false is ambiguous here in a way it is not in the client API: some
-    # MCP clients auto-fill an omitted optional boolean as false. Honor it only
-    # for a project the operator declared internal-only, where it can only mean
-    # "internal" — that is the case the guard exists for, and dropping it there
-    # is what blocked internal comments entirely. Anywhere else, keep treating it
-    # as omitted, so those clients don't start routing ordinary Jira comments
-    # through the ServiceDesk API (which answers 403 for non-JSM issues) or
-    # tripping the public/visibility conflict on a restricted comment.
+    # Preserve the tri-state ``public`` value at the MCP boundary (#1726).
+    #
+    # Rewriting every bare ``public=False`` to ``None`` for projects outside
+    # ``JIRA_INTERNAL_ONLY_PROJECTS`` made an explicit internal JSM comment
+    # land as customer-visible. Keep ``False`` so ServiceDesk routing can
+    # honor it.
+    #
+    # One compatibility carve-out remains: some MCP clients auto-fill omitted
+    # optional booleans as false. When the caller also supplied a real
+    # ``visibility`` restriction, that false cannot be intentional (the two
+    # are mutually exclusive on the ServiceDesk path) — drop it so restricted
+    # ordinary comments keep working.
     public_value = public
-    if public is False and not jira._is_internal_only_project(issue_key):
+    if public is False and visibility_dict is not None:
         public_value = None
     result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
     return json.dumps(result, indent=2, ensure_ascii=False)

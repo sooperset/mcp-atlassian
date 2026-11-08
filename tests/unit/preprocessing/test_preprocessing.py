@@ -1089,6 +1089,24 @@ def test_normalize_code_language_mapped_languages(preprocessor_with_jira):
     assert preprocessor_with_jira._normalize_code_language("make") == "bash"
 
 
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [
+        ("csharp", "c#"),
+        ("cs", "c#"),
+        ("objective-c", "objc"),
+        ("py", "python"),
+        ("rb", "ruby"),
+        ("yml", "yaml"),
+    ],
+)
+def test_normalize_code_language_jira_aliases(
+    preprocessor_with_jira, language, expected
+):
+    """Test markdown aliases map to formatter tags accepted by Jira."""
+    assert preprocessor_with_jira._normalize_code_language(language) == expected
+
+
 def test_normalize_code_language_unmapped_returns_none(preprocessor_with_jira):
     """Test that unmapped languages return None for plain {code} blocks."""
     # Languages with no good JIRA alternative should return None
@@ -1115,6 +1133,40 @@ def hello():
     assert "{code:python}" in result
     assert "def hello():" in result
     assert "{code}" in result
+
+
+def test_markdown_to_jira_code_block_preserves_newline_after_opener(
+    preprocessor_with_jira,
+):
+    """Test fenced code content starts on the line after the Jira opener."""
+    markdown = "```python\nprint('hello')\n```"
+
+    assert preprocessor_with_jira.markdown_to_jira(markdown) == (
+        "{code:python}\nprint('hello')\n{code}"
+    )
+
+
+@pytest.mark.parametrize("language", ["c#", "c++"])
+def test_markdown_to_jira_code_block_accepts_nonword_language_tags(
+    preprocessor_with_jira, language
+):
+    """Test Jira formatter tags containing punctuation remain fenced blocks."""
+    markdown = f"```{language}\nvoid Run() {{}}\n```"
+
+    assert preprocessor_with_jira.markdown_to_jira(markdown) == (
+        f"{{code:{language}}}\nvoid Run() {{}}\n{{code}}"
+    )
+
+
+def test_markdown_to_jira_invalid_jira_language_falls_back_to_plain_code(
+    preprocessor_with_jira,
+):
+    """Test formatter tags Jira rejects fall back to an untyped code macro."""
+    markdown = "```coldfusion\nwriteOutput('hello')\n```"
+
+    assert preprocessor_with_jira.markdown_to_jira(markdown) == (
+        "{code}\nwriteOutput('hello')\n{code}"
+    )
 
 
 def test_markdown_to_jira_code_block_dockerfile_maps_to_bash(preprocessor_with_jira):
