@@ -17,7 +17,9 @@ Internal-only guard (JIRA_INTERNAL_ONLY_PROJECTS) coverage map:
   risk it exists for is per *issue* — only a JSM customer request has a
   portal view. add_comment therefore exempts issues in a guarded project
   that are not requests (see _is_servicedesk_request), because the
-  ServiceDesk comment API they would need does not exist for them.
+  ServiceDesk comment API they would need does not exist for them. The same
+  classification lets an explicit ``public`` on any project fall back to an
+  ordinary comment only when the issue is definitely not a request.
 """
 
 import logging
@@ -57,7 +59,35 @@ class CommentsMixin(JiraClient):
     """Mixin for Jira comment operations."""
 
     @staticmethod
-    def _require_canonical_guarded_issue_key(issue_key: str) -> str:
+    def _is_canonical_issue_key(issue_key: str) -> bool:
+        """Return whether an issue key is already in canonical form.
+
+        Canonical means normalization would not change it, it carries no
+        whitespace, and it matches ``PROJECT-123``. A 404 from the request
+        probe is only evidence about the spelling that was probed, so only a
+        canonical key may be classified as "not a customer request".
+
+        Args:
+            issue_key: The caller-provided Jira issue key.
+
+        Returns:
+            True if the key is canonical.
+        """
+        normalized = normalize_project_key(issue_key)
+        project, separator, suffix = normalized.partition("-")
+        canonical = (
+            f"{normalize_project_key(project)}-{normalize_project_key(suffix)}"
+            if separator
+            else normalized
+        )
+        return (
+            issue_key == canonical
+            and not any(char.isspace() for char in canonical)
+            and _CANONICAL_ISSUE_KEY_RE.fullmatch(canonical) is not None
+        )
+
+    @classmethod
+    def _require_canonical_guarded_issue_key(cls, issue_key: str) -> str:
         """Reject ambiguous issue keys before relaxing an internal-only guard.
 
         The guard deliberately normalizes project keys so padded or invisible
@@ -79,25 +109,14 @@ class CommentsMixin(JiraClient):
             ValueError: If normalization would change the key, or if whitespace
                 remains in it.
         """
-        normalized = normalize_project_key(issue_key)
-        project, separator, suffix = normalized.partition("-")
-        canonical = (
-            f"{normalize_project_key(project)}-{normalize_project_key(suffix)}"
-            if separator
-            else normalized
-        )
-        if (
-            issue_key != canonical
-            or any(char.isspace() for char in canonical)
-            or _CANONICAL_ISSUE_KEY_RE.fullmatch(canonical) is None
-        ):
+        if not cls._is_canonical_issue_key(issue_key):
             raise ValueError(
                 f"Issue key {issue_key!r} belongs to an internal-only project "
                 "but is not canonical. Malformed, padded, lowercase, "
                 "whitespace, or invisible-character variants are rejected "
                 "before checking whether the issue is a JSM customer request."
             )
-        return canonical
+        return issue_key
 
     def get_issue_comments(
         self, issue_key: str, limit: int = 50
@@ -164,11 +183,17 @@ class CommentsMixin(JiraClient):
         for a non-request, while ``public=True`` or an omitted ``public`` is
         refused by :meth:`_enforce_internal_only_add`.
 
+        The same holds for an explicit ``public`` on any project: the
+        ServiceDesk comment API it routes to does not exist for a
+        non-request, and an ordinary comment there has no customer audience
+        for ``public`` to choose between.
+
         Fails closed. Only an explicit 404 counts as a negative; every other
         outcome — 403, 5xx, timeout, unexpected body — reports True so the
-        guard stays in force. Called only for projects listed in
-        JIRA_INTERNAL_ONLY_PROJECTS, so other projects never pay the extra
-        round-trip.
+        guard and the ServiceDesk routing stay in force. add_comment calls
+        this only when ``public`` is set or the project is listed in
+        JIRA_INTERNAL_ONLY_PROJECTS, so an ordinary comment never pays the
+        extra round-trip.
 
         Args:
             issue_key: The issue key (e.g. 'PROJ-123')
@@ -189,21 +214,18 @@ class CommentsMixin(JiraClient):
             if _http_status(exc) == 404:
                 logger.info(
                     f"{issue_key} is not a JSM customer request; an ordinary "
-                    "Jira comment there has no portal audience, so the "
-                    "internal-only guard does not apply."
+                    "Jira comment there has no portal audience."
                 )
                 return False
             logger.warning(
                 f"Could not establish whether {issue_key} is a JSM customer "
-                f"request; treating it as one so the internal-only guard "
-                f"stays in force: {exc}"
+                f"request; treating it as one (fail closed): {exc}"
             )
             return True
         except Exception as exc:
             logger.warning(
                 f"Could not establish whether {issue_key} is a JSM customer "
-                f"request; treating it as one so the internal-only guard "
-                f"stays in force: {exc}"
+                f"request; treating it as one (fail closed): {exc}"
             )
             return True
 
@@ -211,8 +233,7 @@ class CommentsMixin(JiraClient):
             return True
         logger.warning(
             f"ServiceDesk API returned no issueId for {issue_key}; treating "
-            "it as a customer request so the internal-only guard stays in "
-            "force."
+            "it as a customer request (fail closed)."
         )
         return True
 
@@ -346,44 +367,63 @@ class CommentsMixin(JiraClient):
             comment: Comment text to add (in Markdown format)
             visibility: (optional) Restrict comment visibility
                 (e.g. {"type":"group","value":"jira-users"})
-            public: (optional) For JSM issues only. True for
+            public: (optional) For JSM customer requests. True for
                 customer-visible, False for internal/agent-only. Posted
                 via the ServiceDesk API as a raw string; Jira Cloud
                 renders it server-side and stores ADF (markdown observed
                 to render on Cloud, but without the client-side
                 markdown→ADF guarantees of the regular comment path).
-                Cannot be combined with visibility. If issue_key's
-                project is listed in JIRA_INTERNAL_ONLY_PROJECTS, only
-                public=False is accepted — unless issue_key is not a JSM
-                customer request, in which case it has no portal audience,
-                this argument is ignored, and the comment posts through
-                the ordinary path.
+                Cannot be combined with visibility on a request. If
+                issue_key is definitely not a JSM customer request, it
+                has no portal audience: this argument is ignored and the
+                comment posts through the ordinary path (visibility then
+                applies as usual). If issue_key's project is listed in
+                JIRA_INTERNAL_ONLY_PROJECTS, only public=False is accepted
+                on a request.
 
         Returns:
             The created comment details
 
         Raises:
-            ValueError: If both public and visibility are set, or if
-                issue_key's project is internal-only and public is not
-                exactly False
+            ValueError: If both public and visibility are set on a JSM
+                request, or if issue_key's project is internal-only, the
+                issue is a request, and public is not exactly False
             Exception: If there is an error adding the comment
         """
-        # The guard names a project, but the leak it prevents is per issue.
-        # An issue that is not a JSM customer request has no portal audience,
-        # and the ServiceDesk comment API that public=False needs does not
-        # exist for it — so enforcing the guard there blocks every route
-        # instead of protecting anyone. Fall through to the ordinary comment
-        # path for those. _is_servicedesk_request fails closed, so anything
-        # short of a definite 404 keeps the guard in force.
-        # The shared project matcher accounts for URL normalization before
-        # classifying the key. Canonical validation then rejects the original
-        # spelling before any request lookup or write.
-        if self._is_internal_only_project(issue_key):
+        # One classification step decides whether the issue has a customer
+        # portal audience at all. It is needed when the caller set `public`
+        # (which routes to the ServiceDesk API) or when the project is listed
+        # in JIRA_INTERNAL_ONLY_PROJECTS (whose guard names a project, while
+        # the leak it prevents is per issue). An issue that is not a JSM
+        # customer request has no portal audience, and the ServiceDesk
+        # comment API does not exist for it, so `public` is meaningless there
+        # and the ordinary comment path is the only one that works.
+        # _is_servicedesk_request fails closed: anything short of a definite
+        # 404 keeps `public` routing to the ServiceDesk API and keeps the
+        # guard in force. A plain comment (public None) on an unlisted
+        # project skips the lookup entirely.
+        #
+        # A 404 only says something about the spelling that was probed, so
+        # only a canonical key may be classified as a non-request. Guarded
+        # projects reject non-canonical keys outright (the shared project
+        # matcher accounts for URL normalization before classifying the key);
+        # elsewhere a non-canonical key simply skips the probe and keeps the
+        # existing ServiceDesk routing.
+        guarded = self._is_internal_only_project(issue_key)
+        if guarded:
             issue_key = self._require_canonical_guarded_issue_key(issue_key)
-            if not self._is_servicedesk_request(issue_key):
-                public = None
-            else:
-                self._enforce_internal_only_add(issue_key, public)
+        if (
+            (guarded or public is not None)
+            and self._is_canonical_issue_key(issue_key)
+            and not self._is_servicedesk_request(issue_key)
+        ):
+            if public is not None:
+                logger.info(
+                    f"Ignoring public={public} for {issue_key}: it is not a "
+                    "JSM customer request, so the comment posts through the "
+                    "ordinary Jira comment path."
+                )
+            public = None
         else:
             self._enforce_internal_only_add(issue_key, public)
 
