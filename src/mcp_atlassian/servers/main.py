@@ -462,21 +462,26 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         allowed_origins: list[str] | None = None,
     ) -> StarletteWithLifespan:
         final_path = path
-        auth_endpoints: frozenset[tuple[str, str]]
+        auth_paths: frozenset[str]
+        auth_mounts: frozenset[str] = frozenset()
         if transport in ("http", "streamable-http"):
             configured_path = path or fastmcp_settings.streamable_http_path
             final_path = self._normalize_http_path(configured_path)
             self._active_streamable_http_path = final_path
-            auth_endpoints = frozenset({("POST", final_path)})
+            auth_paths = frozenset({final_path})
         else:
             sse_path = self._normalize_http_path(path or fastmcp_settings.sse_path)
             message_path = self._normalize_http_path(fastmcp_settings.message_path)
-            auth_endpoints = frozenset({("GET", sse_path), ("POST", message_path)})
+            auth_paths = frozenset({sse_path})
+            # FastMCP serves the SSE message endpoint through a Starlette Mount,
+            # which accepts every method and every sub-path.
+            auth_mounts = frozenset({message_path})
 
         user_token_mw = Middleware(
             UserTokenMiddleware,
             mcp_server_ref=self,
-            auth_endpoints=auth_endpoints,
+            auth_paths=auth_paths,
+            auth_mounts=auth_mounts,
         )
         final_middleware_list = [user_token_mw]
         if middleware:
@@ -507,11 +512,23 @@ class UserTokenMiddleware:
         self,
         app: ASGIApp,
         mcp_server_ref: Optional["AtlassianMCP"] = None,
-        auth_endpoints: frozenset[tuple[str, str]] | None = None,
+        auth_paths: frozenset[str] | None = None,
+        auth_mounts: frozenset[str] | None = None,
     ) -> None:
+        """Initialize the middleware.
+
+        Args:
+            app: The downstream ASGI application.
+            mcp_server_ref: The MCP server, used to resolve the transport path.
+            auth_paths: Transport paths that require authentication for every
+                HTTP method. Defaults to the streamable HTTP path.
+            auth_mounts: Transport mount points that require authentication for
+                every HTTP method on the mount path and all of its sub-paths.
+        """
         self.app = app
         self.mcp_server_ref = mcp_server_ref
-        self.auth_endpoints = auth_endpoints
+        self.auth_paths = auth_paths
+        self.auth_mounts = auth_mounts or frozenset()
         if not self.mcp_server_ref:
             logger.warning(
                 "UserTokenMiddleware initialized without mcp_server_ref. "
@@ -627,19 +644,27 @@ class UserTokenMiddleware:
         await send({"type": "http.response.body", "body": body})
 
     def _should_process_auth(self, scope: Scope) -> bool:
-        """Check if this request should be processed for authentication."""
+        """Check if this request targets an MCP transport endpoint.
+
+        The check is by path only. Every HTTP method the transport routes accept
+        (GET, HEAD, POST, PUT, DELETE, OPTIONS, ...) is authenticated the same way.
+        """
         if not self.mcp_server_ref:
             return False
 
         try:
-            method = scope.get("method", "").upper()
             request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
-            if self.auth_endpoints is not None:
-                return (method, request_path) in self.auth_endpoints
-
-            return (
-                method == "POST"
-                and request_path == self.mcp_server_ref.get_streamable_http_path()
+            auth_paths = self.auth_paths
+            if auth_paths is None:
+                auth_paths = frozenset(
+                    {self.mcp_server_ref.get_streamable_http_path()}
+                )
+            if request_path in auth_paths:
+                return True
+            return any(
+                request_path == mount
+                or request_path.startswith(f"{mount.rstrip('/')}/")
+                for mount in self.auth_mounts
             )
         except (AttributeError, ValueError) as e:
             logger.warning(f"Error checking auth path: {e}")

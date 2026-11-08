@@ -176,38 +176,47 @@ async def test_streamable_http_path_is_normalized_without_trailing_slash():
 
 
 @pytest.mark.parametrize(
-    ("transport", "path", "expected_endpoints"),
+    ("transport", "path", "expected_paths", "expected_mounts"),
     [
-        ("http", "/http-alias/", {("POST", "/http-alias")}),
-        ("streamable-http", "/custom-mcp/", {("POST", "/custom-mcp")}),
-        (
-            "sse",
-            "/custom-sse/",
-            {("GET", "/custom-sse"), ("POST", "/messages")},
-        ),
+        ("http", "/http-alias/", {"/http-alias"}, set()),
+        ("streamable-http", "/custom-mcp/", {"/custom-mcp"}, set()),
+        ("sse", "/custom-sse/", {"/custom-sse"}, {"/messages"}),
     ],
 )
 def test_http_app_configures_auth_for_transport_endpoints(
-    transport, path, expected_endpoints
+    transport, path, expected_paths, expected_mounts
 ):
     app = main_mcp.http_app(transport=transport, path=path)
     middleware = next(
         item for item in app.user_middleware if item.cls is UserTokenMiddleware
     )
 
-    assert middleware.kwargs["auth_endpoints"] == frozenset(expected_endpoints)
+    assert middleware.kwargs["auth_paths"] == frozenset(expected_paths)
+    assert middleware.kwargs["auth_mounts"] == frozenset(expected_mounts)
+
+
+_ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 
 
 @pytest.mark.security_regression
 @pytest.mark.anyio
+@pytest.mark.parametrize("method", _ALL_METHODS)
 @pytest.mark.parametrize(
-    ("method", "path"),
-    [("GET", "/sse"), ("POST", "/messages/?session_id=missing")],
+    "path",
+    [
+        "/sse",
+        "/sse/",
+        "/messages",
+        "/messages/",
+        "/messages/?session_id=missing",
+        "/messages/extra",
+    ],
 )
-async def test_sse_app_rejects_unauthenticated_transport_requests_by_default(
+async def test_sse_app_rejects_unauthenticated_requests_for_every_method(
     method, path, monkeypatch
 ):
     monkeypatch.delenv("ALLOW_GLOBAL_CRED_FALLBACK", raising=False)
+    monkeypatch.delenv("IGNORE_HEADER_AUTH", raising=False)
     app = main_mcp.http_app(transport="sse")
     transport = httpx.ASGITransport(app=app)
 
@@ -215,6 +224,46 @@ async def test_sse_app_rejects_unauthenticated_transport_requests_by_default(
         response = await client.request(method, path)
 
     assert response.status_code == 401
+
+
+@pytest.mark.security_regression
+@pytest.mark.anyio
+@pytest.mark.parametrize("method", _ALL_METHODS)
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/"])
+async def test_streamable_http_app_rejects_unauthenticated_requests_for_every_method(
+    method, path, monkeypatch
+):
+    monkeypatch.delenv("ALLOW_GLOBAL_CRED_FALLBACK", raising=False)
+    monkeypatch.delenv("IGNORE_HEADER_AUTH", raising=False)
+    app = main_mcp.http_app(transport="streamable-http")
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.request(
+            method,
+            path,
+            headers={
+                "accept": "application/json, text/event-stream",
+                "mcp-session-id": "0123456789abcdef0123456789abcdef",
+            },
+        )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("transport_name", ["sse", "streamable-http"])
+async def test_transport_auth_gate_leaves_health_check_open(
+    transport_name, monkeypatch
+):
+    monkeypatch.delenv("ALLOW_GLOBAL_CRED_FALLBACK", raising=False)
+    app = main_mcp.http_app(transport=transport_name)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/healthz")
+
+    assert response.status_code == 200
 
 
 class TestUserTokenMiddleware:
@@ -699,22 +748,22 @@ class TestUserTokenMiddleware:
         ("method", "path", "expected"),
         [
             ("GET", "/custom-sse/", True),
+            ("HEAD", "/custom-sse", True),
             ("POST", "/messages/", True),
-            ("POST", "/custom-mcp/", True),
+            ("PUT", "/messages", True),
+            ("DELETE", "/messages/extra", True),
+            ("GET", "/custom-mcp", True),
+            ("DELETE", "/custom-mcp/", True),
+            ("GET", "/messagesx", False),
             ("GET", "/healthz", False),
             ("POST", "/unrelated", False),
         ],
     )
-    def test_should_process_auth_uses_configured_transport_endpoints(
+    def test_should_process_auth_matches_paths_for_every_method(
         self, middleware, method, path, expected
     ):
-        middleware.auth_endpoints = frozenset(
-            {
-                ("GET", "/custom-sse"),
-                ("POST", "/messages"),
-                ("POST", "/custom-mcp"),
-            }
-        )
+        middleware.auth_paths = frozenset({"/custom-sse", "/custom-mcp"})
+        middleware.auth_mounts = frozenset({"/messages"})
 
         assert (
             middleware._should_process_auth(
@@ -734,14 +783,41 @@ class TestUserTokenMiddleware:
         middleware.app.assert_called_once()
         mock_send.assert_not_called()
 
+    @pytest.mark.parametrize("method", ["GET", "DELETE", "HEAD"])
+    def test_should_process_auth_default_path_covers_every_method(
+        self, middleware, method
+    ):
+        assert (
+            middleware._should_process_auth(
+                {"type": "http", "method": method, "path": "/mcp"}
+            )
+            is True
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("method", ["GET", "DELETE"])
+    async def test_streamable_get_and_delete_without_credentials_return_401(
+        self, middleware, mock_scope, mock_receive, mock_send, method, monkeypatch
+    ):
+        monkeypatch.delenv("ALLOW_GLOBAL_CRED_FALLBACK", raising=False)
+        monkeypatch.delenv("IGNORE_HEADER_AUTH", raising=False)
+        mock_scope["method"] = method
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+        middleware.app.assert_not_called()
+
     @pytest.mark.anyio
     @pytest.mark.parametrize(
-        ("method", "path"), [("GET", "/sse"), ("POST", "/messages/")]
+        ("method", "path"), [("GET", "/sse"), ("PUT", "/messages/")]
     )
     async def test_sse_transport_processes_valid_authentication(
         self, middleware, mock_scope, mock_receive, mock_send, method, path
     ):
-        middleware.auth_endpoints = frozenset({("GET", "/sse"), ("POST", "/messages")})
+        middleware.auth_paths = frozenset({"/sse"})
+        middleware.auth_mounts = frozenset({"/messages"})
         mock_scope.update(
             {
                 "method": method,
