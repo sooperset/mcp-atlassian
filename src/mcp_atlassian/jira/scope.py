@@ -40,6 +40,66 @@ def _path_segment(value: object) -> str:
     return quote(str(value).strip(), safe="")
 
 
+_BOARD_PROJECT_PAGES = 20
+
+
+def board_project_keys(jira: Any, board_id: object) -> frozenset[str] | None:
+    """Return every project key associated with a board, or None.
+
+    Used for boards that have no ``location.projectKey`` (boards located in a
+    user profile, or whose filter spans projects). ``/board/{id}/project``
+    lists the projects the board's filter references or whose issues are on
+    the board. None means the list is empty, incomplete or could not be read,
+    which callers treat as "deny".
+
+    Args:
+        jira: The Atlassian client (``self.jira``).
+        board_id: The board ID.
+    """
+    path = f"rest/agile/1.0/board/{_path_segment(board_id)}/project"
+    keys: set[str] = set()
+    start = 0
+    try:
+        for _ in range(_BOARD_PROJECT_PAGES):
+            page = jira.get(path, params={"startAt": start, "maxResults": 50})
+            if not isinstance(page, dict):
+                return None
+            values = page.get("values")
+            if not isinstance(values, list):
+                return None
+            for project in values:
+                key = project.get("key") if isinstance(project, dict) else None
+                if not isinstance(key, str) or not key.strip():
+                    return None
+                keys.add(key.strip().upper())
+            if page.get("isLast") is True:
+                return frozenset(keys) or None
+            if not values:
+                return None
+            start += len(values)
+    except Exception as e:  # noqa: BLE001 - any failure denies
+        logger.warning(f"Could not list projects of Jira board {board_id!r}: {e}")
+        return None
+    return None
+
+
+def board_in_scope(jira: Any, board: dict[str, Any], allowed: frozenset[str]) -> bool:
+    """Return True when ``board`` lies inside the project allowlist.
+
+    A board located in a project is in scope when that project is allowed.
+    A board with no location project is in scope only when every project
+    associated with it is allowed.
+    """
+    project_key = (board.get("location") or {}).get("projectKey")
+    if isinstance(project_key, str) and project_key.strip():
+        return project_key.strip().upper() in allowed
+    board_id = board.get("id")
+    if board_id is None:
+        return False
+    keys = board_project_keys(jira, board_id)
+    return keys is not None and keys <= allowed
+
+
 class ScopeMixin(JiraClient):
     """Project-allowlist checks shared by every Jira tool."""
 
@@ -109,8 +169,14 @@ class ScopeMixin(JiraClient):
             self.ensure_issue_allowed(item.strip() if isinstance(item, str) else item)
 
     def ensure_board_allowed(self, board_id: object) -> None:
-        """Check the project a board is located in."""
-        if self.allowed_projects() is None:
+        """Check the project a board is located in.
+
+        A board without a location project (for example one located in a
+        user profile) is allowed only when every project associated with it
+        is allowlisted.
+        """
+        allowed = self.allowed_projects()
+        if allowed is None:
             return
         try:
             board = self._get_json(f"rest/agile/1.0/board/{_path_segment(board_id)}")
@@ -118,9 +184,12 @@ class ScopeMixin(JiraClient):
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Jira board {board_id!r}: {e}")
             raise _denied("board", board_id) from e
-        if not isinstance(project_key, str):
+        if isinstance(project_key, str):
+            self.ensure_project_allowed(project_key)
+            return
+        keys = board_project_keys(self.jira, board_id)
+        if keys is None or not keys <= allowed:
             raise _denied("board", board_id)
-        self.ensure_project_allowed(project_key)
 
     def ensure_sprint_allowed(self, sprint_id: object) -> None:
         """Check the project of the board a sprint was created on."""

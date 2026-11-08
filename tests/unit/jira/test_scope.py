@@ -291,3 +291,64 @@ def test_cross_project_dependencies_hide_disallowed_targets() -> None:
 
     assert "SECRET" not in repr(result)
     assert "OTHER" in result["by_project"]
+
+
+# --- boards without a location project -----------------------------------------
+
+_USER_BOARD = {"rest/agile/1.0/board/5": {"location": {"type": "user"}}}
+
+
+def _board_projects(keys: list[str], *, is_last: bool = True) -> dict[str, Any]:
+    return {
+        "rest/agile/1.0/board/5/project": {
+            "isLast": is_last,
+            "total": len(keys) + (0 if is_last else 1),
+            "values": [{"key": k} for k in keys],
+        }
+    }
+
+
+def test_board_without_location_project_allowed_when_all_projects_allowed() -> None:
+    fetcher = _fetcher()
+    responses = {**_USER_BOARD, **_board_projects(["ALLOWED", "other"])}
+    fetcher.jira.get.side_effect = lambda path, **kw: responses[path]
+    fetcher.ensure_board_allowed("5")
+
+
+@pytest.mark.parametrize(
+    "projects",
+    [
+        _board_projects(["ALLOWED", "SECRET"]),
+        _board_projects([]),
+        _board_projects(["ALLOWED"], is_last=False),
+    ],
+    ids=["one-project-outside", "no-projects", "incomplete-list"],
+)
+def test_board_without_location_project_denied_without_full_signal(
+    projects: dict[str, Any],
+) -> None:
+    fetcher = _fetcher()
+    responses = {**_USER_BOARD, **projects}
+    fetcher.jira.get.side_effect = lambda path, **kw: responses[path]
+    with pytest.raises(ScopeViolationError):
+        fetcher.ensure_board_allowed("5")
+
+
+def test_board_listing_keeps_unlocated_board_inside_filter() -> None:
+    fetcher = _fetcher("ALLOWED")
+    fetcher.jira.get_all_agile_boards.return_value = {
+        "values": [
+            {"id": 1, "location": {"projectKey": "ALLOWED"}},
+            {"id": 5, "location": {"type": "user"}},
+            {"id": 6, "location": {"type": "user"}},
+        ]
+    }
+    responses = {
+        **_board_projects(["ALLOWED"]),
+        "rest/agile/1.0/board/6/project": {
+            "isLast": True,
+            "values": [{"key": "SECRET"}],
+        },
+    }
+    fetcher.jira.get.side_effect = lambda path, **kw: responses[path]
+    assert [b["id"] for b in fetcher.get_all_agile_boards()] == [1, 5]

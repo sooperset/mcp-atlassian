@@ -7,7 +7,7 @@ import requests
 
 from ..models.jira import JiraBoard
 from .client import JiraClient
-from .scope import allowed_project_keys
+from .scope import allowed_project_keys, board_in_scope
 
 logger = logging.getLogger("mcp-jira")
 
@@ -50,14 +50,14 @@ class BoardsMixin(JiraClient):
             values = boards.get("values", []) if isinstance(boards, dict) else []
             allowed = allowed_project_keys(self.config)
             if allowed is not None:
-                # Boards located outside JIRA_PROJECTS_FILTER (or not in any
-                # project) are hidden, like projects in get_all_projects.
+                # Boards located outside JIRA_PROJECTS_FILTER are hidden, like
+                # projects in get_all_projects. A board with no location
+                # project is shown only when all its projects are allowed.
                 values = [
                     board
                     for board in values
                     if isinstance(board, dict)
-                    and str((board.get("location") or {}).get("projectKey", "")).upper()
-                    in allowed
+                    and board_in_scope(self.jira, board, allowed)
                 ]
             return values
         except requests.HTTPError as e:
