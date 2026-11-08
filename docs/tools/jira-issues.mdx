@@ -194,7 +194,7 @@ Transition a Jira issue to a new status.
 | `transition_id` | `string` | Yes | ID or name of the transition to perform (case-insensitive name match, e.g. 'In Progress', 'Done'). Use the jira_get_transitions tool first to see the available transitions for the issue. Example values: '11', '21', '31', 'In Progress' |
 | `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: '`{"resolution": {"name": "Fixed"}}`' |
 | `comment` | `string` | No | (Optional) Comment to add during the transition in Markdown format. This will be visible in the issue history. Rejected for projects listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be customer-visible on JSM and cannot be forced internal): transition without a comment, then post an internal note with jira_add_comment(public=false). On Jira Cloud, the workflow transition's screen must include a Comment field; if Jira omits the comment, add it separately with jira_add_comment. |
-| `update_data` | `string` | No | (Optional) JSON string of Jira update operations to include in the transition. Use this for worklogs and other transition-time operations. Example: '`{"worklog": [{"add": {"timeSpent": "1h"}}]}`' |
+| `update_data` | `string` | No | (Optional) JSON string of Jira update operations to include in the transition. Use this for worklogs and other transition-time operations. On Jira Cloud, text in comment bodies and worklog comments is treated as Markdown and converted to ADF. Example: '`{"worklog": [{"add": {"timeSpent": "1h"}}]}`' |
 **Example:**
 
 ```json

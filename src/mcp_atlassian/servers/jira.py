@@ -3213,7 +3213,9 @@ async def transition_issue(
             description=(
                 "(Optional) JSON string of Jira update operations to include "
                 "in the transition. Use this for worklogs and other "
-                "transition-time operations. Example: "
+                "transition-time operations. On Jira Cloud, text in "
+                "comment bodies and worklog comments is treated as "
+                "Markdown and converted to ADF. Example: "
                 '\'{"worklog": [{"add": {"timeSpent": "1h"}}]}\''
             ),
         ),

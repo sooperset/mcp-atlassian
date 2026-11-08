@@ -61,11 +61,8 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             )
             result: list[dict[str, Any]] = []
 
+            # get_transitions already drops non-dict entries.
             for transition in transitions_data:
-                # Skip non-dict transitions
-                if not isinstance(transition, dict):
-                    continue
-
                 # Extract the essential information
                 transition_info = {
                     "id": transition.get("id", ""),
@@ -224,7 +221,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
         if isinstance(response, dict):
             transitions = response.get("transitions", [])
             if isinstance(transitions, list):
-                return transitions
+                return [item for item in transitions if isinstance(item, dict)]
         return []
 
     def get_transitions_models(self, issue_key: str) -> list[JiraTransition]:
@@ -278,7 +275,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 alongside the transition. Example:
                 {"worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]}
                 Top-level comment operations are subject to the same
-                JIRA_INTERNAL_ONLY_PROJECTS restriction as comment.
+                JIRA_INTERNAL_ONLY_PROJECTS restriction as comment. On
+                Jira Cloud, string comment bodies and worklog comments are
+                treated as Markdown and converted to ADF.
 
         Returns:
             JiraIssue model representing the transitioned issue
@@ -298,7 +297,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
 
             # Validate that this is a valid transition ID
             valid_transitions = self.get_transitions_models(issue_key)
-            valid_ids = [t.id for t in valid_transitions]
+            valid_ids: list[str | int] = [t.id for t in valid_transitions]
 
             # Convert string IDs to integers for proper comparison
             if isinstance(normalized_transition_id, int):
@@ -332,7 +331,9 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             # Prepare update data (comment + extra update_data like worklog)
             temp_transition_data: dict[str, Any] = {}
             if update_data:
-                temp_transition_data["update"] = dict(update_data)
+                temp_transition_data["update"] = self._format_update_data_text(
+                    update_data
+                )
             if comment:
                 self._add_comment_to_transition_data(temp_transition_data, comment)
             update_for_api = temp_transition_data.get("update")
@@ -377,7 +378,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             logger.error(error_msg)
             raise ValueError(error_msg) from e
 
-    def _normalize_transition_id(self, transition_id: str | int | dict) -> str | int:
+    def _normalize_transition_id(self, transition_id: object) -> str | int:
         """
         Normalize the transition ID to a common format.
 
@@ -535,6 +536,49 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
             "Perform the transition WITHOUT a comment, then post an "
             "internal note with add_comment(public=False)."
         )
+
+    def _format_update_data_text(self, update_data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Convert text inside transition update operations for Jira Cloud.
+
+        Cloud transitions are sent to REST v3, which requires ADF for comment
+        bodies and worklog comments. Plain strings in ``comment[*].<op>.body``
+        and ``worklog[*].<op>.comment`` are treated as Markdown and converted
+        to ADF. Values that are already ADF dicts are left alone. Server/DC
+        payloads use REST v2, so they are returned unchanged.
+
+        Args:
+            update_data: Caller-supplied Jira update operations.
+
+        Returns:
+            A copy of the update operations, with Cloud text converted to ADF.
+        """
+        result = dict(update_data)
+        if not self.config.is_cloud or not hasattr(self, "_markdown_to_jira"):
+            return result
+
+        for op_key, text_key in (("comment", "body"), ("worklog", "comment")):
+            operations = result.get(op_key)
+            if not isinstance(operations, list):
+                continue
+            converted_operations: list[Any] = []
+            for operation in operations:
+                if not isinstance(operation, dict):
+                    converted_operations.append(operation)
+                    continue
+                converted_operation: dict[str, Any] = {}
+                for verb, payload in operation.items():
+                    if isinstance(payload, dict) and isinstance(
+                        payload.get(text_key), str
+                    ):
+                        payload = {
+                            **payload,
+                            text_key: self._markdown_to_jira(payload[text_key]),
+                        }
+                    converted_operation[verb] = payload
+                converted_operations.append(converted_operation)
+            result[op_key] = converted_operations
+        return result
 
     def _add_comment_to_transition_data(
         self, transition_data: dict[str, Any], comment: str | int

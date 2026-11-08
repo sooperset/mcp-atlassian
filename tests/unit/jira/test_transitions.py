@@ -448,6 +448,26 @@ class TestTransitionsMixin:
         transitions_mixin.get_issue.assert_called_once_with("TEST-123")
         assert isinstance(result, JiraIssue)
 
+    def test_get_transitions_drops_non_dict_entries(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Regression for #1355: malformed transition entries are skipped."""
+        transitions_mixin.jira.get_issue_transitions_full.return_value = {
+            "transitions": ["bad", None, {"id": "11", "name": "Done"}]
+        }
+
+        assert transitions_mixin.get_transitions("TEST-123") == [
+            {"id": "11", "name": "Done"}
+        ]
+        assert transitions_mixin.get_available_transitions("TEST-123") == [
+            {
+                "id": "11",
+                "name": "Done",
+                "has_screen": False,
+                "is_conditional": False,
+            }
+        ]
+
     def test_get_transitions_uses_full_api(self, transitions_mixin: TransitionsMixin):
         """Test that get_transitions uses get_issue_transitions_full for complete data.
 
@@ -1084,20 +1104,92 @@ class TestTransitionsMixin:
     def test_transition_issue_with_update_data(
         self, transitions_mixin: TransitionsMixin
     ):
-        """Test transition_issue with update_data (worklog)."""
-        # Call with update_data containing worklog
+        """Cloud converts a worklog comment in update_data to ADF for REST v3."""
+        adf_comment = {"version": 1, "type": "doc", "content": []}
+        transitions_mixin._markdown_to_jira = MagicMock(return_value=adf_comment)
         update_data = {"worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]}
         transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
 
+        transitions_mixin._markdown_to_jira.assert_called_once_with("Resolved")
         transitions_mixin.jira.post.assert_called_once_with(
             "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
             data={
                 "transition": {"id": "10"},
                 "update": {
-                    "worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]
+                    "worklog": [{"add": {"timeSpent": "1h", "comment": adf_comment}}]
                 },
             },
             params=None,
+        )
+        # The caller's update_data is not mutated.
+        assert update_data == {
+            "worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]
+        }
+
+    def test_transition_issue_cloud_converts_update_data_comment_body(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Cloud converts string comment bodies in update_data to ADF."""
+        adf_body = {"version": 1, "type": "doc", "content": []}
+        transitions_mixin._markdown_to_jira = MagicMock(return_value=adf_body)
+
+        transitions_mixin.transition_issue(
+            "TEST-123",
+            "10",
+            update_data={"comment": [{"add": {"body": "**Done**"}}]},
+        )
+
+        transitions_mixin._markdown_to_jira.assert_called_once_with("**Done**")
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {"comment": [{"add": {"body": adf_body}}]},
+            },
+            params=None,
+        )
+
+    def test_transition_issue_cloud_keeps_adf_in_update_data(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Cloud leaves ADF bodies and non-text operations unchanged."""
+        transitions_mixin._markdown_to_jira = MagicMock()
+        adf_body = {"version": 1, "type": "doc", "content": []}
+        update_data = {
+            "comment": [{"add": {"body": adf_body}}],
+            "worklog": [{"add": {"timeSpent": "1h"}}],
+            "labels": [{"add": "triaged"}],
+        }
+
+        transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
+
+        transitions_mixin._markdown_to_jira.assert_not_called()
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={"transition": {"id": "10"}, "update": update_data},
+            params=None,
+        )
+
+    def test_transition_issue_dc_keeps_update_data_text(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Server/DC sends update_data text unchanged to REST v2."""
+        transitions_mixin.config.url = "https://jira.example.com"
+        transitions_mixin._markdown_to_jira = MagicMock()
+        transitions_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+        update_data = {
+            "comment": [{"add": {"body": "Done"}}],
+            "worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}],
+        }
+
+        transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
+
+        transitions_mixin._markdown_to_jira.assert_not_called()
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            data={"transition": {"id": "10"}, "update": update_data},
         )
 
     def test_transition_issue_with_comment_and_update_data(
@@ -1138,7 +1230,7 @@ class TestTransitionsMixin:
         self, transitions_mixin: TransitionsMixin
     ):
         """Test comment combines with comment operations in update_data."""
-        transitions_mixin._markdown_to_jira = MagicMock(return_value="New comment")
+        transitions_mixin._markdown_to_jira = MagicMock(side_effect=lambda text: text)
         existing_comment = {"add": {"body": "Existing comment"}}
 
         transitions_mixin.transition_issue(
