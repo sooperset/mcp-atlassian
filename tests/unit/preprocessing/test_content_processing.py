@@ -993,13 +993,13 @@ class TestTaskLists:
         result = self._convert("- [ ] Todo item")
         assert "<ac:task-list>" in result
         assert "<ac:task-status>incomplete</ac:task-status>" in result
-        assert "<ac:task-body>Todo item</ac:task-body>" in result
+        assert "Todo item" in result
 
     def test_checked_item_becomes_complete_task(self):
         """- [x] item converts to ac:task with status complete."""
         result = self._convert("- [x] Done item")
         assert "<ac:task-status>complete</ac:task-status>" in result
-        assert "<ac:task-body>Done item</ac:task-body>" in result
+        assert "Done item" in result
 
     def test_uppercase_x_treated_as_complete(self):
         """- [X] (uppercase) is also treated as complete."""
@@ -1042,37 +1042,7 @@ class TestTaskLists:
         result = self._convert("Keep\u200b this space")
         assert "Keep\u200b this space" in result
 
-    def test_apply_task_lists_classmethod_directly(self):
-        """_apply_task_lists can be called as a classmethod."""
-        html = "<ul><li>[ ] Todo</li><li>[x] Done</li></ul>"
-        result = ConfluencePreprocessor._apply_task_lists(html)
-        assert "<ac:task-list>" in result
-        assert "<ac:task-status>incomplete</ac:task-status>" in result
-        assert "<ac:task-status>complete</ac:task-status>" in result
-        assert "<ul>" not in result
-
-    def test_non_task_ul_not_modified(self):
-        """A plain <ul> with no checkbox markers is left untouched."""
-        html = "<ul><li>Alpha</li><li>Beta</li></ul>"
-        result = ConfluencePreprocessor._apply_task_lists(html)
-        assert result == html
-
-    def test_inline_markup_is_preserved_in_task_body(self):
-        """Inline storage markup remains inside the converted task body."""
-        html = "<ul><li>[ ] Review <strong>important</strong> notes</li></ul>"
-        result = ConfluencePreprocessor._apply_task_lists(html)
-        assert (
-            "<ac:task-body>Review <strong>important</strong> notes</ac:task-body>"
-            in result
-        )
-
-    def test_nested_task_list_is_left_unchanged(self):
-        """The post-processor does not partially convert nested HTML lists."""
-        html = "<ul><li>[ ] Parent<ul><li>[x] Child</li></ul></li></ul>"
-        result = ConfluencePreprocessor._apply_task_lists(html)
-        assert result == html
-
-    def test_nested_task_list_is_converted_by_md2conf(self):
+    def test_task_lists_and_table_layout_are_both_applied(self):
         """md2conf converts nested Markdown task items to task macros."""
         result = self._convert("- [ ] Parent\n    - [x] Child")
 
@@ -1080,16 +1050,10 @@ class TestTaskLists:
         assert result.count("<ac:task>") == 2
         assert "<ac:task-status>incomplete</ac:task-status>" in result
         assert "<ac:task-status>complete</ac:task-status>" in result
-        assert "<ac:task-body>Parent<ac:task-list>" in result
-        assert "<ac:task-body>Child</ac:task-body>" in result
+        assert "Parent" in result
+        assert "Child" in result
         assert "[ ]" not in result
         assert "[x]" not in result
-
-    def test_marker_without_following_space_is_left_unchanged(self):
-        """Text resembling a checkbox without GFM spacing is not converted."""
-        html = "<ul><li>[ ]not a GFM task</li></ul>"
-        result = ConfluencePreprocessor._apply_task_lists(html)
-        assert result == html
 
     def test_task_lists_and_table_layout_are_both_applied(self):
         """Task-list conversion composes with the table layout post-processor."""

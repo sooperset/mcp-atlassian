@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, Tag
 from md2conf.converter import (
     ConfluencePageCollection,
     ConfluenceStorageFormatConverter,
@@ -26,11 +26,6 @@ logger = logging.getLogger("mcp-atlassian")
 
 class ConfluencePreprocessor(BasePreprocessor):
     """Handles text preprocessing for Confluence content."""
-
-    # Use a private-use sequence that is absent from the converted HTML so
-    # restoring an opt-out task list cannot remove user-supplied characters.
-    _TASK_MARKER_PREFIX = "\ue000"
-    _TASK_MARKER_PATTERN = re.compile(r"(<li\b[^>]*>)(\[[ xX]\])")
 
     def __init__(self, base_url: str) -> None:
         """
@@ -84,12 +79,6 @@ class ConfluencePreprocessor(BasePreprocessor):
             html_content = self._fix_attachment_images(
                 markdown_to_html(markdown_content)
             )
-            task_marker_prefix: str | None = None
-            if not apply_task_lists:
-                task_marker_prefix = self._get_task_list_marker_prefix(html_content)
-                html_content = self._protect_task_list_markers(
-                    html_content, task_marker_prefix
-                )
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 root_dir = Path(temp_dir)
@@ -109,6 +98,7 @@ class ConfluencePreprocessor(BasePreprocessor):
                     force_valid_url=False,
                     heading_anchors=enable_heading_anchors,
                     render_mermaid=False,
+                    task_lists=apply_task_lists,
                 )
 
                 # Create a converter
@@ -132,15 +122,7 @@ class ConfluencePreprocessor(BasePreprocessor):
                 storage_format = self._fix_attachment_images(
                     str(elements_to_string(root))
                 )
-                if task_marker_prefix is not None:
-                    storage_format = self._restore_task_list_markers(
-                        storage_format, task_marker_prefix
-                    )
-                if apply_task_lists:
-                    storage_format = self._normalize_task_list_bodies(storage_format)
 
-                if apply_task_lists:
-                    storage_format = self._apply_task_lists(storage_format)
                 if table_layout is not None and table_layout in self._TABLE_WIDTHS:
                     storage_format = self._apply_table_layout(
                         storage_format, table_layout
@@ -156,117 +138,10 @@ class ConfluencePreprocessor(BasePreprocessor):
 
             # This creates a proper Confluence storage format document
             storage_format = self._fix_attachment_images(f"""<p>{html_content}</p>""")
-            if apply_task_lists:
-                storage_format = self._apply_task_lists(storage_format)
             if table_layout is not None and table_layout in self._TABLE_WIDTHS:
                 storage_format = self._apply_table_layout(storage_format, table_layout)
 
             return storage_format
-
-    @classmethod
-    def _get_task_list_marker_prefix(cls, html_content: str) -> str:
-        """Return a private-use marker sequence absent from the HTML."""
-        marker_prefix = cls._TASK_MARKER_PREFIX
-        while marker_prefix in html_content:
-            marker_prefix += cls._TASK_MARKER_PREFIX
-        return marker_prefix
-
-    @classmethod
-    def _protect_task_list_markers(cls, html_content: str, marker_prefix: str) -> str:
-        """Prevent md2conf from converting task lists when requested."""
-        return cls._TASK_MARKER_PATTERN.sub(rf"\1{marker_prefix}\2", html_content)
-
-    @classmethod
-    def _restore_task_list_markers(cls, storage_html: str, marker_prefix: str) -> str:
-        """Remove task-list conversion sentinels from converted HTML."""
-        return storage_html.replace(marker_prefix, "")
-
-    @staticmethod
-    def _normalize_task_list_bodies(storage_html: str) -> str:
-        """Match legacy task-body whitespace after md2conf 0.6 conversion."""
-        return re.sub(r"(<ac:task-body>)[ \t]+", r"\1", storage_html)
-
-    @classmethod
-    def _apply_task_lists(cls, storage_html: str) -> str:
-        """Convert GFM-style task list items to Confluence ac:task-list macros.
-
-        md2conf renders GFM task list items (``- [ ]`` / ``- [x]``) as plain
-        ``<ul><li>`` elements with the checkbox marker as literal text.
-        Confluence needs ``<ac:task-list>`` / ``<ac:task>`` elements to render
-        interactive checkboxes.
-
-        Only converts unnested ``<ul>`` blocks whose every direct ``<li>``
-        begins with a checkbox marker. Mixed and nested lists are left unchanged.
-
-        Args:
-            storage_html: Confluence storage-format string to post-process.
-
-        Returns:
-            Updated storage-format string with task lists converted.
-        """
-        if "<ul" not in storage_html.lower() or "[" not in storage_html:
-            return storage_html
-
-        marker_pattern = re.compile(
-            r"^\s*\[(?P<checked>[ xX])\](?:[ \t]+|$)(?P<body>.*)$",
-            re.DOTALL,
-        )
-        soup = BeautifulSoup(storage_html, "html.parser")
-        rewritten = False
-
-        for unordered_list in soup.find_all("ul"):
-            if not isinstance(unordered_list, Tag):
-                continue
-            if unordered_list.find("ul") or unordered_list.find_parent("ul"):
-                continue
-
-            items = unordered_list.find_all("li", recursive=False)
-            if not items:
-                continue
-
-            matches: list[tuple[Tag, NavigableString, re.Match[str]]] = []
-            for item in items:
-                if not isinstance(item, Tag):
-                    break
-                first_content = next(
-                    (
-                        child
-                        for child in item.contents
-                        if not isinstance(child, NavigableString) or str(child).strip()
-                    ),
-                    None,
-                )
-                if not isinstance(first_content, NavigableString):
-                    break
-                match = marker_pattern.match(str(first_content))
-                if match is None:
-                    break
-                matches.append((item, first_content, match))
-
-            if len(matches) != len(items):
-                continue
-
-            task_list = soup.new_tag("ac:task-list")
-            for item, marker_text, match in matches:
-                marker_text.replace_with(match.group("body"))
-
-                task = soup.new_tag("ac:task")
-                status = soup.new_tag("ac:task-status")
-                status.string = (
-                    "complete"
-                    if match.group("checked").lower() == "x"
-                    else "incomplete"
-                )
-                body = soup.new_tag("ac:task-body")
-                while item.contents:
-                    body.append(item.contents[0].extract())
-                task.extend((status, body))
-                task_list.append(task)
-
-            unordered_list.replace_with(task_list)
-            rewritten = True
-
-        return str(soup) if rewritten else storage_html
 
     @classmethod
     def _apply_table_layout(cls, storage_html: str, table_layout: str) -> str:
