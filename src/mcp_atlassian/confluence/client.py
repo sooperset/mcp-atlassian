@@ -158,7 +158,7 @@ class ConfluenceClient:
             log_config_param(logger, "Confluence", "NO_PROXY", self.config.no_proxy)
 
         # Configure SSL verification using the shared utility
-        configure_ssl_verification(
+        effective_verify = configure_ssl_verification(
             service_name="Confluence",
             url=transport_url,
             session=self.confluence._session,
@@ -168,6 +168,10 @@ class ConfluenceClient:
             client_key_password=self.config.client_key_password,
             no_proxy=self.config.no_proxy,
         )
+        # atlassian-python-api passes verify=self.verify_ssl on every request,
+        # which overrides session.verify; keep the wrapper in sync so an
+        # operator CA bundle applies to normal API calls too.
+        self.confluence.verify_ssl = effective_verify
 
         # Validate redirects for SSRF on every outbound call from this session
         # (covers direct _session.get() paths and global/stdio fetchers, not just
