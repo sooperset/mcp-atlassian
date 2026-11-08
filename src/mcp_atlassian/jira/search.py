@@ -119,7 +119,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             # Convert fields to proper format if it's a list/tuple/set
             fields_param: str | None
             if fields is None:  # Use default if None
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+                fields_param = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS))
             elif isinstance(fields, list | tuple | set):
                 fields_param = ",".join(fields)
             else:
@@ -258,7 +258,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             # Determine fields_param
             fields_param = fields
             if fields_param is None:
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+                fields_param = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS))
 
             response = self.jira.get_issues_for_board(
                 board_id=board_id,

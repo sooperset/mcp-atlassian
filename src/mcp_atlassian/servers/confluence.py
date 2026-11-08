@@ -328,9 +328,10 @@ async def get_page(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
-                "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
-                "using HTML significantly increases token usage in AI responses."
+                "Whether to convert page to markdown (true) or return raw Confluence "
+                "storage XHTML (false). Storage output preserves macros and task "
+                "metadata for safe round-tripping, but CAUTION: it significantly "
+                "increases token usage in AI responses."
             ),
             default=True,
         ),
@@ -345,7 +346,8 @@ async def get_page(
         title: The exact title of the page. Must be used with 'space_key'.
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
-        convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+        convert_to_markdown: Convert content to markdown (true) or return raw
+            Confluence storage XHTML (false).
 
     Returns:
         JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
@@ -421,10 +423,13 @@ async def get_page_children(
     expand: Annotated[
         str,
         Field(
-            description="Fields to expand in the response (e.g., 'version', 'body.storage')",
-            default="version",
+            description=(
+                "Fields to expand in the response (e.g., 'version', "
+                "'body.storage'). Defaults to 'version,history'."
+            ),
+            default="version,history",
         ),
-    ] = "version",
+    ] = "version,history",
     limit: Annotated[
         int,
         Field(
@@ -576,6 +581,9 @@ async def get_comments(
     ],
 ) -> str:
     """Get comments for a specific Confluence page.
+
+    Replies include their parent comment ID when available. Inline comments also
+    include anchor selection, marker reference, and resolution status metadata.
 
     Args:
         ctx: The FastMCP context.
@@ -1094,8 +1102,10 @@ async def update_page_section(
 
     Replaces only the content beneath a named heading, leaving all other
     sections, macros, layouts, and Confluence-specific elements completely
-    intact. This avoids the data loss that occurs when a full page is
-    downloaded as Markdown, edited, and re-uploaded.
+    intact. A following excerpt, expand, or layout that contains a heading of
+    the same or higher level ends the section — that wrapper is not replaced.
+    This avoids the data loss that occurs when a full page is downloaded as
+    Markdown, edited, and re-uploaded.
 
     Args:
         ctx: The FastMCP context.
@@ -1382,6 +1392,9 @@ async def get_inline_comments(
     ],
 ) -> str:
     """Get all inline comments for a Confluence page.
+
+    Results include parent comment IDs plus anchor selection, marker reference,
+    and resolution status metadata when Confluence provides those fields.
 
     Args:
         ctx: The FastMCP context.

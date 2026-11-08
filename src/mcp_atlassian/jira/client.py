@@ -3,6 +3,7 @@
 import logging
 import os
 from typing import Any, Literal
+from urllib.parse import unquote
 
 from atlassian import Jira
 from requests import Session
@@ -353,7 +354,13 @@ class JiraClient:
         reject whitespace-padded keys, and both sides of the comparison have
         to normalize identically or the guard silently stops matching.
         """
-        return normalize_project_key(normalize_project_key(issue_key).split("-", 1)[0])
+        # requests decodes percent-encoded unreserved characters while
+        # preparing URLs. Match the representation that downstream reads and
+        # writes can reach, so CC%2D1 or %43C-1 cannot evade a CC project guard.
+        request_key = unquote(issue_key)
+        return normalize_project_key(
+            normalize_project_key(request_key).split("-", 1)[0]
+        )
 
     def _is_internal_only_project(self, issue_key: str) -> bool:
         """Check whether issue_key's project is in JIRA_INTERNAL_ONLY_PROJECTS.

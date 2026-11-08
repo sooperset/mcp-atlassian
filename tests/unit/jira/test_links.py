@@ -77,13 +77,16 @@ class TestLinksMixin:
 
     # --- JIRA_INTERNAL_ONLY_PROJECTS guard on link comments ---
 
-    def test_create_issue_link_comment_internal_only_inward_rejected(self, links_mixin):
+    @pytest.mark.parametrize("issue_key", ["CC-123", "CC%2D123", "%43C-123"])
+    def test_create_issue_link_comment_internal_only_inward_rejected(
+        self, links_mixin, issue_key
+    ):
         """A link comment is rejected when the INWARD issue is in a listed
         project, before any API call."""
         links_mixin.config.internal_only_projects = frozenset({"CC"})
         data = {
             "type": {"name": "Blocks"},
-            "inwardIssue": {"key": "CC-123"},
+            "inwardIssue": {"key": issue_key},
             "outwardIssue": {"key": "PROJ-456"},
             "comment": {"body": "Client update"},
         }
