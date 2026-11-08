@@ -353,7 +353,7 @@ def _write_count_documents(root: Path, counts: ToolCounts) -> None:
     (root / ".env.example").write_text(
         f"# Only core tools (~{counts.core_tools} tools)\n"
         f"# All {counts.total_toolsets} toolsets ({counts.total_tools} tools)\n"
-        f"# If unset, all toolsets are enabled ({counts.total_tools} tools).\n"
+        f"# If unset, only {counts.core_toolsets} core toolsets are enabled.\n"
     )
     (root / "docs.json").write_text(
         f'{{"description": "all {counts.total_tools} tools enabled by default"}}\n'
@@ -368,8 +368,7 @@ def _write_count_documents(root: Path, counts: ToolCounts) -> None:
     (root / "docs" / "configuration.mdx").write_text(
         f"# Restrict to core tools only (~{counts.core_tools} tools across "
         f"{counts.core_toolsets} core toolsets)\n"
-        f"In v0.22.0, the default will change from all toolsets to "
-        f"{counts.core_toolsets} core toolsets only.\n"
+        f"If unset, only {counts.core_toolsets} core toolsets are enabled.\n"
     )
 
 
@@ -397,8 +396,8 @@ def _write_count_documents(root: Path, counts: ToolCounts) -> None:
         ),
         (
             "docs/configuration.mdx",
-            "to 6 core toolsets only",
-            "to 30 core toolsets only",
+            "only 6 core toolsets are enabled",
+            "only 30 core toolsets are enabled",
             "core_toolsets",
         ),
     ],
@@ -456,8 +455,8 @@ def test_check_mode_rejects_stale_warning_core_toolset_count(
     path = tmp_path / "docs" / "configuration.mdx"
     path.write_text(
         path.read_text().replace(
-            "to 6 core toolsets only",
-            "to 30 core toolsets only",
+            "only 6 core toolsets are enabled",
+            "only 30 core toolsets are enabled",
         )
     )
 
