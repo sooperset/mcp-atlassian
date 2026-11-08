@@ -58,6 +58,9 @@ class JiraClient:
         # Load configuration from environment variables if not provided
         self.config = config or JiraConfig.from_env()
         transport_url = self.config.url
+        # Fixed, code-built gateway URLs that may keep the deployment proxy.
+        # ``config.url`` can come from a request header, so it is never added.
+        proxy_trusted_urls: list[str] = []
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "oauth":
@@ -91,6 +94,8 @@ class JiraClient:
                 api_url = f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
             transport_url = api_url
+            if not is_dc_oauth:
+                proxy_trusted_urls.append(api_url)
 
             # Initialize Jira with the session
             self.jira = Jira(
@@ -193,7 +198,7 @@ class JiraClient:
         self.jira._session.hooks["response"].append(make_ssrf_redirect_hook())
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
-        mount_ssrf_pinning(self.jira._session, transport_url)
+        mount_ssrf_pinning(self.jira._session, *proxy_trusted_urls)
 
         # atlassian-python-api's built-in retry_with_header performs an UNBOUNDED,
         # header-driven retry (``time.sleep(int(Retry-After)); retry``). It melts

@@ -178,6 +178,51 @@ def test_operator_configured_host_may_resolve_private(env, monkeypatch):
 
 
 @pytest.mark.security_regression
+@pytest.mark.parametrize("ip", ["127.0.0.1", "169.254.169.254", "fd00:ec2::254"])
+def test_allowlisted_domain_does_not_waive_loopback_or_metadata(ip, monkeypatch):
+    """A host under an allowlisted domain may be private, never loopback or a
+    metadata address: request-supplied URLs can match the domain pattern."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "corp.example.com")
+
+    with patch(
+        "mcp_atlassian.utils.ssrf_adapter.socket.getaddrinfo",
+        side_effect=_gai_returning(ip),
+    ):
+        with pytest.raises(OSError, match="non-global"):
+            _pinned_create_connection(("rebind.corp.example.com", 443))
+
+
+@pytest.mark.security_regression
+def test_per_request_service_url_does_not_keep_operator_proxy(monkeypatch):
+    """A service URL taken from a request header must not be treated as a
+    proxy-trusted host: the proxy would resolve it outside the pinned
+    connector and reopen DNS rebinding."""
+    from mcp_atlassian.jira import JiraConfig
+    from mcp_atlassian.jira.client import JiraClient
+
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    config = JiraConfig(
+        url="https://rebind.attacker.test",
+        auth_type="pat",
+        personal_token="caller-pat",
+        https_proxy="http://proxy.example.test:8080",
+    )
+    client = JiraClient(config=config)
+    url = "https://rebind.attacker.test/rest/api/2/myself"
+    adapter = client.jira._session.get_adapter(url)
+    request = requests.Request("GET", url).prepare()
+    proxies = {"https": "http://proxy.example.test:8080"}
+
+    with patch.object(HTTPAdapter, "send", return_value=requests.Response()) as send:
+        adapter.send(request, proxies=proxies)
+
+    assert send.call_args.kwargs["proxies"] == {}
+
+
+@pytest.mark.security_regression
 def test_untrusted_host_still_refused_when_other_hosts_are_trusted(monkeypatch):
     """Trusting the operator's own host must not waive the guard for a
     caller-supplied host (the rebinding-attack case)."""

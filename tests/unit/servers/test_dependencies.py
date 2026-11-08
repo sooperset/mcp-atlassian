@@ -1565,6 +1565,7 @@ class TestGetConfluenceFetcher:
     ):
         """Header-based Confluence auth can use passthrough without global config."""
         monkeypatch.setenv("CONFLUENCE_PASSTHROUGH_HEADERS", "X-SSO-User, X-Request-ID")
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "atlassian.net")
         mock_context.request_context.lifespan_context = {}
         service_headers = {
             "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
@@ -1596,6 +1597,70 @@ class TestGetConfluenceFetcher:
         assert result == mock_fetcher
         called_config = mock_confluence_fetcher_class.call_args[1]["config"]
         assert called_config.custom_headers == {"X-SSO-User": "header-user"}
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize(
+        ("env", "forwarded"),
+        [
+            ({}, False),
+            ({"MCP_ALLOWED_URL_DOMAINS": "corp.example.com"}, False),
+            ({"MCP_ALLOWED_URL_DOMAINS": "atlassian.net"}, True),
+            ({"CONFLUENCE_URL": "https://test.atlassian.net/wiki"}, True),
+        ],
+    )
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_header_pat_passthrough_only_to_operator_trusted_host(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        monkeypatch,
+        env,
+        forwarded,
+    ):
+        """Gateway-injected passthrough headers never reach a caller-chosen host.
+
+        The header PAT branch takes its URL from the request, so passthrough
+        headers (which the caller may not know) travel only to a host the
+        operator configured or allowlisted.
+        """
+        for key in ("CONFLUENCE_URL", "JIRA_URL", "MCP_ALLOWED_URL_DOMAINS"):
+            monkeypatch.delenv(key, raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.setenv("CONFLUENCE_PASSTHROUGH_HEADERS", "X-Gateway-Secret")
+        mock_context.request_context.lifespan_context = {}
+        service_headers = {
+            "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
+            "X-Atlassian-Confluence-Personal-Token": "caller-pat",
+        }
+
+        class MockState:
+            def __init__(self):
+                self.confluence_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(name)
+                return None
+
+        mock_request.state = MockState()
+        mock_request.headers = Headers({"x-gateway-secret": "GATEWAY-SECRET"})
+        mock_get_http_request.return_value = mock_request
+        mock_confluence_fetcher_class.return_value = _create_mock_fetcher(
+            ConfluenceFetcher
+        )
+
+        await get_confluence_fetcher(mock_context)
+
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        sent = called_config.custom_headers or {}
+        assert ("X-Gateway-Secret" in sent) is forwarded
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
@@ -2029,6 +2094,7 @@ class TestValidationCache:
     ):
         """Passthrough identity must isolate shared PAT cache entries."""
         monkeypatch.setenv("CONFLUENCE_PASSTHROUGH_HEADERS", passthrough_header)
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "atlassian.net")
         service_headers = self._confluence_headers("shared-pat-token")
         request1 = self._header_pat_request(service_headers)
         request1.headers = Headers({passthrough_header: "user-a"})

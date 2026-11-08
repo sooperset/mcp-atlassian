@@ -13,6 +13,7 @@ import os
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from cachetools import TTLCache
 from fastmcp import Context
@@ -30,7 +31,11 @@ from mcp_atlassian.utils.env import (
 )
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.proxy import get_proxy_settings_from_env
-from mcp_atlassian.utils.urls import validate_url_for_ssrf
+from mcp_atlassian.utils.ssrf_adapter import _operator_trusted_hosts
+from mcp_atlassian.utils.urls import (
+    _hostname_matches_allowlist,
+    validate_url_for_ssrf,
+)
 
 if TYPE_CHECKING:
     from mcp_atlassian.confluence.config import (
@@ -444,6 +449,36 @@ def _with_request_passthrough_headers(
         getattr(config, "custom_headers", None), passthrough_headers
     )
     return dataclasses.replace(config, custom_headers=custom_headers)
+
+
+def _header_url_passthrough_names(url: str, spec: _ServiceSpec) -> list[str]:
+    """Passthrough header names that may travel to a request-supplied URL.
+
+    Passthrough headers are injected by a trusted gateway, so the caller may
+    not know their values. They are forwarded only when the destination is a
+    host the operator trusts: the configured service host or an
+    ``MCP_ALLOWED_URL_DOMAINS`` entry. Otherwise none are attached.
+
+    Args:
+        url: The service URL taken from the request header.
+        spec: Service specification for Jira or Confluence.
+
+    Returns:
+        Header names to forward, possibly empty.
+    """
+    names = get_header_names(spec.passthrough_env_var)
+    if not names:
+        return names
+    hostname = (urlparse(url).hostname or "").lower()
+    if hostname and _hostname_matches_allowlist(hostname, _operator_trusted_hosts()):
+        return names
+    logger.warning(
+        "Not forwarding %s passthrough headers to %s: the host is not "
+        "JIRA_URL/CONFLUENCE_URL or in MCP_ALLOWED_URL_DOMAINS.",
+        spec.name,
+        hostname or "<no host>",
+    )
+    return []
 
 
 def _get_header_pat_network_config(ctx: Context, spec: _ServiceSpec) -> dict[str, Any]:
@@ -872,7 +907,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 # Never forward instance-specific custom headers to a URL
                 # selected per request.
                 custom_headers=None,
-                passthrough_headers=get_header_names(spec.passthrough_env_var),
+                passthrough_headers=_header_url_passthrough_names(url_header_val, spec),
                 **spec.filter_kwargs,
             )
             return _create_and_validate(

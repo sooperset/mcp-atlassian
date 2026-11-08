@@ -378,6 +378,10 @@ control any passthrough header they are allowed to send to the MCP endpoint.
 When external auth uses a client-supplied Jira or Confluence URL, configure
 `MCP_ALLOWED_URL_DOMAINS`; dynamic URLs are rejected without this allowlist so
 trusted session headers cannot be forwarded to an attacker-controlled host.
+Header-based PAT requests (`X-Atlassian-*-Url` with a personal token) forward
+passthrough headers only when the URL host is the configured `JIRA_URL` /
+`CONFLUENCE_URL` host or matches `MCP_ALLOWED_URL_DOMAINS`; other destinations
+receive the caller's token without any passthrough header.
 
 <Note>
 Header values are masked in debug logs for security.

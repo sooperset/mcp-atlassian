@@ -408,6 +408,41 @@ class TestSsrfEmbeddedIpv4Regression:
         assert _check_ip_address(ip) is not None
 
 
+@pytest.mark.security_regression
+class TestAllowlistedHostAddressRegression:
+    """An allowlisted domain may sit on a private network, nothing more.
+
+    Request-supplied URLs can match an ``MCP_ALLOWED_URL_DOMAINS`` pattern, so
+    a subdomain an attacker can point at loopback or a metadata service must
+    not inherit the domain's trust.
+    """
+
+    @pytest.mark.parametrize(
+        "ip",
+        ["127.0.0.1", "169.254.169.254", "fd00:ec2::254", "::1", "0.0.0.0"],
+    )
+    def test_allowlisted_host_resolving_to_loopback_or_metadata_is_blocked(
+        self, ip: str
+    ) -> None:
+        family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+        with patch.dict(os.environ, {"MCP_ALLOWED_URL_DOMAINS": "corp.example.com"}):
+            with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+                mock_dns.return_value = [(family, 1, 6, "", (ip, 0))]
+                result = validate_url_for_ssrf("https://evil.corp.example.com")
+        assert result is not None
+        assert "non-global" in result
+
+    @pytest.mark.parametrize("ip", ["10.0.0.5", "192.168.1.10", "fd12:3456::1"])
+    def test_allowlisted_host_resolving_to_private_network_is_allowed(
+        self, ip: str
+    ) -> None:
+        family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+        with patch.dict(os.environ, {"MCP_ALLOWED_URL_DOMAINS": "corp.example.com"}):
+            with patch("mcp_atlassian.utils.urls.socket.getaddrinfo") as mock_dns:
+                mock_dns.return_value = [(family, 1, 6, "", (ip, 0))]
+                assert validate_url_for_ssrf("https://jira.corp.example.com") is None
+
+
 class TestSsrfBackslashBypassRegression:
     """Regression (GHSA-hgcf) — backslash authority-confusion SSRF bypass.
 

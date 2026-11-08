@@ -11,12 +11,14 @@ exactly once, rejects any candidate address that is not globally routable
 address — there is no separate re-resolution to rebind. The original hostname is
 preserved for TLS SNI and certificate verification, so HTTPS is unaffected.
 
-Operator-trusted hosts — the configured ``JIRA_URL`` / ``CONFLUENCE_URL`` hosts
-and ``MCP_ALLOWED_URL_DOMAINS`` entries — are exempt from the non-global
-rejection (on-prem DC instances legitimately live on private networks or
-localhost). Those values come from the server environment, which an attacker
-cannot influence through a request, so the rebinding guard is not weakened for
-caller-supplied URLs. The single-resolution pin still applies to every host.
+The configured ``JIRA_URL`` / ``CONFLUENCE_URL`` hosts are exempt from the
+non-global rejection (on-prem DC instances legitimately live on private networks
+or localhost); those exact hosts come from the server environment, which an
+attacker cannot influence through a request. ``MCP_ALLOWED_URL_DOMAINS`` entries
+are domain patterns that request-supplied URLs may also match, so a host under
+them may resolve to a private network address but never to loopback, link-local
+or cloud-metadata addresses. The single-resolution pin still applies to every
+host.
 """
 
 import os
@@ -35,8 +37,8 @@ from urllib3.poolmanager import PoolManager
 from .urls import _check_ip_address, _get_domain_allowlist, _hostname_matches_allowlist
 
 
-def _operator_trusted_hosts() -> list[str]:
-    """Hosts the operator explicitly configured or allowlisted via environment."""
+def _configured_service_hosts() -> list[str]:
+    """Exact service hosts the operator configured via environment."""
     hosts = []
     for env in ("JIRA_URL", "CONFLUENCE_URL"):
         raw = os.environ.get(env, "").strip()
@@ -44,8 +46,17 @@ def _operator_trusted_hosts() -> list[str]:
             hostname = urlparse(raw).hostname
             if hostname:
                 hosts.append(hostname.lower())
-    hosts.extend(_get_domain_allowlist() or [])
     return hosts
+
+
+def _operator_trusted_hosts() -> list[str]:
+    """Hosts the operator explicitly configured or allowlisted via environment."""
+    return [*_configured_service_hosts(), *(_get_domain_allowlist() or [])]
+
+
+def _is_configured_service_host(host: str) -> bool:
+    """Return True when ``host`` is exactly a configured service host."""
+    return host.lower() in _configured_service_hosts()
 
 
 def _pinned_create_connection(
@@ -61,13 +72,17 @@ def _pinned_create_connection(
     connection.
     """
     host, port = address
-    host_trusted = _hostname_matches_allowlist(host, _operator_trusted_hosts())
+    host_trusted = _is_configured_service_host(host)
+    host_allowlisted = _hostname_matches_allowlist(host, _get_domain_allowlist() or [])
     err: Exception | None = None
     for af, socktype, proto, _canonname, sa in socket.getaddrinfo(
         host, port, 0, socket.SOCK_STREAM
     ):
         ip = sa[0]
-        if not host_trusted and _check_ip_address(ip) is not None:
+        if (
+            not host_trusted
+            and _check_ip_address(ip, allow_private=host_allowlisted) is not None
+        ):
             msg = f"SSRF blocked: {host} resolves to non-global address {ip}"
             raise OSError(msg)
         sock = None
