@@ -1041,3 +1041,53 @@ class TestServerTLSRealCertificates:
         assert not isinstance(
             exc_info.value, ssl.SSLWantReadError | ssl.SSLWantWriteError
         ), "server continued the legacy handshake instead of rejecting it"
+
+
+class TestSecretCliOptionWarning:
+    """Secrets passed on the command line produce a deprecation warning."""
+
+    @staticmethod
+    def _ctx(sources):
+        import click
+
+        ctx = MagicMock()
+        ctx.get_parameter_source.side_effect = lambda name: sources.get(
+            name, click.core.ParameterSource.DEFAULT
+        )
+        return ctx
+
+    def test_warns_for_secret_given_on_command_line(self):
+        import click
+
+        from mcp_atlassian import _warn_secret_cli_options
+
+        ctx = self._ctx({"jira_token": click.core.ParameterSource.COMMANDLINE})
+        with patch("mcp_atlassian.logger.warning") as warning:
+            _warn_secret_cli_options(ctx)
+
+        warning.assert_called_once()
+        message = warning.call_args.args[0]
+        assert "--jira-token" in message
+        assert "JIRA_API_TOKEN" in message
+
+    def test_no_warning_for_secret_from_environment(self):
+        import click
+
+        from mcp_atlassian import _warn_secret_cli_options
+
+        ctx = self._ctx(
+            {"jira_token": click.core.ParameterSource.ENVIRONMENT},
+        )
+        with patch("mcp_atlassian.logger.warning") as warning:
+            _warn_secret_cli_options(ctx)
+
+        warning.assert_not_called()
+
+    def test_every_secret_option_maps_to_a_cli_parameter(self):
+        from mcp_atlassian import SECRET_CLI_OPTIONS
+
+        option_names = {
+            opt for param in main.params for opt in getattr(param, "opts", [])
+        }
+        for option, _env_var in SECRET_CLI_OPTIONS.values():
+            assert option in option_names

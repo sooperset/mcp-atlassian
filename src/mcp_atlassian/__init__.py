@@ -146,6 +146,41 @@ def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
         sys.exit(1)
 
 
+# CLI options that take a secret value, mapped to the environment variable
+# that should be used instead. Values on the command line are readable by other
+# local users through the process argument list (for example /proc/PID/cmdline).
+SECRET_CLI_OPTIONS: dict[str, tuple[str, str]] = {
+    "confluence_token": ("--confluence-token", "CONFLUENCE_API_TOKEN"),
+    "confluence_personal_token": (
+        "--confluence-personal-token",
+        "CONFLUENCE_PERSONAL_TOKEN",
+    ),
+    "jira_token": ("--jira-token", "JIRA_API_TOKEN"),
+    "jira_personal_token": ("--jira-personal-token", "JIRA_PERSONAL_TOKEN"),
+    "oauth_client_secret": ("--oauth-client-secret", "ATLASSIAN_OAUTH_CLIENT_SECRET"),
+    "oauth_access_token": ("--oauth-access-token", "ATLASSIAN_OAUTH_ACCESS_TOKEN"),
+}
+
+
+def _warn_secret_cli_options(ctx: click.Context) -> None:
+    """Warn when a secret was passed as a command-line argument.
+
+    Args:
+        ctx: The Click context of the running command.
+    """
+    for param_name, (option, env_var) in SECRET_CLI_OPTIONS.items():
+        if (
+            ctx.get_parameter_source(param_name)
+            != click.core.ParameterSource.COMMANDLINE
+        ):
+            continue
+        logger.warning(
+            f"{option} puts a secret in the process argument list, which other "
+            f"local users can read. Set {env_var} in the environment or an "
+            "--env-file instead. This option will be removed in a future release."
+        )
+
+
 @click.version_option(__version__, prog_name="mcp-atlassian")
 @click.command()
 @click.option(
@@ -193,10 +228,16 @@ def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
     help="Confluence URL (e.g., https://your-domain.atlassian.net/wiki)",
 )
 @click.option("--confluence-username", help="Confluence username/email")
-@click.option("--confluence-token", help="Confluence API token")
+@click.option(
+    "--confluence-token",
+    help="Confluence API token."
+    " Deprecated: visible to other local users, set CONFLUENCE_API_TOKEN instead.",
+)
 @click.option(
     "--confluence-personal-token",
-    help="Confluence Personal Access Token (for Confluence Server/Data Center)",
+    help="Confluence Personal Access Token (for Confluence Server/Data Center)."
+    " Deprecated: visible to other local users, set CONFLUENCE_PERSONAL_TOKEN"
+    " instead.",
 )
 @click.option(
     "--confluence-ssl-verify/--no-confluence-ssl-verify",
@@ -212,10 +253,15 @@ def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
     help="Jira URL (e.g., https://your-domain.atlassian.net or https://jira.your-company.com)",
 )
 @click.option("--jira-username", help="Jira username/email (for Jira Cloud)")
-@click.option("--jira-token", help="Jira API token (for Jira Cloud)")
+@click.option(
+    "--jira-token",
+    help="Jira API token (for Jira Cloud)."
+    " Deprecated: visible to other local users, set JIRA_API_TOKEN instead.",
+)
 @click.option(
     "--jira-personal-token",
-    help="Jira Personal Access Token (for Jira Server/Data Center)",
+    help="Jira Personal Access Token (for Jira Server/Data Center)."
+    " Deprecated: visible to other local users, set JIRA_PERSONAL_TOKEN instead.",
 )
 @click.option(
     "--jira-ssl-verify/--no-jira-ssl-verify",
@@ -245,7 +291,9 @@ def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
 )
 @click.option(
     "--oauth-client-secret",
-    help="OAuth 2.0 client secret for Atlassian Cloud",
+    help="OAuth 2.0 client secret for Atlassian Cloud."
+    " Deprecated: visible to other local users, set ATLASSIAN_OAUTH_CLIENT_SECRET"
+    " instead.",
 )
 @click.option(
     "--oauth-redirect-uri",
@@ -262,7 +310,9 @@ def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
 @click.option(
     "--oauth-access-token",
     help="Atlassian Cloud OAuth 2.0 access token (if you have your own you'd like to "
-    "use for the session.)",
+    "use for the session.)"
+    " Deprecated: visible to other local users, set ATLASSIAN_OAUTH_ACCESS_TOKEN"
+    " instead.",
 )
 @click.option(
     "--ssl-certfile",
@@ -372,6 +422,8 @@ def main(
             sys.exit(1)
 
     click_ctx = click.get_current_context(silent=True)
+    if click_ctx:
+        _warn_secret_cli_options(click_ctx)
 
     # Transport precedence
     final_transport = os.getenv("TRANSPORT", "stdio").lower()
