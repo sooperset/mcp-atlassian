@@ -407,6 +407,14 @@ class TestSsrfEmbeddedIpv4Regression:
     def test_unspecified_and_loopback_stay_blocked(self, ip: str) -> None:
         assert _check_ip_address(ip) is not None
 
+    @pytest.mark.parametrize(
+        "ip", ["224.0.0.1", "239.1.1.1", "ff02::1", "ff0e::1", "::ffff:224.0.0.1"]
+    )
+    def test_multicast_is_blocked(self, ip: str) -> None:
+        """ipaddress reports some multicast ranges as global; block them first."""
+        assert _check_ip_address(ip) is not None
+        assert _check_ip_address(ip, allow_private=True) is not None
+
 
 @pytest.mark.security_regression
 class TestAllowlistedHostAddressRegression:

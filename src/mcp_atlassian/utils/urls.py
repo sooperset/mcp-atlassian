@@ -212,6 +212,10 @@ def _is_blocked_ip(
         embedded = _embedded_ipv4(addr)
         if embedded is not None:
             addr = embedded
+    if addr.is_multicast:
+        # ipaddress reports some multicast ranges (e.g. 224.0.0.1, ff0e::1)
+        # as global; a guarded request never has a multicast destination.
+        return True
     if addr.is_global:
         return False
     if not allow_private:
