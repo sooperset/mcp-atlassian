@@ -11,6 +11,7 @@ from mcp.types import EmbeddedResource, TextContent
 
 from mcp_atlassian.confluence.attachments import AttachmentsMixin
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
 
 # Test scenarios for AttachmentsMixin
 #
@@ -1908,6 +1909,24 @@ class TestResolveAttachmentDownloadUrl:
         )
         assert url == (
             "https://example.atlassian.net/wiki"
+            "/rest/api/content/123/child/attachment/att999/download"
+        )
+
+    def test_oauth_cloud_uses_gateway_host(self) -> None:
+        mixin = self._make_mixin(use_v1=None)
+        mixin.config.auth_type = "oauth"
+        mixin.config.oauth_config = BYOAccessTokenOAuthConfig(
+            access_token="test-token", cloud_id="cloud-123"
+        )
+        mixin.confluence = MagicMock()
+        mixin.confluence.url = "https://api.atlassian.com/ex/confluence/cloud-123"
+
+        url = mixin._resolve_attachment_download_url(
+            "/download/attachments/123/foo.png", attachment_id="att999"
+        )
+
+        assert url == (
+            "https://api.atlassian.com/ex/confluence/cloud-123/wiki"
             "/rest/api/content/123/child/attachment/att999/download"
         )
 

@@ -183,7 +183,7 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
         Get required fields for creating an issue of a specific type in a project.
 
         Args:
-            issue_type: The issue type (e.g., 'Bug', 'Story', 'Epic')
+            issue_type: The issue type name or ID (e.g., 'Bug' or '10001')
             project_key: The project key (e.g., 'PROJ')
 
         Returns:
@@ -202,7 +202,7 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             return self._required_fields_cache[cache_key]
 
         try:
-            # Step 1: Get the ID for the given issue type name within the project
+            # Step 1: Resolve the issue type by stable ID or display name.
             if not hasattr(self, "get_project_issue_types"):
                 logger.error(
                     "get_project_issue_types method not available. Cannot resolve issue type ID."
@@ -212,8 +212,13 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
             all_issue_types = self.get_project_issue_types(project_key)
             issue_type_id = None
             for it in all_issue_types:
-                if it.get("name", "").lower() == issue_type.lower():
-                    issue_type_id = it.get("id")
+                candidate_id = it.get("id")
+                candidate_name = it.get("name", "")
+                if (candidate_id is not None and str(candidate_id) == issue_type) or (
+                    isinstance(candidate_name, str)
+                    and candidate_name.lower() == issue_type.lower()
+                ):
+                    issue_type_id = candidate_id
                     break
 
             if not issue_type_id:

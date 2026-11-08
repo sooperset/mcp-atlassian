@@ -3,6 +3,7 @@
 import logging
 import os
 from typing import Any, Literal
+from urllib.parse import unquote
 
 from atlassian import Jira
 from requests import Session
@@ -190,6 +191,14 @@ class JiraClient:
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
         mount_ssrf_pinning(self.jira._session, transport_url)
 
+        # atlassian-python-api's built-in retry_with_header performs an UNBOUNDED,
+        # header-driven retry (``time.sleep(int(Retry-After)); retry``). It melts
+        # down when a gateway returns ``Retry-After: 0`` — endless zero-delay retries
+        # that the server then treats as anonymous, surfacing a spurious 401 — and it
+        # now overlaps with configure_retry() below. Disable it so the bounded
+        # urllib3 Retry policy is the single source of retry truth.
+        self.jira.retry_with_header = False
+
         # Apply opt-in HTTP hardening after SSL setup and after the pinning
         # adapter is mounted: these wrappers patch send() in place on whatever
         # adapters are mounted now, so mounting the pinning adapter later would
@@ -345,7 +354,13 @@ class JiraClient:
         reject whitespace-padded keys, and both sides of the comparison have
         to normalize identically or the guard silently stops matching.
         """
-        return normalize_project_key(normalize_project_key(issue_key).split("-", 1)[0])
+        # requests decodes percent-encoded unreserved characters while
+        # preparing URLs. Match the representation that downstream reads and
+        # writes can reach, so CC%2D1 or %43C-1 cannot evade a CC project guard.
+        request_key = unquote(issue_key)
+        return normalize_project_key(
+            normalize_project_key(request_key).split("-", 1)[0]
+        )
 
     def _is_internal_only_project(self, issue_key: str) -> bool:
         """Check whether issue_key's project is in JIRA_INTERNAL_ONLY_PROJECTS.
