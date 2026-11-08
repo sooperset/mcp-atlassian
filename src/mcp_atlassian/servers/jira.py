@@ -61,6 +61,7 @@ _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
         "changelog",
         "comments",
         "worklogs",
+        "epic_summary",
     }
 )
 _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
@@ -70,6 +71,7 @@ _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
     "changelog": "changelogs",
     "comments": "comments",
     "worklogs": "worklogs",
+    "epic_summary": "epic_summary",
 }
 _GET_ISSUE_INCLUDE_ALIASES = {
     "comment": "comments",
@@ -350,13 +352,29 @@ async def get_user_profile(
             description="Identifier for the user (e.g., email address 'user@example.com', username 'johndoe', account ID 'accountid:...', or key for Server/DC)."
         ),
     ],
+    expand: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional comma-separated sections to include when "
+                "user_identifier is 'me', e.g. 'groups' or "
+                "'groups,applicationRoles'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """
-    Retrieve profile information for a specific Jira user.
+    Retrieve profile information for a Jira user.
+
+    Use ``user_identifier="me"`` to return the account authenticated for the
+    current request directly from Jira's ``/myself`` endpoint. This path does
+    not require Browse Users permission.
 
     Args:
         ctx: The FastMCP context.
         user_identifier: User identifier (email, username, key, or account ID).
+        expand: Optional sections to include for the ``me`` lookup.
 
     Returns:
         JSON string representing the Jira user profile object, or an error object if not found.
@@ -366,8 +384,11 @@ async def get_user_profile(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        user: JiraUser = jira.get_user_profile_by_identifier(user_identifier)
-        result = user.to_simplified_dict()
+        if user_identifier.lower() == "me":
+            result = jira.get_current_user_profile(expand=expand)
+        else:
+            user: JiraUser = jira.get_user_profile_by_identifier(user_identifier)
+            result = user.to_simplified_dict()
         response_data = {"success": True, "user": result}
     except Exception as e:
         error_message = ""
@@ -712,11 +733,42 @@ async def get_issue(
                 "(Optional) Comma-separated sections to inline "
                 "in the response, avoiding extra tool calls. "
                 "Supported: all, remote_links, transitions, "
-                "watchers, changelog, comments, worklogs"
+                "watchers, changelog, comments, worklogs, epic_summary. "
+                "'epic_summary' only applies when the issue is an Epic: "
+                "it adds child-issue aggregations (counts by status, "
+                "assignee, and type, plus a completion percentage). By "
+                "default the summary is aggregate-only; set "
+                "'epic_summary_children=true' to also inline a compact "
+                "child list."
             ),
             default=None,
         ),
     ] = None,
+    epic_summary_children: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true and 'epic_summary' is included on an Epic, also "
+                "inline a compact list of child issues (key, status, "
+                "assignee) alongside the aggregates. Ignored unless "
+                "'epic_summary' is requested and the issue is an Epic."
+            ),
+            default=False,
+        ),
+    ] = False,
+    max_epic_children: Annotated[
+        int,
+        Field(
+            description=(
+                "Maximum number of child issues to aggregate for "
+                "'epic_summary' (1-500). If the cap is reached the summary "
+                "sets 'truncated': true."
+            ),
+            default=100,
+            ge=1,
+            le=500,
+        ),
+    ] = 100,
     use_display_names: Annotated[
         bool,
         Field(
@@ -734,8 +786,12 @@ async def get_issue(
 
     Includes Epic links and relationship information. Use the
     ``include`` parameter to inline enrichments (remote_links,
-    transitions, watchers, changelog, comments, worklogs) so that
-    separate tool calls are not needed.
+    transitions, watchers, changelog, comments, worklogs, epic_summary)
+    so that separate tool calls are not needed. The ``epic_summary``
+    section only applies when the issue is an Epic and adds child-issue
+    aggregations (counts by status, assignee, and type, plus a
+    completion percentage); it is aggregate-only unless
+    ``epic_summary_children`` is set.
 
     Args:
         ctx: The FastMCP context.
@@ -746,6 +802,9 @@ async def get_issue(
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
         include: Comma-separated enrichment sections to inline.
+        epic_summary_children: Inline a compact child list with
+            ``epic_summary`` (aggregate-only by default).
+        max_epic_children: Cap on children aggregated for ``epic_summary``.
         use_display_names: Opt into human-readable custom field keys.
 
     Returns:
@@ -822,6 +881,26 @@ async def get_issue(
             result["worklogs"] = jira.get_worklogs(issue_key)
         except Exception:  # noqa: BLE001
             result["worklogs"] = []
+
+    if "epic_summary" in include_sections:
+        # Gate on the already-fetched issue type: a non-Epic makes ZERO
+        # child calls and is reported as not-applicable rather than
+        # silently dropping the requested section.
+        issue_type_name = issue.issue_type.name if issue.issue_type else ""
+        if not jira._is_epic_issue_type(issue_type_name):
+            result["epic_summary"] = {
+                "applicable": False,
+                "reason": "not_epic",
+            }
+        else:
+            summary = await run_jira_fetcher_call(
+                jira.get_epic_summary,
+                epic_key=issue_key,
+                max_children=max_epic_children,
+                include_children=epic_summary_children,
+            )
+            summary["applicable"] = True
+            result["epic_summary"] = summary
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -2654,16 +2733,20 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    # A bare false is ambiguous here in a way it is not in the client API: some
-    # MCP clients auto-fill an omitted optional boolean as false. Honor it only
-    # for a project the operator declared internal-only, where it can only mean
-    # "internal" — that is the case the guard exists for, and dropping it there
-    # is what blocked internal comments entirely. Anywhere else, keep treating it
-    # as omitted, so those clients don't start routing ordinary Jira comments
-    # through the ServiceDesk API (which answers 403 for non-JSM issues) or
-    # tripping the public/visibility conflict on a restricted comment.
+    # Preserve the tri-state ``public`` value at the MCP boundary (#1726).
+    #
+    # Rewriting every bare ``public=False`` to ``None`` for projects outside
+    # ``JIRA_INTERNAL_ONLY_PROJECTS`` made an explicit internal JSM comment
+    # land as customer-visible. Keep ``False`` so ServiceDesk routing can
+    # honor it.
+    #
+    # One compatibility carve-out remains: some MCP clients auto-fill omitted
+    # optional booleans as false. When the caller also supplied a real
+    # ``visibility`` restriction, that false cannot be intentional (the two
+    # are mutually exclusive on the ServiceDesk path) — drop it so restricted
+    # ordinary comments keep working.
     public_value = public
-    if public is False and not jira._is_internal_only_project(issue_key):
+    if public is False and visibility_dict is not None:
         public_value = None
     result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
     return json.dumps(result, indent=2, ensure_ascii=False)

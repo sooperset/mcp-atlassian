@@ -23,6 +23,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.credential_command import (
+    deferred_pat_outranks,
+    get_resolver,
+)
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import is_read_only_mode
@@ -139,6 +143,9 @@ async def health_check(request: Request) -> JSONResponse:
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
     services = get_available_services()
+    resolver = get_resolver()
+    has_deferred_jira_auth = resolver.has_deferred_credentials("jira")
+    has_deferred_confluence_auth = resolver.has_deferred_credentials("confluence")
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
     enabled_toolsets = get_enabled_toolsets()
@@ -158,6 +165,11 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.warning(
                     "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
                 )
+        except ValueError as e:
+            if has_deferred_jira_auth:
+                logger.info("Jira credential resolution deferred until first use.")
+            else:
+                logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
 
@@ -173,12 +185,43 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.warning(
                     "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
                 )
+        except ValueError as e:
+            if has_deferred_confluence_auth:
+                logger.info(
+                    "Confluence credential resolution deferred until first use."
+                )
+            else:
+                logger.error(
+                    f"Failed to load Confluence configuration: {e}", exc_info=True
+                )
         except Exception as e:
             logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
+
+    # A deferred credential wins when nothing loaded eagerly, or when it would
+    # have outranked what did load (Server/DC personal tokens beat Basic and
+    # OAuth in from_env, but a deferred one is invisible to it at startup).
+    deferred_jira_wins = has_deferred_jira_auth and (
+        loaded_jira_config is None
+        or deferred_pat_outranks(
+            "jira",
+            is_cloud=loaded_jira_config.is_cloud,
+            auth_type=loaded_jira_config.auth_type,
+        )
+    )
+    deferred_confluence_wins = has_deferred_confluence_auth and (
+        loaded_confluence_config is None
+        or deferred_pat_outranks(
+            "confluence",
+            is_cloud=loaded_confluence_config.is_cloud,
+            auth_type=loaded_confluence_config.auth_type,
+        )
+    )
 
     app_context = MainAppContext(
         full_jira_config=loaded_jira_config,
         full_confluence_config=loaded_confluence_config,
+        has_deferred_jira_auth=deferred_jira_wins,
+        has_deferred_confluence_auth=deferred_confluence_wins,
         read_only=read_only,
         enabled_tools=enabled_tools,
         enabled_toolsets=enabled_toolsets,
@@ -338,9 +381,11 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         if app_lifespan_state:
             jira_available = (
                 app_lifespan_state.full_jira_config is not None
+                or app_lifespan_state.has_deferred_jira_auth
             ) or header_based_services.get("jira", False)
             confluence_available = (
                 app_lifespan_state.full_confluence_config is not None
+                or app_lifespan_state.has_deferred_confluence_auth
             ) or header_based_services.get("confluence", False)
             if is_jira_tool and not jira_available:
                 return False
@@ -417,12 +462,22 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         allowed_origins: list[str] | None = None,
     ) -> StarletteWithLifespan:
         final_path = path
-        if transport == "streamable-http":
+        auth_endpoints: frozenset[tuple[str, str]]
+        if transport in ("http", "streamable-http"):
             configured_path = path or fastmcp_settings.streamable_http_path
             final_path = self._normalize_http_path(configured_path)
             self._active_streamable_http_path = final_path
+            auth_endpoints = frozenset({("POST", final_path)})
+        else:
+            sse_path = self._normalize_http_path(path or fastmcp_settings.sse_path)
+            message_path = self._normalize_http_path(fastmcp_settings.message_path)
+            auth_endpoints = frozenset({("GET", sse_path), ("POST", message_path)})
 
-        user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=self)
+        user_token_mw = Middleware(
+            UserTokenMiddleware,
+            mcp_server_ref=self,
+            auth_endpoints=auth_endpoints,
+        )
         final_middleware_list = [user_token_mw]
         if middleware:
             final_middleware_list.extend(middleware)
@@ -449,10 +504,14 @@ class UserTokenMiddleware:
     """
 
     def __init__(
-        self, app: ASGIApp, mcp_server_ref: Optional["AtlassianMCP"] = None
+        self,
+        app: ASGIApp,
+        mcp_server_ref: Optional["AtlassianMCP"] = None,
+        auth_endpoints: frozenset[tuple[str, str]] | None = None,
     ) -> None:
         self.app = app
         self.mcp_server_ref = mcp_server_ref
+        self.auth_endpoints = auth_endpoints
         if not self.mcp_server_ref:
             logger.warning(
                 "UserTokenMiddleware initialized without mcp_server_ref. "
@@ -569,13 +628,19 @@ class UserTokenMiddleware:
 
     def _should_process_auth(self, scope: Scope) -> bool:
         """Check if this request should be processed for authentication."""
-        if not self.mcp_server_ref or scope.get("method") != "POST":
+        if not self.mcp_server_ref:
             return False
 
         try:
-            mcp_path = self.mcp_server_ref.get_streamable_http_path()
+            method = scope.get("method", "").upper()
             request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
-            return request_path == mcp_path
+            if self.auth_endpoints is not None:
+                return (method, request_path) in self.auth_endpoints
+
+            return (
+                method == "POST"
+                and request_path == self.mcp_server_ref.get_streamable_http_path()
+            )
         except (AttributeError, ValueError) as e:
             logger.warning(f"Error checking auth path: {e}")
             return False
