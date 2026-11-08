@@ -1154,3 +1154,48 @@ def test_http_app_refuses_wide_file_root(monkeypatch):
     monkeypatch.setenv(io_mod.FILES_DIR_ENV, "/")
     with pytest.raises(ValueError, match="filesystem root"):
         main_mcp.http_app(transport="streamable-http")
+
+
+@pytest.mark.security_regression
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("transport_name", "path"),
+    [
+        ("sse", "/prefix/sse"),
+        ("sse", "/prefix/messages/"),
+        ("sse", "/prefix/messages/sub"),
+        ("streamable-http", "/prefix/mcp"),
+        ("streamable-http", "/prefix/mcp/"),
+    ],
+)
+async def test_auth_gate_applies_under_root_path(transport_name, path, monkeypatch):
+    """With root_path set, the router strips the prefix; so must the gate."""
+    monkeypatch.delenv("ALLOW_GLOBAL_CRED_FALLBACK", raising=False)
+    monkeypatch.delenv("IGNORE_HEADER_AUTH", raising=False)
+    app = main_mcp.http_app(transport=transport_name)
+    transport = httpx.ASGITransport(app=app, root_path="/prefix")
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            path, headers={"accept": "application/json, text/event-stream"}
+        )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        {"path": "/mcp", "root_path": ""},
+        {"path": "/prefix/mcp", "root_path": "/prefix"},
+        {"path": "/prefix", "root_path": "/prefix"},
+        {"path": "/prefixed/mcp", "root_path": "/prefix"},
+        {"path": "/other/mcp", "root_path": "/prefix"},
+    ],
+)
+def test_route_path_matches_starlette_router(scope):
+    from starlette._utils import get_route_path
+
+    from mcp_atlassian.servers.main import _route_path
+
+    assert _route_path(scope) == get_route_path(scope)

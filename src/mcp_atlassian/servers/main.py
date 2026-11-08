@@ -512,6 +512,26 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         return app
 
 
+def _route_path(scope: Scope) -> str:
+    """Return the path the Starlette router matches for ``scope``.
+
+    Starlette strips ``root_path`` (set by ``uvicorn --root-path`` or a parent
+    ``Mount``) from ``path`` before routing, so the auth gate must compare the
+    same stripped path; otherwise ``/prefix/mcp`` is routed to ``/mcp`` while
+    the gate sees ``/prefix/mcp`` and lets it through. This mirrors
+    ``starlette._utils.get_route_path``.
+    """
+    path: str = scope.get("path", "")
+    root_path: str = scope.get("root_path", "") or ""
+    if not root_path or not path.startswith(root_path):
+        return path
+    if path == root_path:
+        return ""
+    if path[len(root_path)] == "/":
+        return path[len(root_path) :]
+    return path
+
+
 # Atlassian cloud IDs are UUIDs. Allow letters, digits and hyphens only, so a
 # header value cannot add path segments, a query or a fragment to the API URL.
 _CLOUD_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,127}")
@@ -669,7 +689,7 @@ class UserTokenMiddleware:
             return False
 
         try:
-            request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
+            request_path = AtlassianMCP._normalize_http_path(_route_path(scope))
             auth_paths = self.auth_paths
             if auth_paths is None:
                 auth_paths = frozenset({self.mcp_server_ref.get_streamable_http_path()})
