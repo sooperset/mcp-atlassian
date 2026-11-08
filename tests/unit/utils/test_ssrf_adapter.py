@@ -46,7 +46,18 @@ def test_rebind_internal_address_refused_with_single_resolution():
 
 
 @pytest.mark.security_regression
-@pytest.mark.parametrize("ip", ["169.254.169.254", "127.0.0.1", "10.0.0.5", "::1"])
+@pytest.mark.parametrize(
+    "ip",
+    [
+        "169.254.169.254",
+        "127.0.0.1",
+        "10.0.0.5",
+        "::1",
+        "64:ff9b::a9fe:a9fe",
+        "2002:a9fe:a9fe::",
+        "::a9fe:a9fe",
+    ],
+)
 def test_pinning_adapter_blocks_internal_through_real_stack(ip):
     """End-to-end through the mounted adapter and the real requests/urllib3 stack:
     a host resolving to an internal address is refused — proving the adapter is

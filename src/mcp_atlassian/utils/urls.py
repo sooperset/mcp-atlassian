@@ -145,6 +145,57 @@ def validate_url_for_ssrf(url: str) -> str | None:
     return None
 
 
+# NAT64 prefixes (RFC 6052 well-known, RFC 8215 local-use). The well-known
+# /96 prefix carries the IPv4 address in its last 32 bits; the local-use /48
+# prefix lets operators pick the embedding length, so it is rejected outright.
+_NAT64_WELL_KNOWN = ipaddress.IPv6Network("64:ff9b::/96")
+_NAT64_LOCAL_USE = ipaddress.IPv6Network("64:ff9b:1::/48")
+# IPv4-compatible IPv6 (RFC 4291, deprecated): ::a.b.c.d in ::/96.
+_IPV4_COMPATIBLE = ipaddress.IPv6Network("::/96")
+
+
+def _embedded_ipv4(addr: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """Return the IPv4 address an IPv6 transition form routes to, if any.
+
+    Covers IPv4-mapped (``::ffff:a.b.c.d``), 6to4 (``2002::/16``), NAT64
+    well-known prefix (``64:ff9b::/96``) and IPv4-compatible (``::a.b.c.d``).
+    ``ipaddress`` reports several of these as global regardless of the IPv4
+    they wrap, so a guard must judge the embedded address instead.
+
+    Args:
+        addr: The IPv6 address to inspect.
+
+    Returns:
+        The embedded IPv4 address, or None when ``addr`` carries none.
+    """
+    if addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    if addr.sixtofour is not None:
+        return addr.sixtofour
+    if addr in _NAT64_WELL_KNOWN or (addr in _IPV4_COMPATIBLE and int(addr) > 0xFFFF):
+        # ``int(addr) > 0xFFFF`` leaves ``::`` and ``::1`` to the IPv6 checks.
+        return ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF)
+    return None
+
+
+def _is_blocked_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True when ``addr`` (or the IPv4 it embeds) is not globally routable.
+
+    Args:
+        addr: The address to judge.
+
+    Returns:
+        True if the address must be blocked.
+    """
+    if isinstance(addr, ipaddress.IPv6Address):
+        if addr in _NAT64_LOCAL_USE:
+            return True
+        embedded = _embedded_ipv4(addr)
+        if embedded is not None:
+            return not embedded.is_global
+    return not addr.is_global
+
+
 def _check_ip_address(hostname: str) -> str | None:
     """Check if hostname is a blocked IP address.
 
@@ -159,11 +210,7 @@ def _check_ip_address(hostname: str) -> str | None:
     except ValueError:
         return None  # Not an IP literal - skip
 
-    # Handle IPv4-mapped IPv6 (e.g., ::ffff:127.0.0.1)
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
-        addr = addr.ipv4_mapped
-
-    if not addr.is_global:
+    if _is_blocked_ip(addr):
         return f"Blocked IP address: {hostname} (non-global)"
 
     return None
@@ -221,10 +268,7 @@ def _check_dns_resolution(hostname: str) -> str | None:
         ip_str = sockaddr[0]
         try:
             addr = ipaddress.ip_address(ip_str)
-            # Handle IPv4-mapped IPv6
-            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
-                addr = addr.ipv4_mapped
-            if not addr.is_global:
+            if _is_blocked_ip(addr):
                 return f"DNS for {hostname} resolves to non-global IP: {ip_str}"
         except ValueError:
             continue
