@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
@@ -501,6 +502,11 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         return app
 
 
+# Atlassian cloud IDs are UUIDs. Allow letters, digits and hyphens only, so a
+# header value cannot add path segments, a query or a fragment to the API URL.
+_CLOUD_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,127}")
+
+
 class UserTokenMiddleware:
     """ASGI-compliant middleware to extract Atlassian user tokens/credentials.
 
@@ -656,9 +662,7 @@ class UserTokenMiddleware:
             request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
             auth_paths = self.auth_paths
             if auth_paths is None:
-                auth_paths = frozenset(
-                    {self.mcp_server_ref.get_streamable_http_path()}
-                )
+                auth_paths = frozenset({self.mcp_server_ref.get_streamable_http_path()})
             if request_path in auth_paths:
                 return True
             return any(
@@ -760,8 +764,14 @@ class UserTokenMiddleware:
                 f"CloudId present: {bool(cloud_id_str)}"
             )
 
-            # Process Cloud ID
+            # Process Cloud ID. It is interpolated into the Atlassian API path,
+            # so only accept the characters a cloud ID can contain.
             if cloud_id_str and cloud_id_str.strip():
+                if not _CLOUD_ID_PATTERN.fullmatch(cloud_id_str.strip()):
+                    scope["state"]["auth_validation_error"] = (
+                        "Unauthorized: Invalid X-Atlassian-Cloud-Id header"
+                    )
+                    return
                 scope["state"]["user_atlassian_cloud_id"] = cloud_id_str.strip()
                 logger.debug(
                     f"UserTokenMiddleware: Extracted cloudId: {cloud_id_str.strip()}"

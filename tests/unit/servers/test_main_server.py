@@ -783,6 +783,49 @@ class TestUserTokenMiddleware:
         middleware.app.assert_called_once()
         mock_send.assert_not_called()
 
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "cloud_id",
+        [
+            "../../admin",
+            "abc/def",
+            "abc?x=1",
+            "abc#frag",
+            "abc%2F..",
+            "-leading-hyphen",
+            "a" * 129,
+        ],
+    )
+    async def test_invalid_cloud_id_header_is_rejected(
+        self, middleware, mock_scope, mock_receive, mock_send, cloud_id
+    ):
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer user-token"),
+            (b"x-atlassian-cloud-id", cloud_id.encode()),
+        ]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        start_call = mock_send.call_args_list[0][0][0]
+        assert start_call["status"] == 401
+        middleware.app.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_uuid_cloud_id_header_is_accepted(
+        self, middleware, mock_scope, mock_receive, mock_send
+    ):
+        cloud_id = "1324a887-45db-1bf4-1e99-ef0ff456d421"
+        mock_scope["headers"] = [
+            (b"authorization", b"Bearer user-token"),
+            (b"x-atlassian-cloud-id", f" {cloud_id} ".encode()),
+        ]
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_cloud_id"] == cloud_id
+
     @pytest.mark.parametrize("method", ["GET", "DELETE", "HEAD"])
     def test_should_process_auth_default_path_covers_every_method(
         self, middleware, method
