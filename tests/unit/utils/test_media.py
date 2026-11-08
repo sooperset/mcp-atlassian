@@ -8,6 +8,7 @@ from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
     is_image_attachment,
+    resolve_mime_type,
 )
 
 
@@ -88,6 +89,40 @@ def test_is_image_attachment(
 ) -> None:
     """Parametrized test for two-tier MIME detection."""
     assert is_image_attachment(media_type, filename) == expected
+
+
+@pytest.mark.parametrize(
+    ("media_type", "filename", "expected"),
+    [
+        ("image/png", "x.png", "image/png"),
+        ("application/pdf", "renamed.png", "application/pdf"),
+        ("application/octet-stream", "diagram.png", "image/png"),
+        ("application/binary", "notes.txt", "text/plain"),
+        ("multipart/form-data", "report.pdf", "application/pdf"),
+        ("application/octet-stream", "blob", "application/octet-stream"),
+        ("multipart/form-data", "blob", "multipart/form-data"),
+        (None, "photo.jpg", "image/jpeg"),
+        (None, None, "application/octet-stream"),
+    ],
+    ids=[
+        "specific-type",
+        "specific-type-wins-over-extension",
+        "octet-stream-png-ext",
+        "binary-txt-ext",
+        "multipart-pdf-ext",
+        "octet-stream-no-ext",
+        "multipart-no-ext",
+        "none-mime-jpg-ext",
+        "both-none",
+    ],
+)
+def test_resolve_mime_type(
+    media_type: str | None,
+    filename: str | None,
+    expected: str,
+) -> None:
+    """Ambiguous or missing MIME types fall back to the filename extension."""
+    assert resolve_mime_type(media_type, filename) == expected
 
 
 # -- fetch_and_encode_attachment tests --------------------------------

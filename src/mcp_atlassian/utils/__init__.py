@@ -16,6 +16,7 @@ from .media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
     is_image_attachment,
+    resolve_mime_type,
 )
 
 # Export OAuth utilities
@@ -48,5 +49,6 @@ __all__ = [
     "setup_signal_handlers",
     "ensure_clean_exit",
     "fetch_and_encode_attachment",
+    "resolve_mime_type",
     "validate_url_for_ssrf",
 ]

@@ -4,7 +4,6 @@ import base64
 import binascii
 import json
 import logging
-import mimetypes
 import re
 from pathlib import Path
 from typing import Annotated
@@ -26,6 +25,7 @@ from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
     is_image_attachment,
+    resolve_mime_type,
 )
 
 logger = logging.getLogger(__name__)
@@ -2239,10 +2239,8 @@ async def download_attachment(
         )
 
         filename = attachment_data.get("title") or attachment_id
-        mime_type = (
-            attachment_data.get("extensions", {}).get("mediaType")
-            or mimetypes.guess_type(filename)[0]
-            or "application/octet-stream"
+        mime_type = resolve_mime_type(
+            attachment_data.get("extensions", {}).get("mediaType"), filename
         )
         file_size = attachment_data.get("extensions", {}).get("fileSize")
 
@@ -2434,7 +2432,7 @@ async def download_content_attachments(
             fetch_fn=confluence_fetcher.fetch_attachment_content,
             url=download_url,
             filename=filename,
-            mime_type=attachment.media_type,
+            mime_type=resolve_mime_type(attachment.media_type, filename),
         )
         if encoded is None:
             if fetched_bytes > 0:

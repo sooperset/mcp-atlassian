@@ -1,6 +1,7 @@
 """Attachment operations for Confluence API."""
 
 import logging
+import mimetypes
 import os
 import urllib.parse
 from pathlib import Path
@@ -708,8 +709,12 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             Attachment metadata dict.
         """
 
+        # Without a part Content-Type, Confluence stores the attachment as
+        # application/octet-stream regardless of the filename.
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
         def make_files(content: Any) -> dict[str, Any]:
-            files: dict[str, Any] = {"file": (filename, content)}
+            files: dict[str, Any] = {"file": (filename, content, content_type)}
             if comment:
                 files["comment"] = (None, comment, "text/plain; charset=utf-8")
             return files
