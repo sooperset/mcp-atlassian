@@ -46,6 +46,7 @@ def mock_confluence_fetcher():
     # Set up mock responses for each method
     mock_fetcher.search.return_value = [mock_page]
     mock_fetcher.get_page_content.return_value = mock_page
+    mock_fetcher.get_page_rendered_content.return_value = mock_page
     mock_fetcher.get_page_children.return_value = [mock_page]
     mock_fetcher.get_space_page_tree.return_value = {
         "space_key": "TEST",
@@ -248,6 +249,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_page_template,
+        get_rendered_page,
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
@@ -278,6 +280,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp = FastMCP(name="TestConfluenceSubMCP")
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
+    confluence_sub_mcp.add_tool(get_rendered_page)
     confluence_sub_mcp.add_tool(get_page_children)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
@@ -617,6 +620,45 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     assert result_data["metadata"]["title"] == "Test Page HTML"
     assert result_data["metadata"]["content"] == "<p>HTML Content</p>"
     assert result_data["metadata"]["content_format"] == "storage"
+
+
+@pytest.mark.anyio
+async def test_get_rendered_page(client, mock_confluence_fetcher):
+    """Test the get_rendered_page tool returns rendered content."""
+    response = await client.call_tool(
+        "confluence_get_rendered_page", {"page_id": "123456"}
+    )
+
+    mock_confluence_fetcher.get_page_rendered_content.assert_called_once_with("123456")
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" in result_data
+    assert result_data["metadata"]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
+async def test_get_rendered_page_resolves_url(client, mock_confluence_fetcher):
+    """Test get_rendered_page resolves full URLs before fetching."""
+    await client.call_tool(
+        "confluence_get_rendered_page",
+        {"page_id": "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Title"},
+    )
+
+    mock_confluence_fetcher.get_page_rendered_content.assert_called_once_with("123456789")
+
+
+@pytest.mark.anyio
+async def test_get_rendered_page_error(client, mock_confluence_fetcher):
+    """Test get_rendered_page returns error JSON on failure."""
+    mock_confluence_fetcher.get_page_rendered_content.side_effect = Exception("not found")
+
+    response = await client.call_tool(
+        "confluence_get_rendered_page", {"page_id": "999"}
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "error" in result_data
+    assert "999" in result_data["error"]
 
 
 @pytest.mark.anyio

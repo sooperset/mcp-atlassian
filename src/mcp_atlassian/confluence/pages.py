@@ -323,6 +323,68 @@ class PagesMixin(ConfluenceClient):
             raise Exception(f"Error retrieving page content: {str(e)}") from e
 
     @handle_auth_errors("Confluence API")
+    def get_page_rendered_content(self, page_id: str) -> ConfluencePage:
+        """Get the rendered (view) content of a specific page.
+
+        Uses ``expand=body.view`` instead of ``body.storage`` so macros and
+        dynamic content are expanded exactly as they appear in the Confluence
+        UI, rather than returned as raw storage XML.
+
+        Args:
+            page_id: The ID of the page to retrieve.
+
+        Returns:
+            ConfluencePage model containing the rendered HTML and metadata.
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails (401/403).
+            Exception: If there is an error retrieving the page.
+        """
+        try:
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                logger.debug(
+                    f"Using v2 API for OAuth authentication to get rendered page '{page_id}'"
+                )
+                page = v2_adapter.get_page_view(page_id=page_id)
+            else:
+                logger.debug(
+                    f"Using v1 API to get rendered page '{page_id}'"
+                )
+                page = self.confluence.get_page_by_id(
+                    page_id=page_id,
+                    expand="body.view,version,space,children.attachment,history",
+                )
+
+            if isinstance(page, str):
+                raise Exception(f"API returned error response: {page[:500]}")
+
+            space_key = page.get("space", {}).get("key", "")
+            try:
+                content = page["body"]["view"]["value"]
+            except (KeyError, TypeError) as e:
+                logger.warning(
+                    f"Page {page.get('id', 'unknown')} missing body.view.value: {e}"
+                )
+                content = ""
+
+            return ConfluencePage.from_api_response(
+                page,
+                base_url=self.config.url,
+                include_body=True,
+                content_override=content,
+                content_format="view",
+                is_cloud=self.config.is_cloud,
+            )
+        except HTTPError:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Error retrieving rendered page content for page ID {page_id}: {str(e)}"
+            )
+            raise Exception(f"Error retrieving rendered page content: {str(e)}") from e
+
+    @handle_auth_errors("Confluence API")
     def get_page_ancestors(self, page_id: str) -> list[ConfluencePage]:
         """
         Get ancestors (parent pages) of a specific page.

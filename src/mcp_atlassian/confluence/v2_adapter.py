@@ -366,6 +366,60 @@ class ConfluenceV2Adapter:
                 logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
 
+    def get_page_view(self, page_id: str) -> dict[str, Any]:
+        """Get a page's rendered (view) body using the v2 API.
+
+        Requests ``body-format=view`` so macros and dynamic content are
+        expanded as they appear in the Confluence UI.
+
+        Args:
+            page_id: The ID of the page to retrieve.
+
+        Returns:
+            Page data in v1-compatible format with ``body.view.value`` set.
+
+        Raises:
+            ValueError: If page retrieval fails.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/pages/{page_id}"
+            params = {"body-format": "view"}
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+
+            v2_response = response.json()
+            logger.debug(
+                f"Successfully retrieved rendered page '{page_id}' with v2 API"
+            )
+
+            space_id = v2_response.get("spaceId")
+            space_key = self._get_space_key_from_id(space_id) if space_id else "unknown"
+
+            v1_compatible = self._convert_v2_to_v1_format(v2_response, space_key)
+
+            # Map v2 body.view → v1 body.view structure
+            if "body" in v2_response and v2_response["body"].get("view"):
+                view_value = v2_response["body"]["view"].get("value", "")
+                v1_compatible["body"] = {
+                    "view": {"value": view_value, "representation": "view"}
+                }
+
+            if space_id:
+                v1_compatible["space"] = {"key": space_key, "id": space_id}
+
+            return v1_compatible
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting rendered page '{page_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting rendered page '{page_id}': {e}")
+            raise ValueError(f"Failed to get rendered page '{page_id}': {e}") from e
+
     def get_page_direct_children(
         self,
         page_id: str,

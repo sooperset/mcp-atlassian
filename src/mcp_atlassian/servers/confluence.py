@@ -422,6 +422,58 @@ async def get_page(
 
 @confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Rendered Page", "readOnlyHint": True},
+)
+async def get_rendered_page(
+    ctx: Context,
+    page_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Confluence page ID, full page URL, or tiny link. For example: "
+                "'123456789', "
+                "'https://example.atlassian.net/wiki/spaces/TEAM/pages/"
+                "123456789/Page+Title', or "
+                "'https://example.atlassian.net/wiki/x/N4CIO'."
+            ),
+        ),
+        BeforeValidator(lambda x: str(x) if x is not None else None),
+    ],
+) -> str:
+    """Get the rendered view of a Confluence page, with macros and dynamic content expanded.
+
+    Unlike confluence_get_page (which returns raw storage format), this tool
+    uses expand=body.view so the content reflects what users actually see
+    in the Confluence UI: macros are executed, dynamic content is resolved,
+    and the output is rendered HTML.
+
+    Args:
+        ctx: The FastMCP context.
+        page_id: Confluence page ID, full page URL, or tiny link.
+
+    Returns:
+        JSON string with page metadata and rendered HTML content.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    page_id_str = _resolve_page_id(str(page_id))
+
+    try:
+        page_object = confluence_fetcher.get_page_rendered_content(page_id_str)
+    except Exception as e:
+        logger.error(f"Error fetching rendered page '{page_id}': {e}")
+        return json.dumps(
+            {"error": f"Failed to retrieve rendered page '{page_id}': {e}"},
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    result = {"metadata": page_object.to_simplified_dict()}
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page Children", "readOnlyHint": True},
 )
 async def get_page_children(
