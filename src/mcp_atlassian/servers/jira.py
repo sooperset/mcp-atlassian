@@ -3110,7 +3110,9 @@ async def create_remote_issue_link(
 @check_write_access
 async def remove_issue_link(
     ctx: Context,
-    link_id: Annotated[str, Field(description="The ID of the link to remove")],
+    link_id: Annotated[
+        str, Field(description="The ID of the link to remove", pattern=r"^\d+$")
+    ],
 ) -> str:
     """Remove a link between two Jira issues.
 
