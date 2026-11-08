@@ -771,6 +771,13 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
+
+            # ADF descriptions are handled by the model, as in get_issue.
+            fields_data = issue_data.get("fields", {}) or {}
+            raw_description = fields_data.get("description")
+            if isinstance(raw_description, str) and raw_description:
+                fields_data["description"] = self._clean_text(raw_description)
+
             return JiraIssue.from_api_response(issue_data)
 
         except Exception as e:
