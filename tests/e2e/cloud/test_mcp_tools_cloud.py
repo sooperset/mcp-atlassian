@@ -30,6 +30,27 @@ async def call_tool(
     return await client.call_tool(tool_name, arguments)
 
 
+def _comment_visibility_role(jira_fetcher: JiraFetcher, project_key: str) -> str:
+    """Return a project role the current user belongs to.
+
+    Role names differ between Cloud sites (for example ``Administrators`` on
+    a new Free site and ``Administrator`` on older ones), so the role used for
+    comment visibility is discovered instead of hardcoded.
+    """
+    roles = jira_fetcher.jira.get(
+        f"rest/api/3/project/{project_key}/roledetails",
+        params={"currentMember": "true", "excludeConnectAddons": "true"},
+    )
+    names = [
+        role["name"]
+        for role in roles or []
+        if isinstance(role, dict) and role.get("name")
+    ]
+    if not names:
+        pytest.skip(f"Current user has no project role in {project_key}")
+    return "Administrators" if "Administrators" in names else names[0]
+
+
 @pytest.fixture
 def cloud_env(cloud_instance: CloudInstanceInfo) -> dict[str, str]:
     """Environment variables for configuring MCP server against Cloud."""
@@ -202,9 +223,13 @@ class TestMCPJiraTools:
         self,
         mcp_client: Client,
         cloud_instance: CloudInstanceInfo,
+        jira_fetcher: JiraFetcher,
     ) -> None:
         """Update fields, transition, comment, and worklog in one call."""
         uid = uuid.uuid4().hex[:8]
+        visibility_role = _comment_visibility_role(
+            jira_fetcher, cloud_instance.project_key
+        )
         create_result = await call_tool(
             mcp_client,
             "jira_create_issue",
@@ -240,7 +265,9 @@ class TestMCPJiraTools:
                     "fields": json.dumps({"summary": f"Updated {uid}"}),
                     "transition": target["name"],
                     "comment": f"Cloud orchestration comment {uid}",
-                    "comment_visibility": '{"type":"role","value":"Administrator"}',
+                    "comment_visibility": json.dumps(
+                        {"type": "role", "value": visibility_role}
+                    ),
                     "worklog": "1m",
                 },
             )
