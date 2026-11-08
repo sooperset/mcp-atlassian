@@ -318,10 +318,16 @@ def mock_jira_fetcher():
     }
     mock_get_user_profile = MagicMock()
 
-    def side_effect_func(identifier):
+    mock_user_with_groups = MagicMock(spec=JiraUser)
+    mock_user_with_groups.to_simplified_dict.return_value = {
+        **mock_user.to_simplified_dict.return_value,
+        "groups": ["jira-users", "ROLE_Global_Support"],
+    }
+
+    def side_effect_func(identifier, include_groups=False):
         if identifier == "nonexistent@example.com":
             raise ValueError(f"User '{identifier}' not found.")
-        return mock_user
+        return mock_user_with_groups if include_groups else mock_user
 
     mock_get_user_profile.side_effect = side_effect_func
     mock_fetcher.get_user_profile_by_identifier = mock_get_user_profile
@@ -1221,6 +1227,21 @@ async def test_get_user_profile_tool_success(jira_client, mock_jira_fetcher):
         user_info["avatar_url"]
         == "https://test.atlassian.net/avatar/test.profile@example.com"
     )
+
+
+@pytest.mark.anyio
+async def test_get_user_profile_tool_include_groups(jira_client, mock_jira_fetcher):
+    """include_groups=true reaches the fetcher and the groups are returned."""
+    response = await jira_client.call_tool(
+        "jira_get_user_profile",
+        {"user_identifier": "test.profile@example.com", "include_groups": True},
+    )
+    mock_jira_fetcher.get_user_profile_by_identifier.assert_called_once_with(
+        "test.profile@example.com", include_groups=True
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is True
+    assert result_data["user"]["groups"] == ["jira-users", "ROLE_Global_Support"]
 
 
 @pytest.mark.anyio

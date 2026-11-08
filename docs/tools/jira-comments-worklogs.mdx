@@ -113,6 +113,7 @@ Retrieve profile information for a specific Jira user.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `user_identifier` | `string` | Yes | Identifier for the user (e.g., email address 'user@example.com', username 'johndoe', account ID 'accountid:...', or key for Server/DC). |
+| `include_groups` | `boolean` | No | When true, the profile also lists the names of the groups the user belongs to (e.g. LDAP/AD role groups on Server/DC). Off by default to keep the response small. |
 
 ---
 

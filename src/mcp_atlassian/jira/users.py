@@ -550,13 +550,18 @@ class UsersMixin(JiraClient):
         return users
 
     @handle_auth_errors("Jira API")
-    def get_user_profile_by_identifier(self, identifier: str) -> "JiraUser":
+    def get_user_profile_by_identifier(
+        self, identifier: str, include_groups: bool = False
+    ) -> "JiraUser":
         """
         Retrieve Jira user profile information by identifier.
 
         Args:
             identifier: User identifier (accountId, username,
                 key, or email).
+            include_groups: When True, request the ``groups`` expansion so
+                the returned user carries the names of the groups the user
+                belongs to (Cloud and Server/DC both support it).
 
         Returns:
             JiraUser model with profile information.
@@ -571,9 +576,13 @@ class UsersMixin(JiraClient):
         # Handle 'me' as a special case — resolve to current user's account ID
         if identifier.lower() == "me":
             resolved_id = self.get_current_user_account_id()
-            return self.get_user_profile_by_identifier(resolved_id)
+            return self.get_user_profile_by_identifier(
+                resolved_id, include_groups=include_groups
+            )
 
         api_kwargs = self._determine_user_api_params(identifier)
+        if include_groups:
+            api_kwargs["expand"] = "groups"
 
         try:
             logger.debug(f"Calling self.jira.user() with parameters: {api_kwargs}")

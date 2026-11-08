@@ -350,6 +350,17 @@ async def get_user_profile(
             description="Identifier for the user (e.g., email address 'user@example.com', username 'johndoe', account ID 'accountid:...', or key for Server/DC)."
         ),
     ],
+    include_groups: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true, the profile also lists the names of the groups the "
+                "user belongs to (e.g. LDAP/AD role groups on Server/DC). Off by "
+                "default to keep the response small."
+            ),
+            default=False,
+        ),
+    ] = False,
 ) -> str:
     """
     Retrieve profile information for a specific Jira user.
@@ -357,6 +368,7 @@ async def get_user_profile(
     Args:
         ctx: The FastMCP context.
         user_identifier: User identifier (email, username, key, or account ID).
+        include_groups: Whether to include the user's group names.
 
     Returns:
         JSON string representing the Jira user profile object, or an error object if not found.
@@ -366,7 +378,12 @@ async def get_user_profile(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        user: JiraUser = jira.get_user_profile_by_identifier(user_identifier)
+        if include_groups:
+            user: JiraUser = jira.get_user_profile_by_identifier(
+                user_identifier, include_groups=True
+            )
+        else:
+            user = jira.get_user_profile_by_identifier(user_identifier)
         result = user.to_simplified_dict()
         response_data = {"success": True, "user": result}
     except Exception as e:

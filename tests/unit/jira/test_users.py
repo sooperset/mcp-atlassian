@@ -749,6 +749,55 @@ class TestUsersMixin:
         params = users_mixin._determine_user_api_params("jnovak")
         assert params == {"username": "jnovak"}
 
+    def test_get_user_profile_by_identifier_include_groups(self, users_mixin):
+        """include_groups=True requests the `groups` expansion; default does not."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = False
+        users_mixin.jira.user = MagicMock(
+            return_value={
+                "name": "jdoe",
+                "key": "JIRAUSER123",
+                "displayName": "John Doe",
+                "groups": {"size": 1, "items": [{"name": "ROLE_Global_Support"}]},
+            }
+        )
+
+        user = users_mixin.get_user_profile_by_identifier("jdoe", include_groups=True)
+
+        users_mixin.jira.user.assert_called_once_with(username="jdoe", expand="groups")
+        assert user.groups == ["ROLE_Global_Support"]
+
+        users_mixin.jira.user.reset_mock()
+        users_mixin.jira.user.return_value = {"name": "jdoe", "displayName": "J"}
+        user = users_mixin.get_user_profile_by_identifier("jdoe")
+        users_mixin.jira.user.assert_called_once_with(username="jdoe")
+        assert user.groups is None
+
+    def test_get_user_profile_by_identifier_me_forwards_include_groups(
+        self, users_mixin
+    ):
+        """'me' resolves to the current user and keeps the include_groups flag."""
+        users_mixin.config = MagicMock(spec=JiraConfig)
+        users_mixin.config.is_cloud = True
+        users_mixin.get_current_user_account_id = MagicMock(return_value="acc-1")
+        users_mixin._determine_user_api_params = MagicMock(
+            return_value={"account_id": "acc-1"}
+        )
+        users_mixin.jira.user = MagicMock(
+            return_value={
+                "accountId": "acc-1",
+                "displayName": "Me",
+                "groups": {"items": []},
+            }
+        )
+
+        user = users_mixin.get_user_profile_by_identifier("me", include_groups=True)
+
+        users_mixin.jira.user.assert_called_once_with(
+            account_id="acc-1", expand="groups"
+        )
+        assert user.groups == []
+
     def test_get_user_profile_by_identifier_server_dc_email(self, users_mixin):
         """Regression: Server/DC email lookup must search first, not pass email as username."""
         users_mixin.config = MagicMock(spec=JiraConfig)
