@@ -2693,7 +2693,7 @@ async def add_comment(
         bool | None,
         Field(
             description=(
-                "(Optional) For JSM/Service Desk issues only. "
+                "(Optional) For JSM customer requests. "
                 "Set to true for customer-visible comment, "
                 "false for internal agent-only comment. Posted "
                 "via the ServiceDesk API as a raw string; Jira "
@@ -2701,14 +2701,13 @@ async def add_comment(
                 "(markdown observed to render on Cloud, without "
                 "the client-side markdown-to-ADF guarantees of "
                 "the regular comment path). Cannot be combined "
-                "with visibility. If the issue's project is "
-                "listed in JIRA_INTERNAL_ONLY_PROJECTS, only "
-                "public=false is accepted — public=true or "
-                "omitting this field is rejected. Issues in such "
-                "a project that are not JSM customer requests "
-                "(e.g. an agent-created Task) have no portal "
-                "audience and are exempt: they post through the "
-                "ordinary comment path and ignore this field."
+                "with visibility on a request. On an issue that "
+                "is not a JSM customer request (e.g. a plain "
+                "Jira Task) this field is ignored and an "
+                "ordinary comment is posted. If the issue's "
+                "project is listed in JIRA_INTERNAL_ONLY_PROJECTS, "
+                "only public=false is accepted on a request — "
+                "public=true or omitting this field is rejected."
             )
         ),
     ] = None,
@@ -2720,8 +2719,9 @@ async def add_comment(
         issue_key: Jira issue key.
         body: Comment text in Markdown.
         visibility: (Optional) Comment visibility as JSON string.
-        public: (Optional) For JSM issues. True = customer-visible,
-            False = internal/agent-only. Uses ServiceDesk API.
+        public: (Optional) For JSM requests. True = customer-visible,
+            False = internal/agent-only. Uses ServiceDesk API; ignored
+            on an issue that is not a JSM customer request.
 
     Returns:
         JSON string representing the added comment object.
