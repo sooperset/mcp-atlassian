@@ -1095,6 +1095,16 @@ class IssuesMixin(
                 api_field_id = field_map[key]
                 logger.debug(f"Identified field '{key}' as standard system field ID.")
 
+            if api_field_id == "project":
+                # The project comes only from the explicit project_key argument,
+                # which is checked against JIRA_PROJECTS_FILTER. Letting an
+                # additional field replace it would bypass that check.
+                logger.warning(
+                    f"Ignoring additional field '{key}': set the project with "
+                    "project_key instead."
+                )
+                continue
+
             if api_field_id:
                 # Allow None values to pass through for clearing fields
                 if value is None:

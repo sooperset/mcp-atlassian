@@ -21,6 +21,7 @@ from mcp_atlassian.servers.async_utils import run_jira_fetcher_call
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.servers.helpers import resolve_transition
+from mcp_atlassian.servers.scope_guard import JIRA_SCOPE_POLICY, ToolScopeGuard
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.env import get_regex_env
 from mcp_atlassian.utils.media import (
@@ -48,9 +49,16 @@ ISSUE_KEY_PATTERN = get_regex_env(
 )
 PROJECT_KEY_PATTERN = get_regex_env("JIRA_PROJECT_KEY_PATTERN", r"^[A-Z][A-Z0-9_]+$")
 
+
+async def _scope_fetcher(ctx: Context) -> Any:
+    # Looked up at call time so the guard uses the same dependency as the tools.
+    return await get_jira_fetcher(ctx)
+
+
 jira_mcp = ErrorPreservingFastMCP(
     name="Jira MCP Service",
     instructions="Provides tools for interacting with Atlassian Jira.",
+    tool_guard=ToolScopeGuard(JIRA_SCOPE_POLICY, _scope_fetcher),
 )
 
 _GET_ISSUE_INCLUDE_SECTIONS = frozenset(

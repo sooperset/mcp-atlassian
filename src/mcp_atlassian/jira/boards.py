@@ -7,6 +7,7 @@ import requests
 
 from ..models.jira import JiraBoard
 from .client import JiraClient
+from .scope import allowed_project_keys
 
 logger = logging.getLogger("mcp-jira")
 
@@ -46,7 +47,19 @@ class BoardsMixin(JiraClient):
                 start=start,
                 limit=limit,
             )
-            return boards.get("values", []) if isinstance(boards, dict) else []
+            values = boards.get("values", []) if isinstance(boards, dict) else []
+            allowed = allowed_project_keys(self.config)
+            if allowed is not None:
+                # Boards located outside JIRA_PROJECTS_FILTER (or not in any
+                # project) are hidden, like projects in get_all_projects.
+                values = [
+                    board
+                    for board in values
+                    if isinstance(board, dict)
+                    and str((board.get("location") or {}).get("projectKey", "")).upper()
+                    in allowed
+                ]
+            return values
         except requests.HTTPError as e:
             logger.error(f"Error getting all agile boards: {str(e.response.content)}")
             return []
