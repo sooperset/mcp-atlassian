@@ -332,6 +332,16 @@ class TestJiraDCTransitions:
             issue.key,
             target_id,
             comment=f"Data Center transition comment {uid}",
+            update_data={
+                "worklog": [
+                    {
+                        "add": {
+                            "timeSpent": "1m",
+                            "comment": f"Data Center transition worklog {uid}",
+                        }
+                    }
+                ]
+            },
         )
 
         updated = jira_fetcher.get_issue(issue.key)
