@@ -1118,7 +1118,7 @@ async def test_update_page_accepts_empty_content(client, mock_confluence_fetcher
 
 
 def test_page_content_file_parameters_preserve_positional_order():
-    """content_file should not shift existing positional parameters."""
+    """content_file and content_base64 should not shift existing positional parameters."""
     create_params = list(
         inspect.signature(confluence_server.create_page.__wrapped__).parameters
     )
@@ -1133,6 +1133,7 @@ def test_page_content_file_parameters_preserve_positional_order():
         "include_content",
         "emoji",
         "content_file",
+        "content_base64",
         "page_width",
         "table_layout",
         "subtype",
@@ -1154,6 +1155,7 @@ def test_page_content_file_parameters_preserve_positional_order():
         "include_content",
         "emoji",
         "content_file",
+        "content_base64",
         "page_width",
         "table_layout",
     ]
@@ -1167,7 +1169,7 @@ async def test_create_page_rejects_both_content_and_file(
     fp = tmp_path / "page.md"
     fp.write_text("x", encoding="utf-8")
 
-    with pytest.raises(Exception, match="not both"):
+    with pytest.raises(Exception, match="not both|not multiple"):
         await client.call_tool(
             "confluence_create_page",
             {
@@ -1191,6 +1193,107 @@ async def test_create_page_rejects_neither_content_nor_file(
             {"space_key": "TEST", "title": "Missing body"},
         )
     mock_confluence_fetcher.create_page.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_create_page_with_content_base64(client, mock_confluence_fetcher):
+    """content_base64 should be decoded and passed to the fetcher as the body."""
+    import base64
+
+    body = "# Remote Page\n\nSent as base64."
+    encoded = base64.b64encode(body.encode("utf-8")).decode("ascii")
+
+    await client.call_tool(
+        "confluence_create_page",
+        {
+            "space_key": "TEST",
+            "title": "Base64 Page",
+            "content_base64": encoded,
+        },
+    )
+
+    mock_confluence_fetcher.create_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.create_page.call_args.kwargs
+    assert call_kwargs["body"] == body
+
+
+@pytest.mark.anyio
+async def test_update_page_with_content_base64(client, mock_confluence_fetcher):
+    """content_base64 should be decoded and passed to the fetcher as the body."""
+    import base64
+
+    body = "Updated via base64."
+    encoded = base64.b64encode(body.encode("utf-8")).decode("ascii")
+
+    await client.call_tool(
+        "confluence_update_page",
+        {
+            "page_id": "999999",
+            "title": "Updated Page",
+            "content_base64": encoded,
+        },
+    )
+
+    mock_confluence_fetcher.update_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.update_page.call_args.kwargs
+    assert call_kwargs["body"] == body
+
+
+@pytest.mark.anyio
+async def test_create_page_rejects_invalid_base64(client, mock_confluence_fetcher):
+    """Invalid base64 in content_base64 should raise a clear ValueError."""
+    with pytest.raises(Exception, match="[Ii]nvalid base64"):
+        await client.call_tool(
+            "confluence_create_page",
+            {
+                "space_key": "TEST",
+                "title": "Bad Base64",
+                "content_base64": "not-valid-base64!!!",
+            },
+        )
+    mock_confluence_fetcher.create_page.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_create_page_rejects_content_and_base64(
+    client, mock_confluence_fetcher
+):
+    """Supplying both content and content_base64 should error cleanly."""
+    import base64
+
+    with pytest.raises(Exception, match="not multiple|not both"):
+        await client.call_tool(
+            "confluence_create_page",
+            {
+                "space_key": "TEST",
+                "title": "Conflict",
+                "content": "inline",
+                "content_base64": base64.b64encode(b"also inline").decode("ascii"),
+            },
+        )
+    mock_confluence_fetcher.create_page.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_create_page_content_base64_unicode(client, mock_confluence_fetcher):
+    """content_base64 should correctly handle non-ASCII Unicode content."""
+    import base64
+
+    body = "# 日本語ページ\n\n内容はこちらです。"
+    encoded = base64.b64encode(body.encode("utf-8")).decode("ascii")
+
+    await client.call_tool(
+        "confluence_create_page",
+        {
+            "space_key": "TEST",
+            "title": "Unicode Page",
+            "content_base64": encoded,
+        },
+    )
+
+    mock_confluence_fetcher.create_page.assert_called_once()
+    call_kwargs = mock_confluence_fetcher.create_page.call_args.kwargs
+    assert call_kwargs["body"] == body
 
 
 @pytest.mark.anyio

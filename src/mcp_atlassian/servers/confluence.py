@@ -135,40 +135,69 @@ def _resolve_page_id(page_reference: str) -> str:
     return page_reference
 
 
-def _resolve_page_content(content: str | None, content_file: str | None) -> str:
-    """Resolve page body from either an inline string or a file path.
+def _resolve_page_content(
+    content: str | None,
+    content_file: str | None,
+    content_base64: str | None = None,
+) -> str:
+    """Resolve page body from an inline string, a file path, or base64-encoded data.
 
-    Exactly one of ``content`` / ``content_file`` must be supplied. ``content_file``
-    exists so callers (especially MCP clients transporting large bodies over stdio
-    JSON) can hand off content via the filesystem instead of marshalling it as a
-    tool-call argument.
+    Exactly one of ``content`` / ``content_file`` / ``content_base64`` must be
+    supplied. ``content_file`` exists so callers (especially MCP clients
+    transporting large bodies over stdio JSON) can hand off content via the
+    filesystem instead of marshalling it as a tool-call argument.
+    ``content_base64`` is the filesystem-free alternative for remote/Docker/SSE
+    deployments where the server cannot read client-side paths.
 
     Args:
         content: Inline page body (any supported content_format).
         content_file: Filesystem path to read the body from (UTF-8). Must
             resolve inside the current working directory (workspace), the same
             confinement contract as attachment paths.
+        content_base64: Base64-encoded page body (UTF-8). Decoded with
+            ``base64.b64decode(..., validate=True)`` then ``.decode('utf-8')``.
+            Useful for remote deployments where client-side paths are not
+            accessible on the server.
 
     Returns:
         The resolved page body as a string.
 
     Raises:
-        ValueError: If neither or both arguments are supplied, if the file does
-            not exist / is not a regular file, or if the path escapes the
-            workspace.
+        ValueError: If none or more than one argument is supplied, if the file
+            does not exist / is not a regular file, if the path escapes the
+            workspace, or if the base64 data is invalid or not UTF-8.
         OSError: If the file exists but cannot be read.
     """
     has_content = content is not None
     has_file = content_file is not None and content_file != ""
-    if has_content and has_file:
-        raise ValueError("Provide either 'content' or 'content_file', not both.")
-    if not has_content and not has_file:
-        raise ValueError("One of 'content' or 'content_file' must be provided.")
+    has_b64 = content_base64 is not None and content_base64 != ""
+
+    supplied = sum([has_content, has_file, has_b64])
+    if supplied > 1:
+        raise ValueError(
+            "Provide exactly one of 'content', 'content_file', or 'content_base64', not multiple."
+        )
+    if supplied == 0:
+        raise ValueError(
+            "One of 'content', 'content_file', or 'content_base64' must be provided."
+        )
+
     if has_content:
         return content
-    if content_file is None or content_file == "":
-        raise ValueError("One of 'content' or 'content_file' must be provided.")
 
+    if has_b64:
+        try:
+            decoded_bytes = base64.b64decode(content_base64, validate=True)
+        except binascii.Error as exc:
+            raise ValueError(f"Invalid base64 data in 'content_base64': {exc}") from exc
+        try:
+            return decoded_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                f"'content_base64' decoded bytes are not valid UTF-8: {exc}"
+            ) from exc
+
+    # has_file path
     # Confine the read to the workspace, same contract as attachment paths — an
     # unconfined caller-supplied path is an arbitrary-file-read primitive (the
     # file body is echoed back through the created/updated page).
@@ -704,8 +733,8 @@ async def create_page(
             description=(
                 "The content of the page. Format depends on content_format "
                 "parameter. Can be Markdown (default), wiki markup, storage "
-                "format, or XHTML storage format. Either 'content' or "
-                "'content_file' must be provided, but not both."
+                "format, or XHTML storage format. Either 'content', "
+                "'content_file', or 'content_base64' must be provided, but not more than one."
             ),
             default=None,
         ),
@@ -759,7 +788,20 @@ async def create_page(
                 "(Optional) Absolute or relative filesystem path to read the "
                 "page body from (UTF-8). Use this instead of 'content' when "
                 "the body is too large to pass comfortably as a tool "
-                "argument. Mutually exclusive with 'content'."
+                "argument. Mutually exclusive with 'content' and 'content_base64'."
+            ),
+            default=None,
+        ),
+    ] = None,
+    content_base64: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Base64-encoded page body (UTF-8). Use this instead "
+                "of 'content_file' when the server runs remotely (SSE/Docker) "
+                "and cannot access client-side filesystem paths. The client "
+                "base64-encodes the body; the server decodes it as UTF-8. "
+                "Mutually exclusive with 'content' and 'content_file'."
             ),
             default=None,
         ),
@@ -804,10 +846,12 @@ async def create_page(
         space_key: The key of the space.
         title: The title of the page.
         content: The content of the page (format depends on content_format).
-            Mutually exclusive with content_file; exactly one must be
-            supplied.
+            Mutually exclusive with content_file and content_base64; exactly
+            one must be supplied.
         content_file: Filesystem path to read the page body from (UTF-8).
             Useful for bodies too large to pass as an inline tool argument.
+        content_base64: Base64-encoded page body (UTF-8). Use for remote
+            deployments where client-side paths cannot be read by the server.
         parent_id: Optional parent page ID.
         content_format: The format of the content ('markdown', 'wiki',
             'storage', or 'xhtml').
@@ -833,7 +877,7 @@ async def create_page(
             "'markdown', 'wiki', 'storage', or 'xhtml'"
         )
 
-    resolved_content = _resolve_page_content(content, content_file)
+    resolved_content = _resolve_page_content(content, content_file, content_base64)
 
     # Determine parameters based on content format
     if content_format == "markdown":
@@ -887,7 +931,7 @@ async def update_page(
                 "The new content of the page. Format depends on "
                 "content_format parameter and may be Markdown (default), wiki "
                 "markup, storage format, or XHTML storage format. Either "
-                "'content' or 'content_file' must be provided, but not both."
+                "'content', 'content_file', or 'content_base64' must be provided, but not more than one."
             ),
             default=None,
         ),
@@ -944,7 +988,20 @@ async def update_page(
                 "(Optional) Absolute or relative filesystem path to read the "
                 "new page body from (UTF-8). Use this instead of 'content' "
                 "when the body is too large to pass comfortably as a tool "
-                "argument. Mutually exclusive with 'content'."
+                "argument. Mutually exclusive with 'content' and 'content_base64'."
+            ),
+            default=None,
+        ),
+    ] = None,
+    content_base64: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Base64-encoded page body (UTF-8). Use this instead "
+                "of 'content_file' when the server runs remotely (SSE/Docker) "
+                "and cannot access client-side filesystem paths. The client "
+                "base64-encodes the body; the server decodes it as UTF-8. "
+                "Mutually exclusive with 'content' and 'content_file'."
             ),
             default=None,
         ),
@@ -979,11 +1036,13 @@ async def update_page(
         page_id: The ID of the page to update.
         title: The new title of the page.
         content: The new content of the page (format depends on
-            content_format). Mutually exclusive with content_file; exactly
-            one must be supplied.
+            content_format). Mutually exclusive with content_file and
+            content_base64; exactly one must be supplied.
         content_file: Filesystem path to read the new page body from
             (UTF-8). Useful for bodies too large to pass as an inline tool
             argument.
+        content_base64: Base64-encoded page body (UTF-8). Use for remote
+            deployments where client-side paths cannot be read by the server.
         is_minor_edit: Whether this is a minor edit.
         version_comment: Optional comment for this version.
         parent_id: Optional new parent page ID.
@@ -1010,7 +1069,7 @@ async def update_page(
             "'markdown', 'wiki', 'storage', or 'xhtml'"
         )
 
-    resolved_content = _resolve_page_content(content, content_file)
+    resolved_content = _resolve_page_content(content, content_file, content_base64)
 
     # Determine parameters based on content format
     if content_format == "markdown":
