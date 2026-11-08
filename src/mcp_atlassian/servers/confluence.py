@@ -14,6 +14,10 @@ from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import BeforeValidator, Field
 
+from mcp_atlassian.confluence.attachments import (
+    ATTACHMENT_ID_PATTERN,
+    validate_attachment_id,
+)
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.models.confluence import ConfluenceAttachment
 from mcp_atlassian.servers.dependencies import get_confluence_fetcher
@@ -2186,7 +2190,8 @@ async def download_attachment(
                 "The ID of the attachment to download (e.g., 'att123456789'). "
                 "Find attachment IDs using get_attachments tool. "
                 "Example workflow: get_attachments(content_id) → use returned ID here."
-            )
+            ),
+            pattern=ATTACHMENT_ID_PATTERN,
         ),
     ],
 ) -> TextContent | EmbeddedResource:
@@ -2209,6 +2214,7 @@ async def download_attachment(
     confluence_fetcher = await get_confluence_fetcher(ctx)
 
     try:
+        validate_attachment_id(attachment_id)
         v2_adapter = confluence_fetcher._v2_adapter
 
         if v2_adapter:
@@ -2492,7 +2498,8 @@ async def delete_attachment(
                 "The ID of the attachment to delete. Attachment IDs can be found using the "
                 "get_attachments tool. Example: 'att123456789'. "
                 "**Warning**: This permanently deletes the attachment and all its versions."
-            )
+            ),
+            pattern=ATTACHMENT_ID_PATTERN,
         ),
     ],
 ) -> str:

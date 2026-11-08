@@ -1,5 +1,6 @@
 """Tests for the Jira attachments module."""
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -114,20 +115,12 @@ class TestAttachmentsMixin:
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
-            patch("os.path.abspath") as mock_abspath,
-            patch("os.path.isabs") as mock_isabs,
             patch("os.getcwd", return_value="/absolute/path"),
             patch("mcp_atlassian.jira.attachments.validate_safe_path"),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12
-            mock_isabs.return_value = False
             # Target a subdirectory (downloads may not land in the CWD root itself).
-            mock_abspath.side_effect = lambda p: (
-                "/absolute/path/downloads/test_file.txt"
-                if p == "downloads/test_file.txt"
-                else p
-            )
 
             # Call the method with a relative path
             result = attachments_mixin.download_attachment(
@@ -136,10 +129,8 @@ class TestAttachmentsMixin:
 
             # Assertions
             assert result is True
-            mock_isabs.assert_any_call("downloads/test_file.txt")
-            mock_abspath.assert_any_call("downloads/test_file.txt")
             mock_file.assert_called_once_with(
-                "/absolute/path/downloads/test_file.txt", "wb"
+                os.path.normpath("/absolute/path/downloads/test_file.txt"), "wb"
             )
 
     def test_download_attachment_no_url(self, attachments_mixin: AttachmentsMixin):
@@ -297,22 +288,18 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 return_value=mock_attachment,
             ),
-            patch("os.path.isabs") as mock_isabs,
-            patch("os.path.abspath") as mock_abspath,
             patch("os.getcwd", return_value="/absolute/path"),
-            patch("mcp_atlassian.jira.attachments.validate_safe_path"),
+            patch("mcp_atlassian.jira.attachments.validate_safe_path") as mock_validate,
         ):
-            mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/attachments"
-
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "attachments"
             )
 
-            # Assertions
+            # Assertions: the relative dir resolves against the file root (cwd).
             assert result["success"] is True
-            mock_isabs.assert_called_once_with("attachments")
-            mock_abspath.assert_called_once_with("attachments")
+            mock_validate.assert_called_once_with(
+                os.path.normpath("/absolute/path/attachments")
+            )
 
     def test_download_issue_attachments_no_attachments(
         self, attachments_mixin: AttachmentsMixin

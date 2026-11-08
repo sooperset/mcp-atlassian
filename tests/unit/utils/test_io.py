@@ -125,3 +125,103 @@ class TestValidateSafePath:
         monkeypatch.chdir(tmp_path)
         result = validate_safe_path("child.txt")
         assert result == (tmp_path / "child.txt").resolve()
+
+
+# --- File root boundary (remote transports) -----------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_files_dir():
+    """Override the suite-wide fixture: these tests check the real default.
+
+    Every test here points HOME at a temporary directory instead.
+    """
+    from mcp_atlassian.utils import io as io_mod
+
+    yield
+    io_mod.set_remote_transport(False)
+
+
+@pytest.fixture
+def reset_file_root(monkeypatch: pytest.MonkeyPatch):
+    """Isolate the module-level transport flag and the files-dir env var."""
+    from mcp_atlassian.utils import io as io_mod
+
+    monkeypatch.delenv(io_mod.FILES_DIR_ENV, raising=False)
+    io_mod.set_remote_transport(False)
+    yield io_mod
+    io_mod.set_remote_transport(False)
+
+
+class TestFileRoot:
+    """The file-path boundary is explicit on remote transports, cwd on stdio."""
+
+    def test_stdio_default_is_cwd(self, reset_file_root, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert reset_file_root.get_file_root() == tmp_path.resolve()
+
+    def test_env_overrides_cwd(self, reset_file_root, tmp_path, monkeypatch):
+        files = tmp_path / "files"
+        monkeypatch.setenv(reset_file_root.FILES_DIR_ENV, str(files))
+        assert reset_file_root.get_file_root() == files.resolve()
+
+    def test_remote_default_is_dedicated_dir(
+        self, reset_file_root, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.chdir(tmp_path)
+        root = reset_file_root.configure_file_root_for_transport("streamable-http")
+        assert root == (tmp_path / "home" / ".mcp-atlassian" / "files").resolve()
+        assert root.is_dir()
+
+    @pytest.mark.security_regression
+    def test_remote_transport_from_root_cwd_does_not_expose_host_files(
+        self, reset_file_root, tmp_path, monkeypatch
+    ):
+        """cwd=/ (systemd system unit default) must not widen the boundary."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.chdir("/")
+        root = reset_file_root.configure_file_root_for_transport("sse")
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            validate_safe_path("/etc/hostname")
+        # A relative path lands in the dedicated directory, not under /.
+        assert validate_safe_path("etc/hostname") == root / "etc" / "hostname"
+
+    @pytest.mark.security_regression
+    def test_remote_transport_from_home_cwd_does_not_expose_dotfiles(
+        self, reset_file_root, tmp_path, monkeypatch
+    ):
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".env").write_text("SECRET=1")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.chdir(home)
+        root = reset_file_root.configure_file_root_for_transport("streamable-http")
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            validate_safe_path(str(home / ".env"))
+        assert validate_safe_path(".env") == root / ".env"
+
+    @pytest.mark.parametrize("wide", ["root", "home"])
+    def test_remote_transport_refuses_wide_files_dir(
+        self, reset_file_root, tmp_path, monkeypatch, wide
+    ):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        target = "/" if wide == "root" else str(home)
+        monkeypatch.setenv(reset_file_root.FILES_DIR_ENV, target)
+        with pytest.raises(ValueError, match="filesystem root or home"):
+            reset_file_root.configure_file_root_for_transport("streamable-http")
+
+    def test_stdio_keeps_wide_cwd(self, reset_file_root, monkeypatch):
+        """Local stdio clients often start the server from / — unchanged."""
+        monkeypatch.chdir("/")
+        root = reset_file_root.configure_file_root_for_transport("stdio")
+        assert root == Path("/")
+        assert validate_safe_path("/etc/hostname") == Path("/etc/hostname")
+
+    def test_is_in_cwd_root(self, reset_file_root, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert reset_file_root.is_in_cwd_root("victim.py")
+        assert reset_file_root.is_in_cwd_root(tmp_path / "victim.py")
+        assert not reset_file_root.is_in_cwd_root(tmp_path / "sub" / "victim.py")

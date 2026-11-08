@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..models.jira import JiraAttachment
-from ..utils.io import validate_safe_path
+from ..utils.io import get_file_root, is_in_cwd_root, validate_safe_path
 from ..utils.media import ATTACHMENT_MAX_BYTES
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
@@ -35,9 +35,13 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             return False
 
         try:
-            # Convert to absolute path if relative
+            # Relative paths resolve against the configured file root (the
+            # working directory unless MCP_ATLASSIAN_FILES_DIR or a remote
+            # transport sets another one).
             if not os.path.isabs(target_path):
-                target_path = os.path.abspath(target_path)
+                target_path = os.path.normpath(
+                    os.path.join(get_file_root(), target_path)
+                )
 
             # Guard against path traversal (resolves symlinks)
             validate_safe_path(target_path)
@@ -46,8 +50,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             # Python resolves imports first, so a download landing there could
             # overwrite an importable module and gain code execution (GHSA-6vmq).
             # Attachments must be saved into a subdirectory.
-            resolved = Path(target_path).resolve()
-            if resolved.parent == Path(os.getcwd()).resolve():
+            if is_in_cwd_root(target_path):
                 logger.error(
                     f"Refusing to download into the working-directory root: {target_path}"
                 )
@@ -273,9 +276,11 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         Returns:
             A dictionary with download results
         """
-        # Convert to absolute path if relative
+        # Relative paths resolve against the configured file root (the
+        # working directory unless MCP_ATLASSIAN_FILES_DIR or a remote
+        # transport sets another one).
         if not os.path.isabs(target_dir):
-            target_dir = os.path.abspath(target_dir)
+            target_dir = os.path.normpath(os.path.join(get_file_root(), target_dir))
 
         # Guard against path traversal (resolves symlinks)
         validate_safe_path(target_dir)

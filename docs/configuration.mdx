@@ -276,6 +276,7 @@ JIRA_PROJECT_KEY_PATTERN=^[A-Z0-9][A-Z0-9_]*$
 | `MCP_SSL_CERTFILE` | TLS certificate (PEM) for the server's own HTTPS listener (see [HTTP Transport](/docs/http-transport#tls-https-listener)) |
 | `MCP_SSL_KEYFILE` | TLS private key (PEM) for the HTTPS listener; must be set together with the certificate |
 | `READ_ONLY_MODE` | Disable write operations (`true`/`false`) |
+| `MCP_ATLASSIAN_FILES_DIR` | Directory that confines every server-side file path a tool accepts (attachment uploads, `content_file`, attachment downloads). Unset = the working directory on `stdio`, `~/.mcp-atlassian/files` on `sse`/`streamable-http`. A remote transport refuses to start if this is a filesystem root or a home directory. See [HTTP Transport](/http-transport#server-side-file-paths). |
 | `MCP_VERBOSE` | Enable verbose logging (`true`/`false`) |
 | `MCP_VERY_VERBOSE` | Enable debug logging (`true`/`false`) |
 | `MCP_LOGGING_STDOUT` | Log to stdout instead of stderr (`true`/`false`) |

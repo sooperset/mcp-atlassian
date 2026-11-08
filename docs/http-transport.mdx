@@ -140,6 +140,58 @@ startup — rotation requires a restart. Under `stdio` there is no network
 listener, so the options are ignored with a warning.
 </Note>
 
+
+## Server-side file paths
+
+Some tools accept a path on the **server's** filesystem: `confluence_upload_attachment(s)`
+and `jira_update_issue` (`attachments`) read a file and upload it, and
+`confluence_create_page` / `confluence_update_page` read `content_file`. Over HTTP the
+caller is remote, so these paths are confined to one directory:
+
+- `MCP_ATLASSIAN_FILES_DIR` when set.
+- Otherwise `~/.mcp-atlassian/files` for the user running the server (created on start).
+  The process working directory is **not** used on `sse` / `streamable-http`, because it
+  depends on how the server was started (`/` for a systemd system unit, `$HOME` for a
+  user unit or a shell).
+
+The server refuses to start on a remote transport if `MCP_ATLASSIAN_FILES_DIR` is a
+filesystem root or a home directory. Put only files you intend callers to upload in this
+directory. In multi-user deployments every caller shares it, so prefer the base64
+`content` inputs and leave the directory empty when you can.
+
+On `stdio` (a local client) the boundary stays the working directory unless
+`MCP_ATLASSIAN_FILES_DIR` is set, so existing local setups keep working.
+
+### systemd
+
+Set both the working directory and the files directory explicitly. Without
+`WorkingDirectory=`, a system unit starts in `/` (see `systemd.exec(5)`).
+
+```ini
+[Service]
+User=mcp-atlassian
+WorkingDirectory=/srv/mcp-atlassian
+Environment=MCP_ATLASSIAN_FILES_DIR=/srv/mcp-atlassian/files
+EnvironmentFile=/etc/mcp-atlassian.env
+ExecStart=/usr/local/bin/uvx mcp-atlassian --transport streamable-http --port 9000
+```
+
+Keep secrets such as `.env` files outside both directories.
+
+### Docker
+
+The official image works from `/app`. To upload files from the host, mount a dedicated
+directory and point the variable at it:
+
+```bash
+docker run --rm -p 9000:9000 \
+  --env-file /path/to/your/.env \
+  -e MCP_ATLASSIAN_FILES_DIR=/data/files \
+  -v /srv/mcp-atlassian/files:/data/files \
+  ghcr.io/sooperset/mcp-atlassian:latest \
+  --transport streamable-http --port 9000
+```
+
 ## Multi-User Authentication
 
 Both transport types support per-request authentication where each user provides their own credentials.

@@ -55,6 +55,32 @@ class TestMainTransportSelection:
                     assert "_run_stdio_with_stdin_guard" not in coro_repr
                     assert "run_async" in coro_repr or hasattr(called_coro, "cr_code")
 
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("transport", ["sse", "streamable-http"])
+    def test_http_transport_refuses_root_files_dir(self, mock_asyncio_run, transport):
+        """A remote transport must not start with file paths confined to /."""
+        with patch.dict(
+            "os.environ", {"TRANSPORT": transport, "MCP_ATLASSIAN_FILES_DIR": "/"}
+        ):
+            with patch("sys.argv", ["mcp-atlassian"]):
+                with pytest.raises(SystemExit) as exc:
+                    main()
+        assert exc.value.code == 1
+        assert not mock_asyncio_run.called
+
+    def test_stdio_transport_allows_root_files_dir(self, mock_server, mock_asyncio_run):
+        """Local stdio keeps working when started from / or with a wide dir."""
+        with patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=mock_server):
+            with patch.dict(
+                "os.environ", {"TRANSPORT": "stdio", "MCP_ATLASSIAN_FILES_DIR": "/"}
+            ):
+                with patch("sys.argv", ["mcp-atlassian"]):
+                    try:
+                        main()
+                    except SystemExit:
+                        pass
+        assert mock_asyncio_run.called
+
     def test_stdio_transport_uses_stdin_guard(self, mock_server, mock_asyncio_run):
         with patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=mock_server):
             with patch.dict("os.environ", {"TRANSPORT": "stdio"}):
