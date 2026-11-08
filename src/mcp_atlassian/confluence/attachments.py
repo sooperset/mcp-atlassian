@@ -1,6 +1,7 @@
 """Attachment operations for Confluence API."""
 
 import logging
+import mimetypes
 import os
 import urllib.parse
 from pathlib import Path
@@ -709,7 +710,10 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         """
 
         def make_files(content: Any) -> dict[str, Any]:
-            files: dict[str, Any] = {"file": (filename, content)}
+            # Confluence Cloud rejects a file part without a Content-Type
+            # (HTTP 415 on /child/attachment/{id}/data), so always send one.
+            mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            files: dict[str, Any] = {"file": (filename, content, mime_type)}
             if comment:
                 files["comment"] = (None, comment, "text/plain; charset=utf-8")
             return files
