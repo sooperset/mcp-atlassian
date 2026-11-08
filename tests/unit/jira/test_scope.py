@@ -191,3 +191,103 @@ def test_additional_fields_cannot_replace_project() -> None:
     )
     assert fields["project"] == {"key": "ALLOWED"}
     assert "priority" in fields
+
+
+# --- nested references in responses ------------------------------------------
+
+
+def _raw_issue_with_references() -> dict[str, Any]:
+    return {
+        "id": "1",
+        "key": "ALLOWED-1",
+        "fields": {
+            "summary": "s",
+            "project": {"key": "ALLOWED"},
+            "parent": {
+                "key": "SECRET-7",
+                "fields": {"summary": "secret parent", "project": {"key": "SECRET"}},
+            },
+            "subtasks": [
+                {"key": "ALLOWED-2", "fields": {"summary": "ok"}},
+                {"key": "SECRET-3", "fields": {"summary": "secret sub"}},
+            ],
+            "issuelinks": [
+                {
+                    "id": "10",
+                    "type": {"name": "Blocks", "inward": "is blocked by"},
+                    "inwardIssue": {
+                        "key": "SECRET-4",
+                        "fields": {"summary": "secret linked"},
+                    },
+                },
+                {
+                    "id": "11",
+                    "type": {"name": "Relates", "outward": "relates to"},
+                    "outwardIssue": {
+                        "key": "OTHER-5",
+                        "fields": {"summary": "allowed linked"},
+                    },
+                },
+            ],
+        },
+    }
+
+
+def test_get_issue_drops_references_outside_allowlist() -> None:
+    fetcher = _fetcher()
+    fetcher.jira.get_issue.return_value = _raw_issue_with_references()
+    fetcher.jira.issue.return_value = _raw_issue_with_references()
+
+    result = fetcher.get_issue("ALLOWED-1", fields="*all").to_simplified_dict()
+
+    dumped = repr(result)
+    assert "SECRET" not in dumped
+    assert "secret" not in dumped
+    assert "parent" not in result
+    assert [s["key"] for s in result["subtasks"]] == ["ALLOWED-2"]
+    assert [link["outward_issue"]["key"] for link in result["issuelinks"]] == [
+        "OTHER-5"
+    ]
+
+
+def test_references_kept_without_allowlist() -> None:
+    fetcher = _fetcher(None)
+    fetcher.jira.get_issue.return_value = _raw_issue_with_references()
+    fetcher.jira.issue.return_value = _raw_issue_with_references()
+
+    result = fetcher.get_issue("ALLOWED-1", fields="*all").to_simplified_dict()
+
+    assert result["parent"]["key"] == "SECRET-7"
+    assert len(result["subtasks"]) == 2
+    assert len(result["issuelinks"]) == 2
+
+
+def test_search_results_drop_references_outside_allowlist() -> None:
+    fetcher = _fetcher()
+    fetcher.config.url = "https://example.atlassian.net"
+    response = {"issues": [_raw_issue_with_references()], "total": 1}
+    fetcher.jira.enhanced_jql_get_list_of_tickets.return_value = response["issues"]
+    fetcher.jira.jql.return_value = response
+    fetcher.jira.post.return_value = response
+    fetcher.jira.get.return_value = response
+    fetcher.jira.resource_url.return_value = "rest/api/3/search/jql"
+
+    result = fetcher.search_issues("project = ALLOWED", fields="*all")
+
+    dumped = repr([i.to_simplified_dict() for i in result.issues])
+    assert result.issues
+    assert "SECRET" not in dumped
+
+
+def test_cross_project_dependencies_hide_disallowed_targets() -> None:
+    fetcher = _fetcher()
+    response = {"issues": [_raw_issue_with_references()], "total": 1}
+    fetcher.jira.enhanced_jql_get_list_of_tickets.return_value = response["issues"]
+    fetcher.jira.jql.return_value = response
+    fetcher.jira.post.return_value = response
+    fetcher.jira.get.return_value = response
+
+    result = fetcher.get_cross_project_dependencies("ALLOWED")
+
+    assert "SECRET" not in repr(result)
+    assert "OTHER" in result["by_project"]

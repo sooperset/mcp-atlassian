@@ -25,6 +25,7 @@ from .protocols import (
     ProjectsOperationsProto,
     UsersOperationsProto,
 )
+from .scope import allowed_project_keys
 
 logger = logging.getLogger("mcp-jira")
 
@@ -284,6 +285,7 @@ class IssuesMixin(
                 issue,
                 base_url=self.config.url if hasattr(self, "config") else None,
                 requested_fields=model_fields,
+                allowed_projects=allowed_project_keys(self.config),
             )
         except HTTPError as http_err:
             status_code = (
@@ -771,7 +773,9 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(issue_data)
+            return JiraIssue.from_api_response(
+                issue_data, allowed_projects=allowed_project_keys(self.config)
+            )
 
         except Exception as e:
             self._handle_create_issue_error(e, issue_type)
@@ -1442,7 +1446,9 @@ class IssuesMixin(
                 logger.error(msg)
                 raise TypeError(msg)
             issue = JiraIssue.from_api_response(
-                issue_data, requested_fields=return_fields_param
+                issue_data,
+                requested_fields=return_fields_param,
+                allowed_projects=allowed_project_keys(self.config),
             )
 
             # Add attachment results to the response if available
@@ -1560,7 +1566,9 @@ class IssuesMixin(
                 logger.error(msg)
                 raise TypeError(msg)
             return JiraIssue.from_api_response(
-                issue_data, requested_fields=return_fields_param
+                issue_data,
+                requested_fields=return_fields_param,
+                allowed_projects=allowed_project_keys(self.config),
             )
 
         # Get available transitions (uses TransitionsMixin's normalized implementation)
@@ -1661,7 +1669,9 @@ class IssuesMixin(
             logger.error(msg)
             raise TypeError(msg)
         return JiraIssue.from_api_response(
-            issue_data, requested_fields=return_fields_param
+            issue_data,
+            requested_fields=return_fields_param,
+            allowed_projects=allowed_project_keys(self.config),
         )
 
     def delete_issue(self, issue_key: str) -> bool:
@@ -1812,7 +1822,9 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(issue_data)
+            return JiraIssue.from_api_response(
+                issue_data, allowed_projects=allowed_project_keys(self.config)
+            )
 
         except (ValueError, NotImplementedError, TypeError):
             raise
@@ -2107,6 +2119,7 @@ class IssuesMixin(
                                 base_url=self.config.url
                                 if hasattr(self, "config")
                                 else None,
+                                allowed_projects=allowed_project_keys(self.config),
                             )
                         )
                     except Exception as e:

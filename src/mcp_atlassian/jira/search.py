@@ -13,6 +13,7 @@ from ..utils.query_scope import and_scope_clause
 from .client import JiraClient
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import IssueOperationsProto
+from .scope import allowed_project_keys
 from .utils import quote_jql_identifier_if_needed, sanitize_jql_reserved_words
 
 logger = logging.getLogger("mcp-jira")
@@ -178,6 +179,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     response_dict,
                     base_url=self.config.url,
                     requested_fields=fields_param,
+                    allowed_projects=allowed_project_keys(self.config),
                 )
 
                 return search_result
@@ -193,7 +195,10 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
                 # Convert the response to a search result model
                 search_result = JiraSearchResult.from_api_response(
-                    response, base_url=self.config.url, requested_fields=fields_param
+                    response,
+                    base_url=self.config.url,
+                    requested_fields=fields_param,
+                    allowed_projects=allowed_project_keys(self.config),
                 )
 
                 # Return the full search result object
@@ -260,7 +265,10 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
             # Convert the response to a search result model
             search_result = JiraSearchResult.from_api_response(
-                response, base_url=self.config.url, requested_fields=fields_param
+                response,
+                base_url=self.config.url,
+                requested_fields=fields_param,
+                allowed_projects=allowed_project_keys(self.config),
             )
             return search_result
         except requests.HTTPError as e:
