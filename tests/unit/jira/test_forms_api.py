@@ -689,3 +689,59 @@ class TestFormsApiDateTimeLimitation:
         assert "Workaround" in docstring
         assert "jira.update_issue" in docstring or "custom field" in docstring.lower()
         assert "customfield" in docstring
+
+
+class TestFormsApiPathSegments:
+    """Identifiers from tool input never change the request path's shape."""
+
+    @pytest.fixture
+    def mixin(self):
+        config = JiraConfig(
+            url="https://test.atlassian.net",
+            username="test@example.com",
+            api_token="test-token",
+            auth_type="basic",
+        )
+        with patch("atlassian.Jira"):
+            mixin = FormsApiMixin(config)
+            mixin._cloud_id = MOCK_CLOUD_ID
+            mixin.jira = Mock()
+            return mixin
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda m, f: m.get_form_details("ALLOW-1", f),
+            lambda m, f: m.update_form_answers("ALLOW-1", f, []),
+            lambda m, f: m.delete_form("ALLOW-1", f),
+            lambda m, f: m.get_form_attachments("ALLOW-1", f),
+        ],
+        ids=["details", "update", "delete", "attachments"],
+    )
+    @pytest.mark.parametrize(
+        "form_id",
+        ["../../DENY-1/form/abc", "form-1", f"{MOCK_FORM_UUID_1}/../x", ""],
+    )
+    def test_non_uuid_form_id_is_rejected_before_request(self, mixin, call, form_id):
+        with patch.object(mixin, "_make_forms_api_request") as mock_request:
+            with pytest.raises(ValueError, match="form_id"):
+                call(mixin, form_id)
+        mock_request.assert_not_called()
+
+    def test_uuid_form_id_is_used_as_one_segment(self, mixin):
+        with patch.object(
+            mixin, "_make_forms_api_request", return_value={}
+        ) as mock_request:
+            mixin.delete_form("ALLOW-1", MOCK_FORM_UUID_1.upper())
+        mock_request.assert_called_once_with(
+            "DELETE", f"/issue/ALLOW-1/form/{MOCK_FORM_UUID_1}"
+        )
+
+    def test_issue_key_is_percent_encoded(self, mixin):
+        with patch.object(
+            mixin, "_make_forms_api_request", return_value=[]
+        ) as mock_request:
+            mixin.get_issue_forms("ALLOW-1/../../DENY-1")
+        mock_request.assert_called_once_with(
+            "GET", "/issue/ALLOW-1%2F..%2F..%2FDENY-1/form"
+        )

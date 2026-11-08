@@ -12,7 +12,9 @@ Features:
 
 import logging
 import os
+import uuid
 from typing import Any
+from urllib.parse import quote
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -27,6 +29,35 @@ from .forms_common import handle_forms_http_error
 logger = logging.getLogger("mcp-jira")
 
 FORMS_API_BASE_URL = "https://api.atlassian.com/jira/forms/cloud"
+
+
+def _issue_segment(issue_key: str) -> str:
+    """Percent-encode an issue key as one URL path segment."""
+    return quote(str(issue_key).strip(), safe="")
+
+
+def _form_segment(form_id: str) -> str:
+    """Validate a form ID as a UUID and return its canonical form.
+
+    Forms API form IDs are UUIDs. Anything else is rejected so that a
+    caller-supplied value can never add path segments to the request.
+
+    Raises:
+        ValueError: If ``form_id`` is not a UUID.
+    """
+    try:
+        return str(uuid.UUID(str(form_id).strip()))
+    except (ValueError, AttributeError, TypeError) as e:
+        msg = f"Invalid form_id {form_id!r}: expected a form UUID."
+        raise ValueError(msg) from e
+
+
+def _form_path(issue_key: str, form_id: str | None = None) -> str:
+    """Build ``/issue/{issueKey}/form[/{formId}]`` from encoded segments."""
+    path = f"/issue/{_issue_segment(issue_key)}/form"
+    if form_id is not None:
+        path = f"{path}/{_form_segment(form_id)}"
+    return path
 
 
 class FormsApiMixin(JiraClient):
@@ -204,7 +235,7 @@ class FormsApiMixin(JiraClient):
             Exception: If there is an error getting forms
         """
         try:
-            response = self._make_forms_api_request("GET", f"/issue/{issue_key}/form")
+            response = self._make_forms_api_request("GET", _form_path(issue_key))
 
             # API returns a plain array of forms
             forms_data = (
@@ -249,10 +280,9 @@ class FormsApiMixin(JiraClient):
         Raises:
             Exception: If there is an error getting form details
         """
+        path = _form_path(issue_key, form_id)
         try:
-            response = self._make_forms_api_request(
-                "GET", f"/issue/{issue_key}/form/{form_id}"
-            )
+            response = self._make_forms_api_request("GET", path)
 
             # API returns ADF (Atlassian Document Format) structure
             form = ProFormaForm.from_api_response(response, issue_key=issue_key)
@@ -303,6 +333,7 @@ class FormsApiMixin(JiraClient):
         Raises:
             Exception: If there is an error updating the form
         """
+        path = _form_path(issue_key, form_id)
         try:
             # Transform answers from list format to the API's expected object format
             # API expects: {"answers": {"questionId": {"type": value}, ...}}
@@ -341,9 +372,7 @@ class FormsApiMixin(JiraClient):
 
             request_body = {"answers": answers_dict}
 
-            response = self._make_forms_api_request(
-                "PUT", f"/issue/{issue_key}/form/{form_id}", data=request_body
-            )
+            response = self._make_forms_api_request("PUT", path, data=request_body)
 
             logger.info(f"Successfully updated form {form_id} for issue {issue_key}")
             return response
@@ -369,7 +398,7 @@ class FormsApiMixin(JiraClient):
             request_body = {"formTemplateId": template_id}
 
             response = self._make_forms_api_request(
-                "POST", f"/issue/{issue_key}/form", data=request_body
+                "POST", _form_path(issue_key), data=request_body
             )
 
             logger.info(f"Successfully added form template to issue {issue_key}")
@@ -389,8 +418,9 @@ class FormsApiMixin(JiraClient):
         Raises:
             Exception: If there is an error deleting the form
         """
+        path = _form_path(issue_key, form_id)
         try:
-            self._make_forms_api_request("DELETE", f"/issue/{issue_key}/form/{form_id}")
+            self._make_forms_api_request("DELETE", path)
 
             logger.info(f"Successfully deleted form {form_id} from issue {issue_key}")
 
@@ -413,10 +443,9 @@ class FormsApiMixin(JiraClient):
         Raises:
             Exception: If there is an error getting attachments
         """
+        path = f"{_form_path(issue_key, form_id)}/attachment"
         try:
-            response = self._make_forms_api_request(
-                "GET", f"/issue/{issue_key}/form/{form_id}/attachment"
-            )
+            response = self._make_forms_api_request("GET", path)
 
             # API should return attachments wrapped in an 'attachments' key
             attachments = response.get("attachments", [])
