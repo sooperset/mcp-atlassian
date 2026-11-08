@@ -137,7 +137,10 @@ class TestAttachmentsMixin:
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.basename") as mock_basename,
-            patch("builtins.open", mock_open(read_data=b"test content")),
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 100
@@ -191,7 +194,10 @@ class TestAttachmentsMixin:
             patch("os.path.isabs", return_value=True),
             patch("os.path.abspath", return_value="/absolute/path/test_file.txt"),
             patch("os.path.basename", return_value="test_file.txt"),
-            patch("builtins.open", mock_open(read_data=b"test content")),
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
         ):
             attachments_mixin.upload_attachment(
                 "123456", "/absolute/path/test_file.txt"
@@ -314,7 +320,10 @@ class TestAttachmentsMixin:
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.basename") as mock_basename,
             patch("os.path.getsize") as mock_getsize,
-            patch("builtins.open", mock_open(read_data=b"test content")),
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
         ):
             mock_exists.return_value = True
             mock_isabs.return_value = True
@@ -382,7 +391,10 @@ class TestAttachmentsMixin:
             patch("os.path.isabs", return_value=True),
             patch("os.path.abspath", return_value=f"/absolute/path/{filename}"),
             patch("os.path.basename", return_value=filename),
-            patch("builtins.open", mock_open(read_data=b"updated content")),
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined",
+                mock_open(read_data=b"updated content"),
+            ),
         ):
             result = attachments_mixin.upload_attachment(
                 "123456", f"/absolute/path/{filename}"
@@ -663,7 +675,9 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
@@ -699,7 +713,9 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
@@ -753,7 +769,9 @@ class TestAttachmentsMixin:
 
         # Mock file operations to raise an exception during write
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.makedirs") as mock_makedirs,
             patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
         ):
@@ -776,7 +794,9 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.path.exists") as mock_exists,
             patch("os.makedirs") as mock_makedirs,
             patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
@@ -2114,3 +2134,46 @@ class TestResolveAttachmentDownloadUrl:
             "/download/attachments/123/foo.png", attachment_id="att999"
         )
         assert "/child/attachment/" not in url
+
+
+@pytest.mark.security_regression
+def test_download_refuses_directory_swapped_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp_atlassian.confluence import ConfluenceFetcher
+    from mcp_atlassian.utils import io as io_mod
+
+    base = tmp_path / "base"
+    (base / "dl").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "f.bin").write_bytes(b"ORIGINAL")
+    monkeypatch.setenv(io_mod.FILES_DIR_ENV, str(base))
+    monkeypatch.chdir(tmp_path)
+
+    original = io_mod.validate_safe_path
+    calls = {"n": 0}
+
+    def validate_then_swap(*args, **kwargs):
+        result = original(*args, **kwargs)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            (base / "dl").rmdir()
+            (base / "dl").symlink_to(outside, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(
+        "mcp_atlassian.confluence.attachments.validate_safe_path", validate_then_swap
+    )
+    fetcher = ConfluenceFetcher.__new__(ConfluenceFetcher)
+    fetcher.confluence = MagicMock()
+    monkeypatch.setattr(fetcher, "_ensure_same_origin", lambda url: None, raising=False)
+    response = MagicMock()
+    response.iter_content.return_value = [b"ATTACKER"]
+    fetcher.confluence._session.get.return_value = response
+
+    assert (
+        fetcher.download_attachment("https://x/att", str(base / "dl" / "f.bin"))
+        is False
+    )
+    assert (outside / "f.bin").read_bytes() == b"ORIGINAL"

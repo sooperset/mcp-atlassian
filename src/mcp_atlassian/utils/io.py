@@ -2,7 +2,9 @@
 
 import logging
 import os
+import stat
 from pathlib import Path
+from typing import IO, Literal
 
 from mcp_atlassian.utils.env import is_env_extended_truthy
 
@@ -200,3 +202,97 @@ def validate_safe_path(
         )
 
     return resolved_path
+
+
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+_O_BINARY = getattr(os, "O_BINARY", 0)
+
+
+def open_confined(
+    path: str | os.PathLike[str],
+    mode: Literal["rb", "wb"],
+    base_dir: str | os.PathLike[str] | None = None,
+) -> IO[bytes]:
+    """Open *path* for binary read or write, verifying the opened file.
+
+    :func:`validate_safe_path` checks a path, but a symlink swapped in after
+    that check (on the file or on any parent directory) would make a plain
+    ``open`` reach a file outside the boundary. This opens the parent
+    directory first, confirms that the opened directory is inside the
+    boundary (the directory inode is compared with the resolved path, so the
+    check holds for the descriptor actually used), and opens the file
+    relative to that directory with ``O_NOFOLLOW``. The result must be a
+    regular file.
+
+    Args:
+        path: The file to open.
+        mode: ``"rb"`` to read an existing file, ``"wb"`` to create or
+            truncate one.
+        base_dir: The boundary directory. Defaults to :func:`get_file_root`.
+
+    Returns:
+        A binary file object whose ``name`` is the resolved path.
+
+    Raises:
+        ValueError: If the path, its directory or the opened file is outside
+            the boundary, is a symlink, or is not a regular file.
+        OSError: If the file cannot be opened for another reason (for
+            example ``FileNotFoundError``).
+    """
+    if mode not in ("rb", "wb"):
+        msg = f"Unsupported mode {mode!r}"
+        raise ValueError(msg)
+    if base_dir is None:
+        base_dir = get_file_root()
+    resolved_base = Path(base_dir).resolve(strict=False)
+    resolved = validate_safe_path(path, resolved_base)
+    parent, name = resolved.parent, resolved.name
+    if not name:
+        msg = f"Not a file path: {path}"
+        raise ValueError(msg)
+
+    dir_fd = os.open(parent, os.O_RDONLY | _O_DIRECTORY | _O_CLOEXEC)
+    fd = -1
+    try:
+        real_parent = Path(os.path.realpath(parent))
+        if not real_parent.is_relative_to(resolved_base) or not os.path.samestat(
+            os.fstat(dir_fd), os.stat(real_parent)
+        ):
+            msg = f"Path {path} resolves outside {resolved_base}"
+            raise ValueError(msg)
+
+        flags = _O_NOFOLLOW | _O_CLOEXEC | _O_BINARY
+        if mode == "rb":
+            flags |= os.O_RDONLY
+        else:
+            flags |= os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        try:
+            if os.open in os.supports_dir_fd:
+                fd = os.open(name, flags, 0o666, dir_fd=dir_fd)
+            else:  # pragma: no cover - platforms without dir_fd (Windows)
+                if os.path.islink(real_parent / name):
+                    msg = f"Refusing to follow a symlink: {path}"
+                    raise ValueError(msg)
+                fd = os.open(real_parent / name, flags, 0o666)
+        except OSError as e:
+            if os.path.islink(real_parent / name):
+                msg = f"Refusing to follow a symlink: {path}"
+                raise ValueError(msg) from e
+            if isinstance(e, IsADirectoryError):
+                msg = f"Not a regular file: {path}"
+                raise ValueError(msg) from e
+            raise
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            msg = f"Not a regular file: {path}"
+            raise ValueError(msg)
+        file_obj = os.fdopen(fd, mode)
+        fd = -1
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        os.close(dir_fd)
+    # Keep the path as the name (requests uses it as the upload filename).
+    file_obj.raw.name = str(real_parent / name)  # type: ignore[attr-defined]
+    return file_obj

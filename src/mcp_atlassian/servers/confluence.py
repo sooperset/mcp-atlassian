@@ -26,7 +26,7 @@ from mcp_atlassian.servers.scope_guard import CONFLUENCE_SCOPE_POLICY, ToolScope
 from mcp_atlassian.utils.decorators import (
     check_write_access,
 )
-from mcp_atlassian.utils.io import validate_safe_path
+from mcp_atlassian.utils.io import open_confined, validate_safe_path
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
     fetch_and_encode_attachment,
@@ -181,7 +181,8 @@ def _resolve_page_content(content: str | None, content_file: str | None) -> str:
     if not path.is_file():
         msg = f"content_file does not exist or is not a regular file: {path}"
         raise ValueError(msg)
-    return path.read_text(encoding="utf-8")
+    with open_confined(path, "rb") as f:
+        return f.read().decode("utf-8")
 
 
 async def _scope_fetcher(ctx: Context) -> Any:

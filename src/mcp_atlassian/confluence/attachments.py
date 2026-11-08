@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from ..models.confluence import ConfluenceAttachment
-from ..utils.io import get_file_root, is_in_cwd_root, validate_safe_path
+from ..utils.io import (
+    get_file_root,
+    is_in_cwd_root,
+    open_confined,
+    validate_safe_path,
+)
 from ..utils.urls import resolve_relative_url
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
@@ -471,8 +476,10 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             response = self.confluence._session.get(url, stream=True)
             response.raise_for_status()
 
-            # Write the file to disk
-            with open(target_path, "wb") as f:
+            # Write the file to disk. open_confined re-checks the boundary on
+            # the descriptor it opens, so a symlink swapped in since the
+            # validation above cannot redirect the write.
+            with open_confined(target_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
 
@@ -710,7 +717,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             Attachment metadata dict if successful, None otherwise
         """
         try:
-            with open(file_path, "rb") as file_handle:
+            with open_confined(file_path, "rb") as file_handle:
                 return self._send_attachment_request(
                     content_id, filename, file_handle, comment, minor_edit
                 )

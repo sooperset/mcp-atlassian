@@ -225,3 +225,97 @@ class TestFileRoot:
         assert reset_file_root.is_in_cwd_root("victim.py")
         assert reset_file_root.is_in_cwd_root(tmp_path / "victim.py")
         assert not reset_file_root.is_in_cwd_root(tmp_path / "sub" / "victim.py")
+
+
+# --- open_confined: the opened file is the validated file ----------------------
+
+
+@pytest.fixture
+def boundary(tmp_path: Path):
+    base = tmp_path / "base"
+    (base / "sub").mkdir(parents=True)
+    (base / "sub" / "in.txt").write_text("inside")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "in.txt").write_text("SECRET")
+    return base, outside
+
+
+def _swap_after_validation(monkeypatch, swap):
+    """Run ``swap`` right after validate_safe_path passes (the race window)."""
+    from mcp_atlassian.utils import io as io_mod
+
+    original = io_mod.validate_safe_path
+
+    def validate_then_swap(*args, **kwargs):
+        result = original(*args, **kwargs)
+        swap()
+        return result
+
+    monkeypatch.setattr(io_mod, "validate_safe_path", validate_then_swap)
+
+
+class TestOpenConfined:
+    def test_reads_file_inside_boundary(self, boundary):
+        from mcp_atlassian.utils.io import open_confined
+
+        base, _ = boundary
+        with open_confined(base / "sub" / "in.txt", "rb", base_dir=base) as f:
+            assert f.read() == b"inside"
+            assert f.name == str((base / "sub" / "in.txt").resolve())
+
+    def test_writes_file_inside_boundary(self, boundary):
+        from mcp_atlassian.utils.io import open_confined
+
+        base, _ = boundary
+        with open_confined(base / "sub" / "new.bin", "wb", base_dir=base) as f:
+            f.write(b"data")
+        assert (base / "sub" / "new.bin").read_bytes() == b"data"
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("mode", ["rb", "wb"])
+    def test_directory_swapped_to_symlink_is_refused(self, boundary, monkeypatch, mode):
+        from mcp_atlassian.utils.io import open_confined
+
+        base, outside = boundary
+
+        def swap():
+            (base / "sub" / "in.txt").unlink()
+            (base / "sub").rmdir()
+            (base / "sub").symlink_to(outside, target_is_directory=True)
+
+        _swap_after_validation(monkeypatch, swap)
+        with pytest.raises(ValueError, match="outside"):
+            open_confined(base / "sub" / "in.txt", mode, base_dir=base)
+        assert (outside / "in.txt").read_text() == "SECRET"
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("mode", ["rb", "wb"])
+    def test_file_swapped_to_symlink_is_refused(self, boundary, monkeypatch, mode):
+        from mcp_atlassian.utils.io import open_confined
+
+        base, outside = boundary
+        target = base / "sub" / "in.txt"
+
+        def swap():
+            target.unlink()
+            target.symlink_to(outside / "in.txt")
+
+        _swap_after_validation(monkeypatch, swap)
+        with pytest.raises(ValueError):
+            open_confined(target, mode, base_dir=base)
+        assert (outside / "in.txt").read_text() == "SECRET"
+
+    def test_directory_is_not_opened_as_file(self, boundary):
+        from mcp_atlassian.utils.io import open_confined
+
+        base, _ = boundary
+        with pytest.raises(ValueError):
+            open_confined(base / "sub", "rb", base_dir=base)
+
+    def test_traversal_still_rejected(self, boundary):
+        from mcp_atlassian.utils.io import open_confined
+
+        base, _ = boundary
+        with pytest.raises(ValueError, match="Path traversal"):
+            open_confined(base / ".." / "outside" / "in.txt", "rb", base_dir=base)
