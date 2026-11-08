@@ -192,6 +192,8 @@ Use this instead of `confluence_update_page` when the page contains macros, layo
 
 <Warning>
 `heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised without updating the page.
+
+The section ends at the next same-or-higher heading, including a heading nested in a following excerpt, expand, or layout macro. That wrapper is left intact. Info panels and other macros are not boundaries. Lower-level sibling headings (an `h3` after an `h2`) are still part of the section.
 </Warning>
 
 ---
