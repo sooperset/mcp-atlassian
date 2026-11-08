@@ -1,5 +1,6 @@
 """Base preprocessing module."""
 
+import json
 import logging
 import re
 import urllib.parse
@@ -286,6 +287,10 @@ class BasePreprocessor:
             # output keeps the original storage-format macros intact
             processed_html = str(soup)
 
+            # Convert roadmap macros to readable Markdown tables before
+            # markdownify strips the unknown tags and leaks the encoded JSON.
+            self._process_roadmap_macros_in_soup(soup)
+
             # Convert code-block macros before markdownify strips them
             # (markdown path only). Keep their contents out of markdownify so
             # it cannot shorten their fences or strip boundary newlines, while
@@ -305,6 +310,64 @@ class BasePreprocessor:
         except Exception as e:
             logger.error(f"Error in process_html_content: {str(e)}")
             raise
+
+    @staticmethod
+    def _process_roadmap_macros_in_soup(soup: BeautifulSoup) -> None:
+        """Replace Confluence Roadmap Planner macros with readable Markdown tables.
+
+        The roadmap macro stores its entire plan as URL-encoded JSON in the
+        ``source`` parameter.  Without this handler markdownify dumps kilobytes
+        of ``%7B%22title%22...`` noise into the output.  On decode failure a
+        short placeholder is substituted so the page still converts cleanly.
+
+        Args:
+            soup: BeautifulSoup object containing parsed Confluence storage HTML.
+        """
+
+        def _cell(value: object) -> str:
+            return str(value or "").replace("|", "\\|").replace("\n", " ").strip()
+
+        for macro in soup.find_all(
+            "ac:structured-macro", attrs={"ac:name": "roadmap"}
+        ):
+            params = {
+                p.get("ac:name", ""): p.get_text()
+                for p in macro.find_all("ac:parameter", recursive=False)
+            }
+            try:
+                data = json.loads(urllib.parse.unquote(params.get("source", "")))
+            except (ValueError, TypeError):
+                macro.replace_with("[roadmap macro]")
+                continue
+
+            tl = data.get("timeline") or {}
+            unit = (_cell(tl.get("displayOption")) or "unit").lower()
+            title = _cell(data.get("title")) or "Roadmap"
+            start_date = _cell(tl.get("startDate"))[:10]
+            end_date = _cell(tl.get("endDate"))[:10]
+
+            lines = [
+                f"**{title}** ({start_date} to {end_date})",
+                "",
+                f"| Lane | Item | Start | Duration ({unit}s) | Description |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+            for lane in data.get("lanes") or []:
+                lane_title = _cell(lane.get("title"))
+                for bar in lane.get("bars") or []:
+                    lines.append(
+                        f"| {lane_title} | {_cell(bar.get('title'))} "
+                        f"| {_cell(bar.get('startDate'))[:10]} "
+                        f"| {_cell(bar.get('duration'))} "
+                        f"| {_cell(bar.get('description'))} |"
+                    )
+            if data.get("markers"):
+                lines += ["", "Markers:"] + [
+                    f"- {_cell(m.get('markerDate'))[:10]}: {_cell(m.get('title'))}"
+                    for m in data["markers"]
+                ]
+
+            macro.replace_with("\n".join(lines))
 
     @staticmethod
     def _process_code_macros_in_soup(soup: BeautifulSoup) -> dict[str, str]:
