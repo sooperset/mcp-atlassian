@@ -7,6 +7,7 @@ output stream based on their level.
 
 import logging
 import sys
+from collections.abc import Mapping
 from typing import TextIO
 
 
@@ -68,32 +69,54 @@ def mask_sensitive(value: str | None, keep_chars: int = 4) -> str:
     return f"{start}{middle}{end}"
 
 
-def get_masked_session_headers(headers: dict[str, str]) -> dict[str, str]:
+# Standard request headers whose values carry no credentials. Every other
+# header value is redacted, because custom and passthrough headers (for example
+# X-Gateway-Secret) can hold secrets under any name.
+_LOGGABLE_HEADER_NAMES = frozenset(
+    {
+        "accept",
+        "accept-encoding",
+        "accept-language",
+        "cache-control",
+        "connection",
+        "content-length",
+        "content-type",
+        "user-agent",
+        "x-atlassian-token",
+        "x-experimentalapi",
+    }
+)
+_AUTHORIZATION_HEADER_NAMES = frozenset({"authorization", "proxy-authorization"})
+REDACTED_HEADER_VALUE = "<redacted>"
+
+
+def get_masked_session_headers(headers: Mapping[str, str]) -> dict[str, str]:
     """Get session headers with sensitive values masked for safe logging.
 
+    Header names are compared case-insensitively. Only a small allowlist of
+    standard, non-credential headers keeps its value. Authorization headers keep
+    their scheme (for example ``Bearer``) and every other value is redacted.
+
     Args:
-        headers: Dictionary of HTTP headers
+        headers: Mapping of HTTP headers
 
     Returns:
-        Dictionary with sensitive headers masked
+        Dictionary with sensitive header values redacted
     """
-    sensitive_headers = {"Authorization", "Cookie", "Set-Cookie", "Proxy-Authorization"}
-    masked_headers = {}
+    masked_headers: dict[str, str] = {}
 
     for key, value in headers.items():
-        if key in sensitive_headers:
-            if key == "Authorization":
-                # Preserve auth type but mask the credentials
-                if value.startswith("Basic "):
-                    masked_headers[key] = f"Basic {mask_sensitive(value[6:])}"
-                elif value.startswith("Bearer "):
-                    masked_headers[key] = f"Bearer {mask_sensitive(value[7:])}"
-                else:
-                    masked_headers[key] = mask_sensitive(value)
-            else:
-                masked_headers[key] = mask_sensitive(value)
-        else:
+        name = str(key).lower()
+        if name in _LOGGABLE_HEADER_NAMES:
             masked_headers[key] = str(value)
+        elif name in _AUTHORIZATION_HEADER_NAMES:
+            scheme, _, credentials = str(value).partition(" ")
+            if credentials and scheme.isalpha():
+                masked_headers[key] = f"{scheme} {REDACTED_HEADER_VALUE}"
+            else:
+                masked_headers[key] = REDACTED_HEADER_VALUE
+        else:
+            masked_headers[key] = REDACTED_HEADER_VALUE
 
     return masked_headers
 
