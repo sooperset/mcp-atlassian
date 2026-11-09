@@ -25,6 +25,37 @@ from .urls import is_atlassian_cloud_url
 # Configure logging
 logger = logging.getLogger("mcp-atlassian.oauth")
 
+_TOKEN_ERROR_FIELD_MAX_LENGTH = 200
+
+
+def _describe_token_error(response: requests.Response) -> str:
+    """Summarize a failed token endpoint response without logging its body.
+
+    A token endpoint body can carry tokens or other secrets, so only the
+    standard OAuth ``error`` and ``error_description`` fields are kept.
+
+    Args:
+        response: The failed token endpoint response.
+
+    Returns:
+        A short, log-safe description of the failure.
+    """
+    try:
+        data = response.json()
+    except ValueError:
+        return "Response body omitted."
+    if not isinstance(data, dict):
+        return "Response body omitted."
+    parts = []
+    for field_name in ("error", "error_description"):
+        value = data.get(field_name)
+        if isinstance(value, str) and value:
+            parts.append(f"{field_name}={value[:_TOKEN_ERROR_FIELD_MAX_LENGTH]!r}")
+    if not parts:
+        return "Response body omitted."
+    return "OAuth " + ", ".join(parts)
+
+
 # Cloud OAuth endpoints
 CLOUD_TOKEN_URL = "https://auth.atlassian.com/oauth/token"  # noqa: S105 - This is a public API endpoint URL, not a password
 CLOUD_AUTHORIZE_URL = "https://auth.atlassian.com/authorize"
@@ -182,7 +213,7 @@ class OAuthConfig:
             if not response.ok:
                 logger.error(
                     f"Token exchange failed with status {response.status_code}. "
-                    f"Response: {response.text}"
+                    f"{_describe_token_error(response)}"
                 )
                 return False
 
@@ -245,10 +276,6 @@ class OAuthConfig:
             logger.error(
                 f"Failed to decode JSON response from token endpoint: {e}",
                 exc_info=True,
-            )
-            logger.error(
-                f"Response text that failed to parse: "
-                f"{response.text if 'response' in locals() else 'Response object not available'}"
             )
             return False
         except Exception as e:

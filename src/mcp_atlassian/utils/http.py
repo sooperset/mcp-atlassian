@@ -6,8 +6,9 @@ both the default HTTPAdapter and any service-specific adapters (e.g.
 SSLIgnoreAdapter mounted by configure_ssl_verification) get the same retry
 behavior. Call AFTER configure_ssl_verification.
 
-The optional retry policy, concurrency cap, rate limiter, and circuit breaker
-are disabled by default and gated behind env vars. The send wrappers patch
+Reads (GET/HEAD/OPTIONS) are retried a small, bounded number of times by
+default; the concurrency cap, rate limiter, and circuit breaker are disabled by
+default and gated behind env vars. The send wrappers patch
 adapter.send in place (rather than replacing the adapter), so they compose with
 whatever adapter is mounted.
 """
@@ -15,9 +16,11 @@ whatever adapter is mounted.
 import logging
 import threading
 import time
+from typing import Any
 
 from requests import Session
 from requests.adapters import BaseAdapter, HTTPAdapter
+from urllib3.exceptions import InvalidHeader
 from urllib3.util.retry import Retry
 
 from .env import (
@@ -29,14 +32,60 @@ from .env import (
 
 logger = logging.getLogger("mcp-atlassian.http")
 
-DEFAULT_RETRY_TOTAL = 0
+DEFAULT_RETRY_TOTAL = 3
 DEFAULT_RETRY_BACKOFF = 1.0
+DEFAULT_RETRY_MAX_RETRY_AFTER = 60
 DEFAULT_RETRY_STATUSES = (429, 502, 503, 504)
 _READ_METHODS = frozenset(["GET", "HEAD", "OPTIONS"])
 _ALL_METHODS = frozenset(["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"])
 _THROTTLED_ATTR = "_mcp_atlassian_throttled"
 _RATE_LIMITED_ATTR = "_mcp_atlassian_rate_limited"
 _CIRCUIT_BREAKER_ATTR = "_mcp_atlassian_circuit_breaker"
+
+
+class _BoundedRetry(Retry):
+    """urllib3 Retry whose ``Retry-After`` waits are bounded on both sides.
+
+    * Cap: a server ``Retry-After`` longer than ``max_retry_after`` seconds is
+      cut down to it (urllib3's own ceiling is six hours).
+    * Floor: when the header is present the wait is never shorter than the
+      exponential backoff, nor than ``backoff_factor``, so ``Retry-After: 0``
+      cannot cause zero-delay retries (the #1543 storm).
+    * An unparseable header falls back to plain backoff instead of raising.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        max_retry_after: float = DEFAULT_RETRY_MAX_RETRY_AFTER,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.max_retry_after = max_retry_after
+
+    def new(self, **kw: Any) -> "_BoundedRetry":
+        # Retry.new() rebuilds via type(self)(**params) with only the stock
+        # parameters; carry the cap over to each incremented copy.
+        new_retry = super().new(**kw)
+        new_retry.max_retry_after = self.max_retry_after
+        return new_retry
+
+    def get_retry_after(self, response: Any) -> float | None:
+        try:
+            return super().get_retry_after(response)
+        except InvalidHeader:
+            logger.debug("Ignoring invalid Retry-After header; using backoff")
+            return None
+
+    def sleep_for_retry(self, response: Any = None) -> bool:
+        retry_after = self.get_retry_after(response)
+        if retry_after is None:
+            return False
+        floor = max(self.backoff_factor, self.get_backoff_time())
+        delay = max(min(retry_after, self.max_retry_after), floor)
+        if delay > 0:
+            time.sleep(delay)
+        return True
 
 
 class CircuitBreakerOpenError(Exception):
@@ -173,22 +222,31 @@ _circuit_breaker_init_lock = threading.Lock()
 
 
 def configure_retry(session: Session, *, service: str = "atlassian") -> None:
-    """Apply a urllib3 Retry policy to all adapters on the session.
+    """Apply a bounded urllib3 Retry policy to all adapters on the session.
+
+    Enabled by default with 3 retries for idempotent reads (GET/HEAD/OPTIONS).
+    This replaces atlassian-python-api's unbounded ``retry_with_header`` loop,
+    which callers must disable (see #1543), so this is the only retry layer.
 
     Env knobs:
-      ATLASSIAN_RETRY_TOTAL          (int,   default 0; <=0 disables)
+      ATLASSIAN_RETRY_TOTAL          (int,   default 3; <=0 disables retries)
       ATLASSIAN_RETRY_BACKOFF        (float, default 1.0 seconds — exponential factor)
       ATLASSIAN_RETRY_INCLUDE_WRITES (bool,  default false; if true also retries
                                      POST/PUT/PATCH/DELETE — only safe when the
                                      server is known to be idempotent for them)
       ATLASSIAN_RETRY_IGNORE_RETRY_AFTER (bool, default false; ignore the server's
                                      Retry-After header and always use exponential
-                                     backoff — enable for gateways that emit bogus
-                                     values such as ``Retry-After: 0``)
+                                     backoff)
+      ATLASSIAN_RETRY_MAX_RETRY_AFTER (int, default 60 seconds; longer Retry-After
+                                     values are capped to this)
 
-    Retries fire on 429, 502, 503, 504 and on connection errors. The Retry-After
-    header is respected when present, unless ATLASSIAN_RETRY_IGNORE_RETRY_AFTER
-    is set.
+    Retries fire on 429, 502, 503, 504 and on connection errors; other statuses
+    (including 401/403) are returned immediately. The Retry-After header is
+    honored up to ATLASSIAN_RETRY_MAX_RETRY_AFTER, and never waits less than the
+    exponential backoff, so ``Retry-After: 0`` cannot cause a tight loop.
+
+    Retries happen inside ``adapter.send``, so the circuit breaker and rate
+    limiter (which wrap ``send``) see one call per logical request.
     """
     total = get_int_env("ATLASSIAN_RETRY_TOTAL", DEFAULT_RETRY_TOTAL)
     if total <= 0:
@@ -199,7 +257,12 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
     include_writes = is_env_extended_truthy("ATLASSIAN_RETRY_INCLUDE_WRITES")
     methods = _ALL_METHODS if include_writes else _READ_METHODS
 
-    retry = Retry(
+    max_retry_after = max(
+        0,
+        get_int_env("ATLASSIAN_RETRY_MAX_RETRY_AFTER", DEFAULT_RETRY_MAX_RETRY_AFTER),
+    )
+
+    retry = _BoundedRetry(
         total=total,
         connect=total,
         read=total,
@@ -211,6 +274,7 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
             "ATLASSIAN_RETRY_IGNORE_RETRY_AFTER"
         ),
         raise_on_status=False,
+        max_retry_after=max_retry_after,
     )
 
     if not session.adapters:
@@ -223,12 +287,14 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
             adapter.max_retries = retry
 
     logger.debug(
-        "%s: retry configured total=%d backoff=%.2fs statuses=%s writes=%s",
+        "%s: retry configured total=%d backoff=%.2fs statuses=%s writes=%s "
+        "max_retry_after=%ds",
         service,
         total,
         backoff,
         DEFAULT_RETRY_STATUSES,
         include_writes,
+        max_retry_after,
     )
 
 
