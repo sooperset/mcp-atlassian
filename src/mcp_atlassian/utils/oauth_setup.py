@@ -11,7 +11,9 @@ This module helps with the OAuth 2.0 (3LO) authorization flow for Atlassian Clou
 import http.server
 import logging
 import os
+import secrets
 import socketserver
+import sys
 import threading
 import time
 import urllib.parse
@@ -29,6 +31,26 @@ authorization_code = None
 authorization_state = None
 callback_received = False
 callback_error = None
+# The state value the running flow expects. Callbacks that do not carry it
+# are answered with an error and ignored, so they cannot end the flow.
+expected_state: str | None = None
+
+# Interface the local callback server binds to. The browser reaches it through
+# the loopback redirect URI, so it must never listen on external interfaces.
+CALLBACK_BIND_HOST = "127.0.0.1"
+
+
+def _state_matches(received: str | None) -> bool:
+    """Return whether a callback carries the state of the running flow."""
+    if expected_state is None or received is None:
+        return False
+    return secrets.compare_digest(received.encode(), expected_state.encode())
+
+
+def _redact_url_query(url: str) -> str:
+    """Return a URL without its query string and fragment, for logging."""
+    parsed = urllib.parse.urlsplit(str(url))
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
 def _sanitize_input(user_input: str) -> str:
@@ -61,6 +83,16 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
         query = urllib.parse.urlparse(self.path).query
         params = urllib.parse.parse_qs(query)
 
+        # Ignore callbacks that do not belong to the running flow. Without this,
+        # any request reaching the port could end the flow or plant a code.
+        received_state = params.get("state", [None])[0]
+        if not _state_matches(received_state):
+            self._send_response(
+                "Invalid callback: state does not match this authorization request",
+                status=400,
+            )
+            return
+
         if "error" in params:
             callback_error = params["error"][0]
             callback_received = True
@@ -69,8 +101,7 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
 
         if "code" in params:
             authorization_code = params["code"][0]
-            if "state" in params:
-                authorization_state = params["state"][0]
+            authorization_state = received_state
             callback_received = True
             self._send_response(
                 "Authorization successful! You can close this window now."
@@ -166,10 +197,20 @@ class CallbackHandler(http.server.BaseHTTPRequestHandler):
         return
 
 
-def start_callback_server(port: int) -> socketserver.TCPServer:
-    """Start a local server to receive the OAuth callback."""
+def start_callback_server(
+    port: int, host: str = CALLBACK_BIND_HOST
+) -> socketserver.TCPServer:
+    """Start a local server to receive the OAuth callback.
+
+    Args:
+        port: Port from the redirect URI.
+        host: Interface to bind. Defaults to the IPv4 loopback address.
+
+    Returns:
+        The running server.
+    """
     handler = CallbackHandler
-    httpd = socketserver.TCPServer(("", port), handler)
+    httpd = socketserver.TCPServer((host, port), handler)
     server_thread = threading.Thread(target=httpd.serve_forever)
     server_thread.daemon = True
     server_thread.start()
@@ -216,10 +257,12 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
     """Run the OAuth 2.0 authorization flow."""
     # Reset global state (important for multiple runs)
     global authorization_code, authorization_state, callback_received, callback_error
+    global expected_state
     authorization_code = None
     authorization_state = None
     callback_received = False
     callback_error = None
+    expected_state = None
 
     # Create OAuth configuration
     oauth_config = OAuthConfig(
@@ -230,9 +273,8 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
     )
 
     # Generate a random state for CSRF protection
-    import secrets
-
     state = secrets.token_urlsafe(16)
+    expected_state = state
 
     # Start local callback server if using localhost
     hostname, port = parse_redirect_uri(args.redirect_uri)
@@ -250,11 +292,13 @@ def run_oauth_flow(args: OAuthSetupArgs) -> bool:
     # Get the authorization URL
     auth_url = oauth_config.get_authorization_url(state=state)
 
-    # Open the browser for authorization
-    logger.info(f"Opening browser for authorization at {auth_url}")
+    # Open the browser for authorization. The full URL carries the CSRF state,
+    # so it goes to the terminal only, never to the log.
+    logger.info(f"Opening browser for authorization at {_redact_url_query(auth_url)}")
     webbrowser.open(auth_url)
-    logger.info(
-        "If the browser doesn't open automatically, please visit this URL manually."
+    print(
+        f"If the browser doesn't open automatically, visit this URL:\n{auth_url}",
+        file=sys.stderr,
     )
 
     # Wait for the callback

@@ -6,6 +6,7 @@ This module provides Pydantic models for Jira issues.
 
 import logging
 import re
+from collections.abc import Collection
 from typing import Any, Literal
 
 from pydantic import Field
@@ -47,6 +48,27 @@ EPIC_LINK_PATTERNS = [
     r"parent\s*link",
     r"epiclink",
 ]
+
+
+def _reference_project(ref: Any) -> str | None:
+    """Return the upper-cased project key of an issue reference, or None.
+
+    Uses ``fields.project.key`` when the reference carries it, otherwise the
+    prefix of the issue key Jira returned (the current key of the issue).
+    """
+    if not isinstance(ref, dict):
+        return None
+    fields = ref.get("fields")
+    project = fields.get("project") if isinstance(fields, dict) else None
+    project_key = project.get("key") if isinstance(project, dict) else None
+    if isinstance(project_key, str) and project_key.strip():
+        return project_key.strip().upper()
+    key = ref.get("key")
+    if isinstance(key, str) and "-" in key:
+        prefix = key.rsplit("-", 1)[0].strip()
+        if prefix:
+            return prefix.upper()
+    return None
 
 
 class JiraIssue(ApiModel, TimestampMixin):
@@ -481,7 +503,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             requested_fields_param = [field.strip() for field in requested_fields_param]
 
         # Create the issue instance with all the extracted data
-        return cls(
+        issue = cls(
             id=issue_id,
             key=key,
             summary=summary,
@@ -518,6 +540,42 @@ class JiraIssue(ApiModel, TimestampMixin):
             changelogs=changelogs,
             issuelinks=cls._extract_issue_links(fields),
         )
+        allowed_projects = kwargs.get("allowed_projects")
+        if allowed_projects:
+            issue.restrict_references(allowed_projects)
+        return issue
+
+    def restrict_references(self, allowed_projects: Collection[str]) -> None:
+        """Drop references to issues outside ``allowed_projects``.
+
+        An issue inside the project allowlist can point at issues outside it
+        through its parent, subtasks, issue links and epic link. Those
+        references carry the other issue's key and summary, so they are
+        removed rather than returned. A reference whose project cannot be
+        determined is removed as well.
+
+        Args:
+            allowed_projects: Upper-cased project keys (JIRA_PROJECTS_FILTER).
+        """
+        allowed = {str(k).strip().upper() for k in allowed_projects}
+
+        def ok(ref: Any) -> bool:
+            return _reference_project(ref) in allowed
+
+        if self.parent is not None and not ok(self.parent):
+            self.parent = None
+        self.subtasks = [st for st in self.subtasks if ok(st)]
+        self.issuelinks = [
+            link
+            for link in self.issuelinks
+            if all(
+                side is None or ok({"key": side.key})
+                for side in (link.inward_issue, link.outward_issue)
+            )
+            and (link.inward_issue is not None or link.outward_issue is not None)
+        ]
+        if self.epic_key and not ok({"key": self.epic_key}):
+            self.epic_key = None
 
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""

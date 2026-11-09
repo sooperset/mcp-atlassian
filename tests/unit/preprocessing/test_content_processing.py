@@ -1232,3 +1232,25 @@ class TestTaskLists:
 
         assert "<ac:task-list>" in result
         assert 'data-table-width="1800"' in result
+
+
+def test_rowspan_table_and_code_macro_in_same_document() -> None:
+    """Preserve both column positions and code macros in mixed content."""
+    from mcp_atlassian.preprocessing.base import BasePreprocessor
+
+    source = (
+        "<table><tr><th>Group</th><th>Item</th></tr>"
+        '<tr><td rowspan="2">alpha</td><td>one</td></tr>'
+        "<tr><td>two</td></tr></table>"
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        '<ac:plain-text-body><![CDATA[print("hello")]]></ac:plain-text-body>'
+        "</ac:structured-macro>"
+    )
+    html, markdown = BasePreprocessor(
+        base_url="https://example.invalid"
+    ).process_html_content(source)
+    assert 'rowspan="2"' in html
+    assert 'ac:name="code"' in html
+    assert "|  | two |" in markdown
+    assert '```python\nprint("hello")\n```' in markdown
