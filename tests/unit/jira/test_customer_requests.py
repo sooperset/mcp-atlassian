@@ -1153,6 +1153,35 @@ def test_get_my_pending_approvals_cloud_uses_approver_filter(
     ]
 
 
+@pytest.mark.parametrize("source", ["portal", "cloud", "scan"])
+def test_get_my_pending_approvals_skips_requests_outside_projects_filter(
+    jira_fetcher: JiraFetcher,
+    source: str,
+) -> None:
+    """Requests outside JIRA_PROJECTS_FILTER are neither read nor returned."""
+    fetcher = _make_customer_requests_fetcher(jira_fetcher)
+    fetcher.config.projects_filter = "proj"
+    fetcher.config.is_cloud = source == "cloud"
+    approvals = {
+        "PROJ-1": _approvals_page(_approval_payload("41")),
+        "OTHER-2": _approvals_page(_approval_payload("42")),
+    }
+    if source == "portal":
+        fetcher.jira.post = MagicMock(return_value=_portal_page(["PROJ-1", "OTHER-2"]))
+        fetcher.jira.get = _route_get_by_key(approvals)
+    else:
+        fetcher.jira.post = _portal_unavailable()
+        fetcher.jira.get = _route_get(
+            [_request_list_page(["PROJ-1", "OTHER-2"])], approvals
+        )
+
+    result = fetcher.get_my_pending_approvals()
+
+    assert [item.request.issue_key for item in result.requests] == ["PROJ-1"]
+    read = [call.args[0] for call in fetcher.jira.get.call_args_list]
+    assert not any("OTHER-2" in endpoint for endpoint in read)
+
+
 def test_get_my_pending_approvals_server_fallback_scans_open_requests(
     jira_fetcher: JiraFetcher,
 ) -> None:

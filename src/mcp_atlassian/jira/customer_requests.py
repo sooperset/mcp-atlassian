@@ -20,6 +20,7 @@ from ..models.jira import (
 )
 from ..utils.media import ATTACHMENT_MAX_BYTES
 from .client import JiraClient
+from .scope import allowed_project_keys
 
 logger = logging.getLogger("mcp-jira")
 
@@ -970,6 +971,18 @@ class CustomerRequestsMixin(JiraClient):
                 return approvals
             start += len(result.approvals)
 
+    def _pending_request_in_scope(self, issue_key: str) -> bool:
+        """Return True when ``issue_key`` lies inside JIRA_PROJECTS_FILTER.
+
+        Both list sources return the request's current key, so its project
+        prefix names the project the request is in now.
+        """
+        allowed = allowed_project_keys(self.config)
+        if allowed is None:
+            return True
+        project_key, _, number = issue_key.strip().rpartition("-")
+        return bool(number) and project_key.upper() in allowed
+
     def _list_customer_requests(
         self,
         params: dict[str, Any],
@@ -994,7 +1007,8 @@ class CustomerRequestsMixin(JiraClient):
         not support the approver filter, so the customer portal's approval
         list (the ``approvalListFilter`` model behind "My approvals") is used,
         falling back to scanning open requests with a warning. Every request
-        is confirmed through the public approval endpoint. In all cases
+        is confirmed through the public approval endpoint. Requests outside
+        ``JIRA_PROJECTS_FILTER`` are skipped. In all cases
         ``start_at`` is an offset into the underlying list; pass
         ``next_start`` from a previous result to continue.
 
@@ -1104,6 +1118,8 @@ class CustomerRequestsMixin(JiraClient):
         while True:
             for key in keys[skip:]:
                 offset += 1
+                if not self._pending_request_in_scope(key):
+                    continue
                 try:
                     approvals = self._get_answerable_approvals(key)
                     request = (
@@ -1154,6 +1170,8 @@ class CustomerRequestsMixin(JiraClient):
         requests: list[JiraPendingApproval] = []
         for raw_request in values:
             request = JiraCustomerRequestDetails.from_api_response(raw_request)
+            if not self._pending_request_in_scope(request.issue_key):
+                continue
             approvals = self._get_answerable_approvals(request.issue_key)
             if approvals:
                 requests.append(
@@ -1195,6 +1213,8 @@ class CustomerRequestsMixin(JiraClient):
                 offset += 1
                 scanned += 1
                 request = JiraCustomerRequestDetails.from_api_response(raw_request)
+                if not self._pending_request_in_scope(request.issue_key):
+                    continue
                 try:
                     approvals = self._get_answerable_approvals(request.issue_key)
                 except ValueError as e:

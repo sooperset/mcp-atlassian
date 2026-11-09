@@ -138,6 +138,7 @@ JIRA_SCOPE_POLICY = ScopePolicy(
             # Sub-objects addressed through a checked issue, project or
             # service desk argument of the same tool.
             "comment_id",
+            "approval_id",
             "form_id",
             "queue_id",
             "request_type_id",
@@ -171,6 +172,7 @@ JIRA_SCOPE_POLICY = ScopePolicy(
             "body",
             "visibility",
             "public",
+            "decision",
             "time_spent",
             "started",
             "original_estimate",

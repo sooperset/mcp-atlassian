@@ -32,8 +32,8 @@ from mcp_atlassian.servers.scope_guard import (
 )
 
 # Tools that take no project/space identifier. Search tools are bounded by the
-# allowlist inside the JQL/CQL; project listings filter their results; the
-# rest return instance-wide metadata.
+# allowlist inside the JQL/CQL; project and pending-approval listings filter
+# their results; the rest return instance-wide metadata.
 JIRA_TOOLS_WITHOUT_SCOPED_ARGS = {
     "get_user_profile",
     "search",
@@ -41,6 +41,7 @@ JIRA_TOOLS_WITHOUT_SCOPED_ARGS = {
     "get_link_types",
     "get_all_projects",
     "search_projects",
+    "get_my_pending_approvals",
 }
 CONFLUENCE_TOOLS_WITHOUT_SCOPED_ARGS = {"search", "search_user"}
 
@@ -200,6 +201,8 @@ _JIRA_VALUES: dict[str, Any] = {
     "issues": json.dumps(
         [{"project_key": FORBIDDEN, "summary": "s", "issue_type": "Task"}]
     ),
+    # Not scoped, but schema-validated before the guard runs.
+    "decision": "approve",
 }
 _CONFLUENCE_VALUES: dict[str, Any] = {
     "page_id": "123",
