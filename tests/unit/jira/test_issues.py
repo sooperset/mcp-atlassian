@@ -9,6 +9,7 @@ from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.jira import JiraFetcher
+from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.issues import IssuesMixin, logger
 from mcp_atlassian.models.jira import JiraIssue
 from tests.utils.mocks import setup_api3_passthrough_mocks
@@ -215,6 +216,7 @@ class TestIssuesMixin:
 
         call_args = issues_mixin.jira.get_issue.call_args
         fields_param = call_args[1]["fields"]
+        assert fields_param == ",".join(sorted(DEFAULT_READ_JIRA_FIELDS))
         assert "comment" not in fields_param
 
         issues_mixin.jira.issue_get_comments.assert_not_called()
@@ -740,6 +742,53 @@ class TestIssuesMixin:
         assert document.id == "12345"
         assert document.key == "TEST-123"
         assert document.summary == "Updated Summary"
+
+    def test_update_issue_merges_path_and_inline_attachment_results(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Path and in-memory attachment uploads share one result report."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+        path_result = {
+            "success": True,
+            "issue_key": "TEST-123",
+            "total": 1,
+            "uploaded": [{"filename": "path.txt", "size": 4, "id": "1"}],
+            "failed": [],
+        }
+        inline_result = {
+            "success": False,
+            "issue_key": "TEST-123",
+            "total": 1,
+            "uploaded": [],
+            "failed": [{"filename": "inline.txt", "error": "upload failed"}],
+        }
+        inline_attachments = [{"filename": "inline.txt", "content": b"data"}]
+
+        with (
+            patch.object(
+                issues_mixin, "upload_attachments", return_value=path_result
+            ) as upload_paths,
+            patch.object(
+                issues_mixin,
+                "upload_attachments_from_content",
+                return_value=inline_result,
+            ) as upload_content,
+        ):
+            document = issues_mixin.update_issue(
+                issue_key="TEST-123",
+                attachments=["path.txt"],
+                attachments_base64=inline_attachments,
+            )
+
+        upload_paths.assert_called_once_with("TEST-123", ["path.txt"])
+        upload_content.assert_called_once_with("TEST-123", inline_attachments)
+        assert document.custom_fields["attachment_results"] == {
+            "success": True,
+            "issue_key": "TEST-123",
+            "total": 2,
+            "uploaded": [{"filename": "path.txt", "size": 4, "id": "1"}],
+            "failed": [{"filename": "inline.txt", "error": "upload failed"}],
+        }
 
     def test_update_issue_preserves_existing_cloud_media_nodes(
         self, issues_mixin: IssuesMixin, make_issue_data

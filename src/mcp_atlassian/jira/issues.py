@@ -25,6 +25,7 @@ from .protocols import (
     ProjectsOperationsProto,
     UsersOperationsProto,
 )
+from .scope import allowed_project_keys
 
 logger = logging.getLogger("mcp-jira")
 
@@ -130,7 +131,7 @@ class IssuesMixin(
             # Determine fields_param: use provided fields or default from constant
             fields_param = fields
             if fields_param is None:
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+                fields_param = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS))
             elif isinstance(fields_param, list | tuple | set):
                 fields_param = ",".join(fields_param)
 
@@ -284,6 +285,7 @@ class IssuesMixin(
                 issue,
                 base_url=self.config.url if hasattr(self, "config") else None,
                 requested_fields=model_fields,
+                allowed_projects=allowed_project_keys(self.config),
             )
         except HTTPError as http_err:
             status_code = (
@@ -771,7 +773,9 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(issue_data)
+            return JiraIssue.from_api_response(
+                issue_data, allowed_projects=allowed_project_keys(self.config)
+            )
 
         except Exception as e:
             self._handle_create_issue_error(e, issue_type)
@@ -1095,6 +1099,16 @@ class IssuesMixin(
                 api_field_id = field_map[key]
                 logger.debug(f"Identified field '{key}' as standard system field ID.")
 
+            if api_field_id == "project":
+                # The project comes only from the explicit project_key argument,
+                # which is checked against JIRA_PROJECTS_FILTER. Letting an
+                # additional field replace it would bypass that check.
+                logger.warning(
+                    f"Ignoring additional field '{key}': set the project with "
+                    "project_key instead."
+                )
+                continue
+
             if api_field_id:
                 # Allow None values to pass through for clearing fields
                 if value is None:
@@ -1188,6 +1202,38 @@ class IssuesMixin(
             return ",".join(return_fields)
         return return_fields
 
+    @staticmethod
+    def _merge_attachment_results(
+        first: dict[str, Any] | None, second: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Merge two attachment upload reports into a single one.
+
+        Path-based and in-memory uploads are independent sources that can be
+        used in the same call, but callers read one ``attachment_results``
+        entry, so their reports are combined.
+
+        Args:
+            first: Report of the first upload batch, or None
+            second: Report of the second upload batch, or None
+
+        Returns:
+            The combined report, or whichever side is not None
+        """
+        if not first:
+            return second
+        if not second:
+            return first
+
+        uploaded = list(first.get("uploaded", [])) + list(second.get("uploaded", []))
+        failed = list(first.get("failed", [])) + list(second.get("failed", []))
+        return {
+            "success": bool(uploaded),
+            "issue_key": first.get("issue_key") or second.get("issue_key"),
+            "total": first.get("total", 0) + second.get("total", 0),
+            "uploaded": uploaded,
+            "failed": failed,
+        }
+
     def update_issue(
         self,
         issue_key: str,
@@ -1207,6 +1253,8 @@ class IssuesMixin(
                 reduces the size of the returned issue.
             **kwargs: Additional fields to update. Special fields include:
                 - attachments: List of file paths to upload as attachments
+                - attachments_base64: List of dicts with 'filename' and
+                  'content' (bytes) keys, uploaded without reading from disk
                 - status: New status for the issue (handled via transitions)
                 - assignee: New assignee for the issue
                 - parent: Parent issue key (str or {"key": "..."} dict)
@@ -1262,10 +1310,12 @@ class IssuesMixin(
                         issue_key, update_fields, return_fields=return_fields
                     )
 
-                elif key == "attachments":
-                    # Handle attachments separately - they're not part of fields update
+                elif key in ("attachments", "attachments_base64"):
+                    # Handled separately - they're not part of fields update.
+                    # Note both are skipped entirely when a "status" kwarg
+                    # returns above via _update_issue_with_status.
                     if not value or not isinstance(value, list | tuple):
-                        logger.warning(f"Invalid attachments value: {value}")
+                        logger.warning(f"Invalid {key} value: {value}")
 
                 elif key == "assignee":
                     # Handle assignee updates, allow unassignment with None or empty string
@@ -1352,6 +1402,27 @@ class IssuesMixin(
                     )
                     # Continue with the update even if attachments fail
 
+            # Handle in-memory attachments if provided. Both sources are
+            # additive, so their results are merged into a single report.
+            if "attachments_base64" in kwargs and kwargs["attachments_base64"]:
+                try:
+                    content_result = self.upload_attachments_from_content(
+                        issue_key, kwargs["attachments_base64"]
+                    )
+                    logger.info(
+                        f"Uploaded in-memory attachments to {issue_key}: "
+                        f"{content_result}"
+                    )
+                    attachments_result = self._merge_attachment_results(
+                        attachments_result, content_result
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error uploading in-memory attachments to "
+                        f"{issue_key}: {str(e)}"
+                    )
+                    # Continue with the update even if attachments fail
+
             # Get the updated issue data and convert to JiraIssue model
             issue_data = self.jira.get_issue(issue_key, fields=return_fields_param)
             if isinstance(issue_data, str):
@@ -1375,7 +1446,9 @@ class IssuesMixin(
                 logger.error(msg)
                 raise TypeError(msg)
             issue = JiraIssue.from_api_response(
-                issue_data, requested_fields=return_fields_param
+                issue_data,
+                requested_fields=return_fields_param,
+                allowed_projects=allowed_project_keys(self.config),
             )
 
             # Add attachment results to the response if available
@@ -1493,7 +1566,9 @@ class IssuesMixin(
                 logger.error(msg)
                 raise TypeError(msg)
             return JiraIssue.from_api_response(
-                issue_data, requested_fields=return_fields_param
+                issue_data,
+                requested_fields=return_fields_param,
+                allowed_projects=allowed_project_keys(self.config),
             )
 
         # Get available transitions (uses TransitionsMixin's normalized implementation)
@@ -1594,7 +1669,9 @@ class IssuesMixin(
             logger.error(msg)
             raise TypeError(msg)
         return JiraIssue.from_api_response(
-            issue_data, requested_fields=return_fields_param
+            issue_data,
+            requested_fields=return_fields_param,
+            allowed_projects=allowed_project_keys(self.config),
         )
 
     def delete_issue(self, issue_key: str) -> bool:
@@ -1745,7 +1822,9 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(issue_data)
+            return JiraIssue.from_api_response(
+                issue_data, allowed_projects=allowed_project_keys(self.config)
+            )
 
         except (ValueError, NotImplementedError, TypeError):
             raise
@@ -2040,6 +2119,7 @@ class IssuesMixin(
                                 base_url=self.config.url
                                 if hasattr(self, "config")
                                 else None,
+                                allowed_projects=allowed_project_keys(self.config),
                             )
                         )
                     except Exception as e:

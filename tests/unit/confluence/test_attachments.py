@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 import pytest
 from mcp.types import EmbeddedResource, TextContent
 
-from mcp_atlassian.confluence.attachments import AttachmentsMixin
+from mcp_atlassian.confluence.attachments import (
+    AttachmentsMixin,
+    validate_attachment_id,
+)
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
 
@@ -134,7 +137,10 @@ class TestAttachmentsMixin:
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.basename") as mock_basename,
-            patch("builtins.open", mock_open(read_data=b"test content")),
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 100
@@ -188,7 +194,10 @@ class TestAttachmentsMixin:
             patch("os.path.isabs", return_value=True),
             patch("os.path.abspath", return_value="/absolute/path/test_file.txt"),
             patch("os.path.basename", return_value="test_file.txt"),
-            patch("builtins.open", mock_open(read_data=b"test content")),
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
         ):
             attachments_mixin.upload_attachment(
                 "123456", "/absolute/path/test_file.txt"
@@ -311,7 +320,10 @@ class TestAttachmentsMixin:
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.basename") as mock_basename,
             patch("os.path.getsize") as mock_getsize,
-            patch("builtins.open", mock_open(read_data=b"test content")),
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
         ):
             mock_exists.return_value = True
             mock_isabs.return_value = True
@@ -379,7 +391,10 @@ class TestAttachmentsMixin:
             patch("os.path.isabs", return_value=True),
             patch("os.path.abspath", return_value=f"/absolute/path/{filename}"),
             patch("os.path.basename", return_value=filename),
-            patch("builtins.open", mock_open(read_data=b"updated content")),
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined",
+                mock_open(read_data=b"updated content"),
+            ),
         ):
             result = attachments_mixin.upload_attachment(
                 "123456", f"/absolute/path/{filename}"
@@ -540,7 +555,11 @@ class TestAttachmentsMixin:
         assert call_args[1]["headers"]["X-Atlassian-Token"] == "no-check"
         assert call_args[1]["data"]["minorEdit"] == "false"
         # The raw bytes are sent directly as the multipart file payload
-        assert call_args[1]["files"]["file"] == ("test_file.txt", b"test content")
+        assert call_args[1]["files"]["file"] == (
+            "test_file.txt",
+            b"test content",
+            "text/plain",
+        )
 
     def test_upload_attachment_from_content_no_content_id(
         self, attachments_mixin: AttachmentsMixin
@@ -633,7 +652,13 @@ class TestAttachmentsMixin:
         assert attachments_mixin.confluence._session.post.call_count == 2
         second_call = attachments_mixin.confluence._session.post.call_args_list[1]
         assert "/child/attachment/att12345/data" in second_call[0][0]
-        assert second_call[1]["files"]["file"] == (filename, b"updated content")
+        # Cloud returns 415 for a new-version upload whose file part has no
+        # Content-Type, so the part must always carry one.
+        assert second_call[1]["files"]["file"] == (
+            filename,
+            b"updated content",
+            "text/plain",
+        )
 
     # Tests for download_attachment method
 
@@ -650,7 +675,9 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
@@ -661,13 +688,13 @@ class TestAttachmentsMixin:
 
             # Call the method
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", test_path
+                "https://example.atlassian.net/attachment", test_path
             )
 
             # Assertions
             assert result is True
             attachments_mixin.confluence._session.get.assert_called_once_with(
-                "https://test.url/attachment", stream=True
+                "https://example.atlassian.net/attachment", stream=True
             )
             # Path should remain unchanged since it's already absolute
             mock_file.assert_called_once_with(test_path, "wb")
@@ -686,29 +713,31 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
-            patch("os.path.abspath") as mock_abspath,
-            patch("os.path.isabs") as mock_isabs,
+            patch(
+                "mcp_atlassian.confluence.attachments.get_file_root",
+                return_value=Path("/absolute/path"),
+            ),
             patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12
-            mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/test_file.txt"
 
-            # Call the method with a relative path
+            # A relative path resolves against the configured file root.
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "test_file.txt"
+                "https://example.atlassian.net/attachment", "downloads/test_file.txt"
             )
 
             # Assertions
             assert result is True
-            mock_isabs.assert_called_once_with("test_file.txt")
-            mock_abspath.assert_called_once_with("test_file.txt")
-            mock_file.assert_called_once_with("/absolute/path/test_file.txt", "wb")
+            mock_file.assert_called_once_with(
+                os.path.normpath("/absolute/path/downloads/test_file.txt"), "wb"
+            )
 
     def test_download_attachment_no_url(self, attachments_mixin: AttachmentsMixin):
         """Test attachment download with no URL."""
@@ -724,7 +753,7 @@ class TestAttachmentsMixin:
 
         with patch("mcp_atlassian.confluence.attachments.validate_safe_path"):
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "/tmp/test_file.txt"
+                "https://example.atlassian.net/attachment", "/tmp/test_file.txt"
             )
         assert result is False
 
@@ -740,14 +769,16 @@ class TestAttachmentsMixin:
 
         # Mock file operations to raise an exception during write
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.makedirs") as mock_makedirs,
             patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
         ):
             mock_file().write.side_effect = OSError("Write error")
 
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "/tmp/test_file.txt"
+                "https://example.atlassian.net/attachment", "/tmp/test_file.txt"
             )
             assert result is False
 
@@ -763,7 +794,9 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.path.exists") as mock_exists,
             patch("os.makedirs") as mock_makedirs,
             patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
@@ -771,7 +804,7 @@ class TestAttachmentsMixin:
             mock_exists.return_value = False  # File doesn't exist after write
 
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "/tmp/test_file.txt"
+                "https://example.atlassian.net/attachment", "/tmp/test_file.txt"
             )
             assert result is False
 
@@ -787,12 +820,12 @@ class TestAttachmentsMixin:
         attachments_mixin.confluence._session.get.return_value = mock_response
 
         result = attachments_mixin.fetch_attachment_content(
-            "https://test.atlassian.net/download/att123"
+            "https://example.atlassian.net/download/att123"
         )
 
         assert result == b"hello world"
         attachments_mixin.confluence._session.get.assert_called_once_with(
-            "https://test.atlassian.net/download/att123", stream=True
+            "https://example.atlassian.net/download/att123", stream=True
         )
 
     def test_fetch_attachment_content_empty_url(
@@ -811,7 +844,7 @@ class TestAttachmentsMixin:
         attachments_mixin.confluence._session.get.return_value = mock_response
 
         result = attachments_mixin.fetch_attachment_content(
-            "https://test.atlassian.net/download/att123"
+            "https://example.atlassian.net/download/att123"
         )
         assert result is None
 
@@ -824,7 +857,7 @@ class TestAttachmentsMixin:
         )
 
         result = attachments_mixin.fetch_attachment_content(
-            "https://test.atlassian.net/download/att123"
+            "https://example.atlassian.net/download/att123"
         )
         assert result is None
 
@@ -839,7 +872,7 @@ class TestAttachmentsMixin:
         attachments_mixin.confluence._session.get.return_value = mock_response
 
         result = attachments_mixin.fetch_attachment_content(
-            "https://test.atlassian.net/download/att123"
+            "https://example.atlassian.net/download/att123"
         )
 
         assert result == b"chunk1chunk2chunk3"
@@ -940,21 +973,23 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.confluence.ConfluenceAttachment.from_api_response",
                 return_value=mock_attachment,
             ),
-            patch("os.path.isabs") as mock_isabs,
-            patch("os.path.abspath") as mock_abspath,
-            patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
+            patch(
+                "mcp_atlassian.confluence.attachments.get_file_root",
+                return_value=Path("/absolute/path"),
+            ),
+            patch(
+                "mcp_atlassian.confluence.attachments.validate_safe_path"
+            ) as mock_validate,
         ):
-            mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/attachments"
-
             result = attachments_mixin.download_content_attachments(
                 "123456", "attachments"
             )
 
-            # Assertions
+            # Assertions: the relative dir resolves against the file root.
             assert result["success"] is True
-            mock_isabs.assert_called_once_with("attachments")
-            mock_abspath.assert_called_once_with("attachments")
+            mock_validate.assert_called_once_with(
+                os.path.normpath("/absolute/path/attachments")
+            )
 
     def test_download_content_attachments_no_attachments(
         self, attachments_mixin: AttachmentsMixin
@@ -1576,7 +1611,7 @@ class TestDownloadAttachmentServerTool:
             )
 
             result = await server_download_attachment(
-                ctx=MagicMock(), attachment_id="att_huge"
+                ctx=MagicMock(), attachment_id="att999"
             )
 
         assert isinstance(result, TextContent)
@@ -1815,6 +1850,169 @@ class TestConfluenceAttachmentPathTraversal:
         confluence_mixin._upload_attachment_direct.assert_not_called()
 
 
+class TestConfluenceAttachmentBoundaryRegressions:
+    """Regressions for the attachment ID, host, and download-root guards."""
+
+    @pytest.fixture
+    def mixin(self) -> AttachmentsMixin:
+        with patch(
+            "mcp_atlassian.confluence.attachments.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = AttachmentsMixin()
+            mixin.confluence = MagicMock()
+            mixin.confluence.url = "https://test.atlassian.net/wiki"
+            mixin.config = MagicMock()
+            mixin.config.url = "https://test.atlassian.net/wiki"
+            mixin.config.auth_type = "basic"
+            mixin.preprocessor = MagicMock()
+            return mixin
+
+    @pytest.mark.parametrize("good", ["att123456789", "123456"])
+    def test_validate_attachment_id_accepts(self, good: str) -> None:
+        assert validate_attachment_id(good) == good
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "../../secure/admin/users.jsp",
+            "..%2fsecure%2fadmin%2fusers.jsp",
+            "att123/../../x",
+            "att123?expand=x",
+            "",
+            "att",
+        ],
+    )
+    def test_validate_attachment_id_rejects(self, bad: str) -> None:
+        with pytest.raises(ValueError, match="Invalid attachment ID"):
+            validate_attachment_id(bad)
+
+    @pytest.mark.security_regression
+    @pytest.mark.asyncio
+    async def test_download_tool_rejects_path_injection_before_request(
+        self,
+    ) -> None:
+        """attachment_id must never reach the authenticated URL unvalidated."""
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter = None
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment(
+                ctx=MagicMock(), attachment_id="../../secure/admin/users.jsp"
+            )
+
+        assert isinstance(result, TextContent)
+        assert json.loads(result.text)["success"] is False
+        mock_fetcher.confluence._session.get.assert_not_called()
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1:8902/attacker-collector",
+            "https://evil.example.com/download/x",
+            "http://test.atlassian.net/download/x",
+            "https://test.atlassian.net.evil.com/download/x",
+        ],
+    )
+    def test_fetch_refuses_other_hosts(self, mixin: AttachmentsMixin, url: str) -> None:
+        """The session's credentials must not be sent to another origin."""
+        assert mixin.fetch_attachment_content(url) is None
+        mixin.confluence._session.get.assert_not_called()
+
+    @pytest.mark.security_regression
+    def test_download_refuses_other_hosts(
+        self, mixin: AttachmentsMixin, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        assert (
+            mixin.download_attachment("https://evil.example.com/x", "sub/out.bin")
+            is False
+        )
+        mixin.confluence._session.get.assert_not_called()
+
+    def test_fetch_allows_same_origin(self, mixin: AttachmentsMixin) -> None:
+        response = MagicMock()
+        response.iter_content.return_value = [b"ok"]
+        mixin.confluence._session.get.return_value = response
+        url = "https://test.atlassian.net:443/wiki/download/attachments/1/a.txt"
+        assert mixin.fetch_attachment_content(url) == b"ok"
+
+    @pytest.mark.security_regression
+    def test_download_into_cwd_module_is_rejected(
+        self, mixin: AttachmentsMixin, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Mirror of the Jira GHSA-6vmq guard: no writes into the cwd root."""
+        monkeypatch.chdir(tmp_path)
+        victim = tmp_path / "victim_module.py"
+        victim.write_text("SAFE = True\n")
+        response = MagicMock()
+        response.iter_content.return_value = [b"PWNED = True\n"]
+        mixin.confluence._session.get.return_value = response
+
+        result = mixin.download_attachment(
+            "https://test.atlassian.net/download/x", "victim_module.py"
+        )
+
+        assert result is False
+        assert victim.read_text() == "SAFE = True\n"
+        mixin.confluence._session.get.assert_not_called()
+
+    @pytest.mark.security_regression
+    def test_upload_on_remote_transport_ignores_cwd_secrets(
+        self, mixin: AttachmentsMixin, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A remote caller must not read .env from the server's cwd."""
+        from mcp_atlassian.utils import io as io_mod
+
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        (workdir / ".env").write_text("SECRET=decoy")
+        monkeypatch.chdir(workdir)
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.delenv(io_mod.FILES_DIR_ENV, raising=False)
+        mixin._upload_attachment_direct = MagicMock(return_value={"id": "1"})
+        try:
+            io_mod.configure_file_root_for_transport("streamable-http")
+            for attempt in (".env", str(workdir / ".env")):
+                result = mixin.upload_attachment("123456", attempt)
+                assert result["success"] is False
+        finally:
+            io_mod.set_remote_transport(False)
+
+        mixin._upload_attachment_direct.assert_not_called()
+
+    def test_upload_from_configured_files_dir(
+        self, mixin: AttachmentsMixin, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Files placed in MCP_ATLASSIAN_FILES_DIR stay uploadable."""
+        from mcp_atlassian.utils import io as io_mod
+
+        files = tmp_path / "files"
+        files.mkdir()
+        (files / "report.txt").write_text("hello")
+        monkeypatch.setenv(io_mod.FILES_DIR_ENV, str(files))
+        mixin._upload_attachment_direct = MagicMock(return_value={"id": "1"})
+        try:
+            io_mod.configure_file_root_for_transport("streamable-http")
+            result = mixin.upload_attachment("123456", "report.txt")
+        finally:
+            io_mod.set_remote_transport(False)
+
+        assert result["success"] is True
+        assert mixin._upload_attachment_direct.call_args[0][1] == str(
+            (files / "report.txt").resolve()
+        )
+
+
 class TestResolveAttachmentDownloadUrl:
     """Tests for AttachmentsMixin._resolve_attachment_download_url.
 
@@ -1936,3 +2134,46 @@ class TestResolveAttachmentDownloadUrl:
             "/download/attachments/123/foo.png", attachment_id="att999"
         )
         assert "/child/attachment/" not in url
+
+
+@pytest.mark.security_regression
+def test_download_refuses_directory_swapped_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp_atlassian.confluence import ConfluenceFetcher
+    from mcp_atlassian.utils import io as io_mod
+
+    base = tmp_path / "base"
+    (base / "dl").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "f.bin").write_bytes(b"ORIGINAL")
+    monkeypatch.setenv(io_mod.FILES_DIR_ENV, str(base))
+    monkeypatch.chdir(tmp_path)
+
+    original = io_mod.validate_safe_path
+    calls = {"n": 0}
+
+    def validate_then_swap(*args, **kwargs):
+        result = original(*args, **kwargs)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            (base / "dl").rmdir()
+            (base / "dl").symlink_to(outside, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(
+        "mcp_atlassian.confluence.attachments.validate_safe_path", validate_then_swap
+    )
+    fetcher = ConfluenceFetcher.__new__(ConfluenceFetcher)
+    fetcher.confluence = MagicMock()
+    monkeypatch.setattr(fetcher, "_ensure_same_origin", lambda url: None, raising=False)
+    response = MagicMock()
+    response.iter_content.return_value = [b"ATTACKER"]
+    fetcher.confluence._session.get.return_value = response
+
+    assert (
+        fetcher.download_attachment("https://x/att", str(base / "dl" / "f.bin"))
+        is False
+    )
+    assert (outside / "f.bin").read_bytes() == b"ORIGINAL"
