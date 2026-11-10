@@ -165,6 +165,10 @@ JIRA_SCOPE_POLICY = ScopePolicy(
             "transition",
             "comment",
             "comment_visibility",
+            # Transition payload: update operations and field-metadata
+            # expansion for an issue checked through issue_key.
+            "update_data",
+            "expand_fields",
             "worklog",
             "worklog_started",
             "return_fields",
