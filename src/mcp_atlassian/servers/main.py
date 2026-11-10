@@ -920,6 +920,12 @@ def _get_allowed_redirect_uris() -> list[str] | None:
     parsed = parse_env_list(raw)
     if parsed is None:
         return DEFAULT_ALLOWED_REDIRECT_URIS
+    if raw is not None and raw.strip() == "*":
+        logger.warning(
+            "OAuth proxy server-wide redirect URI allowlist is disabled; "
+            "keep OAuth consent enabled and only authorize trusted clients."
+        )
+        return None
     return parsed
 
 

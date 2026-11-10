@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import get_type_hints
 
 import httpx
@@ -12,6 +13,7 @@ import pytest
 from pydantic import AnyHttpUrl
 from starlette.applications import Starlette
 
+from mcp_atlassian.servers.main import _get_allowed_redirect_uris
 from mcp_atlassian.servers.oauth_proxy import HardenedOAuthProxy
 from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
 from tests.utils.oauth_dcr_harness import (
@@ -47,6 +49,7 @@ def _build_proxy(
         "allowed_grant_types": ["authorization_code", "refresh_token"],
         "forced_scopes": ["read:jira-work"],
         "require_authorization_consent": False,
+        "allowed_client_redirect_uris": _get_allowed_redirect_uris(),
     }
     if redirect_path is not None:
         provider_kwargs["redirect_path"] = redirect_path
@@ -66,11 +69,14 @@ def _build_proxy_app(
     return Starlette(routes=provider.get_routes("/mcp"))
 
 
-@pytest.fixture
+@pytest.fixture(params=["default", "open-dcr"])
 async def oauth_proxy_testbed(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> AsyncIterator[OAuthProxyTestbed]:
     """Start an HTTPS upstream while mounting the proxy through ASGI transport."""
+    monkeypatch.delenv("ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS", raising=False)
+    if request.param == "open-dcr":
+        monkeypatch.setenv("ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS", "*")
     issuer = FakeUpstreamIssuer()
     upstream_server = LocalTLSOAuthIssuer(tmp_path / "upstream", issuer)
     monkeypatch.setenv("SSL_CERT_FILE", str(upstream_server.ca_certificate_path))
@@ -147,6 +153,34 @@ async def test_oauth_proxy_rejects_unregistered_redirect_uri(
     )
 
     assert response.status_code >= 400
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "redirect_uri",
+    [
+        "javascript:alert(1)",
+        "data:text/html,example",
+        "file:///tmp/callback",
+        "vbscript:example",
+    ],
+)
+async def test_oauth_proxy_rejects_unsafe_redirect_schemes(
+    oauth_proxy_testbed: OAuthProxyTestbed, redirect_uri: str
+) -> None:
+    response = await oauth_proxy_testbed.harness._client.post(
+        "/register",
+        json={
+            "client_name": "unsafe-redirect-client",
+            "redirect_uris": [redirect_uri],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+        },
+    )
+
+    assert 400 <= response.status_code < 500
+    assert response.json()["error"] == "invalid_redirect_uri"
 
 
 @pytest.mark.anyio
