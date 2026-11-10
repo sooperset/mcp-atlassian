@@ -1264,29 +1264,18 @@ async def move_page(
             is provided, or if Confluence client is not configured.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    try:
-        moved_page = confluence_fetcher.move_page(
-            page_id=page_id,
-            target_parent_id=target_parent_id,
-            target_space_key=target_space_key,
-            position=position,
-        )
-        page_data = moved_page.to_simplified_dict()
-        return json.dumps(
-            {"message": "Page moved successfully", "page": page_data},
-            indent=2,
-            ensure_ascii=False,
-        )
-    except ValueError:
-        raise
-    except Exception as e:
-        logger.error(f"Error moving Confluence page {page_id}: {str(e)}")
-        response = {
-            "success": False,
-            "message": f"Error moving page {page_id}",
-            "error": str(e),
-        }
-        return json.dumps(response, indent=2, ensure_ascii=False)
+    moved_page = confluence_fetcher.move_page(
+        page_id=page_id,
+        target_parent_id=target_parent_id,
+        target_space_key=target_space_key,
+        position=position,
+    )
+    page_data = moved_page.to_simplified_dict()
+    return json.dumps(
+        {"message": "Page moved successfully", "page": page_data},
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
 @confluence_mcp.tool(
