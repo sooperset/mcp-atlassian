@@ -48,6 +48,43 @@ uvx --python=3.12 mcp-atlassian --help
   <Tab title="Cursor">
     Open **Settings** → **MCP** → **+ Add new global MCP server**, then use the same JSON configuration.
   </Tab>
+
+  <Tab title="GitHub Copilot" id="github-copilot">
+
+    See also [the GitHub Copilot documentation](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers#editing-the-configuration-file).
+
+    MCP server configuration can be stored in either of these files:
+
+    - The global configuration file `~/.copilot/mcp-config.json` (or `$COPILOT_HOME/mcp-config.json`).
+
+    - A Workspace-specific configuration file named `.mcp.json` in the workspace root.
+      > IMPORTANT: Don't include secret tokens to this file if is committed in a repository. To avoid including secrets
+      > in the `mcp-config.json` file (for example, `JIRA_PERSONAL_TOKEN`), you can reference them with the `${NAME}`
+      > syntax. All secrets you wish to reference must be added to the environment variables for your user and will then
+      > require a restart of the IDE to take effect.
+
+    Both configuration files expect a top-level `mcpServers` object.
+
+    ```json
+    {
+      "mcpServers": {
+        "mcp-atlassian": {
+          "type": "stdio",
+          "command": "uvx",
+          "args": ["mcp-atlassian"],
+          "env": {
+            "JIRA_URL": "https://jira.your-company.com",
+            "JIRA_PERSONAL_TOKEN": "${JIRA_PERSONAL_TOKEN}",
+            "CONFLUENCE_URL": "https://confluence.your-company.com",
+            "CONFLUENCE_PERSONAL_TOKEN": "${CONFLUENCE_PERSONAL_TOKEN}"
+          },
+          "tools": ["*"]
+        }
+      }
+    }
+    ```
+
+  </Tab>
 </Tabs>
 
 ## Docker
