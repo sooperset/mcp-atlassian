@@ -12,9 +12,14 @@ keeping schemas valid.
 import json
 
 import pytest
+from fastmcp import Client
 from mcp.types import Tool as MCPTool
 
-from mcp_atlassian.servers.main import _sanitize_schema_for_compatibility, main_mcp
+from mcp_atlassian.servers.main import (
+    AtlassianMCP,
+    _sanitize_schema_for_compatibility,
+    main_mcp,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -27,9 +32,9 @@ def all_tool_schemas() -> dict[str, dict]:
 
     Uses ``main_mcp.list_tools()`` to get prefixed tool names (e.g.,
     ``jira_get_issue``, ``confluence_get_page``) and applies the same
-    ``_sanitize_schema_for_compatibility`` transform that the production
-    ``_list_tools_mcp`` method uses.  No Atlassian credentials are needed
-    since we only inspect schemas, not invoke tools.
+    schema sanitizer that the production ``tools/list`` handler applies.
+    No Atlassian credentials are needed since we only inspect schemas, not
+    invoke tools.
     """
     import asyncio
 
@@ -40,7 +45,7 @@ def all_tool_schemas() -> dict[str, dict]:
             name = tool_obj.name
             mcp_tool = tool_obj.to_mcp_tool(name=name)
             _sanitize_schema_for_compatibility(mcp_tool)
-            schemas[name] = mcp_tool.inputSchema
+            schemas[name] = mcp_tool.input_schema
         return schemas
 
     try:
@@ -179,7 +184,7 @@ class TestSanitizeSchemaForCompatibility:
             }
         )
         _sanitize_schema_for_compatibility(tool)
-        prop = tool.inputSchema["properties"]["foo"]
+        prop = tool.input_schema["properties"]["foo"]
         assert prop["type"] == "string"
         assert "anyOf" not in prop
         assert prop["default"] is None
@@ -196,7 +201,7 @@ class TestSanitizeSchemaForCompatibility:
             }
         )
         _sanitize_schema_for_compatibility(tool)
-        prop = tool.inputSchema["properties"]["bar"]
+        prop = tool.input_schema["properties"]["bar"]
         assert prop["type"] == "integer"
         assert "anyOf" not in prop
 
@@ -210,7 +215,7 @@ class TestSanitizeSchemaForCompatibility:
             }
         )
         _sanitize_schema_for_compatibility(tool)
-        prop = tool.inputSchema["properties"]["flag"]
+        prop = tool.input_schema["properties"]["flag"]
         assert prop["type"] == "boolean"
         assert "anyOf" not in prop
 
@@ -235,7 +240,7 @@ class TestSanitizeSchemaForCompatibility:
             }
         )
         _sanitize_schema_for_compatibility(tool)
-        prop = tool.inputSchema["properties"]["project_key"]
+        prop = tool.input_schema["properties"]["project_key"]
         assert prop["type"] == "string"
         assert prop["pattern"] == "^[A-Z][A-Z0-9_]+$"
         assert "anyOf" not in prop
@@ -248,7 +253,7 @@ class TestSanitizeSchemaForCompatibility:
             {"name": {"type": "string", "description": "required name"}}
         )
         _sanitize_schema_for_compatibility(tool)
-        prop = tool.inputSchema["properties"]["name"]
+        prop = tool.input_schema["properties"]["name"]
         assert prop == {"type": "string", "description": "required name"}
 
     def test_preserves_complex_anyof(self) -> None:
@@ -270,7 +275,7 @@ class TestSanitizeSchemaForCompatibility:
             }
         )
         _sanitize_schema_for_compatibility(tool)
-        prop = tool.inputSchema["properties"]["data"]
+        prop = tool.input_schema["properties"]["data"]
         # Should remain untouched since there are 2 non-null types
         assert "anyOf" in prop
 
@@ -433,3 +438,27 @@ class TestSetPageRestrictionsArraySchema:
         assert prop["items"] == {"type": "string"}, (
             f"Parameter {param_name!r} has unexpected 'items' schema: {prop['items']!r}"
         )
+
+
+@pytest.mark.anyio
+async def test_tools_list_sanitizes_schema_without_changing_registry() -> None:
+    """``tools/list`` flattens nullable unions on a copy of the tool schema."""
+    server = AtlassianMCP("schema-sanitize-test")
+
+    @server.tool(name="nullable_tool", tags={"read"})
+    async def nullable_tool(
+        issue_key: str | None = None, limit: int | None = None
+    ) -> str:
+        return "unused"
+
+    async with Client(server) as client:
+        listed = {tool.name: tool for tool in await client.list_tools()}
+
+    properties = listed["nullable_tool"].input_schema["properties"]
+    assert "anyOf" not in json.dumps(properties)
+    assert properties["issue_key"]["type"] == "string"
+    assert properties["limit"]["type"] == "integer"
+
+    registered = await server.get_tool("nullable_tool")
+    assert registered is not None
+    assert "anyOf" in registered.parameters["properties"]["issue_key"]

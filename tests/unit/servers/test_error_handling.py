@@ -3,6 +3,7 @@
 import logging
 
 import pytest
+from fastmcp import Client
 
 from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.utils.decorators import deprecated_tool
@@ -52,8 +53,9 @@ async def test_deprecated_tool_is_preserved_in_registered_mcp_tool(
     assert listed[tool_name].tags == registered.tags
 
     with caplog.at_level(logging.WARNING, logger="mcp_atlassian.utils.decorators"):
-        first_result = await server._call_tool_mcp(tool_name, {})
-        second_result = await server._call_tool_mcp(tool_name, {})
+        async with Client(server) as client:
+            first_result = await client.call_tool_mcp(tool_name, {})
+            second_result = await client.call_tool_mcp(tool_name, {})
 
     assert first_result.content[0].text == f"{decorator_order} result"
     assert second_result.content[0].text == f"{decorator_order} result"

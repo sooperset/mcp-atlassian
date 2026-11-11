@@ -1,21 +1,28 @@
 """Main FastMCP server setup for Atlassian integration."""
 
 import base64
+import copy
 import json
 import logging
 import os
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
-from fastmcp import FastMCP
+import mcp.types as mcp_types
+from fastmcp import Context, FastMCP
 from fastmcp import settings as fastmcp_settings
-from fastmcp.exceptions import NotFoundError
+from fastmcp.exceptions import ToolError
 from fastmcp.server.event_store import EventStore
 from fastmcp.server.http import StarletteWithLifespan
+from fastmcp.server.middleware import CallNext, MiddlewareContext
+from fastmcp.server.middleware import Middleware as FastMCPMiddleware
 from fastmcp.tools import Tool as FastMCPTool
+from fastmcp.tools import ToolResult
+from fastmcp.utilities.versions import VersionSpec
 from mcp.types import Tool as MCPTool
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -69,8 +76,8 @@ DEFAULT_ALLOWED_GRANT_TYPES = ["authorization_code", "refresh_token"]
 OAUTH_PROXY_ENABLE_ENV = "ATLASSIAN_OAUTH_PROXY_ENABLE"
 
 
-def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
-    """Sanitize tool inputSchema for AI platform compatibility.
+def _sanitize_input_schema(schema: dict[str, Any]) -> None:
+    """Sanitize a tool input schema in place for AI platform compatibility.
 
     Collapses simple nullable ``anyOf`` unions that Pydantic v2 generates
     for ``T | None`` into a plain ``{"type": T}`` property.  This fixes
@@ -88,18 +95,11 @@ def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
     nested ``anyOf`` patterns appear in the future.
 
     Args:
-        tool: The MCP tool whose inputSchema will be sanitized in-place.
-
-    Returns:
-        The same MCPTool instance (mutated) for chaining convenience.
+        schema: The JSON schema of the tool input, mutated in place.
     """
-    schema = tool.inputSchema
-    if not schema or not isinstance(schema, dict):
-        return tool
-
     properties = schema.get("properties")
     if not properties or not isinstance(properties, dict):
-        return tool
+        return
 
     def resolve_nullable_schema(schema_def: dict[str, Any]) -> dict[str, Any] | None:
         any_of = schema_def.get("anyOf")
@@ -136,7 +136,44 @@ def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
                 continue
             prop_def[key] = value
 
+
+def _sanitize_schema_for_compatibility(tool: MCPTool) -> MCPTool:
+    """Sanitize an MCP tool's input schema for AI platform compatibility.
+
+    See :func:`_sanitize_input_schema` for the transform.
+
+    Args:
+        tool: The MCP tool whose input schema will be sanitized in place.
+
+    Returns:
+        The same MCPTool instance (mutated) for chaining convenience.
+    """
+    schema = tool.input_schema
+    if schema and isinstance(schema, dict):
+        _sanitize_input_schema(schema)
     return tool
+
+
+def _sanitize_tool_for_compatibility(tool: FastMCPTool) -> FastMCPTool:
+    """Return the tool with an input schema sanitized for AI platforms.
+
+    The registered tool is not modified; a copy carries the sanitized schema
+    when the transform changes it. See :func:`_sanitize_input_schema`.
+
+    Args:
+        tool: The registered FastMCP tool.
+
+    Returns:
+        The tool itself, or a copy with the sanitized input schema.
+    """
+    parameters = tool.parameters
+    if not parameters or not isinstance(parameters, dict):
+        return tool
+    sanitized = copy.deepcopy(parameters)
+    _sanitize_input_schema(sanitized)
+    if sanitized == parameters:
+        return tool
+    return tool.model_copy(update={"parameters": sanitized})
 
 
 async def health_check(request: Request) -> JSONResponse:
@@ -253,61 +290,113 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
         logger.info("Main Atlassian MCP server lifespan shutdown complete.")
 
 
-class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
-    """Custom FastMCP server class for Atlassian integration with tool filtering."""
+@dataclass(frozen=True)
+class ToolPolicyContext:
+    """Per-request inputs of the tool visibility and call policy.
 
-    _active_streamable_http_path: str | None = None
+    Attributes:
+        read_only: Whether ``READ_ONLY_MODE`` hides and blocks write tools.
+        enabled_tools: The ``ENABLED_TOOLS`` allowlist, or None for all tools.
+        enabled_toolsets: The enabled toolsets, or None for all toolsets.
+        app_lifespan_state: The server lifespan state, if it is available.
+        header_based_services: Services made available by per-request headers.
+        jira_is_cloud: Whether the request's Jira deployment is Cloud, or None
+            when it is unknown.
+    """
+
+    read_only: bool = False
+    enabled_tools: list[str] | None = None
+    enabled_toolsets: set[str] | None = None
+    app_lifespan_state: MainAppContext | None = None
+    header_based_services: dict[str, bool] = field(
+        default_factory=lambda: {"jira": False, "confluence": False}
+    )
+    jira_is_cloud: bool | None = None
+
+
+def _unknown_tool_error(name: str) -> ToolError:
+    """Build the error for a tool the caller may not see.
+
+    Hidden and genuinely unknown tools get byte-identical messages, so a caller
+    cannot tell that a hidden tool exists.
+    """
+    return ToolError(f"Unknown tool: {name}")
+
+
+def _requested_version(meta: Mapping[str, Any] | None) -> VersionSpec | None:
+    """Return the component version a ``tools/call`` request selects.
+
+    FastMCP reflects the version selector into the request ``_meta`` as
+    ``{"fastmcp": {"version": ...}}``, either an exact version or a range.
+
+    Args:
+        meta: The ``_meta`` block of the call request.
+
+    Returns:
+        The selected version, or None for the highest version.
+    """
+    if not meta:
+        return None
+    fastmcp_meta = meta.get("fastmcp")
+    if not isinstance(fastmcp_meta, Mapping):
+        return None
+    version = fastmcp_meta.get("version")
+    if isinstance(version, str):
+        return VersionSpec(eq=version)
+    if isinstance(version, Mapping):
+        return VersionSpec(
+            gte=version.get("gte"), lt=version.get("lt"), eq=version.get("eq")
+        )
+    return None
+
+
+class ToolPolicyMiddleware(FastMCPMiddleware):
+    """Enforce tool visibility and call policy on every MCP request.
+
+    ``AtlassianMCP`` installs this middleware as its outermost FastMCP
+    middleware. FastMCP runs the middleware chain for every ``tools/list`` and
+    ``tools/call`` request on every transport, including the in-memory client.
+
+    The policy combines ``READ_ONLY_MODE``, ``ENABLED_TOOLS``, the enabled
+    toolsets, the Jira deployment type and service availability:
+
+    * Listing hides every tool the policy excludes and sanitizes the input
+      schemas of the tools it keeps.
+    * Calling a tool excluded by authorization (read-only mode, the
+      ``ENABLED_TOOLS`` allowlist or toolsets) or by the deployment type fails
+      with the same ``Unknown tool`` error as calling a tool that does not
+      exist. Service availability only hides tools from the listing; a call to
+      an unavailable service fails in its fetcher.
+
+    The policy applies only while FastMCP serves an MCP request. In-process
+    calls such as ``await server.list_tools()`` outside a request see the full
+    registry, as they did before this policy moved into middleware.
+    """
 
     @staticmethod
-    def _normalize_http_path(path: str) -> str:
-        normalized_path = path.strip()
-        if not normalized_path:
-            return "/"
-        if not normalized_path.startswith("/"):
-            normalized_path = f"/{normalized_path}"
-        normalized_path = normalized_path.rstrip("/")
-        return normalized_path or "/"
+    def _policy_context(fastmcp_context: Context) -> ToolPolicyContext | None:
+        """Collect the policy inputs for the current request.
 
-    def get_streamable_http_path(self) -> str:
-        if self._active_streamable_http_path:
-            return self._active_streamable_http_path
-        return self._normalize_http_path(fastmcp_settings.streamable_http_path)
+        Args:
+            fastmcp_context: The FastMCP context of the operation.
 
-    def _tool_filter_context(self) -> dict[str, Any] | None:
-        """Gather the per-request tool-enablement context (read-only mode, enabled
-        tools/toolsets, service availability) from the lifespan/request context.
-
-        Returns None when the lifespan context is unavailable.
+        Returns:
+            The policy inputs, or None when no MCP request is being served.
         """
-        req_context = self._mcp_server.request_context
-        if req_context is None or req_context.lifespan_context is None:
+        request_context = fastmcp_context.request_context
+        if request_context is None:
             return None
 
-        lifespan_ctx_dict = req_context.lifespan_context
+        lifespan_context = fastmcp_context.lifespan_context
         app_lifespan_state: MainAppContext | None = (
-            lifespan_ctx_dict.get("app_lifespan_context")
-            if isinstance(lifespan_ctx_dict, dict)
-            else None
-        )
-        read_only = (
-            getattr(app_lifespan_state, "read_only", False)
-            if app_lifespan_state
-            else False
-        )
-        enabled_tools_filter = (
-            getattr(app_lifespan_state, "enabled_tools", None)
-            if app_lifespan_state
-            else None
-        )
-        enabled_toolsets_filter: set[str] | None = (
-            getattr(app_lifespan_state, "enabled_toolsets", None)
-            if app_lifespan_state
+            lifespan_context.get("app_lifespan_context")
+            if isinstance(lifespan_context, dict)
             else None
         )
 
         header_based_services = {"jira": False, "confluence": False}
         service_headers: dict[str, str] = {}
-        request = getattr(req_context, "request", None)
+        request = getattr(request_context, "request", None)
         if request is not None:
             request_service_headers = getattr(
                 request.state, "atlassian_service_headers", {}
@@ -326,58 +415,90 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         elif jira_config is not None:
             jira_is_cloud = bool(jira_config.is_cloud)
 
-        return {
-            "read_only": read_only,
-            "enabled_tools_filter": enabled_tools_filter,
-            "enabled_toolsets_filter": enabled_toolsets_filter,
-            "app_lifespan_state": app_lifespan_state,
-            "header_based_services": header_based_services,
-            "jira_is_cloud": jira_is_cloud,
-        }
+        if app_lifespan_state is None:
+            return ToolPolicyContext(
+                header_based_services=header_based_services,
+                jira_is_cloud=jira_is_cloud,
+            )
+        return ToolPolicyContext(
+            read_only=bool(getattr(app_lifespan_state, "read_only", False)),
+            enabled_tools=getattr(app_lifespan_state, "enabled_tools", None),
+            enabled_toolsets=getattr(app_lifespan_state, "enabled_toolsets", None),
+            app_lifespan_state=app_lifespan_state,
+            header_based_services=header_based_services,
+            jira_is_cloud=jira_is_cloud,
+        )
 
-    def _is_tool_authorized(
-        self, registered_name: str, tool_obj: FastMCPTool, ctx: dict[str, Any]
+    @staticmethod
+    def is_tool_authorized(
+        registered_name: str, tool_obj: FastMCPTool, policy: ToolPolicyContext
     ) -> bool:
-        """Authorization boundaries enforced at BOTH listing and call time: the
-        ENABLED_TOOLS allowlist, the enabled toolsets, and read-only mode.
+        """Check the boundaries enforced at both listing and call time.
 
-        These are security boundaries — a tool excluded here must not be invocable
-        by name. (Service availability, below, is a listing-only UX filter: an
-        unavailable-service tool simply fails naturally if called.)
+        These are the ``ENABLED_TOOLS`` allowlist, the enabled toolsets and
+        read-only mode. They are security boundaries: a tool excluded here must
+        not be invocable by name.
+
+        Args:
+            registered_name: The tool name the server exposes.
+            tool_obj: The registered tool.
+            policy: The policy inputs of the current request.
+
+        Returns:
+            True when the policy authorizes the tool.
         """
         tool_tags = tool_obj.tags
-        if not should_include_tool_by_toolset(
-            tool_tags, ctx["enabled_toolsets_filter"]
-        ):
+        if not should_include_tool_by_toolset(tool_tags, policy.enabled_toolsets):
             return False
-        if not should_include_tool(registered_name, ctx["enabled_tools_filter"]):
+        if not should_include_tool(registered_name, policy.enabled_tools):
             return False
-        if ctx["read_only"] and "write" in tool_tags:
+        if policy.read_only and "write" in tool_tags:
             return False
         return True
 
     @staticmethod
-    def _is_tool_supported_on_deployment(
-        tool_obj: FastMCPTool, ctx: dict[str, Any]
+    def is_tool_supported_on_deployment(
+        tool_obj: FastMCPTool, policy: ToolPolicyContext
     ) -> bool:
-        """Return whether a tool is supported by the configured deployment."""
+        """Check whether the configured deployment supports a tool.
+
+        Args:
+            tool_obj: The registered tool.
+            policy: The policy inputs of the current request.
+
+        Returns:
+            False for a Cloud-only Jira tool on a known Server/DC deployment.
+        """
         tool_tags = tool_obj.tags
         if "cloud_only" in tool_tags and "jira" in tool_tags:
-            return ctx["jira_is_cloud"] is not False
+            return policy.jira_is_cloud is not False
         return True
 
-    def _is_tool_enabled(
-        self, registered_name: str, tool_obj: FastMCPTool, ctx: dict[str, Any]
+    @classmethod
+    def is_tool_listed(
+        cls, registered_name: str, tool_obj: FastMCPTool, policy: ToolPolicyContext
     ) -> bool:
-        """Listing filter: the tool is authorized AND its backing service is
-        configured/available (the latter is a listing-only graceful-hide)."""
-        if not self._is_tool_authorized(registered_name, tool_obj, ctx):
+        """Check whether ``tools/list`` shows a tool.
+
+        A listed tool is authorized, supported by the deployment, and its
+        service is configured, deferred or provided by request headers. The
+        service check only hides tools from the listing.
+
+        Args:
+            registered_name: The tool name the server exposes.
+            tool_obj: The registered tool.
+            policy: The policy inputs of the current request.
+
+        Returns:
+            True when the listing shows the tool.
+        """
+        if not cls.is_tool_authorized(registered_name, tool_obj, policy):
             return False
-        if not self._is_tool_supported_on_deployment(tool_obj, ctx):
+        if not cls.is_tool_supported_on_deployment(tool_obj, policy):
             return False
 
-        app_lifespan_state = ctx["app_lifespan_state"]
-        header_based_services = ctx["header_based_services"]
+        app_lifespan_state = policy.app_lifespan_state
+        header_based_services = policy.header_based_services
         tool_tags = tool_obj.tags
 
         is_jira_tool = "jira" in tool_tags
@@ -404,53 +525,105 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
                 return False
         return True
 
-    async def _list_tools_mcp(self) -> list[MCPTool]:
-        # Filter tools based on enabled_tools, read_only mode, and service configuration from the lifespan context.
-        ctx = self._tool_filter_context()
-        if ctx is None:
-            logger.warning(
-                "Lifespan context not available during _list_tools_mcp call."
-            )
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[mcp_types.ListToolsRequest],
+        call_next: CallNext[mcp_types.ListToolsRequest, Sequence[FastMCPTool]],
+    ) -> Sequence[FastMCPTool]:
+        """Hide tools the policy excludes and sanitize the rest.
+
+        Args:
+            context: The middleware context of the ``tools/list`` operation.
+            call_next: The rest of the middleware chain.
+
+        Returns:
+            The tools the caller may see.
+        """
+        tools = await call_next(context)
+        fastmcp_context = context.fastmcp_context
+        if fastmcp_context is None:
+            logger.warning("Tool listing has no FastMCP context; listing no tools.")
             return []
+        policy = self._policy_context(fastmcp_context)
+        if policy is None:
+            return tools
 
-        all_tools: list[FastMCPTool] = await self.list_tools()
-        logger.debug(
-            f"Aggregated {len(all_tools)} tools before filtering: "
-            f"{[tool.name for tool in all_tools]}"
-        )
-
-        filtered_tools: list[MCPTool] = []
-        for tool_obj in all_tools:
-            registered_name = tool_obj.name
-            if not self._is_tool_enabled(registered_name, tool_obj, ctx):
-                logger.debug(f"Excluding tool '{registered_name}' (filtered)")
+        listed: list[FastMCPTool] = []
+        for tool_obj in tools:
+            if not self.is_tool_listed(tool_obj.name, tool_obj, policy):
+                logger.debug(f"Excluding tool '{tool_obj.name}' (filtered)")
                 continue
-            mcp_tool = tool_obj.to_mcp_tool(name=registered_name)
-            _sanitize_schema_for_compatibility(mcp_tool)
-            filtered_tools.append(mcp_tool)
+            listed.append(_sanitize_tool_for_compatibility(tool_obj))
+        logger.debug(f"tools/list: {len(listed)} of {len(tools)} tools listed")
+        return listed
 
-        logger.debug(
-            f"_list_tools_mcp: Total tools after filtering: {len(filtered_tools)}"
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mcp_types.CallToolRequestParams],
+        call_next: CallNext[mcp_types.CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
+        """Reject calls to tools the policy hides or that do not exist.
+
+        Args:
+            context: The middleware context of the ``tools/call`` operation.
+            call_next: The rest of the middleware chain.
+
+        Returns:
+            The tool result.
+
+        Raises:
+            ToolError: ``Unknown tool: <name>`` when the tool does not exist or
+                the policy excludes it.
+        """
+        name = context.message.name
+        fastmcp_context = context.fastmcp_context
+        if fastmcp_context is None:
+            logger.warning(f"Tool call '{name}' has no FastMCP context; denying.")
+            raise _unknown_tool_error(name)
+        policy = self._policy_context(fastmcp_context)
+        if policy is None:
+            return await call_next(context)
+
+        tool_obj = await fastmcp_context.fastmcp.get_tool(
+            name, version=_requested_version(context.message.meta)
         )
-        return filtered_tools
+        if (
+            tool_obj is None
+            or not self.is_tool_authorized(name, tool_obj, policy)
+            or not self.is_tool_supported_on_deployment(tool_obj, policy)
+        ):
+            logger.debug(f"Denying call to tool '{name}' (unknown or filtered)")
+            raise _unknown_tool_error(name)
+        return await call_next(context)
 
-    async def _call_tool_mcp(self, key: str, arguments: dict[str, Any]) -> Any:
-        # Enforce the same enablement filter at call time as at listing time, so a
-        # tool hidden from the listing (read-only mode, not in ENABLED_TOOLS, toolset
-        # disabled, or deployment-incompatible) cannot be invoked directly by name.
-        # Under an active filter context, denials and genuinely unknown tools raise
-        # byte-identical messages here (no exists-but-disabled leak), decoupled from
-        # upstream's error format (FastMCP uses a repr-quoted name).
-        ctx = self._tool_filter_context()
-        if ctx is not None:
-            tool_obj = await self.get_tool(key)
-            if (
-                tool_obj is None
-                or not self._is_tool_authorized(key, tool_obj, ctx)
-                or not self._is_tool_supported_on_deployment(tool_obj, ctx)
-            ):
-                raise NotFoundError(f"Unknown tool: {key}")
-        return await super()._call_tool_mcp(key, arguments)
+
+class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
+    """Custom FastMCP server class for Atlassian integration with tool filtering.
+
+    The server installs :class:`ToolPolicyMiddleware` as its outermost FastMCP
+    middleware, so the tool policy applies to every MCP request.
+    """
+
+    _active_streamable_http_path: str | None = None
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.middleware.insert(0, ToolPolicyMiddleware())
+
+    @staticmethod
+    def _normalize_http_path(path: str) -> str:
+        normalized_path = path.strip()
+        if not normalized_path:
+            return "/"
+        if not normalized_path.startswith("/"):
+            normalized_path = f"/{normalized_path}"
+        normalized_path = normalized_path.rstrip("/")
+        return normalized_path or "/"
+
+    def get_streamable_http_path(self) -> str:
+        if self._active_streamable_http_path:
+            return self._active_streamable_http_path
+        return self._normalize_http_path(fastmcp_settings.streamable_http_path)
 
     def http_app(
         self,

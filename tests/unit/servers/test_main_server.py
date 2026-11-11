@@ -1119,8 +1119,11 @@ async def test_oauth_provider_missing_credentials_returns_discovery_challenge(
             metadata = await client.get("/.well-known/oauth-protected-resource/mcp")
 
     assert response.status_code == 401
+    # RFC 6750 section 3.1: no error attribute without credentials. FastMCP 4
+    # also names the scopes the token verifier requires (MCP scope selection).
     assert response.headers["www-authenticate"] == (
         "Bearer "
+        'scope="read:jira", '
         'resource_metadata="https://testserver/'
         '.well-known/oauth-protected-resource/mcp"'
     )
