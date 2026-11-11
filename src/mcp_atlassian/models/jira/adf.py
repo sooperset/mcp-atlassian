@@ -112,7 +112,8 @@ def _parse_inline_formatting(
         r"title=(?P<status_title>[^}]+)\}"
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
-        r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+?)"
+        r"|\[(?P<link_text>[^\]]+)\]\("
+        r"(?P<link_href>[^)\s]+(?:\s+[^)\s\"'(][^)\s]*)*)"
         r"(?:\s+(?P<link_title>\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)"
         r"|(?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)"
     )

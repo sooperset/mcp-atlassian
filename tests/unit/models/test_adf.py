@@ -6,6 +6,7 @@ including handling of various inline and block node types,
 and the reverse conversion from Markdown to ADF.
 """
 
+import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -494,6 +495,13 @@ class TestMarkdownToAdf:
         )
         assert mark["attrs"]["href"] == "https://example.com/a b"
         assert "title" not in mark["attrs"]
+
+    def test_unclosed_link_does_not_backtrack(self) -> None:
+        """An unclosed link followed by long whitespace converts in linear time."""
+        markdown = "[a](x" + " " * 30000 + "y"
+        start = time.perf_counter()
+        markdown_to_adf(markdown)
+        assert time.perf_counter() - start < 1.0
 
     # -- Mentions -----------------------------------------------------------
 
