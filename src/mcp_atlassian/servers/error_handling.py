@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping
+from functools import wraps
 from typing import Any, Generic, TypeVar
 
 from fastmcp import FastMCP
@@ -19,9 +20,40 @@ from mcp_atlassian.utils.toolsets import TOOLSET_TAG_PREFIX
 
 LifespanResultT = TypeVar("LifespanResultT")
 
+ToolGuard = Callable[[str, Mapping[str, Any]], Awaitable[None]]
+
 
 class ErrorPreservingFastMCP(FastMCP[LifespanResultT], Generic[LifespanResultT]):
-    """FastMCP variant that registers tools with detailed error handling."""
+    """FastMCP variant that registers tools with detailed error handling.
+
+    An optional ``tool_guard`` runs before every registered tool with the bound
+    call arguments; the servers use it to enforce the project/space allowlist
+    (see :mod:`mcp_atlassian.servers.scope_guard`).
+    """
+
+    def __init__(
+        self, *args: Any, tool_guard: ToolGuard | None = None, **kwargs: Any
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._tool_guard = tool_guard
+
+    def _apply_tool_guard(
+        self, fn: Callable[..., Any], tool_name: str | None = None
+    ) -> Callable[..., Any]:
+        """Wrap ``fn`` so the tool guard sees its arguments before it runs."""
+        guard = getattr(self, "_tool_guard", None)
+        if guard is None:
+            return fn
+        signature = inspect.signature(fn)
+        name = tool_name or getattr(fn, "__name__", "tool")
+
+        @wraps(fn)
+        async def guarded(*args: Any, **kwargs: Any) -> Any:
+            bound = signature.bind_partial(*args, **kwargs)
+            await guard(name, bound.arguments)
+            return await fn(*args, **kwargs)
+
+        return guarded
 
     @staticmethod
     def _merge_deprecated_metadata(
@@ -85,7 +117,9 @@ class ErrorPreservingFastMCP(FastMCP[LifespanResultT], Generic[LifespanResultT])
             deprecated_fn: Callable[..., Any], metadata: ToolMeta
         ) -> None:
             """Replace the registered callable and expose its deprecation metadata."""
-            registered_tool.fn = handle_tool_errors(deprecated_fn)
+            registered_tool.fn = handle_tool_errors(
+                self._apply_tool_guard(deprecated_fn, tool_name)
+            )
             registered_tool.description = metadata.description
             metadata_tags = set(metadata.tags or set())
             toolset_tags = {
@@ -106,7 +140,10 @@ class ErrorPreservingFastMCP(FastMCP[LifespanResultT], Generic[LifespanResultT])
     def _register_tool(self, fn: Callable[..., Any], kwargs: dict[str, Any]) -> Any:
         """Register a function with error handling and deprecation integration."""
         registration_kwargs = self._merge_deprecated_metadata(fn, kwargs)
-        registered_fn = super().tool(handle_tool_errors(fn), **registration_kwargs)
+        guarded_fn = self._apply_tool_guard(fn, registration_kwargs.get("name"))
+        registered_fn = super().tool(
+            handle_tool_errors(guarded_fn), **registration_kwargs
+        )
         if not getattr(fn, _DEPRECATED_TOOL_MARKER, False):
             self._add_deprecated_registration_hook(registered_fn, fn, kwargs)
         return registered_fn

@@ -25,6 +25,7 @@ from .links import LinksMixin
 from .metrics import MetricsMixin
 from .project_analysis import ProjectAnalysisMixin
 from .projects import ProjectsMixin
+from .scope import ScopeMixin
 from .queues import QueuesMixin
 from .sla import SLAMixin
 from .search import SearchMixin
@@ -59,6 +60,7 @@ class JiraFetcher(
     SLAMixin,
     DevelopmentMixin,
     ProjectAnalysisMixin,
+    ScopeMixin,
 ):
     """
     The main Jira client class providing access to all Jira operations.
@@ -82,6 +84,7 @@ class JiraFetcher(
     - MetricsMixin: Issue metrics and date operations
     - QueuesMixin: Service Desk queue read operations (Server/DC)
     - SLAMixin: SLA calculations
+    - ScopeMixin: JIRA_PROJECTS_FILTER checks used by every tool
 
     The class structure is designed to maintain backward compatibility while
     improving code organization and maintainability.
