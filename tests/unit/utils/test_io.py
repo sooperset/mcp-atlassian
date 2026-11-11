@@ -255,6 +255,18 @@ def _swap_after_validation(monkeypatch, swap):
     monkeypatch.setattr(io_mod, "validate_safe_path", validate_then_swap)
 
 
+def _cannot_open_a_directory(monkeypatch):
+    """Make ``os.open`` refuse directories, as Windows does."""
+    real_open = os.open
+
+    def windows_open(path, flags, mode=0o777, *, dir_fd=None):
+        if os.path.isdir(path):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", windows_open)
+
+
 class TestOpenConfined:
     def test_reads_file_inside_boundary(self, boundary):
         from mcp_atlassian.utils.io import open_confined
@@ -319,3 +331,31 @@ class TestOpenConfined:
         base, _ = boundary
         with pytest.raises(ValueError, match="Path traversal"):
             open_confined(base / ".." / "outside" / "in.txt", "rb", base_dir=base)
+
+    def test_opens_file_where_a_directory_cannot_be_opened(self, boundary, monkeypatch):
+        """A platform that cannot open a directory (Windows) still opens the file."""
+        base, _ = boundary
+        _cannot_open_a_directory(monkeypatch)
+        from mcp_atlassian.utils.io import open_confined
+
+        with open_confined(base / "sub" / "in.txt", "rb", base_dir=base) as f:
+            assert f.read() == b"inside"
+
+    @pytest.mark.security_regression
+    def test_symlink_is_refused_where_a_directory_cannot_be_opened(
+        self, boundary, monkeypatch
+    ):
+        """The fallback keeps refusing a symlink when no directory is opened."""
+        base, outside = boundary
+        target = base / "sub" / "in.txt"
+        _cannot_open_a_directory(monkeypatch)
+        from mcp_atlassian.utils.io import open_confined
+
+        def swap():
+            target.unlink()
+            target.symlink_to(outside / "in.txt")
+
+        _swap_after_validation(monkeypatch, swap)
+        with pytest.raises(ValueError):
+            open_confined(target, "rb", base_dir=base)
+        assert (outside / "in.txt").read_text() == "SECRET"
