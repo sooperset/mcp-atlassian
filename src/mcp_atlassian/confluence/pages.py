@@ -19,6 +19,57 @@ from .v2_adapter import ConfluenceV2Adapter
 
 logger = logging.getLogger("mcp-atlassian")
 
+_HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+_STRUCTURAL_MACRO_NAMES = frozenset({"excerpt", "expand", "layout"})
+_STRUCTURAL_WRAPPER_TAGS = frozenset(
+    {
+        "ac:layout",
+        "layout",
+        "ac:layout-section",
+        "layout-section",
+        "ac:layout-cell",
+        "layout-cell",
+    }
+)
+
+
+def _structured_macro_name(node: Tag) -> str:
+    raw = node.get("ac:name") or node.get("name") or ""
+    return str(raw).strip().lower()
+
+
+def _is_structural_wrapper(node: Tag) -> bool:
+    """Excerpt / expand / layout wrappers, not panels, tables, or random divs."""
+    if node.name in _STRUCTURAL_WRAPPER_TAGS:
+        return True
+    if node.name in {"ac:structured-macro", "structured-macro"}:
+        return _structured_macro_name(node) in _STRUCTURAL_MACRO_NAMES
+    return False
+
+
+def _is_section_boundary(
+    node: object,
+    section_level: int,
+    heading_tags: tuple[str, ...] | list[str] = _HEADING_TAGS,
+) -> bool:
+    """True if ``node`` ends a section of ``section_level``.
+
+    A sibling heading of the same or higher rank is a boundary. So is an
+    excerpt, expand, or layout wrapper that *contains* such a heading —
+    otherwise ``update_page_section`` treats the whole macro as body and
+    deletes it. Other wrappers (info panels, tables) are not boundaries.
+    """
+    if not isinstance(node, Tag):
+        return False
+    if node.name in heading_tags and int(node.name[1]) <= section_level:
+        return True
+    if not _is_structural_wrapper(node):
+        return False
+    for descendant in node.find_all(heading_tags):
+        if int(descendant.name[1]) <= section_level:
+            return True
+    return False
+
 
 class PagesMixin(ConfluenceClient):
     """Mixin for Confluence page operations."""
@@ -958,8 +1009,11 @@ class PagesMixin(ConfluenceClient):
         Fetches the page in raw storage format, locates the section identified by
         its heading text, replaces only the content between that heading and the
         next heading of the same or higher level, and writes the modified storage
-        XML back. This is lossless: macros, layouts, mentions, and all other
-        Confluence-specific elements outside the target section are preserved.
+        XML back. A following excerpt, expand, or layout that *contains* such
+        a heading is a boundary too (that wrapper is not replaced). Other
+        wrappers are unchanged. This is lossless: macros, layouts, mentions,
+        and all other Confluence-specific elements outside the target section
+        are preserved.
 
         Args:
             page_id: The ID of the page to update.
@@ -1026,14 +1080,15 @@ class PagesMixin(ConfluenceClient):
 
         # 4. Collect all sibling nodes that belong to this section (between
         #    this heading and the next heading of the same or higher level).
-        #    NavigableString nodes (whitespace, text) are included alongside
-        #    Tag nodes, so we type the list broadly.
+        #    Headings nested inside the next sibling (excerpt/layout/expand
+        #    macros) count as well — otherwise the whole macro is treated as
+        #    body and wiped. NavigableString nodes (whitespace, text) are
+        #    included alongside Tag nodes, so we type the list broadly.
         siblings_to_remove: list[Any] = []
         current = target_heading.next_sibling
         while current is not None:
-            if isinstance(current, Tag) and current.name in heading_tags:
-                if int(current.name[1]) <= heading_level:
-                    break
+            if _is_section_boundary(current, heading_level, heading_tags):
+                break
             siblings_to_remove.append(current)
             current = current.next_sibling
 

@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
@@ -23,9 +24,16 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.credential_command import (
+    deferred_pat_outranks,
+    get_resolver,
+)
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.environment import get_available_services
-from mcp_atlassian.utils.io import is_read_only_mode
+from mcp_atlassian.utils.io import (
+    configure_file_root_for_transport,
+    is_read_only_mode,
+)
 from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.oauth import (
     CLOUD_AUTHORIZE_URL,
@@ -139,6 +147,9 @@ async def health_check(request: Request) -> JSONResponse:
 async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str, Any]]:
     logger.info("Main Atlassian MCP server lifespan starting...")
     services = get_available_services()
+    resolver = get_resolver()
+    has_deferred_jira_auth = resolver.has_deferred_credentials("jira")
+    has_deferred_confluence_auth = resolver.has_deferred_credentials("confluence")
     read_only = is_read_only_mode()
     enabled_tools = get_enabled_tools()
     enabled_toolsets = get_enabled_toolsets()
@@ -158,6 +169,11 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.warning(
                     "Jira URL found, but authentication is not fully configured. Jira tools will be unavailable."
                 )
+        except ValueError as e:
+            if has_deferred_jira_auth:
+                logger.info("Jira credential resolution deferred until first use.")
+            else:
+                logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Failed to load Jira configuration: {e}", exc_info=True)
 
@@ -173,12 +189,43 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
                 logger.warning(
                     "Confluence URL found, but authentication is not fully configured. Confluence tools will be unavailable."
                 )
+        except ValueError as e:
+            if has_deferred_confluence_auth:
+                logger.info(
+                    "Confluence credential resolution deferred until first use."
+                )
+            else:
+                logger.error(
+                    f"Failed to load Confluence configuration: {e}", exc_info=True
+                )
         except Exception as e:
             logger.error(f"Failed to load Confluence configuration: {e}", exc_info=True)
+
+    # A deferred credential wins when nothing loaded eagerly, or when it would
+    # have outranked what did load (Server/DC personal tokens beat Basic and
+    # OAuth in from_env, but a deferred one is invisible to it at startup).
+    deferred_jira_wins = has_deferred_jira_auth and (
+        loaded_jira_config is None
+        or deferred_pat_outranks(
+            "jira",
+            is_cloud=loaded_jira_config.is_cloud,
+            auth_type=loaded_jira_config.auth_type,
+        )
+    )
+    deferred_confluence_wins = has_deferred_confluence_auth and (
+        loaded_confluence_config is None
+        or deferred_pat_outranks(
+            "confluence",
+            is_cloud=loaded_confluence_config.is_cloud,
+            auth_type=loaded_confluence_config.auth_type,
+        )
+    )
 
     app_context = MainAppContext(
         full_jira_config=loaded_jira_config,
         full_confluence_config=loaded_confluence_config,
+        has_deferred_jira_auth=deferred_jira_wins,
+        has_deferred_confluence_auth=deferred_confluence_wins,
         read_only=read_only,
         enabled_tools=enabled_tools,
         enabled_toolsets=enabled_toolsets,
@@ -338,9 +385,11 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         if app_lifespan_state:
             jira_available = (
                 app_lifespan_state.full_jira_config is not None
+                or app_lifespan_state.has_deferred_jira_auth
             ) or header_based_services.get("jira", False)
             confluence_available = (
                 app_lifespan_state.full_confluence_config is not None
+                or app_lifespan_state.has_deferred_confluence_auth
             ) or header_based_services.get("confluence", False)
             if is_jira_tool and not jira_available:
                 return False
@@ -416,13 +465,35 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         allowed_hosts: list[str] | None = None,
         allowed_origins: list[str] | None = None,
     ) -> StarletteWithLifespan:
+        # The CLI sets the file-path boundary before starting, but an ASGI
+        # server that imports this app directly (``uvicorn module:app``) never
+        # runs the CLI. Every HTTP app serves remote callers, so set the
+        # remote boundary here as well; it raises on a root/home directory.
+        configure_file_root_for_transport(
+            "sse" if transport == "sse" else "streamable-http"
+        )
         final_path = path
-        if transport == "streamable-http":
+        auth_paths: frozenset[str]
+        auth_mounts: frozenset[str] = frozenset()
+        if transport in ("http", "streamable-http"):
             configured_path = path or fastmcp_settings.streamable_http_path
             final_path = self._normalize_http_path(configured_path)
             self._active_streamable_http_path = final_path
+            auth_paths = frozenset({final_path})
+        else:
+            sse_path = self._normalize_http_path(path or fastmcp_settings.sse_path)
+            message_path = self._normalize_http_path(fastmcp_settings.message_path)
+            auth_paths = frozenset({sse_path})
+            # FastMCP serves the SSE message endpoint through a Starlette Mount,
+            # which accepts every method and every sub-path.
+            auth_mounts = frozenset({message_path})
 
-        user_token_mw = Middleware(UserTokenMiddleware, mcp_server_ref=self)
+        user_token_mw = Middleware(
+            UserTokenMiddleware,
+            mcp_server_ref=self,
+            auth_paths=auth_paths,
+            auth_mounts=auth_mounts,
+        )
         final_middleware_list = [user_token_mw]
         if middleware:
             final_middleware_list.extend(middleware)
@@ -441,6 +512,31 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         return app
 
 
+def _route_path(scope: Scope) -> str:
+    """Return the path the Starlette router matches for ``scope``.
+
+    Starlette strips ``root_path`` (set by ``uvicorn --root-path`` or a parent
+    ``Mount``) from ``path`` before routing, so the auth gate must compare the
+    same stripped path; otherwise ``/prefix/mcp`` is routed to ``/mcp`` while
+    the gate sees ``/prefix/mcp`` and lets it through. This mirrors
+    ``starlette._utils.get_route_path``.
+    """
+    path: str = scope.get("path", "")
+    root_path: str = scope.get("root_path", "") or ""
+    if not root_path or not path.startswith(root_path):
+        return path
+    if path == root_path:
+        return ""
+    if path[len(root_path)] == "/":
+        return path[len(root_path) :]
+    return path
+
+
+# Atlassian cloud IDs are UUIDs. Allow letters, digits and hyphens only, so a
+# header value cannot add path segments, a query or a fragment to the API URL.
+_CLOUD_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,127}")
+
+
 class UserTokenMiddleware:
     """ASGI-compliant middleware to extract Atlassian user tokens/credentials.
 
@@ -449,10 +545,26 @@ class UserTokenMiddleware:
     """
 
     def __init__(
-        self, app: ASGIApp, mcp_server_ref: Optional["AtlassianMCP"] = None
+        self,
+        app: ASGIApp,
+        mcp_server_ref: Optional["AtlassianMCP"] = None,
+        auth_paths: frozenset[str] | None = None,
+        auth_mounts: frozenset[str] | None = None,
     ) -> None:
+        """Initialize the middleware.
+
+        Args:
+            app: The downstream ASGI application.
+            mcp_server_ref: The MCP server, used to resolve the transport path.
+            auth_paths: Transport paths that require authentication for every
+                HTTP method. Defaults to the streamable HTTP path.
+            auth_mounts: Transport mount points that require authentication for
+                every HTTP method on the mount path and all of its sub-paths.
+        """
         self.app = app
         self.mcp_server_ref = mcp_server_ref
+        self.auth_paths = auth_paths
+        self.auth_mounts = auth_mounts or frozenset()
         if not self.mcp_server_ref:
             logger.warning(
                 "UserTokenMiddleware initialized without mcp_server_ref. "
@@ -568,14 +680,26 @@ class UserTokenMiddleware:
         await send({"type": "http.response.body", "body": body})
 
     def _should_process_auth(self, scope: Scope) -> bool:
-        """Check if this request should be processed for authentication."""
-        if not self.mcp_server_ref or scope.get("method") != "POST":
+        """Check if this request targets an MCP transport endpoint.
+
+        The check is by path only. Every HTTP method the transport routes accept
+        (GET, HEAD, POST, PUT, DELETE, OPTIONS, ...) is authenticated the same way.
+        """
+        if not self.mcp_server_ref:
             return False
 
         try:
-            mcp_path = self.mcp_server_ref.get_streamable_http_path()
-            request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
-            return request_path == mcp_path
+            request_path = AtlassianMCP._normalize_http_path(_route_path(scope))
+            auth_paths = self.auth_paths
+            if auth_paths is None:
+                auth_paths = frozenset({self.mcp_server_ref.get_streamable_http_path()})
+            if request_path in auth_paths:
+                return True
+            return any(
+                request_path == mount
+                or request_path.startswith(f"{mount.rstrip('/')}/")
+                for mount in self.auth_mounts
+            )
         except (AttributeError, ValueError) as e:
             logger.warning(f"Error checking auth path: {e}")
             return False
@@ -670,8 +794,14 @@ class UserTokenMiddleware:
                 f"CloudId present: {bool(cloud_id_str)}"
             )
 
-            # Process Cloud ID
+            # Process Cloud ID. It is interpolated into the Atlassian API path,
+            # so only accept the characters a cloud ID can contain.
             if cloud_id_str and cloud_id_str.strip():
+                if not _CLOUD_ID_PATTERN.fullmatch(cloud_id_str.strip()):
+                    scope["state"]["auth_validation_error"] = (
+                        "Unauthorized: Invalid X-Atlassian-Cloud-Id header"
+                    )
+                    return
                 scope["state"]["user_atlassian_cloud_id"] = cloud_id_str.strip()
                 logger.debug(
                     f"UserTokenMiddleware: Extracted cloudId: {cloud_id_str.strip()}"
