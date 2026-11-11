@@ -80,7 +80,7 @@ class TestJiraGetIssueImages:
 
         # Second: image data
         assert isinstance(result.content[1], ImageContent)
-        assert result.content[1].mimeType.startswith("image/")
+        assert result.content[1].mime_type.startswith("image/")
         assert len(result.content[1].data) > 0
 
     async def test_jira_get_issue_images_no_images(
@@ -130,7 +130,7 @@ class TestConfluenceGetPageImages:
 
         # Second: image data
         assert isinstance(result.content[1], ImageContent)
-        assert result.content[1].mimeType.startswith("image/")
+        assert result.content[1].mime_type.startswith("image/")
         assert len(result.content[1].data) > 0
 
     async def test_confluence_get_page_images_no_images(

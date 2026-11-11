@@ -1445,7 +1445,7 @@ async def download_attachments(
                     type="resource",
                     resource=BlobResourceContents(
                         uri=f"attachment:///{issue_key}/{filename}",
-                        mimeType=resolved_mime_type,
+                        mime_type=resolved_mime_type,
                         blob=encoded,
                     ),
                 )
@@ -1611,7 +1611,7 @@ async def get_issue_images(
             ImageContent(
                 type="image",
                 data=encoded,
-                mimeType=resolved_mime,
+                mime_type=resolved_mime,
             )
         )
 

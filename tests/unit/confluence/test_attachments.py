@@ -1549,7 +1549,7 @@ class TestDownloadAttachmentServerTool:
             )
 
         assert isinstance(result, EmbeddedResource)
-        assert result.resource.mimeType == "application/pdf"
+        assert result.resource.mime_type == "application/pdf"
         assert result.resource.blob
 
     @pytest.mark.asyncio
@@ -1683,7 +1683,7 @@ class TestDownloadContentAttachmentsServerTool:
         assert summary["success"] is True
         assert summary["downloaded"] == 1
         assert isinstance(results[1], EmbeddedResource)
-        assert results[1].resource.mimeType == "text/plain"
+        assert results[1].resource.mime_type == "text/plain"
 
     @pytest.mark.asyncio
     async def test_returns_text_when_no_attachments(self):

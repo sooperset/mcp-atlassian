@@ -3478,7 +3478,7 @@ async def test_download_attachments_image_still_uses_embedded_resource(
     resource_content = response.content[1]
     # Must be EmbeddedResource (type="resource"), unchanged from before #1419
     assert resource_content.type == "resource"
-    assert resource_content.resource.mimeType == "image/png"
+    assert resource_content.resource.mime_type == "image/png"
 
 
 # ── jira_get_issue_images tests ──────────────────────────────────────
@@ -3515,7 +3515,7 @@ async def test_get_issue_images_basic(jira_client, mock_jira_fetcher):
     assert summary["total_images"] == 1
     assert summary["downloaded"] == 1
     assert response.content[1].type == "image"
-    assert response.content[1].mimeType == "image/png"
+    assert response.content[1].mime_type == "image/png"
 
 
 @pytest.mark.anyio
@@ -3541,7 +3541,7 @@ async def test_get_issue_images_octet_stream_fallback(jira_client, mock_jira_fet
     summary = json.loads(response.content[0].text)
     assert summary["total_images"] == 1
     assert response.content[1].type == "image"
-    assert response.content[1].mimeType == "image/jpeg"
+    assert response.content[1].mime_type == "image/jpeg"
 
 
 @pytest.mark.anyio

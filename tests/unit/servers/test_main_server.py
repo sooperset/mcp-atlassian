@@ -116,7 +116,7 @@ async def test_additive_write_tools_are_non_destructive(tool_name: str) -> None:
     """Ensure additive write tools advertise that they preserve existing state."""
     tools = {tool.name: tool for tool in await main_mcp.list_tools()}
 
-    assert tools[tool_name].annotations.destructiveHint is False
+    assert tools[tool_name].annotations.destructive_hint is False
 
 
 @pytest.mark.anyio
@@ -132,7 +132,7 @@ async def test_state_changing_write_tools_are_destructive(tool_name: str) -> Non
     """Ensure tools that remove or reassign state advertise destructive behavior."""
     tools = {tool.name: tool for tool in await main_mcp.list_tools()}
 
-    assert tools[tool_name].annotations.destructiveHint is True
+    assert tools[tool_name].annotations.destructive_hint is True
 
 
 @pytest.mark.anyio

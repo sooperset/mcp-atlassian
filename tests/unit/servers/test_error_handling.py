@@ -1,11 +1,13 @@
 """Tests for the FastMCP registration helpers."""
 
 import logging
+from typing import Any
 
 import pytest
 from fastmcp import Client
 
 from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
+from mcp_atlassian.servers.main import AtlassianMCP
 from mcp_atlassian.utils.decorators import deprecated_tool
 
 
@@ -65,3 +67,24 @@ async def test_deprecated_tool_is_preserved_in_registered_mcp_tool(
         if "is deprecated; use" in record.getMessage()
     ]
     assert len(warnings) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("server_class", [ErrorPreservingFastMCP, AtlassianMCP])
+async def test_tool_error_details_reach_client_when_masking(
+    server_class: type[ErrorPreservingFastMCP[Any]],
+) -> None:
+    """Tool failures keep their message on the wire even with masking enabled."""
+    server = server_class("error-details", mask_error_details=True)
+
+    @server.tool(name="failing_tool", tags={"read"})
+    async def failing_tool() -> str:
+        raise ValueError("Jira rejected field 'customfield_10001'")
+
+    async with Client(server) as client:
+        result = await client.call_tool_mcp("failing_tool", {})
+
+    assert result.is_error
+    assert result.content[0].text == (
+        "Error calling tool 'failing_tool': Jira rejected field 'customfield_10001'"
+    )

@@ -9,7 +9,7 @@ from typing import Any, Generic, TypeVar
 
 from fastmcp import FastMCP
 from fastmcp.decorators import get_fastmcp_meta
-from fastmcp.tools.function_tool import ToolMeta
+from fastmcp.tools.function_tool import FunctionTool, ToolMeta
 
 from mcp_atlassian.utils.decorators import (
     _DEPRECATED_TOOL_MARKER,
@@ -102,7 +102,8 @@ class ErrorPreservingFastMCP(FastMCP[LifespanResultT], Generic[LifespanResultT])
             (
                 component
                 for component in self._local_provider._components.values()
-                if getattr(component, "name", None) == tool_name
+                if isinstance(component, FunctionTool)
+                and component.name == tool_name
                 and (
                     version is None
                     or str(getattr(component, "version", None)) == str(version)

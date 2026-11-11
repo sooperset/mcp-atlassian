@@ -16,13 +16,13 @@ import mcp.types as mcp_types
 from fastmcp import Context, FastMCP
 from fastmcp import settings as fastmcp_settings
 from fastmcp.exceptions import ToolError
-from fastmcp.server.event_store import EventStore
 from fastmcp.server.http import StarletteWithLifespan
 from fastmcp.server.middleware import CallNext, MiddlewareContext
 from fastmcp.server.middleware import Middleware as FastMCPMiddleware
 from fastmcp.tools import Tool as FastMCPTool
 from fastmcp.tools import ToolResult
 from fastmcp.utilities.versions import VersionSpec
+from mcp.server.streamable_http import EventStore
 from mcp.types import Tool as MCPTool
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -637,6 +637,7 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         host_origin_protection: bool | Literal["auto"] | None = None,
         allowed_hosts: list[str] | None = None,
         allowed_origins: list[str] | None = None,
+        session_idle_timeout: float | Literal["auto"] | None = None,
     ) -> StarletteWithLifespan:
         # The CLI sets the file-path boundary before starting, but an ASGI
         # server that imports this app directly (``uvicorn module:app``) never
@@ -681,6 +682,7 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
             host_origin_protection=host_origin_protection,
             allowed_hosts=allowed_hosts,
             allowed_origins=allowed_origins,
+            session_idle_timeout=session_idle_timeout,
         )
         return app
 

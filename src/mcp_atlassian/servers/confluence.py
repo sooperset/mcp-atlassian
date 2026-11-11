@@ -2320,7 +2320,7 @@ async def download_attachment(
             type="resource",
             resource=BlobResourceContents(
                 uri=f"attachment:///{attachment_id}/{filename}",
-                mimeType=mime_type,
+                mime_type=mime_type,
                 blob=encoded,
             ),
         )
@@ -2469,7 +2469,7 @@ async def download_content_attachments(
                 type="resource",
                 resource=BlobResourceContents(
                     uri=f"attachment:///{content_id}/{filename}",
-                    mimeType=mime_type,
+                    mime_type=mime_type,
                     blob=encoded,
                 ),
             )
@@ -2685,7 +2685,7 @@ async def get_page_images(
             ImageContent(
                 type="image",
                 data=encoded,
-                mimeType=resolved_mime,
+                mime_type=resolved_mime,
             )
         )
 

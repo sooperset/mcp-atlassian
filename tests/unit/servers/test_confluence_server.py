@@ -1599,7 +1599,7 @@ async def test_get_page_images_basic(client, mock_confluence_fetcher):
     assert summary["downloaded"] == 1
     # Second content is the image
     assert response.content[1].type == "image"
-    assert response.content[1].mimeType == "image/png"
+    assert response.content[1].mime_type == "image/png"
 
 
 @pytest.mark.anyio
@@ -1635,7 +1635,7 @@ async def test_get_page_images_octet_stream_fallback(client, mock_confluence_fet
     assert summary["total_images"] == 1
     assert response.content[1].type == "image"
     # MIME should be corrected to image/jpeg based on extension
-    assert response.content[1].mimeType == "image/jpeg"
+    assert response.content[1].mime_type == "image/jpeg"
 
 
 @pytest.mark.anyio

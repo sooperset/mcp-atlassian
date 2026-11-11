@@ -439,7 +439,7 @@ def build_tool_docs(
 
             info = tools[tool_name]
             mcp_tool = info["mcp_tool"]
-            schema = mcp_tool.inputSchema or {}
+            schema = mcp_tool.input_schema or {}
             properties = schema.get("properties", {})
             required_set = set(schema.get("required", []))
 
