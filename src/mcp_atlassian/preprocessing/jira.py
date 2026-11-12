@@ -24,6 +24,18 @@ def _convert_panel(params: str | None, content: str) -> str:
     return f"\n{content}\n"
 
 
+def _phrase_pattern(delimiter: str) -> str:
+    """Build a regex for a Jira phrase span (`*bold*`, `+ins+`, ...).
+
+    Mirrors Jira's renderer: the span stays on one line, its content neither
+    starts nor ends with whitespace, the delimiters touch no letter or digit
+    on their outer side, and a backslash-escaped delimiter never opens or
+    closes it. Group 1 captures the content.
+    """
+    d = re.escape(delimiter)
+    return rf"(?<![^\W_])(?<!\\){d}(\S|\S.*?[^\s\\]){d}(?![^\W_])"
+
+
 class JiraPreprocessor(BasePreprocessor):
     """Handles text preprocessing for Jira content."""
 
@@ -277,15 +289,10 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
-        # Text formatting (bold, italic). Delimiters preceded by a backslash
-        # are wiki escapes (e.g. the intraword `\_` this module's
-        # markdown_to_jira writes), not markup, so they must neither open nor
-        # close a span. Like Jira's renderer, `_` next to a word character on
-        # the outer side (`foo_bar_baz`) is literal, not italic, and so is a
-        # doubled `__` (`__init__`).
+        # Text formatting (bold, italic). Italic also counts `_` as a word
+        # character, so a doubled `__` (`__init__`) stays literal.
         output = re.sub(
-            r"(?<!\\)\*(.*?)(?<!\\)\*"
-            r"|(?<!\\)(?<!\w)_(?!_)(.*?)(?<!\\)(?<!_)_(?!\w)",
+            _phrase_pattern("*") + r"|(?<!\w)(?<!\\)_(?!_)(\S|\S.*?[^\s\\_])_(?!\w)",
             lambda match: (
                 f"**{match.group(1)}**"
                 if match.group(1) is not None
@@ -310,13 +317,13 @@ class JiraPreprocessor(BasePreprocessor):
         )
 
         # Inserted text
-        output = re.sub(r"\+([^+]*)\+", r"<ins>\1</ins>", output)
+        output = re.sub(_phrase_pattern("+"), r"<ins>\1</ins>", output)
 
         # Superscript
-        output = re.sub(r"\^([^^]*)\^", r"<sup>\1</sup>", output)
+        output = re.sub(_phrase_pattern("^"), r"<sup>\1</sup>", output)
 
         # Subscript
-        output = re.sub(r"~([^~]*)~", r"<sub>\1</sub>", output)
+        output = re.sub(_phrase_pattern("~"), r"<sub>\1</sub>", output)
 
         # Strikethrough
         output = re.sub(r"-([^-]*)-", r"-\1-", output)
