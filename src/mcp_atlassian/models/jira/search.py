@@ -25,6 +25,11 @@ class JiraSearchResult(ApiModel):
     max_results: int = 0
     issues: list[JiraIssue] = Field(default_factory=list)
     next_page_token: str | None = None
+    # Set when the caller opted into a total on Cloud (``include_total``):
+    # the total then comes from the approximate-count API, which may lag
+    # behind very recent updates, or ``total_error`` explains why it is -1.
+    total_is_approximate: bool = False
+    total_error: str | None = None
 
     @classmethod
     def from_api_response(
@@ -120,8 +125,7 @@ class JiraSearchResult(ApiModel):
             "max_results": self.max_results,
             "issues": [issue.to_simplified_dict() for issue in self.issues],
         }
-        if self.next_page_token is not None:
-            result["next_page_token"] = self.next_page_token
+        self._add_optional_metadata(result)
         return result
 
     def to_display_name_dict(self) -> dict[str, Any]:
@@ -132,6 +136,14 @@ class JiraSearchResult(ApiModel):
             "max_results": self.max_results,
             "issues": [issue.to_display_name_dict() for issue in self.issues],
         }
+        self._add_optional_metadata(result)
+        return result
+
+    def _add_optional_metadata(self, result: dict[str, Any]) -> None:
+        """Add the pagination token and total-count notes when they are set."""
         if self.next_page_token is not None:
             result["next_page_token"] = self.next_page_token
-        return result
+        if self.total_is_approximate:
+            result["total_is_approximate"] = True
+        if self.total_error is not None:
+            result["total_error"] = self.total_error

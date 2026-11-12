@@ -23,6 +23,7 @@ from src.mcp_atlassian.models.jira import (
     JiraRequestTypeField,
     JiraRequestTypeFieldsResult,
     JiraRequestTypesResult,
+    JiraSearchResult,
 )
 from src.mcp_atlassian.servers.context import MainAppContext
 from src.mcp_atlassian.servers.main import AtlassianMCP
@@ -747,7 +748,28 @@ async def test_search(jira_client, mock_jira_fetcher):
         expand=None,
         projects_filter=None,
         page_token=None,
+        include_total=False,
     )
+
+
+@pytest.mark.anyio
+async def test_search_forwards_include_total(jira_client, mock_jira_fetcher):
+    """include_total reaches search_issues and its metadata reaches the output."""
+    mock_jira_fetcher.search_issues.side_effect = None
+    mock_jira_fetcher.search_issues.return_value = JiraSearchResult(
+        issues=[], total=153, start_at=0, max_results=10, total_is_approximate=True
+    )
+
+    response = await jira_client.call_tool(
+        "jira_search",
+        {"jql": "project = TEST", "include_total": True},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["total"] == 153
+    assert content["total_is_approximate"] is True
+    assert "total_error" not in content
+    assert mock_jira_fetcher.search_issues.call_args.kwargs["include_total"] is True
 
 
 @pytest.mark.anyio
@@ -2302,7 +2324,30 @@ async def test_get_project_issues_long_key(jira_client, mock_jira_fetcher):
     content = json.loads(response.content[0].text)
     assert content["total"] == 0
     mock_jira_fetcher.get_project_issues.assert_called_once_with(
-        project_key="CMSV2", start=0, limit=10
+        project_key="CMSV2", start=0, limit=10, include_total=False
+    )
+
+
+@pytest.mark.anyio
+async def test_get_project_issues_forwards_include_total(
+    jira_client, mock_jira_fetcher
+):
+    """include_total reaches the fetcher for jira_get_project_issues."""
+    mock_jira_fetcher.get_project_issues.return_value = JiraSearchResult(
+        issues=[], total=-1, start_at=0, max_results=10, total_error="unavailable"
+    )
+
+    response = await jira_client.call_tool(
+        "jira_get_project_issues",
+        {"project_key": "CMSV2", "include_total": True},
+    )
+
+    content = json.loads(response.content[0].text)
+    assert content["total"] == -1
+    assert content["total_error"] == "unavailable"
+    assert "total_is_approximate" not in content
+    mock_jira_fetcher.get_project_issues.assert_called_once_with(
+        project_key="CMSV2", start=0, limit=10, include_total=True
     )
 
 

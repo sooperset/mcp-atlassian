@@ -49,6 +49,16 @@ ISSUE_KEY_PATTERN = get_regex_env(
 )
 PROJECT_KEY_PATTERN = get_regex_env("JIRA_PROJECT_KEY_PATTERN", r"^[A-Z][A-Z0-9_]+$")
 
+# Shared by jira_search and jira_get_project_issues.
+INCLUDE_TOTAL_DESCRIPTION = (
+    "(Optional) Jira Cloud only: also return the number of matching issues in "
+    "'total', using one extra request to Jira's approximate-count API. The count "
+    "is approximate (very recent changes may be missing) and is marked with "
+    "'total_is_approximate'. If it cannot be fetched, 'total' stays -1 and "
+    "'total_error' explains why. Server/DC always returns an exact total, so this "
+    "has no effect there."
+)
+
 
 async def _scope_fetcher(ctx: Context) -> Any:
     # Looked up at call time so the guard uses the same dependency as the tools.
@@ -997,6 +1007,10 @@ async def search(
             default=False,
         ),
     ] = False,
+    include_total: Annotated[
+        bool,
+        Field(description=INCLUDE_TOTAL_DESCRIPTION, default=False),
+    ] = False,
 ) -> str:
     """Search Jira issues using JQL (Jira Query Language).
 
@@ -1010,6 +1024,7 @@ async def search(
         expand: Optional fields to expand.
         page_token: Pagination token from a previous search result (Cloud only).
         use_display_names: Opt into human-readable custom field keys.
+        include_total: Fetch an approximate total match count (Cloud only).
 
     Returns:
         JSON string representing the search results including pagination info.
@@ -1031,6 +1046,7 @@ async def search(
         expand=expand,
         projects_filter=projects_filter,
         page_token=page_token,
+        include_total=include_total,
     )
     if use_display_names:
         result = search_result.to_display_name_dict()
@@ -1278,6 +1294,10 @@ async def get_project_issues(
         int,
         Field(description="Starting index for pagination (0-based)", default=0, ge=0),
     ] = 0,
+    include_total: Annotated[
+        bool,
+        Field(description=INCLUDE_TOTAL_DESCRIPTION, default=False),
+    ] = False,
 ) -> str:
     """Get all issues for a specific Jira project.
 
@@ -1286,13 +1306,17 @@ async def get_project_issues(
         project_key: The project key.
         limit: Maximum number of results.
         start_at: Starting index for pagination.
+        include_total: Fetch an approximate total match count (Cloud only).
 
     Returns:
         JSON string representing the search results including pagination info.
     """
     jira = await get_jira_fetcher(ctx)
     search_result = jira.get_project_issues(
-        project_key=project_key, start=start_at, limit=limit
+        project_key=project_key,
+        start=start_at,
+        limit=limit,
+        include_total=include_total,
     )
     result = search_result.to_simplified_dict()
     return json.dumps(result, indent=2, ensure_ascii=False)

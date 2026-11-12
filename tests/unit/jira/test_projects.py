@@ -199,6 +199,7 @@ def test_get_project_issues(projects_mixin: ProjectsMixin):
         'project = "TEST"',
         start=0,
         limit=50,
+        include_total=False,
     )
     assert isinstance(result, JiraSearchResult)
     assert len(result.issues) == 0
@@ -234,6 +235,7 @@ def test_get_project_issues_with_start(projects_mixin: ProjectsMixin) -> None:
         f'project = "{project_key}"',
         start=start_index,
         limit=5,
+        include_total=False,
     )
 
 
@@ -853,9 +855,22 @@ def test_get_project_issues_with_search_mixin(projects_mixin: ProjectsMixin):
     result = projects_mixin.get_project_issues("PROJ1", start=10, limit=20)
     assert result == mock_search_result
     projects_mixin.search_issues.assert_called_once_with(
-        'project = "PROJ1"', start=10, limit=20
+        'project = "PROJ1"', start=10, limit=20, include_total=False
     )
     projects_mixin.jira.jql.assert_not_called()
+
+
+def test_get_project_issues_forwards_include_total(projects_mixin: ProjectsMixin):
+    """include_total is passed through to search_issues."""
+    mock_search_result = JiraSearchResult(issues=[], total=7)
+    projects_mixin.search_issues = MagicMock(return_value=mock_search_result)
+
+    result = projects_mixin.get_project_issues("PROJ1", include_total=True)
+
+    assert result.total == 7
+    projects_mixin.search_issues.assert_called_once_with(
+        'project = "PROJ1"', start=0, limit=50, include_total=True
+    )
 
 
 def test_get_project_issues_invalid_response(projects_mixin: ProjectsMixin):
