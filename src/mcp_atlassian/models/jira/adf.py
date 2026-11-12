@@ -224,6 +224,117 @@ def _make_list_item(text: str, jira_base_url: str = "") -> dict[str, Any]:
     return {"type": "listItem", "content": [_make_paragraph(text, jira_base_url)]}
 
 
+# A list marker is "- ", "* " or "<digits>. ", possibly preceded by spaces
+# or tabs. Tabs are normalized to four spaces before the indent is measured.
+_LIST_LINE_RE = re.compile(r"^(?P<indent>[ \t]*)(?P<marker>[-*]|\d+\.)\s+(?P<text>.*)$")
+
+
+def _list_marker(line: str) -> tuple[int, str, str] | None:
+    """Parse a markdown list line into (indent_columns, list_type, item_text).
+
+    Returns None if the line is not a list item. ``indent_columns`` measures
+    leading whitespace with tabs counted as four columns, matching the
+    CommonMark convention closely enough for nesting decisions.
+    """
+    m = _LIST_LINE_RE.match(line)
+    if m is None:
+        return None
+    indent_text = m.group("indent").replace("\t", "    ")
+    list_type = "orderedList" if m.group("marker").endswith(".") else "bulletList"
+    return len(indent_text), list_type, m.group("text")
+
+
+def _parse_list_block(
+    lines: list[str], start: int, base_indent: int, jira_base_url: str = ""
+) -> tuple[list[dict[str, Any]], str, int]:
+    """Parse one nesting level of list items starting at ``start``.
+
+    A blank line is tolerated (and consumed) as long as the next non-blank
+    line is still a list item at ``base_indent`` or deeper -- this keeps a
+    "loose" list (blank line between items) as a single list node instead
+    of fragmenting into one list per item, which for ordered lists would
+    otherwise restart numbering at 1 for every fragment. A run of items
+    indented deeper than ``base_indent`` is attached as a nested list under
+    the immediately preceding item.
+
+    Returns the list items, the list type of this level ("bulletList" or
+    "orderedList", taken from the first item), and the index of the first
+    line that no longer belongs to this level.
+    """
+    items: list[dict[str, Any]] = []
+    level_type: str | None = None
+    i = start
+    while i < len(lines):
+        line = lines[i]
+        if not line.strip():
+            # Peek past the blank line(s) -- only consume them if a deeper
+            # or same-level list item follows. Otherwise the blank line
+            # belongs to the document, not this list block.
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j >= len(lines):
+                break
+            peek = _list_marker(lines[j])
+            if peek is None or peek[0] < base_indent:
+                break
+            i = j
+            continue
+        marker = _list_marker(line)
+        if marker is None or marker[0] < base_indent:
+            break
+        indent, list_type, item_text = marker
+        if indent > base_indent:
+            # Deeper than expected with no parent item to hang off of --
+            # bail and let the caller (or top-level fallback) treat it as a
+            # plain paragraph rather than guessing a nesting level.
+            break
+        if level_type is None:
+            level_type = list_type
+        elif list_type != level_type:
+            # A different list type at the same indent starts a sibling
+            # list; return so the caller opens a new list node for it.
+            break
+        i += 1
+        children: list[dict[str, Any]] = []
+        while i < len(lines):
+            next_line = lines[i]
+            if not next_line.strip():
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                if j >= len(lines):
+                    break
+                peek = _list_marker(lines[j])
+                if peek is None or peek[0] <= indent:
+                    break
+                i = j
+                continue
+            peek = _list_marker(next_line)
+            if peek is None or peek[0] <= indent:
+                break
+            child_items, child_type, i = _parse_list_block(
+                lines, i, peek[0], jira_base_url
+            )
+            # Inconsistent indentation among what's meant to be one run of
+            # sibling children (e.g. one line pasted/retyped at a
+            # different indent than the others) makes each indent value
+            # its own _parse_list_block call, so this can legitimately
+            # fire more than once per item. Merge consecutive results of
+            # the same list type into one node instead of leaving them as
+            # separate list nodes -- otherwise an ordered list restarts
+            # its numbering at every indent change even though every item
+            # is meant to be one continuous list under the same parent.
+            if children and children[-1]["type"] == child_type:
+                children[-1]["content"].extend(child_items)
+            else:
+                children.append({"type": child_type, "content": child_items})
+        item = _make_list_item(item_text, jira_base_url)
+        item["content"].extend(children)
+        items.append(item)
+    return items, level_type or "bulletList", i
+
+
 def _make_task_item(
     text: str,
     checked: bool,
@@ -394,33 +505,13 @@ def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, An
                 doc["content"].append(panel_node)
                 continue
 
-        # --- Unordered list ---
-        if re.match(r"^[-*]\s+", line):
-            items: list[dict[str, Any]] = []
-            while i < len(lines) and re.match(r"^[-*]\s+", lines[i]):
-                item_text = re.sub(r"^[-*]\s+", "", lines[i])
-                items.append(_make_list_item(item_text, jira_base_url))
-                i += 1
-            doc["content"].append({"type": "bulletList", "content": items})
-            continue
-
-        # --- Ordered list ---
-        if re.match(r"^\d+\.\s+", line):
-            items_ol: list[dict[str, Any]] = []
-            while i < len(lines):
-                if re.match(r"^\d+\.\s+", lines[i]):
-                    item_text = re.sub(r"^\d+\.\s+", "", lines[i])
-                    items_ol.append(_make_list_item(item_text, jira_base_url))
-                    i += 1
-                elif (
-                    not lines[i].strip()
-                    and i + 1 < len(lines)
-                    and re.match(r"^\d+\.\s+", lines[i + 1])
-                ):
-                    i += 1
-                else:
-                    break
-            doc["content"].append({"type": "orderedList", "content": items_ol})
+        # --- List (ordered or unordered; nests and tolerates blank lines
+        # between sibling items so loose lists don't fragment into one
+        # list node per item) ---
+        top_marker = _list_marker(line)
+        if top_marker is not None and top_marker[0] == 0:
+            list_items, list_type, i = _parse_list_block(lines, i, 0, jira_base_url)
+            doc["content"].append({"type": list_type, "content": list_items})
             continue
 
         # --- Table ---
