@@ -253,13 +253,13 @@ def open_confined(
         msg = f"Not a file path: {path}"
         raise ValueError(msg)
 
-    # A directory can only be opened where the platform supports it. Windows
-    # raises PermissionError here (``os.open`` cannot open a directory, and
-    # ``O_DIRECTORY`` does not exist), so fall back to opening the file by path
-    # instead of failing before the fallback below can run.
-    try:
+    # Anchor the open on a directory descriptor only where ``os.open`` accepts
+    # ``dir_fd``. Windows cannot open a directory with ``os.open`` (it raises
+    # PermissionError), so it opens the file by path below. On other platforms
+    # a failure to open the directory is a real error and is not downgraded.
+    if os.open in os.supports_dir_fd:
         dir_fd = os.open(parent, os.O_RDONLY | _O_DIRECTORY | _O_CLOEXEC)
-    except OSError:
+    else:
         dir_fd = -1
     fd = -1
     try:
@@ -279,7 +279,7 @@ def open_confined(
         try:
             if dir_fd >= 0:
                 fd = os.open(name, flags, 0o666, dir_fd=dir_fd)
-            else:  # no directory descriptor (Windows, or the parent cannot be opened)
+            else:  # no dir_fd support (Windows)
                 if os.path.islink(real_parent / name):
                     msg = f"Refusing to follow a symlink: {path}"
                     raise ValueError(msg)
