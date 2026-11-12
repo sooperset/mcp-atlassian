@@ -218,7 +218,8 @@ class TestFileRoot:
         monkeypatch.chdir("/")
         root = reset_file_root.configure_file_root_for_transport("stdio")
         assert root == Path("/")
-        assert validate_safe_path("/etc/hostname") == Path("/etc/hostname")
+        # /etc is a symlink on macOS, and validate_safe_path resolves symlinks.
+        assert validate_safe_path("/etc/hostname") == Path("/etc/hostname").resolve()
 
     def test_is_in_cwd_root(self, reset_file_root, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -253,6 +254,18 @@ def _swap_after_validation(monkeypatch, swap):
         return result
 
     monkeypatch.setattr(io_mod, "validate_safe_path", validate_then_swap)
+
+
+def _cannot_open_a_directory(monkeypatch):
+    """Make ``os.open`` refuse directories, as Windows does."""
+    real_open = os.open
+
+    def windows_open(path, flags, mode=0o777, *, dir_fd=None):
+        if os.path.isdir(path):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", windows_open)
 
 
 class TestOpenConfined:
@@ -319,3 +332,57 @@ class TestOpenConfined:
         base, _ = boundary
         with pytest.raises(ValueError, match="Path traversal"):
             open_confined(base / ".." / "outside" / "in.txt", "rb", base_dir=base)
+
+    def test_opens_file_where_a_directory_cannot_be_opened(self, boundary, monkeypatch):
+        """A platform that cannot open a directory (Windows) still opens the file."""
+        base, _ = boundary
+        _cannot_open_a_directory(monkeypatch)
+        from mcp_atlassian.utils.io import open_confined
+
+        with open_confined(base / "sub" / "in.txt", "rb", base_dir=base) as f:
+            assert f.read() == b"inside"
+
+    @pytest.mark.security_regression
+    def test_symlink_is_refused_where_a_directory_cannot_be_opened(
+        self, boundary, monkeypatch
+    ):
+        """The fallback keeps refusing a symlink when no directory is opened."""
+        base, outside = boundary
+        target = base / "sub" / "in.txt"
+        _cannot_open_a_directory(monkeypatch)
+        from mcp_atlassian.utils.io import open_confined
+
+        def swap():
+            target.unlink()
+            target.symlink_to(outside / "in.txt")
+
+        _swap_after_validation(monkeypatch, swap)
+        with pytest.raises(ValueError):
+            open_confined(target, "rb", base_dir=base)
+        assert (outside / "in.txt").read_text() == "SECRET"
+
+    @pytest.mark.security_regression
+    @pytest.mark.skipif(
+        os.open not in os.supports_dir_fd, reason="needs dir_fd support"
+    )
+    def test_unopenable_directory_is_an_error_where_dir_fd_is_supported(
+        self, boundary, monkeypatch
+    ):
+        """With dir_fd support, a directory that cannot be opened is not
+        downgraded to the path-based open."""
+        base, _ = boundary
+        from mcp_atlassian.utils import io as io_mod
+
+        real_open = os.open
+
+        def refusing_open(path, flags, mode=0o777, *, dir_fd=None):
+            if dir_fd is None and os.path.isdir(path):
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        monkeypatch.setattr(io_mod.os, "open", refusing_open)
+        monkeypatch.setattr(
+            io_mod.os, "supports_dir_fd", os.supports_dir_fd | {refusing_open}
+        )
+        with pytest.raises(PermissionError):
+            io_mod.open_confined(base / "sub" / "in.txt", "rb", base_dir=base)
