@@ -1615,11 +1615,142 @@ async def search_user(
         logger.error(f"Error searching users: {str(e)}")
         return json.dumps(
             {
-                "error": f"An unexpected error occurred while searching for users: {str(e)}"
+                "error": (
+                    "An unexpected error occurred while searching for "
+                    f"users: {str(e)}"
+                ),
             },
             indent=2,
             ensure_ascii=False,
         )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_users"},
+    annotations={"title": "Get User Profile", "readOnlyHint": True},
+)
+async def get_user_profile(
+    ctx: Context,
+    username: Annotated[
+        str,
+        Field(
+            description=(
+                "The Confluence username of the user to look up "
+                "(as shown in the profile URL /display/~<username>)."
+            )
+        ),
+    ],
+) -> str:
+    """Get the full profile of a Confluence user (Data Center / Server).
+
+    Returns the basic identity data (username, userKey, displayName) plus,
+    when the instance has a profile plugin (Seibert CUP / Linchpin)
+    installed, the complete custom profile fields - e-mail, phone,
+    department, position, supervisor, address, etc. - merged with their
+    human-readable labels from the profile plugin's field definitions.
+
+    Args:
+        ctx: The FastMCP context.
+        username: The Confluence username to look up.
+
+    Returns:
+        JSON string with the user's identity data, the raw profile
+        key/value map, per-field labels/categories, and a flag whether
+        the profile plugin was available.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        result = confluence_fetcher.get_user_profile(username)
+        if not result["profile_available"]:
+            result["note"] = (
+                "No extended profile plugin (CUP/Linchpin) was detected on "
+                "this instance; only identity data is available."
+            )
+        return json.dumps(result, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(f"Authentication error fetching user profile: {e}", exc_info=False)
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error fetching user profile for {username}: {str(e)}")
+        return json.dumps(
+            {
+                "error": (
+                    "An unexpected error occurred while "
+                    f"profile of '{username}': {str(e)}"
+                ),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_users"},
+    annotations={"title": "Get Profile Fields", "readOnlyHint": True},
+)
+async def get_profile_fields(ctx: Context) -> str:
+    """List the custom user profile fields of this Confluence instance.
+
+    Returns the field definitions of the profile plugin (Seibert CUP /
+    Linchpin) installed on the instance: opaque field keys (e.g.
+    'cup.field-28'), human-readable labels, categories, data source
+    (e.g. LDAP) and help text. Use this to interpret the keys returned
+    by the user profile tool.
+
+    Args:
+        ctx: The FastMCP context.
+
+    Returns:
+        JSON string with the list of profile field definitions, or a note
+        that no profile plugin is available on this instance.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    try:
+        fields = confluence_fetcher.get_profile_fields()
+        if fields is None:
+            return json.dumps(
+                {
+                    "error": "No profile plugin (CUP/Linchpin) detected on this "
+                    "instance.",
+                    "profile_fields": None,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        return json.dumps({"profile_fields": fields}, indent=2, ensure_ascii=False)
+    except MCPAtlassianAuthenticationError as e:
+        logger.error(
+            f"Authentication error fetching profile fields: {e}",
+            exc_info=False,
+        )
+        return json.dumps(
+            {
+                "error": "Authentication failed. Please check your credentials.",
+                "details": str(e),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        logger.error(f"Error fetching profile fields: {str(e)}")
+        return json.dumps(
+            {
+                "error": (
+                    f"An unexpected error occurred while "
+                    f"fetching profile fields: {str(e)}",
+                    )
+                },
+            indent=2,
+            ensure_ascii=False,
+        )
+
 
 
 @confluence_mcp.tool(

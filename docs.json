@@ -3,7 +3,7 @@
   "theme": "mint",
   "name": "MCP Atlassian",
   "metadata": {
-    "og:description": "MCP server for Atlassian Jira and Confluence — all 98 tools enabled by default"
+    "og:description": "MCP server for Atlassian Jira and Confluence — all 100 tools enabled by default"
   },
   "seo": {
     "indexHiddenPages": false
@@ -86,6 +86,7 @@
             "pages": [
               "docs/tools/confluence-pages",
               "docs/tools/confluence-search",
+              "docs/tools/confluence-users",
               "docs/tools/confluence-attachments",
               "docs/tools/confluence-comments",
               "docs/tools/confluence-permissions",

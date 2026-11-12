@@ -255,3 +255,161 @@ class SearchMixin(ConfluenceClient):
             start += len(members)
 
         return matches[:limit]
+
+
+    # ------------------------------------------------------------------
+    # Custom User Profile (CUP / Linchpin) profile plugin support (DC)
+    #
+    # Data Center instances with the Seibert "Custom User Profile" plugin
+    # expose:
+    #   GET /rest/cup/1.0/fields                  -> field definitions
+    #   GET /rest/cup/1.0/profile?username=<u>    -> key/value profile data
+    # Both are probed gracefully: if the plugin is not installed the calls
+    # fail with 404/405/406 and callers fall back to plain identity data.
+    # ------------------------------------------------------------------
+
+    def _get_cup_endpoint(
+        self, endpoint: str, params: dict[str, Any] | None = None
+    ) -> Any | None:
+        """GET a CUP profile plugin endpoint, returning None when absent.
+
+        Args:
+            endpoint: REST endpoint path, e.g. ``rest/cup/1.0/fields``.
+            params: Optional query parameters.
+
+        Returns:
+            The decoded JSON response, or None if the instance does not
+            expose the CUP profile plugin (HTTP 404/405/406) or the
+            endpoint returns a non-JSON payload.
+
+        Raises:
+            MCPAtlassianAuthenticationError: On HTTP 401/403.
+            HTTPError: On any other HTTP error.
+        """
+        from requests.exceptions import HTTPError
+
+        from ..exceptions import MCPAtlassianAuthenticationError
+
+        try:
+            response = self.confluence.get(
+                endpoint, params=params, headers={"Accept": "application/json"}
+            )
+        except HTTPError as http_err:
+            status = (
+                http_err.response.status_code
+                if http_err.response is not None
+                else None
+            )
+            if status in (401, 403):
+                error_msg = (
+                    f"Authentication failed for Confluence API ({status}). "
+                    "Token may be expired or invalid. Please verify credentials."
+                )
+                logger.error(error_msg)
+                raise MCPAtlassianAuthenticationError(error_msg) from http_err
+            if status in (404, 405, 406):
+                logger.info(
+                    f"CUP profile plugin not available at {endpoint} "
+                    f"(HTTP {status})"
+                )
+                return None
+            raise
+        if response is None:
+            return None
+        if isinstance(response, (dict, list)):
+            return response
+        logger.warning(
+            f"CUP endpoint {endpoint} returned a non-JSON response; "
+            "the profile plugin is likely not installed or misconfigured."
+        )
+        return None
+
+    def get_profile_fields(self) -> list[dict[str, Any]] | None:
+        """Fetch the CUP profile plugin field definitions.
+
+        Returns the list of field definitions from ``/rest/cup/1.0/fields``.
+        Each field carries its opaque key (``userFieldBK``/``cup.field-NN``),
+        the human-readable label (``localizedLabel``), the category
+        (``localizedFieldCategoryLabel``), the data source and help text.
+
+        Returns:
+            List of field definition dicts, or None when the instance does
+            not expose the CUP profile plugin.
+        """
+        response = self._get_cup_endpoint("rest/cup/1.0/fields")
+        if not isinstance(response, list):
+            return None
+        return [f for f in response if isinstance(f, dict)]
+
+    def get_user_profile(self, username: str) -> dict[str, Any]:
+        """Fetch the full CUP profile of a user, merged with identity data.
+
+        Uses ``/rest/api/user?username=<u>`` for identity fields and
+        ``/rest/cup/1.0/profile?username=<u>`` for profile plugin data, then
+        annotates every profile field with its human-readable label and
+        category from ``/rest/cup/1.0/fields``.
+
+        Args:
+            username: The username of the user.
+
+        Returns:
+            A dict with:
+              ``user``: identity data (username, userKey, displayName, ...).
+              ``profile``: raw key -> value map from the CUP plugin, or None
+                  when the plugin is not installed.
+              ``profile_fields``: label/category annotations for each profile
+                  key (``cup.field-NN``), or None when unavailable.
+              ``profile_available``: whether the CUP profile plugin was found.
+
+        Raises:
+            MCPAtlassianAuthenticationError: If authentication fails.
+            ValueError: If the user cannot be found.
+        """
+        identity = self.confluence.get("rest/api/user", params={"username": username})
+        if not isinstance(identity, dict) or not identity.get("username"):
+            error = f"User '{username}' not found"
+            raise ValueError(error)
+
+        profile_raw = self._get_cup_endpoint(
+            "rest/cup/1.0/profile", params={"username": username}
+        )
+        profile: dict[str, Any] | None = (
+            profile_raw if isinstance(profile_raw, dict) else None
+        )
+
+        fields: list[dict[str, Any]] | None = None
+        if profile is not None:
+            fields = self.get_profile_fields()
+
+        profile_fields: dict[str, Any] | None = None
+        if profile is not None and fields:
+            by_key: dict[str, dict[str, Any]] = {}
+            for field in fields:
+                key = field.get("userFieldBK") or field.get("xmlKey")
+                if not isinstance(key, str) or not key:
+                    continue
+                by_key[key] = {
+                    "label": (
+                        field.get("localizedLabel")
+                        or field.get("labelPropertyKey")
+                    ),
+                    "category": field.get("localizedFieldCategoryLabel")
+                    or field.get("fieldCategoryPropertyKey"),
+                    "field_type": field.get("fieldType") or field.get("type"),
+                    "data_source": field.get("dataSourceType"),
+                    "help_text": (
+                        field.get("localizedHelpText")
+                        or field.get("helpTextKey")
+                    ),
+                }
+            profile_fields = {
+                key: by_key.get(key, {})
+                for key in profile if key in by_key
+            }
+
+        return {
+            "user": identity,
+            "profile": profile,
+            "profile_fields": profile_fields,
+            "profile_available": profile is not None,
+        }

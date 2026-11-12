@@ -1,0 +1,101 @@
+---
+title: "Confluence User Profiles"
+description: "Search users and read Confluence Data Center / Server user profiles (CUP / Linchpin)"
+---
+
+### Search User
+
+Search Confluence users. On Cloud this runs a CQL user query; on Server/Data Center the group member API is used (pass `group_name` to restrict the search).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | A CQL user query, or a plain search term that is converted to a `user.fullname ~ ...` search. Examples: `"Smith, John"`, `user.fullname ~ "Jane Doe"` |
+| `limit` | `integer` | No | Maximum number of results (1-50). Defaults to 10. |
+| `group_name` | `string` | No | Group to search within on Server/DC (default: `confluence-users`). Ignored on Cloud. |
+
+**Example:**
+
+```json
+{"query": "user.fullname ~ "Example, User"", "limit": 5}
+```
+
+---
+
+### Get User Profile
+
+Get the full profile of a Confluence user on **Server/Data Center** instances.
+
+Returns the basic identity data (`username`, `userKey`, `displayName`, profile picture) and - when the instance has a custom user profile plugin (Seibert CUP / Linchpin) installed - all extended profile fields (e-mail, phone, department, job title, supervisor, address, ...). Each field is annotated with its human-readable label, category and help text.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `username` | `string` | Yes | The Confluence username of the user (as shown in the profile URL `/display/~<username>`). |
+
+**Example:**
+
+```json
+{"username": "example_user"}
+```
+
+**Response (abbreviated):**
+
+```json
+{
+  "user": {
+    "username": "example_user",
+    "userKey": "abc808181624367e00162437c3607010a",
+    "displayName": "Example, User"
+  },
+  "profile": {
+    "confluence.department": "Development",
+    "cup.field-22": "user@example.com"
+  },
+  "profile_fields": {
+    "confluence.department": {
+      "label": "Team",
+      "category": "Organisation",
+      "field_type": "INPUT",
+      "data_source": "LDAP"
+    }
+  },
+  "profile_available": true
+}
+```
+
+<Warning>
+This tool is intended for Confluence Server/Data Center. The extended profile data requires a CUP/Linchpin profile plugin to be installed on the instance. If no profile plugin is detected, the response still contains the basic identity data and `profile_available` is `false` together with an explanatory `note`.
+</Warning>
+
+---
+
+### Get Profile Fields
+
+List the custom user profile field definitions of this Confluence **Server/Data Center** instance.
+
+Returns the field definitions of the installed profile plugin (Seibert CUP / Linchpin): opaque field keys (e.g. `cup.field-28`), human-readable labels, categories, data sources (e.g. LDAP) and help text. Use this to interpret the opaque keys returned by `get_user_profile`.
+
+**Parameters:** none.
+
+**Response (abbreviated):**
+
+```json
+{
+  "profile_fields": {
+    "cup.field-28": {
+      "label": "Short code",
+      "category": "Contact",
+      "field_type": "INPUT",
+      "data_source": "LDAP",
+      "help_text": "My short code"
+    }
+  }
+}
+```
+
+<Warning>
+This tool is only available on Confluence Server/Data Center instances that have a CUP/Linchpin profile plugin installed. On other deployments it returns a note that no profile plugin was detected.
+</Warning>

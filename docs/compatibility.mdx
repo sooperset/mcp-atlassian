@@ -204,6 +204,8 @@ MCP Atlassian supports both Atlassian Cloud and Server/Data Center deployments, 
 | `confluence_check_content_permissions` | Yes | No | Cloud-only content permissions API |
 | `confluence_get_space_permissions` | Yes | No | Cloud-only space permissions API |
 | `confluence_search_user` | Yes (CQL) | Yes (group member fallback) | Server/DC uses group member API; specify `group_name` |
+| `confluence_get_user_profile` | No | Yes (CUP/Linchpin) | Server/DC only; requires a profile plugin (Seibert CUP / Linchpin) |
+| `confluence_get_profile_fields` | No | Yes (CUP/Linchpin) | Server/DC only; requires a profile plugin |
 
 `jira_batch_get_changelogs` and `jira_move_issue` are tagged Cloud-only. When the
 configured Jira URL (or the `X-Atlassian-Jira-Url` request header) is a
