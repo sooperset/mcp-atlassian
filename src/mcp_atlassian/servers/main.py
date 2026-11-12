@@ -1035,6 +1035,10 @@ def _build_auth_provider() -> HardenedOAuthProxy | None:
         valid_scopes=scopes or None,
         allowed_grant_types=allowed_grant_types,
         forced_scopes=scopes or None,
+        # Atlassian rejects the RFC 8707 resource indicator with
+        # "invalid_target: Incorrect resource parameters". The proxy still
+        # checks that a client's resource matches this server.
+        forward_resource=False,
         token_endpoint_auth_method="client_secret_post",  # noqa: S106
         extra_authorize_params=(
             {"audience": "api.atlassian.com", "prompt": "consent"} if is_cloud else None
