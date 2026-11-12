@@ -497,7 +497,7 @@ class TestAttachmentsMixin:
             result = attachments_mixin.upload_attachments("123456", file_paths)
 
             # Assertions
-            assert result["success"] is True
+            assert result["success"] is False
             assert result["content_id"] == "123456"
             assert result["total"] == 3
             assert len(result["uploaded"]) == 2
@@ -507,6 +507,27 @@ class TestAttachmentsMixin:
             # Verify failed file details
             assert result["failed"][0]["filename"] == "file2.pdf"
             assert "File not found" in result["failed"][0]["error"]
+
+    def test_upload_attachments_all_failed(self, attachments_mixin: AttachmentsMixin):
+        """A batch where every upload fails must not report success."""
+        file_paths = ["/path/to/file1.txt", "/path/to/file2.pdf"]
+        mock_results = [
+            {"success": False, "error": "File not found: /path/to/file1.txt"},
+            {"success": False, "error": "File not found: /path/to/file2.pdf"},
+        ]
+
+        with patch.object(
+            attachments_mixin, "upload_attachment", side_effect=mock_results
+        ):
+            result = attachments_mixin.upload_attachments("123456", file_paths)
+
+        assert result["success"] is False
+        assert result["total"] == 2
+        assert result["uploaded"] == []
+        assert [item["filename"] for item in result["failed"]] == [
+            "file1.txt",
+            "file2.pdf",
+        ]
 
     def test_upload_attachments_empty_list(self, attachments_mixin: AttachmentsMixin):
         """Test upload with an empty list of file paths."""

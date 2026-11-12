@@ -312,7 +312,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 )
 
         return {
-            "success": True,
+            "success": not failed,
             "content_id": content_id,
             "total": len(file_paths),
             "uploaded": uploaded,
