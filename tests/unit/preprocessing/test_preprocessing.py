@@ -1788,3 +1788,114 @@ class TestHtmlConversionCodeProtection:
         """Direct test of _convert_html_to_markdown with markdown code spans."""
         result = preprocessor._convert_html_to_markdown(md_input)
         assert expected_substr in result, f"Expected '{expected_substr}' in: {result!r}"
+
+
+class TestConfluenceMacroParameterLeak:
+    """Macro parameter values must not leak into Markdown output."""
+
+    @staticmethod
+    def _markdown(html: str) -> str:
+        from mcp_atlassian.preprocessing.base import BasePreprocessor
+
+        _, markdown = BasePreprocessor(
+            base_url="https://confluence.example.com"
+        ).process_html_content(html)
+        return markdown
+
+    def test_panel_drops_params_keeps_title(self):
+        html = (
+            '<ac:structured-macro ac:name="panel" ac:schema-version="1">'
+            '<ac:parameter ac:name="borderColor">#deebff</ac:parameter>'
+            '<ac:parameter ac:name="bgColor">#f4f5f7</ac:parameter>'
+            '<ac:parameter ac:name="borderWidth">1</ac:parameter>'
+            '<ac:parameter ac:name="title">Title</ac:parameter>'
+            "<ac:rich-text-body><p>Panel body</p></ac:rich-text-body>"
+            "</ac:structured-macro>"
+        )
+        markdown = self._markdown(html)
+
+        assert markdown == "> **Title**\n>\n> Panel body"
+
+    def test_info_no_title_blockquote(self):
+        html = (
+            '<ac:structured-macro ac:name="info">'
+            '<ac:parameter ac:name="icon">true</ac:parameter>'
+            "<ac:rich-text-body><p>Heads up</p></ac:rich-text-body>"
+            "</ac:structured-macro>"
+        )
+
+        assert self._markdown(html) == "> Heads up"
+
+    def test_status_keeps_label(self):
+        html = (
+            "<p>State: "
+            '<ac:structured-macro ac:name="status" ac:schema-version="1">'
+            '<ac:parameter ac:name="colour">Blue</ac:parameter>'
+            '<ac:parameter ac:name="title">IN PROGRESS</ac:parameter>'
+            "</ac:structured-macro> since Monday</p>"
+        )
+        markdown = self._markdown(html)
+
+        assert markdown == "State: [IN PROGRESS] since Monday"
+
+    def test_nested_panel_titles(self):
+        html = (
+            '<ac:structured-macro ac:name="panel">'
+            '<ac:parameter ac:name="title">Outer</ac:parameter>'
+            "<ac:rich-text-body>"
+            '<ac:structured-macro ac:name="panel">'
+            '<ac:parameter ac:name="bgColor">#fff</ac:parameter>'
+            '<ac:parameter ac:name="title">Inner</ac:parameter>'
+            "<ac:rich-text-body><p>Deep</p></ac:rich-text-body>"
+            "</ac:structured-macro>"
+            "</ac:rich-text-body>"
+            "</ac:structured-macro>"
+        )
+        assert self._markdown(html) == ("> **Outer**\n>\n> > **Inner**\n> >\n> > Deep")
+
+    def test_code_in_panel_fenced(self):
+        html = (
+            '<ac:structured-macro ac:name="panel">'
+            '<ac:parameter ac:name="bgColor">#f4f5f7</ac:parameter>'
+            "<ac:rich-text-body>"
+            '<ac:structured-macro ac:name="code">'
+            '<ac:parameter ac:name="language">text</ac:parameter>'
+            "<ac:plain-text-body><![CDATA[print(1)]]></ac:plain-text-body>"
+            "</ac:structured-macro>"
+            "</ac:rich-text-body>"
+            "</ac:structured-macro>"
+        )
+        markdown = self._markdown(html)
+
+        assert markdown == "> ```text\n> print(1)\n> ```"
+        assert "#f4f5f7" not in markdown
+
+    def test_bodyless_macro_placeholder(self):
+        html = (
+            "<p>Before</p>"
+            '<ac:structured-macro ac:name="toc">'
+            '<ac:parameter ac:name="maxLevel">3</ac:parameter>'
+            "</ac:structured-macro>"
+        )
+        markdown = self._markdown(html)
+
+        assert markdown == "Before\n\n[toc macro]"
+
+    def test_plain_body_kept(self):
+        html = (
+            '<ac:structured-macro ac:name="html">'
+            '<ac:parameter ac:name="atlassian-macro-output-type">BLOCK</ac:parameter>'
+            "<ac:plain-text-body><![CDATA[raw text here]]></ac:plain-text-body>"
+            "</ac:structured-macro>"
+        )
+
+        assert self._markdown(html) == "raw text here"
+
+    def test_expand_keeps_body(self):
+        html = (
+            '<ac:structured-macro ac:name="expand">'
+            '<ac:parameter ac:name="title">More</ac:parameter>'
+            "<ac:rich-text-body><p>Hidden text</p></ac:rich-text-body>"
+            "</ac:structured-macro>"
+        )
+        assert self._markdown(html) == "**More**\n\nHidden text"
