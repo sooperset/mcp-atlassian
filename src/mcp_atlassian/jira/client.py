@@ -415,9 +415,16 @@ class JiraClient:
         url = self.jira.resource_url(resource, api_version="3")
         return self.jira.post(url, data=data, params=params)
 
-    def _put_api3(self, resource: str, data: dict[str, Any]) -> Any:
+    def _put_api3(
+        self,
+        resource: str,
+        data: dict[str, Any],
+        params: dict[str, str] | None = None,
+    ) -> Any:
         """PUT to Jira REST API v3 (required for ADF payloads on Cloud)."""
         url = self.jira.resource_url(resource, api_version="3")
+        if params:
+            return self.jira.put(url, data=data, params=params)
         return self.jira.put(url, data=data)
 
     def get_paged(

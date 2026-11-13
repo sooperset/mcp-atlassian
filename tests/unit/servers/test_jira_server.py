@@ -407,6 +407,30 @@ def mock_jira_fetcher():
         "remaining_estimate_updated": False,
     }
 
+    # Configure update_worklog / delete_worklog
+    mock_fetcher.update_worklog.return_value = {
+        "id": "10100",
+        "comment": "Worked on feature",
+        "created": "2024-01-01 10:00:00+00:00",
+        "updated": "2024-01-02 10:00:00+00:00",
+        "started": "2024-01-01 09:00:00+00:00",
+        "time_spent": "2h",
+        "time_spent_seconds": 7200,
+        "author": "Test User",
+        "remaining_estimate_updated": False,
+    }
+    mock_fetcher.delete_worklog.return_value = {
+        "id": "10100",
+        "comment": "Worked on feature",
+        "created": "2024-01-01 10:00:00+00:00",
+        "updated": "2024-01-01 10:00:00+00:00",
+        "started": "2024-01-01 09:00:00+00:00",
+        "time_spent": "1h 30m",
+        "time_spent_seconds": 5400,
+        "author": "Test User",
+        "remaining_estimate_updated": False,
+    }
+
     # Configure create_sprint
     mock_sprint = MagicMock()
     mock_sprint.to_simplified_dict.return_value = {
@@ -3824,6 +3848,148 @@ async def test_add_worklog(jira_client, mock_jira_fetcher):
     result = json.loads(response.content[0].text)
     assert result["worklog"]["time_spent"] == "1h 30m"
     assert result["worklog"]["time_spent_seconds"] == 5400
+
+
+@pytest.mark.anyio
+async def test_add_worklog_update_action(jira_client, mock_jira_fetcher):
+    """action='update' forwards only the values the caller provided."""
+    response = await jira_client.call_tool(
+        "jira_add_worklog",
+        {
+            "issue_key": "TEST-123",
+            "action": "update",
+            "worklog_id": "10100",
+            "time_spent": "2h",
+            "started": "2024-01-01T09:00:00.000+0000",
+        },
+    )
+
+    mock_jira_fetcher.update_worklog.assert_called_once_with(
+        issue_key="TEST-123",
+        worklog_id="10100",
+        time_spent="2h",
+        comment=None,
+        started="2024-01-01T09:00:00.000+0000",
+        remaining_estimate=None,
+    )
+    mock_jira_fetcher.add_worklog.assert_not_called()
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Worklog updated successfully"
+    assert result["worklog"]["time_spent_seconds"] == 7200
+
+
+@pytest.mark.anyio
+async def test_add_worklog_rejects_non_numeric_id(jira_client, mock_jira_fetcher):
+    """worklog_id is restricted to digits so it cannot alter the request path."""
+    with pytest.raises(ToolError):
+        await jira_client.call_tool(
+            "jira_add_worklog",
+            {
+                "issue_key": "TEST-123",
+                "action": "update",
+                "worklog_id": "../10100",
+                "time_spent": "1h",
+            },
+        )
+    mock_jira_fetcher.update_worklog.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_add_worklog_rejects_empty_time_spent(jira_client, mock_jira_fetcher):
+    """An empty time_spent fails schema validation instead of reaching Jira."""
+    with pytest.raises(ToolError):
+        await jira_client.call_tool(
+            "jira_add_worklog",
+            {
+                "issue_key": "TEST-123",
+                "action": "update",
+                "worklog_id": "10100",
+                "time_spent": "",
+            },
+        )
+    mock_jira_fetcher.update_worklog.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_add_worklog_rejects_unknown_action(jira_client, mock_jira_fetcher):
+    """action is limited to add, update and delete."""
+    with pytest.raises(ToolError):
+        await jira_client.call_tool(
+            "jira_add_worklog",
+            {"issue_key": "TEST-123", "action": "edit", "worklog_id": "10100"},
+        )
+    mock_jira_fetcher.update_worklog.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"action": "add"}, "time_spent is required"),
+        (
+            {"action": "add", "worklog_id": "10100", "time_spent": "1h"},
+            "worklog_id is not allowed",
+        ),
+        ({"action": "update", "time_spent": "1h"}, "worklog_id is required"),
+        ({"action": "delete"}, "worklog_id is required"),
+        (
+            {"action": "update", "worklog_id": "10100", "original_estimate": "2h"},
+            "original_estimate is only supported",
+        ),
+        (
+            {"action": "delete", "worklog_id": "10100", "original_estimate": "2h"},
+            "original_estimate is only supported",
+        ),
+        (
+            {"action": "delete", "worklog_id": "10100", "time_spent": "1h"},
+            "time_spent not allowed for action 'delete'",
+        ),
+        (
+            {"action": "delete", "worklog_id": "10100", "comment": "x"},
+            "comment not allowed for action 'delete'",
+        ),
+        (
+            {
+                "action": "delete",
+                "worklog_id": "10100",
+                "started": "2024-01-01T09:00:00.000+0000",
+            },
+            "started not allowed for action 'delete'",
+        ),
+    ],
+)
+async def test_add_worklog_rejects_params_outside_action(
+    jira_client, mock_jira_fetcher, arguments, message
+):
+    """Parameters that do not fit the action fail before any Jira call."""
+    with pytest.raises(ToolError, match=message):
+        await jira_client.call_tool(
+            "jira_add_worklog", {"issue_key": "TEST-123", **arguments}
+        )
+    mock_jira_fetcher.add_worklog.assert_not_called()
+    mock_jira_fetcher.update_worklog.assert_not_called()
+    mock_jira_fetcher.delete_worklog.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_add_worklog_delete_action(jira_client, mock_jira_fetcher):
+    """action='delete' returns the deleted entry."""
+    response = await jira_client.call_tool(
+        "jira_add_worklog",
+        {"issue_key": "TEST-123", "action": "delete", "worklog_id": "10100"},
+    )
+
+    mock_jira_fetcher.delete_worklog.assert_called_once_with(
+        issue_key="TEST-123",
+        worklog_id="10100",
+        remaining_estimate=None,
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["message"] == "Worklog deleted successfully"
+    assert result["worklog"]["id"] == "10100"
+    assert result["worklog"]["time_spent"] == "1h 30m"
 
 
 @pytest.mark.anyio
