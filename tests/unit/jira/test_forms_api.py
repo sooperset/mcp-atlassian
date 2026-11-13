@@ -42,7 +42,7 @@ class TestFormsApiMixinInitialization:
             oauth_config=oauth_config,
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             with patch(
                 "src.mcp_atlassian.utils.oauth.configure_oauth_session",
                 return_value=True,
@@ -61,7 +61,7 @@ class TestFormsApiMixinInitialization:
             auth_type="basic",
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             mixin = FormsApiMixin(config)
             assert mixin._cloud_id == MOCK_CLOUD_ID
 
@@ -86,7 +86,7 @@ class TestFormsApiMixinInitialization:
             oauth_config=oauth_config,
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             with patch(
                 "src.mcp_atlassian.utils.oauth.configure_oauth_session",
                 return_value=True,
@@ -103,7 +103,7 @@ class TestFormsApiMixinInitialization:
             auth_type="basic",
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             mixin = FormsApiMixin(config)
             assert mixin._cloud_id is None
 
@@ -121,7 +121,7 @@ class TestFormsApiMixinConfigurationErrors:
             auth_type="basic",
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             mixin = FormsApiMixin(config)
             mixin._cloud_id = None
             return mixin
@@ -171,7 +171,7 @@ class TestFormsApiResponseFormat:
             auth_type="basic",
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             mixin = FormsApiMixin(config)
             mixin._cloud_id = MOCK_CLOUD_ID
             mixin.jira = Mock()
@@ -259,7 +259,7 @@ class TestFormsApiAuthenticationMethods:
             oauth_config=oauth_config,
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             with patch(
                 "src.mcp_atlassian.utils.oauth.configure_oauth_session",
                 return_value=True,
@@ -290,7 +290,7 @@ class TestFormsApiAuthenticationMethods:
             auth_type="pat",
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             mixin = FormsApiMixin(config)
             mixin._cloud_id = MOCK_CLOUD_ID
 
@@ -321,7 +321,7 @@ class TestFormsApiAuthenticationMethods:
             auth_type="basic",
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             mixin = FormsApiMixin(config)
             mixin._cloud_id = MOCK_CLOUD_ID
             mixin.jira = Mock()
@@ -414,7 +414,7 @@ class TestFormsApiErrorHandling:
             auth_type="basic",
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             mixin = FormsApiMixin(config)
             mixin._cloud_id = MOCK_CLOUD_ID
             mixin.jira = Mock()
@@ -476,7 +476,7 @@ class TestFormsApiUpdateAnswers:
             auth_type="basic",
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             mixin = FormsApiMixin(config)
             mixin._cloud_id = MOCK_CLOUD_ID
             mixin.jira = Mock()
@@ -562,7 +562,7 @@ class TestFormsApiHttpErrorHandling:
             auth_type="basic",
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             mixin = FormsApiMixin(config)
             mixin._cloud_id = MOCK_CLOUD_ID
             mixin.jira = Mock()
@@ -640,7 +640,7 @@ class TestFormsApiDateTimeLimitation:
             auth_type="basic",
         )
 
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             mixin = FormsApiMixin(config)
             mixin._cloud_id = MOCK_CLOUD_ID
             mixin.jira = Mock()
