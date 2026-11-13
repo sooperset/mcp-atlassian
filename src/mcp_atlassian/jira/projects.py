@@ -186,6 +186,73 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             )
             return []
 
+    def create_project_component(
+        self,
+        project_key: str,
+        name: str,
+        description: str | None = None,
+        lead: str | None = None,
+        assignee_type: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a new component in the specified Jira project.
+
+        Args:
+            project_key: The project key (e.g., 'PROJ')
+            name: The name of the component
+            description: Description of the component (optional)
+            lead: Component lead - account ID on Cloud, username on Server/DC
+                (optional)
+            assignee_type: One of PROJECT_DEFAULT, COMPONENT_LEAD, PROJECT_LEAD,
+                UNASSIGNED (optional)
+
+        Returns:
+            The created component object as returned by Jira
+
+        Raises:
+            ValueError: If Jira rejected the request but still created the
+                component (observed when ``lead`` is invalid), so callers do
+                not retry into a duplicate-name error.
+        """
+        component: dict[str, Any] = {"project": project_key, "name": name}
+        if description is not None:
+            component["description"] = description
+        if lead is not None:
+            lead_key = "leadAccountId" if self.config.is_cloud else "leadUserName"
+            component[lead_key] = lead
+        if assignee_type is not None:
+            component["assigneeType"] = assignee_type
+
+        existing_names: set[str] = set()
+        if lead is not None:
+            existing_names = {
+                c.get("name", "") for c in self.get_project_components(project_key)
+            }
+        try:
+            result = self.jira.create_component(component)
+            return result if isinstance(result, dict) else {}
+        except Exception as e:
+            if lead is None or name in existing_names:
+                raise
+            # Jira can reject an invalid lead with a 400 yet still create the
+            # component without it, so check what actually happened.
+            created = next(
+                (
+                    c
+                    for c in self.get_project_components(project_key)
+                    if c.get("name") == name
+                ),
+                None,
+            )
+            if created is None:
+                raise
+            raise ValueError(
+                f"Jira reported an error ({e}), but component '{name}' "
+                f"(id {created.get('id')}) was still created in project "
+                f"{project_key} without the requested lead. Do not retry with "
+                "the same name; fix the component in Jira instead."
+            ) from e
+
     def get_project_versions(self, project_key: str) -> list[dict[str, Any]]:
         """
         Get all versions for a project.

@@ -5,7 +5,7 @@ import base64
 import binascii
 import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
@@ -3584,6 +3584,73 @@ async def get_project_components(
     jira = await get_jira_fetcher(ctx)
     components = jira.get_project_components(project_key)
     return json.dumps(components, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_projects"},
+    annotations={"title": "Create Project Component", "destructiveHint": False},
+)
+@check_write_access
+async def create_project_component(
+    ctx: Context,
+    project_key: Annotated[
+        str,
+        Field(
+            description="Jira project key (e.g., 'PROJ', 'ACV2')",
+            pattern=PROJECT_KEY_PATTERN,
+        ),
+    ],
+    name: Annotated[str, Field(description="Name of the component")],
+    description: Annotated[
+        str | None, Field(description="Description of the component", default=None)
+    ] = None,
+    lead: Annotated[
+        str | None,
+        Field(
+            description=("Component lead: account ID (Cloud) or username (Server/DC)"),
+            default=None,
+        ),
+    ] = None,
+    assignee_type: Annotated[
+        Literal["PROJECT_DEFAULT", "COMPONENT_LEAD", "PROJECT_LEAD", "UNASSIGNED"]
+        | None,
+        Field(
+            description="Default assignee type for issues with this component",
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Create a new component in a Jira project.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        name: Name of the component.
+        description: Description (optional).
+        lead: Component lead (optional).
+        assignee_type: Default assignee type (optional).
+
+    Returns:
+        JSON string of the created component object.
+    """
+    jira = await get_jira_fetcher(ctx)
+    try:
+        component = jira.create_project_component(
+            project_key=project_key,
+            name=name,
+            description=description,
+            lead=lead,
+            assignee_type=assignee_type,
+        )
+        return json.dumps(component, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(
+            f"Error creating component in project {project_key}: {str(e)}",
+            exc_info=True,
+        )
+        return json.dumps(
+            {"success": False, "error": str(e)}, indent=2, ensure_ascii=False
+        )
 
 
 @jira_mcp.tool(

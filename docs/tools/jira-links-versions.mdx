@@ -105,6 +105,24 @@ Get all components for a specific Jira project.
 
 ---
 
+### Create Project Component
+
+Create a new component in a Jira project.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'ACV2') |
+| `name` | `string` | Yes | Name of the component |
+| `description` | `string` | No | Description of the component |
+| `lead` | `string` | No | Component lead: account ID (Cloud) or username (Server/DC) |
+| `assignee_type` | `string` | No | Default assignee type for issues with this component |
+
+---
+
 ### Create Version
 
 Create a new fix version in a Jira project.

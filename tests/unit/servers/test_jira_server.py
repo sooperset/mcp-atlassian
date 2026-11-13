@@ -476,6 +476,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         create_customer_request,
         create_issue,
         create_issue_link,
+        create_project_component,
         create_remote_issue_link,
         create_sprint,
         delete_issue,
@@ -586,6 +587,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(update_sprint)
     jira_sub_mcp.add_tool(add_issues_to_sprint)
     jira_sub_mcp.add_tool(batch_create_versions)
+    jira_sub_mcp.add_tool(create_project_component)
     jira_sub_mcp.add_tool(update_version)
     test_mcp.mount(jira_sub_mcp, namespace="jira")
     return test_mcp
@@ -2087,6 +2089,40 @@ async def test_get_project_fields_tool_configuration_error(
     assert data["success"] is False
     assert data["project_key"] == "TEST"
     assert "Configuration Error" in data["error"]
+
+
+@pytest.mark.anyio
+async def test_create_project_component_tool(jira_client, mock_jira_fetcher):
+    """Test the jira_create_project_component tool."""
+    mock_jira_fetcher.create_project_component.return_value = {
+        "id": "10",
+        "name": "Backend",
+    }
+    response = await jira_client.call_tool(
+        "jira_create_project_component",
+        {"project_key": "TEST", "name": "Backend", "assignee_type": "PROJECT_LEAD"},
+    )
+    content = json.loads(response.content[0].text)
+    assert content == {"id": "10", "name": "Backend"}
+    mock_jira_fetcher.create_project_component.assert_called_once_with(
+        project_key="TEST",
+        name="Backend",
+        description=None,
+        lead=None,
+        assignee_type="PROJECT_LEAD",
+    )
+
+
+@pytest.mark.anyio
+async def test_create_project_component_tool_failure(jira_client, mock_jira_fetcher):
+    """Test the tool returns an error payload when creation fails."""
+    mock_jira_fetcher.create_project_component.side_effect = Exception("boom")
+    response = await jira_client.call_tool(
+        "jira_create_project_component", {"project_key": "TEST", "name": "X"}
+    )
+    content = json.loads(response.content[0].text)
+    assert content["success"] is False
+    assert "boom" in content["error"]
 
 
 @pytest.mark.anyio
