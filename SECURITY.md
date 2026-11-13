@@ -2,10 +2,12 @@
 
 ## Supported Versions
 
+Security fixes are released for the latest minor line only. Upgrade to the newest patch release of that line to receive them.
+
 | Version | Supported |
 |---------|-----------|
-| 0.14.x  | ✅ |
-| < 0.14  | ❌ |
+| 0.24.x  | ✅ |
+| < 0.24  | ❌ |
 
 ## Reporting a Vulnerability
 
