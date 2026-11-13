@@ -25,7 +25,10 @@ from mcp_atlassian.utils.logging import (
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.proxy import apply_proxy_configuration
 from mcp_atlassian.utils.ssl import configure_ssl_verification
-from mcp_atlassian.utils.ssrf_adapter import mount_ssrf_pinning
+from mcp_atlassian.utils.ssrf_adapter import (
+    bind_credentials_to_host,
+    mount_ssrf_pinning,
+)
 from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
 from mcp_atlassian.utils.user_agent import get_default_user_agent
 
@@ -58,6 +61,9 @@ class JiraClient:
         # Load configuration from environment variables if not provided
         self.config = config or JiraConfig.from_env()
         transport_url = self.config.url
+        # Fixed, code-built gateway URLs that may keep the deployment proxy.
+        # ``config.url`` can come from a request header, so it is never added.
+        proxy_trusted_urls: list[str] = []
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "oauth":
@@ -91,6 +97,8 @@ class JiraClient:
                 api_url = f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
             transport_url = api_url
+            if not is_dc_oauth:
+                proxy_trusted_urls.append(api_url)
 
             # Initialize Jira with the session
             self.jira = Jira(
@@ -172,7 +180,7 @@ class JiraClient:
             log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
 
         # Configure SSL verification using the shared utility
-        configure_ssl_verification(
+        effective_verify = configure_ssl_verification(
             service_name="Jira",
             url=transport_url,
             session=self.jira._session,
@@ -182,6 +190,10 @@ class JiraClient:
             client_key_password=self.config.client_key_password,
             no_proxy=self.config.no_proxy,
         )
+        # atlassian-python-api passes verify=self.verify_ssl on every request,
+        # which overrides session.verify; keep the wrapper in sync so an
+        # operator CA bundle applies to normal API calls too.
+        self.jira.verify_ssl = effective_verify
 
         # Validate redirects for SSRF on every outbound call from this session
         # (covers direct _session.get() paths and global/stdio fetchers, not just
@@ -189,7 +201,7 @@ class JiraClient:
         self.jira._session.hooks["response"].append(make_ssrf_redirect_hook())
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
-        mount_ssrf_pinning(self.jira._session, transport_url)
+        mount_ssrf_pinning(self.jira._session, *proxy_trusted_urls)
 
         # atlassian-python-api's built-in retry_with_header performs an UNBOUNDED,
         # header-driven retry (``time.sleep(int(Retry-After)); retry``). It melts
@@ -199,10 +211,10 @@ class JiraClient:
         # urllib3 Retry policy is the single source of retry truth.
         self.jira.retry_with_header = False
 
-        # Apply opt-in HTTP hardening after SSL setup and after the pinning
-        # adapter is mounted: these wrappers patch send() in place on whatever
-        # adapters are mounted now, so mounting the pinning adapter later would
-        # silently drop them.
+        # Apply HTTP hardening (bounded read retries by default, the rest opt-in)
+        # after SSL setup and after the pinning adapter is mounted: these
+        # wrappers patch send() in place on whatever adapters are mounted now,
+        # so mounting the pinning adapter later would silently drop them.
         configure_retry(self.jira._session, service="Jira")
         configure_concurrency(self.jira._session, service="Jira")
         configure_rate_limit(self.jira._session, service="Jira")
@@ -224,6 +236,13 @@ class JiraClient:
         # Apply custom headers if configured
         if self.config.custom_headers:
             self._apply_custom_headers()
+        # Credentials and custom headers belong to the service host only.
+        custom_headers = self.config.custom_headers
+        bind_credentials_to_host(
+            self.jira._session,
+            transport_url,
+            list(custom_headers) if isinstance(custom_headers, dict) else [],
+        )
 
         # Initialize the text preprocessor for text processing capabilities
         self.preprocessor = JiraPreprocessor(

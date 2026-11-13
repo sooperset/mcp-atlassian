@@ -45,3 +45,23 @@ class TestDefaultReadJiraFields:
             assert " " not in field
             assert not field.startswith("_")
             assert not field.endswith("_")
+
+    def test_joined_default_is_alphabetically_sorted(self):
+        """Regression test for #1662.
+
+        Every call site that turns DEFAULT_READ_JIRA_FIELDS into the "fields"
+        default of a tool schema must sort it first. DEFAULT_READ_JIRA_FIELDS is
+        a set, so plain `",".join(DEFAULT_READ_JIRA_FIELDS)` iterates in an order
+        that depends on the process's (randomised) hash seed: two worker
+        processes of the same version then advertise two different tool
+        schemas for jira_search/jira_get_issue/jira_get_board_issues/
+        jira_get_sprint_issues, which MCP clients that fingerprint the tool
+        catalog (e.g. GitHub Copilot CLI) treat as the catalog having changed
+        mid-session, aborting the call.
+        """
+        joined = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS))
+        assert joined == (
+            "assignee,created,description,issuetype,labels,priority,"
+            "reporter,status,summary,updated,versions"
+        )
+        assert joined == ",".join(sorted(joined.split(",")))

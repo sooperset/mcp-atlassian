@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from mcp.server.auth.provider import (
+    AuthorizationParams,
     OAuthClientInformationFull,
     RegistrationError,
 )
@@ -126,6 +127,29 @@ class HardenedOAuthProxy(OAuthProxy):
 
         client_info = client_info.model_copy(update=updates)
         await super().register_client(client_info)
+
+    async def authorize(
+        self,
+        client: OAuthClientInformationFull,
+        params: AuthorizationParams,
+    ) -> str:
+        """Request the forced scopes from the upstream IdP on every authorization.
+
+        A client may request a subset of its registered scopes, for example
+        one that registered before the operator extended the scope list.
+        Without this override the upstream IdP issues a token that lacks the
+        missing scopes, and the tools that need them fail.
+        """
+        if self._forced_scopes is not None:
+            requested = params.scopes or []
+            if set(requested) != set(self._forced_scopes):
+                logger.info(
+                    "Authorize requested scope %s; enforcing %s",
+                    requested,
+                    self._forced_scopes,
+                )
+            params = params.model_copy(update={"scopes": list(self._forced_scopes)})
+        return await super().authorize(client, params)
 
 
 __all__ = ["HardenedOAuthProxy", "parse_env_list"]
