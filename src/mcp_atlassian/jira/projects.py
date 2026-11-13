@@ -545,7 +545,11 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             return 0
 
     def get_project_issues(
-        self, project_key: str, start: int = 0, limit: int = 50
+        self,
+        project_key: str,
+        start: int = 0,
+        limit: int = 50,
+        include_total: bool = False,
     ) -> JiraSearchResult:
         """
         Get issues for a specific project.
@@ -554,6 +558,7 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             project_key: The project key
             start: Index of the first issue to return
             limit: Maximum number of issues to return
+            include_total: On Cloud, also fetch an approximate total match count
 
         Returns:
             List of JiraIssue models representing the issues
@@ -562,7 +567,9 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             # Use JQL to get issues in the project
             jql = f'project = "{project_key}"'
 
-            return self.search_issues(jql, start=start, limit=limit)
+            return self.search_issues(
+                jql, start=start, limit=limit, include_total=include_total
+            )
 
         except Exception as e:
             logger.error(f"Error getting issues for project {project_key}: {str(e)}")

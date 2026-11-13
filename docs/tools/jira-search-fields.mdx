@@ -19,6 +19,7 @@ Search Jira issues using JQL (Jira Query Language).
 | `expand` | `string` | No | (Optional) fields to expand. Examples: 'renderedFields', 'transitions', 'changelog' |
 | `page_token` | `string` | No | (Optional) Pagination token from a previous search result. Cloud only — Server/DC uses start_at for pagination. |
 | `use_display_names` | `boolean` | No | When true, custom field keys in the output use human-readable display names (e.g. 'Story Points') instead of opaque IDs (e.g. 'customfield_10243'). The 'names' expansion is added automatically. Standard fields are unaffected. |
+| `include_total` | `boolean` | No | (Optional) Jira Cloud only: also return the number of matching issues in 'total', using one extra request to Jira's approximate-count API. The count is approximate (very recent changes may be missing) and is marked with 'total_is_approximate'. If it cannot be fetched, 'total' stays -1 and 'total_error' explains why. Server/DC always returns an exact total, so this has no effect there. |
 **Example:**
 
 ```json

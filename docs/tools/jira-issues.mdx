@@ -247,5 +247,6 @@ Get all issues for a specific Jira project.
 | `project_key` | `string` | Yes | Jira project key (e.g., 'PROJ', 'ACV2') |
 | `limit` | `integer` | No | Maximum number of results (1-50) |
 | `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `include_total` | `boolean` | No | (Optional) Jira Cloud only: also return the number of matching issues in 'total', using one extra request to Jira's approximate-count API. The count is approximate (very recent changes may be missing) and is marked with 'total_is_approximate'. If it cannot be fetched, 'total' stays -1 and 'total_error' explains why. Server/DC always returns an exact total, so this has no effect there. |
 
 ---

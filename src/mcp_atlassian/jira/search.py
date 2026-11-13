@@ -68,6 +68,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         expand: str | None = None,
         projects_filter: str | None = None,
         page_token: str | None = None,
+        include_total: bool = False,
     ) -> JiraSearchResult:
         """
         Search for issues using JQL (Jira Query Language).
@@ -85,6 +86,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 replaces it)
             page_token: Optional pagination token from a previous search result.
                   Cloud only — Server/DC uses start for pagination.
+            include_total: On Cloud, also fetch an approximate total match count
+                  with one extra request to the approximate-count endpoint.
+                  Server/DC always returns an exact total, so this is ignored there.
 
         Returns:
             JiraSearchResult object containing issues and metadata (total, start_at, max_results)
@@ -164,9 +168,16 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
                 # Build response dict for model
                 # Note: v3 API doesn't provide total count, so we use -1
+                # unless the caller opted into the approximate count.
+                total = -1
+                total_error: str | None = None
+                if include_total:
+                    count, total_error = self._get_approximate_count(jql)
+                    if count is not None:
+                        total = count
                 response_dict: dict[str, Any] = {
                     "issues": all_issues[:limit],
-                    "total": -1,
+                    "total": total,
                     "startAt": 0,
                     "maxResults": limit,
                 }
@@ -181,6 +192,9 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     requested_fields=fields_param,
                     allowed_projects=allowed_project_keys(self.config),
                 )
+                if include_total:
+                    search_result.total_is_approximate = total >= 0
+                    search_result.total_error = total_error
 
                 return search_result
             else:
@@ -209,6 +223,50 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         except Exception as e:
             logger.error(f"Error searching issues with JQL '{jql}': {str(e)}")
             raise Exception(f"Error searching issues: {str(e)}") from e
+
+    def _get_approximate_count(self, jql: str) -> tuple[int | None, str | None]:
+        """Fetch the approximate number of issues matching ``jql`` (Cloud only).
+
+        Uses ``POST /rest/api/3/search/approximate-count``. The count may lag
+        behind very recent updates, and Jira rejects unbounded JQL here the same
+        way it does for ``/search/jql``. A failure never fails the search.
+
+        Args:
+            jql: The final JQL, with the project allowlist already applied.
+
+        Returns:
+            A ``(count, error)`` tuple: the count and ``None`` on success, or
+            ``None`` and a short error message on failure.
+        """
+        try:
+            response = self.jira.post(
+                "rest/api/3/search/approximate-count", json={"jql": jql}
+            )
+        except HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            logger.warning(
+                f"Approximate count request failed (HTTP {status}) for JQL '{jql}'"
+            )
+            if status == 400:
+                return None, (
+                    "Approximate count unavailable (HTTP 400): Jira rejected the "
+                    "JQL for counting. Unbounded queries need a restriction such "
+                    "as a project."
+                )
+            if status is not None:
+                return None, f"Approximate count unavailable (HTTP {status})"
+            return None, "Approximate count unavailable (request failed)"
+        except requests.RequestException as e:
+            logger.warning(f"Approximate count request failed: {e}")
+            return None, "Approximate count unavailable (request failed)"
+
+        count = response.get("count") if isinstance(response, dict) else None
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            logger.warning(
+                f"Unexpected response from approximate-count API: {response!r}"
+            )
+            return None, "Approximate count unavailable (unexpected response)"
+        return count, None
 
     def get_board_issues(
         self,

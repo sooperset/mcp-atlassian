@@ -1367,3 +1367,188 @@ class TestSearchFilterAndInjectionRegression:
             "config allowlist must still be applied even when a projects_filter arg "
             f"is supplied; JQL was {sent_jql!r}"
         )
+
+
+class TestSearchIssuesIncludeTotal:
+    """Tests for the opt-in approximate total on Jira Cloud."""
+
+    @pytest.fixture
+    def cloud_search(self, jira_fetcher: JiraFetcher) -> SearchMixin:
+        """A Cloud SearchMixin whose search and count calls are routed by path."""
+        mixin = jira_fetcher
+        mixin.config = MagicMock()
+        mixin.config.is_cloud = True
+        mixin.config.projects_filter = None
+        mixin.config.url = "https://example.atlassian.net"
+        return mixin
+
+    @staticmethod
+    def _search_page() -> dict[str, Any]:
+        return {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-1",
+                    "fields": {"summary": "Issue 1", "status": {"name": "Open"}},
+                }
+            ],
+        }
+
+    def _route_posts(self, mixin: SearchMixin, count_result: Any) -> MagicMock:
+        """Route search/jql to one page and approximate-count to count_result."""
+
+        def post(path: str, **kwargs: Any) -> Any:
+            if path == "rest/api/3/search/approximate-count":
+                if isinstance(count_result, Exception):
+                    raise count_result
+                return count_result
+            return self._search_page()
+
+        mixin.jira.post = MagicMock(side_effect=post)
+        return mixin.jira.post
+
+    @staticmethod
+    def _http_error(status: int) -> requests.HTTPError:
+        response = requests.Response()
+        response.status_code = status
+        return requests.HTTPError(f"{status} Client Error", response=response)
+
+    def _count_calls(self, post: MagicMock) -> list[Any]:
+        return [
+            c
+            for c in post.call_args_list
+            if c.args[0] == "rest/api/3/search/approximate-count"
+        ]
+
+    def test_default_does_not_request_count(self, cloud_search: SearchMixin):
+        """Without include_total the extra request is never made."""
+        post = self._route_posts(cloud_search, {"count": 153})
+
+        result = cloud_search.search_issues("project = TEST", limit=5)
+
+        assert self._count_calls(post) == []
+        assert result.total == -1
+        simplified = result.to_simplified_dict()
+        assert "total_is_approximate" not in simplified
+        assert "total_error" not in simplified
+
+    def test_include_total_fills_total(self, cloud_search: SearchMixin):
+        """The approximate count becomes the total and is marked approximate."""
+        post = self._route_posts(cloud_search, {"count": 153})
+
+        result = cloud_search.search_issues(
+            "project = TEST", limit=5, include_total=True
+        )
+
+        count_calls = self._count_calls(post)
+        assert len(count_calls) == 1
+        assert count_calls[0].kwargs["json"] == {"jql": "project = TEST"}
+        assert result.total == 153
+        assert result.total_is_approximate is True
+        assert result.total_error is None
+        simplified = result.to_simplified_dict()
+        assert simplified["total"] == 153
+        assert simplified["total_is_approximate"] is True
+        assert "total_error" not in simplified
+        assert result.to_display_name_dict()["total_is_approximate"] is True
+
+    def test_include_total_counts_zero(self, cloud_search: SearchMixin):
+        """A count of zero is a valid total, not a failure."""
+        self._route_posts(cloud_search, {"count": 0})
+
+        result = cloud_search.search_issues(
+            "project = TEST", limit=5, include_total=True
+        )
+
+        assert result.total == 0
+        assert result.total_is_approximate is True
+        assert result.total_error is None
+
+    def test_include_total_uses_projects_filter_jql(self, cloud_search: SearchMixin):
+        """The count uses the same allowlisted JQL as the search."""
+        cloud_search.config.projects_filter = "ALLOWED"
+        post = self._route_posts(cloud_search, {"count": 3})
+
+        cloud_search.search_issues("status = Open", limit=5, include_total=True)
+
+        search_jql = next(
+            c.kwargs["json"]["jql"]
+            for c in post.call_args_list
+            if c.args[0] == "rest/api/3/search/jql"
+        )
+        count_jql = self._count_calls(post)[0].kwargs["json"]["jql"]
+        assert count_jql == search_jql
+        assert "ALLOWED" in count_jql
+
+    def test_include_total_bad_request_keeps_search(self, cloud_search: SearchMixin):
+        """A 400 from the count (e.g. unbounded JQL) does not fail the search."""
+        self._route_posts(cloud_search, self._http_error(400))
+
+        result = cloud_search.search_issues(
+            "order by created", limit=5, include_total=True
+        )
+
+        assert len(result.issues) == 1
+        assert result.total == -1
+        assert result.total_is_approximate is False
+        assert result.total_error is not None
+        assert "HTTP 400" in result.total_error
+        simplified = result.to_simplified_dict()
+        assert simplified["total_error"] == result.total_error
+        assert "total_is_approximate" not in simplified
+
+    @pytest.mark.parametrize(
+        ("count_result", "expected"),
+        [
+            (requests.ConnectionError("boom"), "request failed"),
+            (requests.HTTPError("no response"), "request failed"),
+            ({"unexpected": True}, "unexpected response"),
+            ({"count": "153"}, "unexpected response"),
+            ({"count": True}, "unexpected response"),
+            ({"count": -5}, "unexpected response"),
+            (None, "unexpected response"),
+        ],
+    )
+    def test_include_total_other_failures(
+        self, cloud_search: SearchMixin, count_result: Any, expected: str
+    ):
+        """Network errors and malformed responses fall back to -1."""
+        self._route_posts(cloud_search, count_result)
+
+        result = cloud_search.search_issues(
+            "project = TEST", limit=5, include_total=True
+        )
+
+        assert len(result.issues) == 1
+        assert result.total == -1
+        assert result.total_is_approximate is False
+        assert result.total_error is not None
+        assert expected in result.total_error
+
+    def test_include_total_server_status_error(self, cloud_search: SearchMixin):
+        """Non-400 HTTP errors report their status."""
+        self._route_posts(cloud_search, self._http_error(503))
+
+        result = cloud_search.search_issues(
+            "project = TEST", limit=5, include_total=True
+        )
+
+        assert result.total == -1
+        assert result.total_error == "Approximate count unavailable (HTTP 503)"
+
+    def test_include_total_ignored_on_server(self, cloud_search: SearchMixin):
+        """Server/DC keeps its exact total and makes no extra request."""
+        cloud_search.config.is_cloud = False
+        cloud_search.jira.post = MagicMock()
+        cloud_search.jira.jql = MagicMock(
+            return_value={**self._search_page(), "total": 42, "startAt": 0}
+        )
+
+        result = cloud_search.search_issues(
+            "project = TEST", limit=5, include_total=True
+        )
+
+        cloud_search.jira.post.assert_not_called()
+        assert result.total == 42
+        assert result.total_is_approximate is False
+        assert result.total_error is None
