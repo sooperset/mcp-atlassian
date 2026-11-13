@@ -653,6 +653,47 @@ class ConfluenceV2Adapter:
             )
             return None
 
+    def delete_comment(self, comment_id: str) -> None:
+        """Delete a footer or inline comment using the v2 API.
+
+        Confluence Cloud exposes separate delete endpoints for footer and inline
+        comments, but callers only have a content ID. Try the footer endpoint
+        first and fall back to the inline endpoint when the ID is not found.
+
+        Args:
+            comment_id: The ID of the comment to delete.
+
+        Raises:
+            ValueError: If the comment cannot be deleted.
+        """
+        endpoints = ("footer-comments", "inline-comments")
+
+        for index, endpoint in enumerate(endpoints):
+            url = f"{self.base_url}/api/v2/{endpoint}/{comment_id}"
+            try:
+                response = self.session.delete(url)
+                response.raise_for_status()
+                logger.debug(
+                    "Successfully deleted %s comment '%s' with v2 API",
+                    endpoint.removesuffix("-comments"),
+                    comment_id,
+                )
+                return
+            except HTTPError as e:
+                if e.response is not None and e.response.status_code == 404:
+                    if index == 0:
+                        continue
+                    break
+                logger.error("HTTP error deleting comment '%s': %s", comment_id, e)
+                raise ValueError(f"Failed to delete comment '{comment_id}': {e}") from e
+            except requests.RequestException as e:
+                logger.error("Error deleting comment '%s': %s", comment_id, e)
+                raise ValueError(f"Failed to delete comment '{comment_id}': {e}") from e
+
+        raise ValueError(
+            f"Comment '{comment_id}' was not found as a footer or inline comment"
+        )
+
     def get_inline_comments(
         self,
         page_id: str,

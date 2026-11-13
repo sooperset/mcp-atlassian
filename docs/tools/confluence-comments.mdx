@@ -67,6 +67,29 @@ Get comment IDs from `confluence_get_comments`. Replies are threaded under the p
 
 ---
 
+### Delete Comment
+
+Delete a footer or inline comment from a Confluence page.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `comment_id` | `string` | Yes | The ID of the footer or inline comment to delete |
+**Example:**
+
+```json
+{"comment_id": "67890"}
+```
+
+<Tip>
+Works for both footer and inline comments. Get comment IDs from `confluence_get_comments` or `confluence_get_inline_comments`. Deletion is permanent.
+</Tip>
+
+---
+
 ### Get Inline Comments
 
 Get all inline comments for a Confluence page.

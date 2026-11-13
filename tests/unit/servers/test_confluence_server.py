@@ -65,6 +65,7 @@ def mock_confluence_fetcher():
     mock_fetcher.update_page.return_value = mock_page
     mock_fetcher.update_page_section.return_value = mock_page
     mock_fetcher.delete_page.return_value = True
+    mock_fetcher.delete_comment.return_value = True
 
     # Mock comment
     mock_comment = MagicMock()
@@ -237,6 +238,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         create_page,
         create_page_from_template,
         delete_attachment,
+        delete_comment,
         delete_page,
         download_attachment,
         download_content_attachments,
@@ -289,6 +291,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(delete_comment)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
@@ -320,6 +323,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         create_page,
         create_page_from_template,
         delete_attachment,
+        delete_comment,
         delete_page,
         download_attachment,
         download_content_attachments,
@@ -374,6 +378,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(delete_comment)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
@@ -766,6 +771,33 @@ async def test_add_comment(client, mock_confluence_fetcher):
     assert result_data["comment"]["author"] == "Test User"
     assert result_data["comment"]["body"] == "This is a test comment added via API"
     assert result_data["comment"]["created"] == "2023-08-01T13:00:00.000Z"
+
+
+@pytest.mark.anyio
+async def test_delete_comment(client, mock_confluence_fetcher):
+    """Test delete_comment forwards the comment ID and reports success."""
+    response = await client.call_tool(
+        "confluence_delete_comment", {"comment_id": "987654"}
+    )
+
+    mock_confluence_fetcher.delete_comment.assert_called_once_with(comment_id="987654")
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is True
+    assert "987654" in result_data["message"]
+
+
+@pytest.mark.anyio
+async def test_delete_comment_failure(client, mock_confluence_fetcher):
+    """Test delete_comment reports failure when the fetcher returns False."""
+    mock_confluence_fetcher.delete_comment.return_value = False
+
+    response = await client.call_tool(
+        "confluence_delete_comment", {"comment_id": "987654"}
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is False
 
 
 @pytest.mark.anyio

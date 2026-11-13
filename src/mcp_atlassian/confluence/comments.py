@@ -55,7 +55,8 @@ class CommentsMixin(ConfluenceClient):
         """
         if self.config.is_cloud and self.config.auth_type in ("oauth", "pat"):
             return ConfluenceV2Adapter(
-                session=self.confluence._session, base_url=self.confluence.url
+                session=self.confluence._session,
+                base_url=self._v1_rest_base_url(),
             )
         return None
 
@@ -492,6 +493,33 @@ class CommentsMixin(ConfluenceClient):
                 exc_info=True,
             )
             return None
+
+    def delete_comment(self, comment_id: str) -> bool:
+        """Delete a footer or inline comment.
+
+        Cloud OAuth/PAT uses the v2 comment endpoints. Cloud basic auth and
+        Server/DC use the v1 content endpoint.
+
+        Args:
+            comment_id: The ID of the comment to delete
+
+        Returns:
+            True if the comment was deleted, False otherwise
+        """
+        try:
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                v2_adapter.delete_comment(comment_id)
+            else:
+                self.confluence.remove_content(comment_id)
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Network error when deleting comment {comment_id}: {e}")
+            return False
+        except Exception as e:  # noqa: BLE001 - Intentional fallback with full logging
+            logger.error(f"Unexpected error deleting comment {comment_id}: {e}")
+            logger.debug("Full exception details for deleting comment:", exc_info=True)
+            return False
 
     def _process_comment_response(
         self, response: dict[str, Any], space_key: str

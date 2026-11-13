@@ -1,0 +1,4 @@
+example: |
+  {"comment_id": "67890"}
+tips: |
+  Works for both footer and inline comments. Get comment IDs from `confluence_get_comments` or `confluence_get_inline_comments`. Deletion is permanent.

@@ -427,6 +427,59 @@ class TestConfluenceV2AdapterComments:
             ),
         ]
 
+    def test_delete_comment_uses_footer_endpoint_first(self, v2_adapter, mock_session):
+        """Footer comments are deleted without probing the inline endpoint."""
+        response = Mock()
+        mock_session.delete.return_value = response
+
+        v2_adapter.delete_comment("12345")
+
+        mock_session.delete.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/footer-comments/12345"
+        )
+        response.raise_for_status.assert_called_once_with()
+
+    def test_delete_comment_falls_back_to_inline_endpoint(
+        self, v2_adapter, mock_session
+    ):
+        """A footer 404 retries the matching inline-comment endpoint."""
+        not_found = Mock(status_code=404)
+        not_found.raise_for_status.side_effect = HTTPError(response=not_found)
+        deleted = Mock(status_code=204)
+        mock_session.delete.side_effect = [not_found, deleted]
+
+        v2_adapter.delete_comment("12345")
+
+        assert mock_session.delete.call_args_list == [
+            call("https://example.atlassian.net/wiki/api/v2/footer-comments/12345"),
+            call("https://example.atlassian.net/wiki/api/v2/inline-comments/12345"),
+        ]
+        deleted.raise_for_status.assert_called_once_with()
+
+    def test_delete_comment_does_not_hide_non_404_error(self, v2_adapter, mock_session):
+        """Authentication and server errors do not trigger a misleading retry."""
+        forbidden = Mock(status_code=403)
+        forbidden.raise_for_status.side_effect = HTTPError(response=forbidden)
+        mock_session.delete.return_value = forbidden
+
+        with pytest.raises(ValueError, match="Failed to delete comment '12345'"):
+            v2_adapter.delete_comment("12345")
+
+        mock_session.delete.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/footer-comments/12345"
+        )
+
+    def test_delete_comment_reports_missing_comment(self, v2_adapter, mock_session):
+        """Two endpoint misses report that neither comment type exists."""
+        not_found = Mock(status_code=404)
+        not_found.raise_for_status.side_effect = HTTPError(response=not_found)
+        mock_session.delete.return_value = not_found
+
+        with pytest.raises(ValueError, match="was not found as a footer or inline"):
+            v2_adapter.delete_comment("12345")
+
+        assert mock_session.delete.call_count == 2
+
     def test_get_inline_comments_paginates_roots_and_replies(
         self, v2_adapter, mock_session
     ):
