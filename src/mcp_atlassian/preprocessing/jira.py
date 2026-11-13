@@ -265,6 +265,23 @@ class JiraPreprocessor(BasePreprocessor):
             "INLINECODE",
         )
 
+        # Link destinations and URL labels are literal, not wiki formatting.
+        # Leave custom labels visible, including links from _process_smart_links.
+        link_urls: list[str] = []
+
+        def protect_link_url(match: re.Match[str]) -> str:
+            placeholder = f"\x00JIRALINK{len(link_urls)}\x00"
+            link_urls.append(match.group(2))
+            return match.group(1) + placeholder + match.group(3)
+
+        for pattern in (
+            r"(\[[^|\]\n]+\|)([^\]\n]+)(\])",
+            # Stop at the pipe so URL labels do not hide the whole wiki link.
+            r"(\[)((?:https?|ftp|mailto):[^|\]\n]+)(\||\])",
+            r"(!?\[[^\]\n]*\]\()([^)]+)(\))",
+        ):
+            output = re.sub(pattern, protect_link_url, output)
+
         # Block quotes
         output = re.sub(r"^bq\.(.*?)$", r"> \1\n", output, flags=re.MULTILINE)
 
@@ -384,7 +401,8 @@ class JiraPreprocessor(BasePreprocessor):
         # Rejoin the lines
         output = "\n".join(lines)
 
-        # Restore code/noformat blocks and inline code
+        # Restore literal link URLs, code/noformat blocks and inline code
+        output = _restore_blocks(output, link_urls, "JIRALINK")
         output = _restore_blocks(output, code_blocks, "CODEBLOCK")
         output = _restore_blocks(output, inline_codes, "INLINECODE")
 
