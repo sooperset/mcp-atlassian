@@ -1788,3 +1788,36 @@ class TestHtmlConversionCodeProtection:
         """Direct test of _convert_html_to_markdown with markdown code spans."""
         result = preprocessor._convert_html_to_markdown(md_input)
         assert expected_substr in result, f"Expected '{expected_substr}' in: {result!r}"
+
+
+def test_markdown_to_jira_preserves_underscores_in_bare_urls(
+    preprocessor_with_jira,
+):
+    """Bare URLs in prose keep literal underscores (issue #1808)."""
+    url = "https://www.linkedin.com/jobs/view/4269042500/?eBP=NON_CHARGEABLE_CHANNEL&ref_id=x"
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            f"Two underscores in one bare URL: {url}"
+        )
+        == f"Two underscores in one bare URL: {url}"
+    )
+    # Identifiers next to the URL are still escaped.
+    assert (
+        preprocessor_with_jira.markdown_to_jira(
+            "see https://example.com/foo_bar for foo_bar"
+        )
+        == "see https://example.com/foo_bar for foo\\_bar"
+    )
+    # Trailing punctuation and emphasis markers stay outside the URL.
+    assert (
+        preprocessor_with_jira.markdown_to_jira("(see https://example.com/foo_bar).")
+        == "(see https://example.com/foo_bar)."
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("**https://example.com/foo_bar**")
+        == "*https://example.com/foo_bar*"
+    )
+    assert (
+        preprocessor_with_jira.markdown_to_jira("_see https://example.com/foo_bar_")
+        == "_see https://example.com/foo_bar_"
+    )

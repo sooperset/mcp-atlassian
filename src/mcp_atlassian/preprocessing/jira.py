@@ -516,6 +516,14 @@ class JiraPreprocessor(BasePreprocessor):
             protect_markdown_autolink_target,
             output,
         )
+        # Bare URLs in prose are linkified by Jira as written, so their
+        # underscores must not be escaped either (issue #1808). Trailing
+        # punctuation and emphasis markers are left outside the URL.
+        output = re.sub(
+            r"\b(?:https?|ftp)://[^\s<>\[\]|\x00]*[^\s<>\[\]|\x00.,;:!?'\")*_~]",
+            lambda match: store_markdown_url_target(match.group(0)),
+            output,
+        )
 
         # Bold and italic - skip lines starting with
         # asterisks+space (Jira list syntax, issue #786)
