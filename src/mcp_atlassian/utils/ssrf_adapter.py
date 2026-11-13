@@ -33,6 +33,7 @@ from urllib3.connection import HTTPConnection, HTTPSConnection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 from urllib3.exceptions import NewConnectionError
 from urllib3.poolmanager import PoolManager
+from urllib3.util.connection import allowed_gai_family  # type: ignore[attr-defined]
 
 from .urls import _check_ip_address, _get_domain_allowlist, _hostname_matches_allowlist
 
@@ -130,8 +131,14 @@ def _pinned_create_connection(
     host_trusted = _is_configured_service_host(host)
     host_allowlisted = _hostname_matches_allowlist(host, _get_domain_allowlist() or [])
     err: Exception | None = None
+    # This connector stands in for urllib3's own create_connection, so it has to
+    # honour urllib3's address-family policy too. allowed_gai_family() returns
+    # AF_INET when urllib3.util.connection.HAS_IPV6 is False — the documented way
+    # to opt out of IPv6 on hosts that advertise AAAA records they cannot route.
+    # Passing 0 (AF_UNSPEC) unconditionally made that switch inert once this
+    # adapter was mounted.
     for af, socktype, proto, _canonname, sa in socket.getaddrinfo(
-        host, port, 0, socket.SOCK_STREAM
+        host, port, allowed_gai_family(), socket.SOCK_STREAM
     ):
         ip = sa[0]
         if (
