@@ -61,6 +61,42 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Release builds must carry a real package version. `.dockerignore` excludes
+      # .git, so uv-dynamic-versioning falls back to 0.0.0 unless VERSION is
+      # injected. A tag cut from a branch without that injection publishes 0.0.0
+      # silently, which makes every past advisory match in vulnerability scanners.
+      # Build the amd64 layer once (cached, reused by the push below) and assert
+      # the installed version before anything is published.
+      - name: Build amd64 image for version verification
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: mcp-atlassian:verify
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+
+      - name: Verify injected package version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          expected='${{ steps.meta.outputs.version }}'
+          actual=$(docker run --rm --entrypoint sh mcp-atlassian:verify -c \
+            'ls /app/.venv/lib/python*/site-packages | sed -n "s/^mcp_atlassian-\(.*\)\.dist-info$/\1/p" | head -1')
+          echo "expected=${expected} actual=${actual}"
+          if [ -z "${actual}" ]; then
+            echo "::error::Could not determine the installed mcp-atlassian version from the image."
+            exit 1
+          fi
+          if [ "${actual}" != "${expected}" ]; then
+            echo "::error::Image reports version '${actual}' but the tag expects '${expected}'."
+            echo "::error::The VERSION build arg did not reach the build. Refusing to publish."
+            exit 1
+          fi
+
       - name: Build and push Docker image
         id: docker_build
         uses: docker/build-push-action@v5
