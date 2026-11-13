@@ -1,0 +1,6 @@
+example: |
+  {"issue_key": "PROJ-123", "approval_id": "42", "decision": "approve"}
+tips: |
+  The decision is recorded as the authenticated user and cannot be undone. The tool reads the approval first and refuses, without submitting anything, when it is already decided or the user cannot answer it. Hidden when `READ_ONLY_MODE=true`.
+platform_notes: |
+  On Server/Data Center the approval endpoints are experimental; the tool sends the required `X-ExperimentalApi: opt-in` header on both Cloud and Server/Data Center.

@@ -3999,6 +3999,131 @@ async def get_request_type_fields(
 
 
 @jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Customer Request", "readOnlyHint": True},
+)
+async def get_customer_request(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(description="Request issue key (e.g., 'PROJ-123')"),
+    ],
+    expand: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated expand values. "
+                "Defaults to 'participant,status,requestType'."
+            ),
+            default="participant,status,requestType",
+        ),
+    ] = "participant,status,requestType",
+) -> str:
+    """Get a Jira Service Management request through the customer portal API.
+
+    Works for customers, request participants and approvers who cannot open
+    the issue through jira_get_issue (HTTP 403 without Browse Projects).
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Request issue key.
+        expand: Optional comma-separated expand values.
+
+    Returns:
+        JSON string with request type, status, reporter, participants and
+        request field values.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_customer_request(issue_key=issue_key, expand=expand)
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get Request Approvals", "readOnlyHint": True},
+)
+async def get_request_approvals(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(description="Request issue key (e.g., 'PROJ-123')"),
+    ],
+    start_at: Annotated[
+        int,
+        Field(description="Starting index for pagination (0-based)", default=0, ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of results (1-50)", default=50, ge=1, le=50),
+    ] = 50,
+) -> str:
+    """Get the approvals of a Jira Service Management request.
+
+    Each approval lists its approvers, their decisions, the final decision
+    (pending, approved or declined) and whether the current user can answer it.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Request issue key.
+        start_at: Starting index for pagination.
+        limit: Maximum number of approvals to return.
+
+    Returns:
+        JSON string with approvals and pagination metadata.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_request_approvals(
+        issue_key=issue_key,
+        start_at=start_at,
+        limit=limit,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_service_desk"},
+    annotations={"title": "Get My Pending Approvals", "readOnlyHint": True},
+)
+async def get_my_pending_approvals(
+    ctx: Context,
+    start_at: Annotated[
+        int,
+        Field(
+            description=(
+                "Offset into the underlying request list (0-based). "
+                "Pass next_start from a previous result to continue."
+            ),
+            default=0,
+            ge=0,
+        ),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(description="Maximum number of requests (1-50)", default=20, ge=1, le=50),
+    ] = 20,
+) -> str:
+    """List Jira Service Management requests awaiting the current user's approval.
+
+    Returns each request with the IDs of the pending approvals the user can
+    answer. On Cloud this uses the native approver filter. On Server/Data
+    Center, where that filter is unavailable, it reads the customer portal's
+    "My approvals" list; if that list is unavailable, it scans open requests
+    the user reported or participates in and adds a warning to the result.
+
+    Args:
+        ctx: The FastMCP context.
+        start_at: Offset into the underlying request list.
+        limit: Maximum number of requests to return.
+
+    Returns:
+        JSON string with pending requests and pagination metadata.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.get_my_pending_approvals(start_at=start_at, limit=limit)
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_service_desk"},
     annotations={"title": "Create Customer Request", "destructiveHint": True},
 )
@@ -4093,6 +4218,59 @@ async def create_customer_request(
         request_participants=parsed_request_participants,
         attachments=parsed_attachments,
         strict_on_behalf=strict_on_behalf,
+    )
+    return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "write", "toolset:jira_service_desk"},
+    annotations={"title": "Answer Approval", "destructiveHint": True},
+)
+@check_write_access
+async def answer_approval(
+    ctx: Context,
+    issue_key: Annotated[
+        str,
+        Field(description="Request issue key (e.g., 'PROJ-123')"),
+    ],
+    approval_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Approval ID from jira_get_request_approvals or "
+                "jira_get_my_pending_approvals (e.g., '42')"
+            )
+        ),
+    ],
+    decision: Annotated[
+        str,
+        Field(
+            description="Decision to submit: 'approve' or 'decline'",
+            pattern=r"^(?i:approve|decline)$",
+        ),
+    ],
+) -> str:
+    """Approve or decline a pending approval on a Jira Service Management request.
+
+    The decision is recorded as the current user and cannot be undone, so only
+    call this after the user explicitly confirms the request and the decision.
+    Fails without submitting anything if the approval is already decided or
+    the user is not allowed to answer it.
+
+    Args:
+        ctx: The FastMCP context.
+        issue_key: Request issue key.
+        approval_id: Approval ID.
+        decision: 'approve' or 'decline'.
+
+    Returns:
+        JSON string with the updated approval.
+    """
+    jira = await get_jira_fetcher(ctx)
+    result = jira.answer_approval(
+        issue_key=issue_key,
+        approval_id=approval_id,
+        decision=decision,
     )
     return json.dumps(result.to_simplified_dict(), indent=2, ensure_ascii=False)
 

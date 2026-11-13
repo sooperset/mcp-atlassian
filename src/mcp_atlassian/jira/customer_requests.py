@@ -3,20 +3,48 @@
 import base64
 import binascii
 import logging
-from typing import Any
+from typing import Any, NoReturn
 
 from requests.exceptions import HTTPError
 
 from ..models.jira import (
     JiraCustomerRequest,
+    JiraCustomerRequestDetails,
+    JiraPendingApproval,
+    JiraPendingApprovalsResult,
+    JiraRequestApproval,
+    JiraRequestApprovalsResult,
     JiraRequestTypeField,
     JiraRequestTypeFieldsResult,
     JiraRequestTypesResult,
 )
 from ..utils.media import ATTACHMENT_MAX_BYTES
 from .client import JiraClient
+from .scope import allowed_project_keys
 
 logger = logging.getLogger("mcp-jira")
+
+APPROVAL_DECISIONS = ("approve", "decline")
+DEFAULT_CUSTOMER_REQUEST_EXPAND = "participant,status,requestType"
+
+# Server/Data Center has no approver filter on the public request list
+# endpoint. The customer portal's "My approvals" page is built from the
+# approvalListFilter model, which is used first; if it is unavailable, open
+# requests the user reported or participates in are scanned instead.
+PORTAL_MODELS_ENDPOINT = "rest/servicedesk/1/customer/models"
+PENDING_APPROVALS_SCAN_LIMIT = 500
+PENDING_APPROVALS_PAGE_SIZE = 50
+PORTAL_FALLBACK_WARNING = (
+    "The customer portal approval list is unavailable ({reason}); only open "
+    "requests you reported or participate in were checked, so requests where "
+    "you are only an approver may be missing."
+)
+
+_SERVICEDESK_ERROR_HINTS = {
+    403: "the current user is not allowed to view this request or approval",
+    404: "the request or approval does not exist or is not visible",
+    412: "Jira rejected the experimental API opt-in for this endpoint",
+}
 
 
 class CustomerRequestsMixin(JiraClient):
@@ -820,3 +848,472 @@ class CustomerRequestsMixin(JiraClient):
                 )
 
             raise ValueError(error_message) from e
+
+    def _get_servicedesk_json(
+        self,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """GET a Service Management endpoint with the experimental opt-in."""
+        headers = self._get_servicedesk_headers(self.jira.default_headers)
+        response = self.jira.get(endpoint, params=params, headers=headers)
+        if not isinstance(response, dict):
+            msg = f"Unexpected response type from {endpoint}: {type(response)}"
+            raise TypeError(msg)
+        return response
+
+    def _raise_servicedesk_error(
+        self,
+        exception: Exception,
+        action: str,
+        issue_key: str,
+    ) -> NoReturn:
+        """Raise a readable error for a failed Service Management request call."""
+        status_code, error_text = self._extract_error_details(exception)
+        shortened_error = self._shorten_error_text(error_text)
+        message = f"Failed to {action} for {issue_key}"
+        if status_code is not None:
+            message += f" (HTTP {status_code})"
+            hint = _SERVICEDESK_ERROR_HINTS.get(status_code)
+            if hint:
+                message += f": {hint}"
+        message += f". Jira response: {shortened_error}"
+        logger.error(message)
+        raise ValueError(message) from exception
+
+    @staticmethod
+    def _require_issue_key(issue_key: str) -> str:
+        """Validate and normalize a request issue key."""
+        if not issue_key or not issue_key.strip():
+            raise ValueError("Issue key is required")
+        return issue_key.strip()
+
+    def get_customer_request(
+        self,
+        issue_key: str,
+        expand: str | None = DEFAULT_CUSTOMER_REQUEST_EXPAND,
+    ) -> JiraCustomerRequestDetails:
+        """Get a customer request through the Service Management portal API.
+
+        The portal API returns requests visible to customers, participants and
+        approvers, including requests the standard issue API rejects with 403
+        because the user lacks the Browse Projects permission.
+
+        Args:
+            issue_key: Request issue key (e.g. 'PROJ-123').
+            expand: Comma-separated expand values, such as
+                'participant,status,requestType'.
+
+        Returns:
+            JiraCustomerRequestDetails with compact request data.
+
+        Raises:
+            ValueError: If the key is missing or Jira rejects the request.
+        """
+        issue_key = self._require_issue_key(issue_key)
+        params = {"expand": expand} if expand else None
+        try:
+            response = self._get_servicedesk_json(
+                f"rest/servicedeskapi/request/{issue_key}", params=params
+            )
+        except HTTPError as e:
+            self._raise_servicedesk_error(e, "get customer request", issue_key)
+        return JiraCustomerRequestDetails.from_api_response(response)
+
+    def get_request_approvals(
+        self,
+        issue_key: str,
+        start_at: int = 0,
+        limit: int = 50,
+    ) -> JiraRequestApprovalsResult:
+        """Get the approvals of a customer request.
+
+        Args:
+            issue_key: Request issue key (e.g. 'PROJ-123').
+            start_at: Starting index for pagination.
+            limit: Maximum number of approvals to return.
+
+        Returns:
+            JiraRequestApprovalsResult with approvals and pagination metadata.
+
+        Raises:
+            ValueError: If arguments are invalid or Jira rejects the request.
+        """
+        issue_key = self._require_issue_key(issue_key)
+        if start_at < 0:
+            raise ValueError("start_at must be >= 0")
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+
+        try:
+            response = self._get_servicedesk_json(
+                f"rest/servicedeskapi/request/{issue_key}/approval",
+                params={"start": start_at, "limit": limit},
+            )
+        except HTTPError as e:
+            self._raise_servicedesk_error(e, "get approvals", issue_key)
+        return JiraRequestApprovalsResult.from_api_response(
+            response, issue_key=issue_key
+        )
+
+    def _get_answerable_approvals(self, issue_key: str) -> list[JiraRequestApproval]:
+        """Return pending approvals the current user can answer on a request."""
+        approvals: list[JiraRequestApproval] = []
+        start = 0
+        while True:
+            result = self.get_request_approvals(issue_key, start_at=start)
+            approvals.extend(
+                approval
+                for approval in result.approvals
+                if approval.is_pending and approval.can_answer_approval
+            )
+            if result.is_last_page or not result.approvals:
+                return approvals
+            start += len(result.approvals)
+
+    def _pending_request_in_scope(self, issue_key: str) -> bool:
+        """Return True when ``issue_key`` lies inside JIRA_PROJECTS_FILTER.
+
+        Both list sources return the request's current key, so its project
+        prefix names the project the request is in now.
+        """
+        allowed = allowed_project_keys(self.config)
+        if allowed is None:
+            return True
+        project_key, _, number = issue_key.strip().rpartition("-")
+        return bool(number) and project_key.upper() in allowed
+
+    def _list_customer_requests(
+        self,
+        params: dict[str, Any],
+        start: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        """Fetch one page of the customer request list endpoint."""
+        return self._get_servicedesk_json(
+            "rest/servicedeskapi/request",
+            params={**params, "start": start, "limit": limit},
+        )
+
+    def get_my_pending_approvals(
+        self,
+        start_at: int = 0,
+        limit: int = 20,
+    ) -> JiraPendingApprovalsResult:
+        """List customer requests awaiting the current user's approval decision.
+
+        On Cloud this uses the native ``requestOwnership=APPROVER`` and
+        ``approvalStatus=MY_PENDING_APPROVAL`` filters. Server/Data Center does
+        not support the approver filter, so the customer portal's approval
+        list (the ``approvalListFilter`` model behind "My approvals") is used,
+        falling back to scanning open requests with a warning. Every request
+        is confirmed through the public approval endpoint. Requests outside
+        ``JIRA_PROJECTS_FILTER`` are skipped. In all cases
+        ``start_at`` is an offset into the underlying list; pass
+        ``next_start`` from a previous result to continue.
+
+        Args:
+            start_at: Offset into the underlying request list.
+            limit: Maximum number of requests to return.
+
+        Returns:
+            JiraPendingApprovalsResult with requests and their answerable
+            approval IDs.
+
+        Raises:
+            ValueError: If arguments are invalid.
+        """
+        if start_at < 0:
+            raise ValueError("start_at must be >= 0")
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+
+        if self.config.is_cloud:
+            return self._get_pending_approvals_cloud(start_at, limit)
+
+        try:
+            return self._get_pending_approvals_portal(start_at, limit)
+        except (HTTPError, TypeError, ValueError) as e:
+            status_code, error_text = self._extract_error_details(e)
+            reason = (
+                f"HTTP {status_code}"
+                if status_code is not None
+                else self._shorten_error_text(error_text, max_length=120)
+            )
+            logger.warning("Portal approval list unavailable: %s", reason)
+            result = self._get_pending_approvals_server(start_at, limit)
+            result.warnings.append(PORTAL_FALLBACK_WARNING.format(reason=reason))
+            return result
+
+    def _get_portal_pending_approval_page(
+        self, page: int
+    ) -> tuple[list[str], int, int]:
+        """Fetch one page of the portal "My approvals" list.
+
+        Args:
+            page: 1-based page number.
+
+        Returns:
+            A tuple of (issue keys, total pages, results per page).
+
+        Raises:
+            TypeError: If the portal response does not have the expected shape.
+        """
+        headers = {**self.jira.default_headers, "X-Atlassian-Token": "no-check"}
+        response = self.jira.post(
+            PORTAL_MODELS_ENDPOINT,
+            data={
+                "models": ["approvalListFilter"],
+                "options": {
+                    "approvalListFilter": {
+                        "approvalFilterValue": "myPending",
+                        "selectedPage": page,
+                    }
+                },
+            },
+            headers=headers,
+        )
+        model = (
+            response.get("approvalListFilter") if isinstance(response, dict) else None
+        )
+        if not isinstance(model, dict) or not isinstance(model.get("requests"), list):
+            msg = "unexpected approvalListFilter response"
+            raise TypeError(msg)
+        if model.get("approvalFilterValue") not in (None, "myPending"):
+            msg = "approvalListFilter ignored the myPending filter"
+            raise TypeError(msg)
+        selected_page = model.get("selectedPage", page)
+        if str(selected_page) != str(page):
+            return [], page - 1, len(model["requests"])
+
+        keys: list[str] = []
+        for item in model["requests"]:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("key") or item.get("issueKey")
+            if key:
+                keys.append(str(key))
+        try:
+            total_pages = int(model.get("totalPages", page))
+        except (TypeError, ValueError):
+            total_pages = page
+        try:
+            per_page = int(model.get("resultsPerPage") or len(keys) or 1)
+        except (TypeError, ValueError):
+            per_page = len(keys) or 1
+        return keys, total_pages, per_page
+
+    def _get_pending_approvals_portal(
+        self, start_at: int, limit: int
+    ) -> JiraPendingApprovalsResult:
+        """List pending approvals on Server/Data Center from the portal list."""
+        keys, total_pages, per_page = self._get_portal_pending_approval_page(1)
+        page = start_at // per_page + 1
+        skip = start_at % per_page
+        if page > 1:
+            keys, total_pages, _ = self._get_portal_pending_approval_page(page)
+
+        requests: list[JiraPendingApproval] = []
+        offset = start_at
+        while True:
+            for key in keys[skip:]:
+                offset += 1
+                if not self._pending_request_in_scope(key):
+                    continue
+                try:
+                    approvals = self._get_answerable_approvals(key)
+                    request = (
+                        self.get_customer_request(key, expand="requestType")
+                        if approvals
+                        else None
+                    )
+                except ValueError as e:
+                    logger.debug("Skipping approvals for %s: %s", key, str(e))
+                    continue
+                if request is not None:
+                    requests.append(
+                        JiraPendingApproval(request=request, approvals=approvals)
+                    )
+                if len(requests) >= limit:
+                    return JiraPendingApprovalsResult(
+                        start=start_at,
+                        limit=limit,
+                        next_start=offset,
+                        is_last_page=False,
+                        requests=requests,
+                    )
+            skip = 0
+            if page >= total_pages or not keys:
+                return JiraPendingApprovalsResult(
+                    start=start_at,
+                    limit=limit,
+                    is_last_page=True,
+                    requests=requests,
+                )
+            page += 1
+            keys, total_pages, _ = self._get_portal_pending_approval_page(page)
+
+    def _get_pending_approvals_cloud(
+        self, start_at: int, limit: int
+    ) -> JiraPendingApprovalsResult:
+        """List pending approvals with the Cloud approver filters."""
+        page = self._list_customer_requests(
+            {
+                "requestOwnership": "APPROVER",
+                "approvalStatus": "MY_PENDING_APPROVAL",
+                "expand": "requestType",
+            },
+            start_at,
+            limit,
+        )
+        values = [item for item in page.get("values", []) if isinstance(item, dict)]
+        requests: list[JiraPendingApproval] = []
+        for raw_request in values:
+            request = JiraCustomerRequestDetails.from_api_response(raw_request)
+            if not self._pending_request_in_scope(request.issue_key):
+                continue
+            approvals = self._get_answerable_approvals(request.issue_key)
+            if approvals:
+                requests.append(
+                    JiraPendingApproval(request=request, approvals=approvals)
+                )
+
+        is_last_page = bool(page.get("isLastPage", True)) or not values
+        return JiraPendingApprovalsResult(
+            start=start_at,
+            limit=limit,
+            next_start=None if is_last_page else start_at + len(values),
+            is_last_page=is_last_page,
+            requests=requests,
+        )
+
+    def _get_pending_approvals_server(
+        self, start_at: int, limit: int
+    ) -> JiraPendingApprovalsResult:
+        """List pending approvals on Server/Data Center by scanning open requests.
+
+        Only requests the user reported or participates in are visible here,
+        so this is a fallback for when the portal approval list is unavailable.
+        """
+        requests: list[JiraPendingApproval] = []
+        offset = start_at
+        scanned = 0
+        while True:
+            page = self._list_customer_requests(
+                {
+                    "requestOwnership": "ALL_REQUESTS",
+                    "requestStatus": "OPEN_REQUESTS",
+                    "expand": "requestType",
+                },
+                offset,
+                PENDING_APPROVALS_PAGE_SIZE,
+            )
+            values = [item for item in page.get("values", []) if isinstance(item, dict)]
+            for raw_request in values:
+                offset += 1
+                scanned += 1
+                request = JiraCustomerRequestDetails.from_api_response(raw_request)
+                if not self._pending_request_in_scope(request.issue_key):
+                    continue
+                try:
+                    approvals = self._get_answerable_approvals(request.issue_key)
+                except ValueError as e:
+                    logger.debug(
+                        "Skipping approvals for %s: %s", request.issue_key, str(e)
+                    )
+                    continue
+                if approvals:
+                    requests.append(
+                        JiraPendingApproval(request=request, approvals=approvals)
+                    )
+                if len(requests) >= limit or scanned >= PENDING_APPROVALS_SCAN_LIMIT:
+                    return JiraPendingApprovalsResult(
+                        start=start_at,
+                        limit=limit,
+                        next_start=offset,
+                        is_last_page=False,
+                        requests=requests,
+                    )
+
+            if page.get("isLastPage", True) or not values:
+                return JiraPendingApprovalsResult(
+                    start=start_at,
+                    limit=limit,
+                    is_last_page=True,
+                    requests=requests,
+                )
+
+    def answer_approval(
+        self,
+        issue_key: str,
+        approval_id: str,
+        decision: str,
+    ) -> JiraRequestApproval:
+        """Approve or decline a pending approval on a customer request.
+
+        The approval is read first so that already decided approvals and
+        approvals the user cannot answer fail before anything is submitted.
+
+        Args:
+            issue_key: Request issue key (e.g. 'PROJ-123').
+            approval_id: Approval ID from the request approvals.
+            decision: 'approve' or 'decline'.
+
+        Returns:
+            The updated JiraRequestApproval.
+
+        Raises:
+            ValueError: If arguments are invalid, the approval cannot be
+                answered, or Jira rejects the decision.
+        """
+        issue_key = self._require_issue_key(issue_key)
+        if not approval_id or not str(approval_id).strip():
+            raise ValueError("Approval ID is required")
+        approval_id = str(approval_id).strip()
+        normalized_decision = (decision or "").strip().lower()
+        if normalized_decision not in APPROVAL_DECISIONS:
+            msg = (
+                f"Invalid decision '{decision}'. "
+                f"Expected one of: {', '.join(APPROVAL_DECISIONS)}"
+            )
+            raise ValueError(msg)
+
+        endpoint = f"rest/servicedeskapi/request/{issue_key}/approval/{approval_id}"
+        try:
+            current = JiraRequestApproval.from_api_response(
+                self._get_servicedesk_json(endpoint)
+            )
+        except HTTPError as e:
+            self._raise_servicedesk_error(e, f"get approval {approval_id}", issue_key)
+
+        if not current.is_pending:
+            msg = (
+                f"Approval {approval_id} on {issue_key} is already decided "
+                f"(final decision: {current.final_decision or 'unknown'})"
+            )
+            raise ValueError(msg)
+        if not current.can_answer_approval:
+            msg = (
+                f"The current user cannot answer approval {approval_id} on "
+                f"{issue_key} (canAnswerApproval=false)"
+            )
+            raise ValueError(msg)
+
+        headers = self._get_servicedesk_headers(self.jira.default_headers)
+        try:
+            response = self.jira.post(
+                endpoint,
+                data={"decision": normalized_decision},
+                headers=headers,
+            )
+        except HTTPError as e:
+            self._raise_servicedesk_error(
+                e, f"answer approval {approval_id}", issue_key
+            )
+        if not isinstance(response, dict):
+            msg = (
+                "Unexpected return value type from "
+                f"ServiceDesk approval API: {type(response)}"
+            )
+            raise TypeError(msg)
+        return JiraRequestApproval.from_api_response(response)
