@@ -8,6 +8,7 @@ from .attachments import AttachmentsMixin
 from .client import ConfluenceClient
 from .comments import CommentsMixin
 from .config import ConfluenceConfig
+from .folders import FoldersMixin
 from .labels import LabelsMixin
 from .pages import PagesMixin
 from .permissions import PermissionsMixin
@@ -23,6 +24,7 @@ class ConfluenceFetcher(
     SearchMixin,
     SpacesMixin,
     PagesMixin,
+    FoldersMixin,
     CommentsMixin,
     LabelsMixin,
     UsersMixin,
@@ -42,6 +44,7 @@ class ConfluenceFetcher(
     - SearchMixin: CQL search operations
     - SpacesMixin: Space operations
     - PagesMixin: Page operations
+    - FoldersMixin: Folder operations (Cloud only)
     - CommentsMixin: Comment operations
     - LabelsMixin: Label operations
     - UsersMixin: User operations
@@ -60,6 +63,7 @@ __all__ = [
     "ConfluenceFetcher",
     "ConfluenceConfig",
     "ConfluenceClient",
+    "FoldersMixin",
     "AnalyticsMixin",
     "PermissionsMixin",
     "RestrictionsMixin",

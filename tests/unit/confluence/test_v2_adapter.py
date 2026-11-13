@@ -715,3 +715,125 @@ class TestConfluenceV2AdapterComments:
         assert payload["pageId"] == "12345"
         assert "parentCommentId" not in payload
         assert result["id"] == "333444555"
+
+
+class TestConfluenceV2AdapterFolders:
+    """Test cases for ConfluenceV2Adapter folder operations."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    def test_create_folder_posts_space_id_title_and_parent(
+        self, v2_adapter, mock_session
+    ):
+        space_response = Mock()
+        space_response.json.return_value = {"results": [{"id": "789"}]}
+        mock_session.get.return_value = space_response
+        create_response = Mock()
+        create_response.json.return_value = {"id": "111", "type": "folder"}
+        mock_session.post.return_value = create_response
+
+        result = v2_adapter.create_folder("DOCS", "Runbooks", parent_id="555")
+
+        assert result == {"id": "111", "type": "folder"}
+        mock_session.post.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/folders",
+            json={"spaceId": "789", "title": "Runbooks", "parentId": "555"},
+        )
+
+    def test_create_folder_omits_parent_when_not_given(self, v2_adapter, mock_session):
+        space_response = Mock()
+        space_response.json.return_value = {"results": [{"id": "789"}]}
+        mock_session.get.return_value = space_response
+        mock_session.post.return_value = Mock(json=Mock(return_value={"id": "111"}))
+
+        v2_adapter.create_folder("DOCS", "Runbooks")
+
+        _, kwargs = mock_session.post.call_args
+        assert kwargs["json"] == {"spaceId": "789", "title": "Runbooks"}
+
+    def test_create_folder_http_error_raises_value_error(
+        self, v2_adapter, mock_session
+    ):
+        space_response = Mock()
+        space_response.json.return_value = {"results": [{"id": "789"}]}
+        mock_session.get.return_value = space_response
+        error_response = Mock(status_code=400, text="bad request")
+        create_response = Mock()
+        create_response.raise_for_status.side_effect = HTTPError(
+            response=error_response
+        )
+        mock_session.post.return_value = create_response
+
+        with pytest.raises(ValueError, match="Failed to create folder 'Runbooks'"):
+            v2_adapter.create_folder("DOCS", "Runbooks")
+
+    def test_get_folder(self, v2_adapter, mock_session):
+        mock_session.get.return_value = Mock(
+            json=Mock(return_value={"id": "111", "title": "Runbooks"})
+        )
+
+        result = v2_adapter.get_folder("111")
+
+        assert result["title"] == "Runbooks"
+        mock_session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/folders/111"
+        )
+
+    @pytest.mark.parametrize(
+        ("links", "expected_has_more"),
+        [
+            ({}, False),
+            ({"next": "/wiki/api/v2/folders/111/direct-children?cursor=x"}, True),
+        ],
+    )
+    def test_get_folder_direct_children(
+        self, v2_adapter, mock_session, links, expected_has_more
+    ):
+        mock_session.get.return_value = Mock(
+            json=Mock(
+                return_value={
+                    "results": [{"id": "42", "type": "page"}],
+                    "_links": links,
+                }
+            )
+        )
+
+        children, has_more = v2_adapter.get_folder_direct_children("111")
+
+        assert children == [{"id": "42", "type": "page"}]
+        assert has_more is expected_has_more
+        mock_session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/folders/111/direct-children",
+            params={"limit": 250},
+        )
+
+    def test_delete_folder(self, v2_adapter, mock_session):
+        mock_session.delete.return_value = Mock(status_code=204)
+
+        v2_adapter.delete_folder("111")
+
+        mock_session.delete.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/folders/111"
+        )
+
+    def test_delete_folder_http_error_raises_value_error(
+        self, v2_adapter, mock_session
+    ):
+        delete_response = Mock()
+        delete_response.raise_for_status.side_effect = HTTPError(
+            response=Mock(status_code=404, text="not found")
+        )
+        mock_session.delete.return_value = delete_response
+
+        with pytest.raises(ValueError, match="Failed to delete folder '111'"):
+            v2_adapter.delete_folder("111")

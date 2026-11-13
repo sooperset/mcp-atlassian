@@ -9,12 +9,14 @@ Key models:
 - ConfluenceUser: User account details
 - ConfluenceSearchResult: Container for Confluence search (CQL) results
 - ConfluenceComment: Page and inline comments
+- ConfluenceFolder: Cloud folder metadata
 - ConfluenceVersion: Content versioning information
 """
 
 from .analytics import PageViews, PageViewsBatchResponse
 from .comment import ConfluenceComment
 from .common import ConfluenceAttachment, ConfluenceUser
+from .folder import ConfluenceFolder
 from .label import ConfluenceLabel
 from .page import ConfluencePage, ConfluenceVersion
 from .search import ConfluenceSearchResult
@@ -27,6 +29,7 @@ __all__ = [
     "ConfluenceSpace",
     "ConfluenceVersion",
     "ConfluenceComment",
+    "ConfluenceFolder",
     "ConfluenceLabel",
     "ConfluencePage",
     "ConfluenceSearchResult",

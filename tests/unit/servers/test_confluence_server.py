@@ -15,6 +15,7 @@ from starlette.requests import Request
 
 from src.mcp_atlassian.confluence import ConfluenceFetcher
 from src.mcp_atlassian.confluence.config import ConfluenceConfig
+from src.mcp_atlassian.models.confluence.folder import ConfluenceFolder
 from src.mcp_atlassian.models.confluence.page import ConfluencePage
 from src.mcp_atlassian.servers import confluence as confluence_server
 from src.mcp_atlassian.servers.context import MainAppContext
@@ -234,14 +235,17 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         add_comment,
         add_label,
         check_content_permissions,
+        create_folder,
         create_page,
         create_page_from_template,
         delete_attachment,
+        delete_folder,
         delete_page,
         download_attachment,
         download_content_attachments,
         get_attachments,
         get_comments,
+        get_folder,
         get_inline_comments,
         get_labels,
         get_page,
@@ -251,6 +255,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
+        move_folder,
         search,
         search_user,
         update_page,
@@ -302,6 +307,10 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(list_page_templates)
     confluence_sub_mcp.add_tool(get_page_template)
     confluence_sub_mcp.add_tool(create_page_from_template)
+    confluence_sub_mcp.add_tool(get_folder)
+    confluence_sub_mcp.add_tool(create_folder)
+    confluence_sub_mcp.add_tool(move_folder)
+    confluence_sub_mcp.add_tool(delete_folder)
 
     test_mcp.mount(confluence_sub_mcp, namespace="confluence")
 
@@ -1750,3 +1759,100 @@ async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     summary = json.loads(response.content[0].text)
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
+
+
+@pytest.fixture
+def mock_folder():
+    """A ConfluenceFolder returned by the mocked fetcher."""
+    folder = ConfluenceFolder(
+        id="3755409420",
+        title="Runbooks",
+        space_id="2810380295",
+        parent_id="2810380568",
+        parent_type="page",
+        version=1,
+        url="https://example.atlassian.net/wiki/spaces/TEST/folder/3755409420",
+    )
+    return folder
+
+
+@pytest.mark.anyio
+async def test_get_folder(client, mock_confluence_fetcher, mock_folder):
+    """Test the get_folder tool includes children by default."""
+    mock_folder.children = [
+        {"id": "42", "title": "Child page", "type": "page", "status": "current"}
+    ]
+    mock_confluence_fetcher.get_folder.return_value = mock_folder
+
+    response = await client.call_tool(
+        "confluence_get_folder", {"folder_id": "3755409420"}
+    )
+
+    mock_confluence_fetcher.get_folder.assert_called_once_with(
+        folder_id="3755409420", include_children=True
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["id"] == "3755409420"
+    assert result_data["type"] == "folder"
+    assert result_data["children"][0]["title"] == "Child page"
+
+
+@pytest.mark.anyio
+async def test_create_folder(client, mock_confluence_fetcher, mock_folder):
+    """Test the create_folder tool."""
+    mock_confluence_fetcher.create_folder.return_value = mock_folder
+
+    response = await client.call_tool(
+        "confluence_create_folder",
+        {"space_key": "TEST", "title": "Runbooks", "parent_id": "2810380568"},
+    )
+
+    mock_confluence_fetcher.create_folder.assert_called_once_with(
+        space_key="TEST", title="Runbooks", parent_id="2810380568"
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Folder created successfully"
+    assert result_data["folder"]["title"] == "Runbooks"
+
+
+@pytest.mark.anyio
+async def test_move_folder(client, mock_confluence_fetcher, mock_folder):
+    """Test the move_folder tool defaults to appending inside the target."""
+    mock_confluence_fetcher.move_folder.return_value = mock_folder
+
+    response = await client.call_tool(
+        "confluence_move_folder", {"folder_id": "3755409420", "target_id": "999"}
+    )
+
+    mock_confluence_fetcher.move_folder.assert_called_once_with(
+        folder_id="3755409420", target_id="999", position="append"
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Folder moved successfully"
+
+
+@pytest.mark.anyio
+async def test_delete_folder(client, mock_confluence_fetcher):
+    """Test the delete_folder tool."""
+    response = await client.call_tool(
+        "confluence_delete_folder", {"folder_id": "3755409420"}
+    )
+
+    mock_confluence_fetcher.delete_folder.assert_called_once_with(
+        folder_id="3755409420"
+    )
+    result_data = json.loads(response.content[0].text)
+    assert result_data["success"] is True
+
+
+@pytest.mark.anyio
+async def test_folder_errors_become_tool_errors(client, mock_confluence_fetcher):
+    """Errors from the fetcher reach the client as tool errors."""
+    mock_confluence_fetcher.create_folder.side_effect = ValueError(
+        "Folders are only available for Confluence Cloud."
+    )
+
+    with pytest.raises(ToolError, match="only available for Confluence Cloud"):
+        await client.call_tool(
+            "confluence_create_folder", {"space_key": "TEST", "title": "Runbooks"}
+        )

@@ -1292,6 +1292,174 @@ async def move_page(
 
 
 @confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Folder", "readOnlyHint": True},
+)
+async def get_folder(
+    ctx: Context,
+    folder_id: Annotated[str, Field(description="The ID of the folder")],
+    include_children: Annotated[
+        bool,
+        Field(
+            description=(
+                "Whether to include the folder's direct children "
+                "(pages and folders, up to 250)"
+            ),
+            default=True,
+        ),
+    ] = True,
+) -> str:
+    """Get a Confluence folder and, by default, its direct children (Cloud only).
+
+    Args:
+        ctx: The FastMCP context.
+        folder_id: The ID of the folder.
+        include_children: Whether to include the folder's direct children.
+
+    Returns:
+        JSON string representing the folder.
+
+    Raises:
+        ValueError: If the instance is not Cloud or the folder cannot be read.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    folder = confluence_fetcher.get_folder(
+        folder_id=folder_id, include_children=include_children
+    )
+    return json.dumps(folder.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Create Folder", "destructiveHint": False},
+)
+@check_write_access
+async def create_folder(
+    ctx: Context,
+    space_key: Annotated[
+        str,
+        Field(description="The key of the space to create the folder in"),
+    ],
+    title: Annotated[str, Field(description="The title of the folder")],
+    parent_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional parent page or folder ID. If omitted, the folder is "
+                "created under the space homepage."
+            ),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Create a folder in a Confluence space (Cloud only).
+
+    Args:
+        ctx: The FastMCP context.
+        space_key: The key of the space.
+        title: The title of the folder.
+        parent_id: Optional parent page or folder ID.
+
+    Returns:
+        JSON string representing the created folder.
+
+    Raises:
+        ValueError: If the instance is not Cloud or creation fails.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    folder = confluence_fetcher.create_folder(
+        space_key=space_key, title=title, parent_id=parent_id
+    )
+    return json.dumps(
+        {
+            "message": "Folder created successfully",
+            "folder": folder.to_simplified_dict(),
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Move Folder", "destructiveHint": True},
+)
+@check_write_access
+async def move_folder(
+    ctx: Context,
+    folder_id: Annotated[str, Field(description="ID of the folder to move")],
+    target_id: Annotated[
+        str,
+        Field(description="ID of the target page or folder"),
+    ],
+    position: Annotated[
+        str,
+        Field(
+            description=(
+                "Position: 'append' (default, move inside the target), "
+                "'before' or 'after' (move next to the target as a sibling)"
+            ),
+            default="append",
+        ),
+    ] = "append",
+) -> str:
+    """Move a Confluence folder to a new parent page or folder (Cloud only).
+
+    Args:
+        ctx: The FastMCP context.
+        folder_id: The ID of the folder to move.
+        target_id: The ID of the target page or folder.
+        position: Position relative to the target ('append', 'before', 'after').
+
+    Returns:
+        JSON string representing the moved folder.
+
+    Raises:
+        ValueError: If the position is invalid, the instance is not Cloud,
+            or the move fails.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    folder = confluence_fetcher.move_folder(
+        folder_id=folder_id, target_id=target_id, position=position
+    )
+    return json.dumps(
+        {"message": "Folder moved successfully", "folder": folder.to_simplified_dict()},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "write", "toolset:confluence_pages"},
+    annotations={"title": "Delete Folder", "destructiveHint": True},
+)
+@check_write_access
+async def delete_folder(
+    ctx: Context,
+    folder_id: Annotated[str, Field(description="The ID of the folder to delete")],
+) -> str:
+    """Delete a Confluence folder (Cloud only). The folder goes to the trash.
+
+    Args:
+        ctx: The FastMCP context.
+        folder_id: The ID of the folder to delete.
+
+    Returns:
+        JSON string indicating success.
+
+    Raises:
+        ValueError: If the instance is not Cloud or deletion fails.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+    confluence_fetcher.delete_folder(folder_id=folder_id)
+    return json.dumps(
+        {"success": True, "message": f"Folder {folder_id} deleted successfully"},
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@confluence_mcp.tool(
     tags={"confluence", "write", "toolset:confluence_comments"},
     annotations={"title": "Add Comment", "destructiveHint": False},
 )

@@ -123,6 +123,10 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "confluence_get_page_restrictions",
         "confluence_set_page_restrictions",
         "confluence_get_page_diff",
+        "confluence_get_folder",
+        "confluence_create_folder",
+        "confluence_move_folder",
+        "confluence_delete_folder",
     ],
     "confluence-search": [
         "confluence_search",

@@ -307,3 +307,75 @@ Use `confluence_get_page_history` to discover available version numbers. The dif
 </Tip>
 
 ---
+
+### Get Folder
+
+Get a Confluence folder and, by default, its direct children (Cloud only).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `folder_id` | `string` | Yes | The ID of the folder |
+| `include_children` | `boolean` | No | Whether to include the folder's direct children (pages and folders, up to 250) |
+
+---
+
+### Create Folder
+
+Create a folder in a Confluence space (Cloud only).
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `space_key` | `string` | Yes | The key of the space to create the folder in |
+| `title` | `string` | Yes | The title of the folder |
+| `parent_id` | `string` | No | Optional parent page or folder ID. If omitted, the folder is created under the space homepage. |
+
+---
+
+### Move Folder
+
+Move a Confluence folder to a new parent page or folder (Cloud only).
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `folder_id` | `string` | Yes | ID of the folder to move |
+| `target_id` | `string` | Yes | ID of the target page or folder |
+| `position` | `string` | No | Position: 'append' (default, move inside the target), 'before' or 'after' (move next to the target as a sibling) |
+**Example:**
+
+```json
+{"folder_id": "12345678", "target_id": "98765432"}
+```
+
+<Tip>
+The target can be a page or another folder. Use `before` or `after` to place the folder next to the target instead of inside it.
+</Tip>
+
+<Warning>
+Cloud only. The public REST API cannot rename folders.
+</Warning>
+
+---
+
+### Delete Folder
+
+Delete a Confluence folder (Cloud only). The folder goes to the trash.
+
+<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `folder_id` | `string` | Yes | The ID of the folder to delete |
+
+---

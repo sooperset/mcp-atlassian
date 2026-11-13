@@ -1,0 +1,6 @@
+example: |
+  {"folder_id": "12345678", "target_id": "98765432"}
+tips: |
+  The target can be a page or another folder. Use `before` or `after` to place the folder next to the target instead of inside it.
+platform_notes: |
+  Cloud only. The public REST API cannot rename folders.

@@ -1,6 +1,6 @@
 """Toolset definitions and filtering utilities for MCP Atlassian.
 
-Groups 98 tools into 25 named toolsets controlled via the TOOLSETS env var.
+Groups 102 tools into 25 named toolsets controlled via the TOOLSETS env var.
 Supports 'all', 'default', and comma-separated toolset names.
 """
 
@@ -112,7 +112,7 @@ JIRA_TOOLSETS: dict[str, ToolsetDefinition] = {
 CONFLUENCE_TOOLSETS: dict[str, ToolsetDefinition] = {
     "confluence_pages": ToolsetDefinition(
         name="confluence_pages",
-        description="Page CRUD, search, children, and history",
+        description="Page and folder CRUD, search, children, and history",
         default=True,
     ),
     "confluence_comments": ToolsetDefinition(

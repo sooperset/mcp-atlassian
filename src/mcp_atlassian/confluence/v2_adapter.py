@@ -497,6 +497,143 @@ class ConfluenceV2Adapter:
                 logger.error(f"Error deleting page '{page_id}': {e}")
             raise ValueError(f"Failed to delete page '{page_id}': {e}") from e
 
+    def create_folder(
+        self,
+        space_key: str,
+        title: str,
+        parent_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a folder using the v2 API.
+
+        Args:
+            space_key: The key of the space to create the folder in
+            title: The title of the folder
+            parent_id: Optional parent page or folder ID. When omitted,
+                Confluence places the folder under the space homepage.
+
+        Returns:
+            The created folder data from the v2 API response
+
+        Raises:
+            ValueError: If folder creation fails
+        """
+        try:
+            space_id = self._get_space_id(space_key)
+
+            data: dict[str, Any] = {"spaceId": space_id, "title": title}
+            if parent_id:
+                data["parentId"] = parent_id
+
+            url = f"{self.base_url}/api/v2/folders"
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+
+            result: dict[str, Any] = response.json()
+            logger.debug(f"Successfully created folder '{title}' with v2 API")
+            return result
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error creating folder '{title}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error creating folder '{title}': {e}")
+            raise ValueError(f"Failed to create folder '{title}': {e}") from e
+
+    def get_folder(self, folder_id: str) -> dict[str, Any]:
+        """Get a folder by ID using the v2 API.
+
+        Args:
+            folder_id: The ID of the folder to retrieve
+
+        Returns:
+            The folder data from the v2 API response
+
+        Raises:
+            ValueError: If the folder cannot be retrieved
+        """
+        try:
+            url = f"{self.base_url}/api/v2/folders/{folder_id}"
+            response = self.session.get(url)
+            response.raise_for_status()
+            folder: dict[str, Any] = response.json()
+            return folder
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting folder '{folder_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting folder '{folder_id}': {e}")
+            raise ValueError(f"Failed to get folder '{folder_id}': {e}") from e
+
+    def get_folder_direct_children(
+        self, folder_id: str, limit: int = 250
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Get the direct children (pages, folders, ...) of a folder.
+
+        Args:
+            folder_id: The ID of the folder
+            limit: Maximum number of children to return (v2 API max: 250)
+
+        Returns:
+            Tuple of (children, has_more) where has_more indicates that the
+            folder has more children than were returned
+
+        Raises:
+            ValueError: If the children cannot be retrieved
+        """
+        try:
+            url = f"{self.base_url}/api/v2/folders/{folder_id}/direct-children"
+            response = self.session.get(url, params={"limit": limit})
+            response.raise_for_status()
+            data = response.json()
+            has_more = bool((data.get("_links") or {}).get("next"))
+            return data.get("results", []), has_more
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error getting children of folder '{folder_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error getting children of folder '{folder_id}': {e}")
+            raise ValueError(
+                f"Failed to get children of folder '{folder_id}': {e}"
+            ) from e
+
+    def delete_folder(self, folder_id: str) -> None:
+        """Delete a folder using the v2 API.
+
+        Confluence moves the folder to the space trash.
+
+        Args:
+            folder_id: The ID of the folder to delete
+
+        Raises:
+            ValueError: If folder deletion fails
+        """
+        try:
+            url = f"{self.base_url}/api/v2/folders/{folder_id}"
+            response = self.session.delete(url)
+            response.raise_for_status()
+            logger.debug(f"Successfully deleted folder '{folder_id}' with v2 API")
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error deleting folder '{folder_id}': {e}\n"
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error deleting folder '{folder_id}': {e}")
+            raise ValueError(f"Failed to delete folder '{folder_id}': {e}") from e
+
     def _convert_v2_to_v1_format(
         self, v2_response: dict[str, Any], space_key: str
     ) -> dict[str, Any]:
