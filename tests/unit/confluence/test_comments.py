@@ -891,6 +891,127 @@ class TestGetInlineComments:
         # v1 API should not be called
         comments_mixin.confluence.get_page_comments.assert_not_called()
 
+    def test_get_inline_comments_v2_cloud_resolves_bare_author_id(self, comments_mixin):
+        """v2 inline comments only carry ``version.authorId`` (no embedded
+        user object, unlike v1's ``version.by``). Confirmed against the real
+        Confluence Cloud v2 API (GET /wiki/api/v2/pages/{id}/inline-comments)
+        on 2026-10-13 — no top-level ``author``, ``version`` has only
+        ``authorId``/``createdAt``/``number``/``message``/``minorEdit``/
+        ``contributorIds``, no ``by``. get_inline_comments must resolve that
+        ID via GET /wiki/rest/api/user so the comment still has an author.
+        """
+        mock_adapter = MagicMock()
+        mock_adapter.get_inline_comments.return_value = [
+            {
+                "id": "333444555",
+                "status": "open",
+                "body": {
+                    "view": {"value": "<p>v2 inline</p>", "representation": "view"}
+                },
+                "extensions": {"location": "inline"},
+                "version": {
+                    "number": 1,
+                    "authorId": "acc-1",
+                    "createdAt": "2024-01-03T10:00:00.000Z",
+                },
+                "_links": {},
+            },
+        ]
+        comments_mixin.preprocessor.process_html_content.return_value = (
+            "<p>v2 inline</p>",
+            "v2 inline",
+        )
+        comments_mixin.confluence.get_user_details_by_accountid.return_value = {
+            "accountId": "acc-1",
+            "displayName": "Jane Doe",
+        }
+
+        with patch.object(
+            type(comments_mixin),
+            "_inline_v2_adapter",
+            new_callable=lambda: property(lambda self: mock_adapter),
+        ):
+            result = comments_mixin.get_inline_comments("12345")
+
+        assert len(result) == 1
+        assert result[0].author is not None
+        assert result[0].author.display_name == "Jane Doe"
+        assert result[0].author.account_id == "acc-1"
+        comments_mixin.confluence.get_user_details_by_accountid.assert_called_once_with(
+            "acc-1"
+        )
+
+    def test_get_inline_comments_v2_cloud_memoizes_author_lookup(self, comments_mixin):
+        """Repeated authorId on the same page is only resolved once."""
+        mock_adapter = MagicMock()
+        comment_template = {
+            "status": "open",
+            "body": {"view": {"value": "<p>c</p>", "representation": "view"}},
+            "extensions": {"location": "inline"},
+            "version": {"number": 1, "authorId": "acc-1"},
+            "_links": {},
+        }
+        mock_adapter.get_inline_comments.return_value = [
+            {**comment_template, "id": "1"},
+            {**comment_template, "id": "2"},
+        ]
+        comments_mixin.preprocessor.process_html_content.return_value = (
+            "<p>c</p>",
+            "c",
+        )
+        comments_mixin.confluence.get_user_details_by_accountid.return_value = {
+            "accountId": "acc-1",
+            "displayName": "Jane Doe",
+        }
+
+        with patch.object(
+            type(comments_mixin),
+            "_inline_v2_adapter",
+            new_callable=lambda: property(lambda self: mock_adapter),
+        ):
+            result = comments_mixin.get_inline_comments("12345")
+
+        assert len(result) == 2
+        assert all(c.author.display_name == "Jane Doe" for c in result)
+        comments_mixin.confluence.get_user_details_by_accountid.assert_called_once_with(
+            "acc-1"
+        )
+
+    def test_get_inline_comments_v2_cloud_author_lookup_failure_is_non_fatal(
+        self, comments_mixin
+    ):
+        """If the user-lookup API call fails, the comment is still returned
+        (just without an author), matching today's behavior rather than
+        crashing the whole page fetch."""
+        mock_adapter = MagicMock()
+        mock_adapter.get_inline_comments.return_value = [
+            {
+                "id": "1",
+                "status": "open",
+                "body": {"view": {"value": "<p>c</p>", "representation": "view"}},
+                "extensions": {"location": "inline"},
+                "version": {"number": 1, "authorId": "acc-1"},
+                "_links": {},
+            },
+        ]
+        comments_mixin.preprocessor.process_html_content.return_value = (
+            "<p>c</p>",
+            "c",
+        )
+        comments_mixin.confluence.get_user_details_by_accountid.side_effect = Exception(
+            "no permission"
+        )
+
+        with patch.object(
+            type(comments_mixin),
+            "_inline_v2_adapter",
+            new_callable=lambda: property(lambda self: mock_adapter),
+        ):
+            result = comments_mixin.get_inline_comments("12345")
+
+        assert len(result) == 1
+        assert result[0].author is None
+
     def test_get_inline_comments_paginates_v1_results(self, comments_mixin_dc):
         """Server/DC inline comments include matches beyond the first page."""
         comments_mixin_dc.confluence.get_page_by_id.return_value = {
@@ -1186,3 +1307,77 @@ class TestInlineCommentModel:
         assert comment.body == "<p>This is a v2 inline comment</p>"
         assert comment.author is not None
         assert comment.author.display_name == "Test User"
+
+
+class TestResolveVersionAuthor:
+    """Unit tests for CommentsMixin._resolve_version_author directly."""
+
+    def test_returns_unchanged_when_author_already_present(self, comments_mixin):
+        data = {"author": {"displayName": "X"}, "version": {}}
+        result = comments_mixin._resolve_version_author(data, account_cache={})
+        assert result is data
+        comments_mixin.confluence.get_user_details_by_accountid.assert_not_called()
+
+    def test_returns_unchanged_when_version_by_already_present(self, comments_mixin):
+        data = {"version": {"by": {"displayName": "X"}}}
+        result = comments_mixin._resolve_version_author(data, account_cache={})
+        assert result is data
+        comments_mixin.confluence.get_user_details_by_accountid.assert_not_called()
+
+    def test_returns_unchanged_when_no_version(self, comments_mixin):
+        data = {"id": "1"}
+        result = comments_mixin._resolve_version_author(data, account_cache={})
+        assert result is data
+
+    def test_returns_unchanged_when_no_author_id(self, comments_mixin):
+        data = {"version": {"number": 1}}
+        result = comments_mixin._resolve_version_author(data, account_cache={})
+        assert result is data
+        comments_mixin.confluence.get_user_details_by_accountid.assert_not_called()
+
+    def test_enriches_version_by_from_bare_author_id(self, comments_mixin):
+        comments_mixin.confluence.get_user_details_by_accountid.return_value = {
+            "accountId": "acc-1",
+            "displayName": "Jane Doe",
+        }
+        data = {"version": {"number": 1, "authorId": "acc-1"}}
+
+        result = comments_mixin._resolve_version_author(data, account_cache={})
+
+        assert result is not data  # original left untouched
+        assert data["version"].get("by") is None
+        assert result["version"]["by"]["displayName"] == "Jane Doe"
+        assert result["version"]["authorId"] == "acc-1"  # original keys preserved
+
+    def test_uses_and_populates_cache(self, comments_mixin):
+        comments_mixin.confluence.get_user_details_by_accountid.return_value = {
+            "accountId": "acc-1",
+            "displayName": "Jane Doe",
+        }
+        cache: dict = {}
+        data = {"version": {"authorId": "acc-1"}}
+
+        comments_mixin._resolve_version_author(data, account_cache=cache)
+        comments_mixin._resolve_version_author(data, account_cache=cache)
+
+        assert cache["acc-1"]["displayName"] == "Jane Doe"
+        comments_mixin.confluence.get_user_details_by_accountid.assert_called_once_with(
+            "acc-1"
+        )
+
+    def test_caches_failed_lookup_to_avoid_retry_storms(self, comments_mixin):
+        comments_mixin.confluence.get_user_details_by_accountid.side_effect = Exception(
+            "no permission"
+        )
+        cache: dict = {}
+        data = {"version": {"authorId": "acc-1"}}
+
+        result1 = comments_mixin._resolve_version_author(data, account_cache=cache)
+        result2 = comments_mixin._resolve_version_author(data, account_cache=cache)
+
+        assert result1 is data
+        assert result2 is data
+        assert cache["acc-1"] is None
+        comments_mixin.confluence.get_user_details_by_accountid.assert_called_once_with(
+            "acc-1"
+        )

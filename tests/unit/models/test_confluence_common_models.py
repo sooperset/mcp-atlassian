@@ -411,6 +411,20 @@ class TestConfluenceComment:
         assert simplified["created"] == "2024-01-01 02:00:00 PST"
         assert simplified["updated"] == "2024-01-01 02:00:00 PST"
         assert simplified["author"] == "Comment Author"
+        assert simplified["author_id"] == "user123"
+
+    def test_to_simplified_dict_author_without_account_id(self, pacific_timezone):
+        """author_id is omitted when the author has no account_id."""
+        comment = ConfluenceComment(
+            id="456789123",
+            body="This is a test comment",
+            author=ConfluenceUser(display_name="Comment Author"),
+        )
+
+        simplified = comment.to_simplified_dict()
+
+        assert simplified["author"] == "Comment Author"
+        assert "author_id" not in simplified
 
 
 class TestConfluenceLabel:

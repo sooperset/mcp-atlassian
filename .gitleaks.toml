@@ -1,0 +1,32 @@
+# mcp-atlassian .gitleaks.toml — commit-time + full-history secret scan allowlist
+# WHAT: false-positive baseline from the full-history scan (tech-center
+#       #10692 public-repo pre-push rollout, 2026-10-23) — 10 raw matches
+#       across 7 commits, all triaged and confirmed false positive.
+# WHY:  allowlist by COMMIT, never by the matched secret VALUE.
+
+[extend]
+useDefault = true
+
+[allowlist]
+# Confirmed false-positive classes:
+# - tests/unit/**/*.py — test fixtures with placeholder-shaped credential
+#   strings (e.g. "sk-1234567890abcdef", a truncated test JWT
+#   "eyJhbGciOiJIUzI1NiJ9.abc123", a Confluence user-key XML attribute
+#   value, regex-pattern test assertions) — not real secrets.
+# - .kiro/specs/tool-call-audit-logging/design.md — a design doc's
+#   illustrative example tool-call payload with placeholder values
+#   ("ghp_abc123xyz", "s3cr3t").
+# - docs/troubleshooting.mdx — curl auth examples with
+#   "your_api_token"/"your_pat_token" placeholders.
+# - src/mcp_atlassian/jira/transitions.py — no credential-shaped value
+#   present anywhere in or around the flagged line (checked a wide
+#   context window); heuristic misfire, not a secret.
+commits = [
+  "10e56cefff76f0202c9500ef5bccde55ecea225a",
+  "16f77bdfddc03d5ddd89b2e6586bda0d2ebae754",
+  "30754ba93429cc6f4fb8d24bc872554ca724ca84",
+  "76dee99aaa7d181977e5ac5653ab9590c39addf5",
+  "7c213ff6a00f690d4af0c2343efa36a8c80efeb5",
+  "814bd2336435a04dd619dcd5c898ec690c65e18e",
+  "865dee729d3f5761eb58d39e66c01eb1706dd463",
+]

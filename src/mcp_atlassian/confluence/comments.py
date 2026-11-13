@@ -17,6 +17,67 @@ logger = logging.getLogger("mcp-atlassian")
 class CommentsMixin(ConfluenceClient):
     """Mixin for Confluence comment operations."""
 
+    def _resolve_version_author(
+        self,
+        comment_data: dict[str, Any],
+        *,
+        account_cache: dict[str, dict[str, Any] | None],
+    ) -> dict[str, Any]:
+        """Backfill a resolvable author onto a raw comment dict, if needed.
+
+        ``ConfluenceComment.from_api_response`` can already build an author
+        from a top-level ``author`` object or from a v1-shaped
+        ``version.by`` user object (both already embed a display name).
+        Confluence Cloud's v2 API (used for inline comments, see
+        ``_inline_v2_adapter``) only returns ``version.authorId`` — a bare
+        account ID, no embedded user object — so that fallback finds nothing
+        and the comment ends up with no author at all.
+
+        This resolves that bare account ID via ``GET /wiki/rest/api/user``
+        and synthesizes a ``version.by``-shaped dict so the existing model
+        logic picks it up unchanged. Best-effort: any failure just leaves
+        the comment without an author, same as today.
+
+        Args:
+            comment_data: Raw comment dict from the Confluence API.
+            account_cache: Per-call cache of accountId -> resolved user
+                dict (or None if resolution failed), so repeated authors on
+                the same page are only looked up once.
+
+        Returns:
+            ``comment_data`` unchanged, or a shallow copy with
+            ``version.by`` filled in.
+        """
+        if comment_data.get("author"):
+            return comment_data
+
+        version = comment_data.get("version")
+        if not isinstance(version, dict) or version.get("by"):
+            return comment_data
+
+        account_id = version.get("authorId")
+        if not account_id:
+            return comment_data
+
+        if account_id in account_cache:
+            user_details = account_cache[account_id]
+        else:
+            try:
+                user_details = self.confluence.get_user_details_by_accountid(account_id)
+            except Exception as e:  # noqa: BLE001 - best-effort enrichment only
+                logger.warning(
+                    f"Could not resolve display name for account {account_id}: {e}"
+                )
+                user_details = None
+            account_cache[account_id] = user_details
+
+        if not user_details:
+            return comment_data
+
+        enriched_data = comment_data.copy()
+        enriched_data["version"] = {**version, "by": user_details}
+        return enriched_data
+
     def _get_all_v1_page_comments(
         self, page_id: str, *, expand: str
     ) -> list[dict[str, Any]]:
@@ -106,6 +167,7 @@ class CommentsMixin(ConfluenceClient):
 
             # Process each comment
             comment_models = []
+            author_cache: dict[str, dict[str, Any] | None] = {}
             for comment_data in raw_comments:
                 # Get the content based on format
                 body = comment_data["body"]["view"]["value"]
@@ -133,6 +195,10 @@ class CommentsMixin(ConfluenceClient):
                 # Set the appropriate content based on return format
                 modified_comment_data["body"]["view"]["value"] = (
                     processed_markdown if return_markdown else processed_html
+                )
+
+                modified_comment_data = self._resolve_version_author(
+                    modified_comment_data, account_cache=author_cache
                 )
 
                 # Create the model with the processed content
@@ -343,6 +409,7 @@ class CommentsMixin(ConfluenceClient):
                 ]
 
             comment_models = []
+            author_cache: dict[str, dict[str, Any] | None] = {}
             for comment_data in raw_comments:
                 body = comment_data.get("body", {}).get("view", {}).get("value", "")
                 processed_html, processed_markdown = (
@@ -365,6 +432,10 @@ class CommentsMixin(ConfluenceClient):
 
                 modified_comment_data["body"]["view"]["value"] = (
                     processed_markdown if return_markdown else processed_html
+                )
+
+                modified_comment_data = self._resolve_version_author(
+                    modified_comment_data, account_cache=author_cache
                 )
 
                 comment_models.append(
@@ -538,6 +609,10 @@ class CommentsMixin(ConfluenceClient):
             modified_response["body"]["view"] = {}
 
         modified_response["body"]["view"]["value"] = processed_markdown
+
+        modified_response = self._resolve_version_author(
+            modified_response, account_cache={}
+        )
 
         return ConfluenceComment.from_api_response(
             modified_response,

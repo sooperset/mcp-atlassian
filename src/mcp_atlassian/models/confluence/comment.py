@@ -173,6 +173,8 @@ class ConfluenceComment(ApiModel, TimestampMixin):
 
         if self.author:
             result["author"] = self.author.display_name
+            if self.author.account_id:
+                result["author_id"] = self.author.account_id
 
         if self.parent_comment_id:
             result["parent_comment_id"] = self.parent_comment_id
