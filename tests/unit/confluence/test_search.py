@@ -60,7 +60,10 @@ class TestSearchMixin:
 
         # Verify API call
         search_mixin.confluence.cql.assert_called_once_with(
-            cql="test query", limit=10, expand="content.history,content.version"
+            cql="test query",
+            limit=10,
+            start=0,
+            expand="content.history,content.version",
         )
 
         # Verify result
@@ -68,6 +71,19 @@ class TestSearchMixin:
         assert result[0].id == "123456789"
         assert result[0].title == "Test Page"
         assert result[0].content == "Processed content"
+
+    def test_search_passes_start_offset(self, search_mixin):
+        """Test that start is forwarded so callers can page past the first limit."""
+        search_mixin.confluence.cql.return_value = {"results": []}
+
+        search_mixin.search("test query", limit=50, start=100)
+
+        search_mixin.confluence.cql.assert_called_once_with(
+            cql="test query",
+            limit=50,
+            start=100,
+            expand="content.history,content.version",
+        )
 
     def test_search_expands_content_metadata(self, search_mixin):
         """Search results should carry created/updated/author and version metadata.
@@ -110,7 +126,10 @@ class TestSearchMixin:
         # The nested content properties must be requested with the
         # "content." prefix, otherwise /rest/api/search ignores them.
         search_mixin.confluence.cql.assert_called_once_with(
-            cql="test query", limit=10, expand="content.history,content.version"
+            cql="test query",
+            limit=10,
+            start=0,
+            expand="content.history,content.version",
         )
 
         assert len(result) == 1
@@ -323,6 +342,7 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f"(test query) AND (space = {quoted_dev})",
             limit=10,
+            start=0,
             expand="content.history,content.version",
         )
         assert len(result) == 1
@@ -336,6 +356,7 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f"(test query) AND (space = {quoted_dev} OR space = {quoted_team})",
             limit=10,
+            start=0,
             expand="content.history,content.version",
         )
         assert len(result) == 1
@@ -347,6 +368,7 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f'(space = "EXISTING") AND (space = {quoted_dev})',
             limit=10,
+            start=0,
             expand="content.history,content.version",
         )
         assert len(result) == 1
@@ -420,6 +442,7 @@ class TestSearchMixin:
         search_mixin.confluence.cql.assert_called_with(
             cql=f"(test query) AND (space = {quoted_dev} OR space = {quoted_team})",
             limit=10,
+            start=0,
             expand="content.history,content.version",
         )
         assert len(result) == 1
@@ -437,6 +460,7 @@ class TestSearchMixin:
                 f" AND (space = {quoted_override})"
             ),
             limit=10,
+            start=0,
             expand="content.history,content.version",
         )
         assert len(result) == 1

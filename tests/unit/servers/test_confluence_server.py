@@ -511,6 +511,56 @@ async def test_search(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_search_defaults_start_to_zero(client, mock_confluence_fetcher):
+    """Test that start defaults to the first result."""
+    await client.call_tool("confluence_search", {"query": "test search"})
+
+    assert mock_confluence_fetcher.search.call_args.kwargs.get("start") == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("query", ["test search", 'space = "DEV"'])
+async def test_search_forwards_start(client, mock_confluence_fetcher, query):
+    """Test that start reaches the fetcher for simple terms and CQL."""
+    await client.call_tool(
+        "confluence_search", {"query": query, "limit": 50, "start": 100}
+    )
+
+    kwargs = mock_confluence_fetcher.search.call_args.kwargs
+    assert kwargs.get("limit") == 50
+    assert kwargs.get("start") == 100
+
+
+@pytest.mark.anyio
+async def test_search_fallback_keeps_start(client, mock_confluence_fetcher):
+    """Test that the text search fallback requests the same offset."""
+    mock_confluence_fetcher.search.side_effect = [
+        ValueError("siteSearch unavailable"),
+        [],
+    ]
+
+    await client.call_tool(
+        "confluence_search", {"query": "test search", "limit": 50, "start": 100}
+    )
+
+    assert mock_confluence_fetcher.search.call_count == 2
+    args, kwargs = mock_confluence_fetcher.search.call_args
+    assert 'text ~ "test search"' in args[0]
+    assert kwargs.get("start") == 100
+
+
+@pytest.mark.anyio
+async def test_search_rejects_negative_start(client, mock_confluence_fetcher):
+    """Test that a negative start fails validation before reaching the fetcher."""
+    with pytest.raises(ToolError):
+        await client.call_tool(
+            "confluence_search", {"query": "test search", "start": -1}
+        )
+
+    mock_confluence_fetcher.search.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_search_returns_error_details(client, mock_confluence_fetcher):
     """Test that search tool failures preserve the original error message."""
     mock_confluence_fetcher.search.side_effect = RuntimeError(

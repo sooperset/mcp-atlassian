@@ -79,7 +79,11 @@ class SearchMixin(ConfluenceClient):
 
     @handle_atlassian_api_errors("Confluence API")
     def search(
-        self, cql: str, limit: int = 10, spaces_filter: str | None = None
+        self,
+        cql: str,
+        limit: int = 10,
+        spaces_filter: str | None = None,
+        start: int = 0,
     ) -> list[ConfluencePage]:
         """
         Search content using Confluence Query Language (CQL).
@@ -90,6 +94,9 @@ class SearchMixin(ConfluenceClient):
             spaces_filter: Optional comma-separated list of space keys to narrow
                 results within the configured allowlist (ANDed with config,
                 never replaces it)
+            start: 0-based offset of the first result to return; pass
+                start=limit, start=2*limit, ... to page through matches
+                beyond the first `limit`
 
         Returns:
             List of ConfluencePage models containing search results
@@ -114,7 +121,10 @@ class SearchMixin(ConfluenceClient):
         # properties require the "content." prefix (a bare "history,version"
         # is silently ignored).
         results = self.confluence.cql(
-            cql=cql, limit=limit, expand="content.history,content.version"
+            cql=cql,
+            limit=limit,
+            start=start,
+            expand="content.history,content.version",
         )
 
         # Surface malformed responses (missing "results") as errors while

@@ -231,12 +231,25 @@ async def search(
     limit: Annotated[
         int,
         Field(
-            description="Maximum number of results (1-50)",
+            description="Maximum number of results per page (1-50)",
             default=10,
             ge=1,
             le=50,
         ),
     ] = 10,
+    start: Annotated[
+        int,
+        Field(
+            description=(
+                "(Optional) 0-based index of the first result to return. "
+                "Use it to page through matches beyond the first `limit`: "
+                "call with start=0, then start=limit, start=2*limit, and so on. "
+                "A page returning fewer than `limit` results is the last one."
+            ),
+            default=0,
+            ge=0,
+        ),
+    ] = 0,
     spaces_filter: Annotated[
         str | None,
         Field(
@@ -254,7 +267,8 @@ async def search(
     Args:
         ctx: The FastMCP context.
         query: Search query - can be simple text or a CQL query string.
-        limit: Maximum number of results (1-50).
+        limit: Maximum number of results per page (1-50).
+        start: 0-based offset of the first result, for paging through matches.
         spaces_filter: Comma-separated list of space keys to filter by.
 
     Returns:
@@ -272,18 +286,18 @@ async def search(
                 f"Converting simple search term to CQL using siteSearch: {query}"
             )
             pages = confluence_fetcher.search(
-                query, limit=limit, spaces_filter=spaces_filter
+                query, limit=limit, spaces_filter=spaces_filter, start=start
             )
         except Exception as e:
             logger.warning(f"siteSearch failed ('{e}'), falling back to text search.")
             query = f'text ~ "{original_query}"'
             logger.info(f"Falling back to text search with CQL: {query}")
             pages = confluence_fetcher.search(
-                query, limit=limit, spaces_filter=spaces_filter
+                query, limit=limit, spaces_filter=spaces_filter, start=start
             )
     else:
         pages = confluence_fetcher.search(
-            query, limit=limit, spaces_filter=spaces_filter
+            query, limit=limit, spaces_filter=spaces_filter, start=start
         )
     search_results = [page.to_simplified_dict() for page in pages]
     return json.dumps(search_results, indent=2, ensure_ascii=False)
