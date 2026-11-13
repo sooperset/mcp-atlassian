@@ -15,52 +15,31 @@ logger = logging.getLogger("mcp-jira")
 class WorklogMixin(JiraClient):
     """Mixin for Jira worklog operations."""
 
-    def _parse_time_spent(self, time_spent: str) -> int:
+    def _build_time_spent_payload(self, time_spent: str) -> dict[str, Any]:
         """
-        Parse time spent string into seconds.
+        Build the time spent part of a worklog request body.
+
+        Duration strings such as ``1d 2h`` are sent to Jira as ``timeSpent`` so
+        Jira converts them with the instance's time tracking settings (hours per
+        day, days per week). Converting them here with fixed 24h days and 7d
+        weeks would log ``1d`` as 24h on an instance where a day is 8h.
+        Plain seconds (``3600`` or ``3600s``) are sent as ``timeSpentSeconds``.
 
         Args:
-            time_spent: Time spent string (e.g. 1h 30m, 1d, etc.)
+            time_spent: Time spent string (e.g. 1h 30m, 1d, 3600s)
 
         Returns:
-            Time spent in seconds
+            Dict with either ``timeSpentSeconds`` or ``timeSpent``
         """
+        value = time_spent.strip()
+
         # Base case for direct specification in seconds
-        if time_spent.endswith("s"):
-            try:
-                return int(time_spent[:-1])
-            except ValueError:
-                pass
-
-        total_seconds = 0
-        time_units = {
-            "w": 7 * 24 * 60 * 60,  # weeks to seconds
-            "d": 24 * 60 * 60,  # days to seconds
-            "h": 60 * 60,  # hours to seconds
-            "m": 60,  # minutes to seconds
-        }
-
-        # Regular expression to find time components like 1w, 2d, 3h, 4m
-        pattern = r"(\d+)([wdhm])"
-        matches = re.findall(pattern, time_spent)
-
-        for value, unit in matches:
-            # Convert value to int and multiply by the unit in seconds
-            seconds = int(value) * time_units[unit]
-            total_seconds += seconds
-
-        if total_seconds == 0:
-            # If we couldn't parse anything, try using the raw value
-            try:
-                return int(float(time_spent))  # Convert to float first, then to int
-            except ValueError:
-                # If all else fails, default to 60 seconds (1 minute)
-                logger.warning(
-                    f"Could not parse time: {time_spent}, defaulting to 60 seconds"
-                )
-                return 60
-
-        return total_seconds
+        if re.fullmatch(r"\d+s", value):
+            return {"timeSpentSeconds": int(value[:-1])}
+        try:
+            return {"timeSpentSeconds": int(float(value))}
+        except ValueError:
+            return {"timeSpent": value}
 
     def add_worklog(
         self,
@@ -89,9 +68,6 @@ class WorklogMixin(JiraClient):
             Exception: If there's an error adding the worklog
         """
         try:
-            # Convert time_spent string to seconds
-            time_spent_seconds = self._parse_time_spent(time_spent)
-
             # Convert Markdown comment to Jira format if provided
             if comment:
                 comment = self._markdown_to_jira(comment)
@@ -112,7 +88,7 @@ class WorklogMixin(JiraClient):
                     # Continue with worklog creation even if estimate update fails
 
             # Step 2: Prepare worklog data
-            worklog_data: dict[str, Any] = {"timeSpentSeconds": time_spent_seconds}
+            worklog_data = self._build_time_spent_payload(time_spent)
             if comment:
                 worklog_data["comment"] = comment
             if started:

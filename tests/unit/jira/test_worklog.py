@@ -21,46 +21,60 @@ class TestWorklogMixin:
 
         return mixin
 
-    def test_parse_time_spent_with_seconds(self, worklog_mixin):
-        """Test parsing time spent with seconds specification."""
-        assert worklog_mixin._parse_time_spent("60s") == 60
-        assert worklog_mixin._parse_time_spent("3600s") == 3600
+    def test_time_spent_payload_with_seconds(self, worklog_mixin):
+        """Test seconds specification is sent as timeSpentSeconds."""
+        assert worklog_mixin._build_time_spent_payload("60s") == {
+            "timeSpentSeconds": 60
+        }
+        assert worklog_mixin._build_time_spent_payload("3600s") == {
+            "timeSpentSeconds": 3600
+        }
 
-    def test_parse_time_spent_with_minutes(self, worklog_mixin):
-        """Test parsing time spent with minutes."""
-        assert worklog_mixin._parse_time_spent("1m") == 60
-        assert worklog_mixin._parse_time_spent("30m") == 1800
+    def test_time_spent_payload_with_numeric_input(self, worklog_mixin):
+        """Test numeric input is sent as timeSpentSeconds."""
+        assert worklog_mixin._build_time_spent_payload("60") == {"timeSpentSeconds": 60}
+        assert worklog_mixin._build_time_spent_payload("3600") == {
+            "timeSpentSeconds": 3600
+        }
 
-    def test_parse_time_spent_with_hours(self, worklog_mixin):
-        """Test parsing time spent with hours."""
-        assert worklog_mixin._parse_time_spent("1h") == 3600
-        assert worklog_mixin._parse_time_spent("2h") == 7200
+    @pytest.mark.parametrize(
+        "time_spent",
+        ["30m", "1h", "1d", "2w", "1h 30m", "1d 6h", "1w 2d 3h 4m"],
+    )
+    def test_time_spent_payload_with_duration_units(self, worklog_mixin, time_spent):
+        """Test duration strings are left for Jira to convert.
 
-    def test_parse_time_spent_with_days(self, worklog_mixin):
-        """Test parsing time spent with days."""
-        assert worklog_mixin._parse_time_spent("1d") == 86400
-        assert worklog_mixin._parse_time_spent("2d") == 172800
+        Jira applies the instance's hours per day and days per week, so 1d is
+        8h on a default instance, not 24h.
+        """
+        assert worklog_mixin._build_time_spent_payload(time_spent) == {
+            "timeSpent": time_spent
+        }
 
-    def test_parse_time_spent_with_weeks(self, worklog_mixin):
-        """Test parsing time spent with weeks."""
-        assert worklog_mixin._parse_time_spent("1w") == 604800
-        assert worklog_mixin._parse_time_spent("2w") == 1209600
+    def test_time_spent_payload_strips_whitespace(self, worklog_mixin):
+        """Test surrounding whitespace is removed."""
+        assert worklog_mixin._build_time_spent_payload(" 1d ") == {"timeSpent": "1d"}
+        assert worklog_mixin._build_time_spent_payload(" 60s ") == {
+            "timeSpentSeconds": 60
+        }
 
-    def test_parse_time_spent_with_mixed_units(self, worklog_mixin):
-        """Test parsing time spent with mixed units."""
-        assert worklog_mixin._parse_time_spent("1h 30m") == 5400
-        assert worklog_mixin._parse_time_spent("1d 6h") == 108000
-        assert worklog_mixin._parse_time_spent("1w 2d 3h 4m") == 788640
+    def test_add_worklog_sends_days_as_jira_duration(self, worklog_mixin):
+        """Regression: 1d must not be sent as 86400 seconds (3d on an 8h day)."""
+        worklog_mixin.jira.post.return_value = {
+            "id": "10001",
+            "timeSpent": "1d",
+            "timeSpentSeconds": 28800,
+        }
+        worklog_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
 
-    def test_parse_time_spent_with_invalid_input(self, worklog_mixin):
-        """Test parsing time spent with invalid input."""
-        # Should default to 60 seconds
-        assert worklog_mixin._parse_time_spent("invalid") == 60
+        result = worklog_mixin.add_worklog("TEST-123", "1d")
 
-    def test_parse_time_spent_with_numeric_input(self, worklog_mixin):
-        """Test parsing time spent with numeric input."""
-        assert worklog_mixin._parse_time_spent("60") == 60
-        assert worklog_mixin._parse_time_spent("3600") == 3600
+        _, kwargs = worklog_mixin.jira.post.call_args
+        assert kwargs["data"] == {"timeSpent": "1d"}
+        assert result["time_spent"] == "1d"
+        assert result["time_spent_seconds"] == 28800
 
     def test_get_worklogs_basic(self, worklog_mixin):
         """Test basic functionality of get_worklogs."""
@@ -438,7 +452,7 @@ class TestWorklogMixin:
         worklog_mixin._post_api3.assert_called_once_with(
             "issue/TEST-123/worklog",
             data={
-                "timeSpentSeconds": 3600,
+                "timeSpent": "1h",
                 "comment": adf_comment,
             },
             params=None,
@@ -476,7 +490,7 @@ class TestWorklogMixin:
         worklog_mixin._post_api3.assert_called_once_with(
             "issue/TEST-123/worklog",
             data={
-                "timeSpentSeconds": 3600,
+                "timeSpent": "1h",
                 "comment": adf_comment,
             },
             params={
