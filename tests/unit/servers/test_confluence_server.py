@@ -246,6 +246,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_diff,
+        get_page_history,
         get_page_images,
         get_page_template,
         get_space_page_tree,
@@ -279,6 +281,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_page_diff)
+    confluence_sub_mcp.add_tool(get_page_history)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
     confluence_sub_mcp.add_tool(get_inline_comments)
@@ -329,6 +333,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_diff,
+        get_page_history,
         get_page_images,
         get_page_template,
         get_space_page_tree,
@@ -364,6 +370,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_page_diff)
+    confluence_sub_mcp.add_tool(get_page_history)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
     confluence_sub_mcp.add_tool(get_inline_comments)
@@ -617,6 +625,41 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     assert result_data["metadata"]["title"] == "Test Page HTML"
     assert result_data["metadata"]["content"] == "<p>HTML Content</p>"
     assert result_data["metadata"]["content_format"] == "storage"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("tool", ["confluence_get_page", "confluence_get_page_history"])
+async def test_raw_storage_survives_mcp_serialization(
+    client, mock_confluence_fetcher, tool
+):
+    storage = '<ac:link><ri:user ri:userkey="alice" /></ac:link>'
+    page = ConfluencePage(
+        id="123456", title="Owners", content=storage, content_format="storage"
+    )
+    mock_confluence_fetcher.get_page_content.return_value = page
+    mock_confluence_fetcher.get_page_history.return_value = page
+    arguments = {"page_id": "123456", "convert_to_markdown": False}
+    if tool.endswith("history"):
+        arguments["version"] = 3
+    response = await client.call_tool(tool, arguments)
+    result = json.loads(response.content[0].text)
+    returned = result.get("metadata", result)
+    assert returned["content"] == {"value": storage, "format": "storage"}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("raw", [True, False])
+async def test_diff_forwards_content_format(client, mock_confluence_fetcher, raw):
+    diff = '-<ac:link><ri:user ri:userkey="alice" /></ac:link>\n+@Alice Smith'
+    mock_confluence_fetcher.get_page_version_diff.return_value = {"diff": diff}
+    arguments = {"page_id": "123456", "from_version": 1, "to_version": 2}
+    if raw:
+        arguments["convert_to_markdown"] = False
+    response = await client.call_tool("confluence_get_page_diff", arguments)
+    mock_confluence_fetcher.get_page_version_diff.assert_called_once_with(
+        page_id="123456", from_version=1, to_version=2, convert_to_markdown=not raw
+    )
+    assert json.loads(response.content[0].text)["diff"] == diff
 
 
 @pytest.mark.anyio
