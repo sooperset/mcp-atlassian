@@ -60,28 +60,9 @@ Get worklog entries for a Jira issue.
 
 ---
 
-### Add Worklog
+### Add, Update or Delete Worklog
 
-Add a worklog entry to a Jira issue.
-
-<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `time_spent` | `string` | Yes | Time spent in Jira format. Examples: '1h 30m' (1 hour and 30 minutes), '1d' (1 day), '30m' (30 minutes), '4h' (4 hours) |
-| `comment` | `string` | No | (Optional) Comment for the worklog in Markdown format |
-| `started` | `string` | No | (Optional) Start time in ISO format. If not provided, the current time will be used. Example: '2023-08-01T12:00:00.000+0000' |
-| `original_estimate` | `string` | No | (Optional) New value for the original estimate |
-| `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |
-
----
-
-### Update Worklog
-
-Update an existing worklog entry on a Jira issue.
+Add, update or delete a worklog entry on a Jira issue.
 
 <Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
 
@@ -90,26 +71,12 @@ Update an existing worklog entry on a Jira issue.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `worklog_id` | `string` | Yes | The ID of the worklog to update (from jira_get_worklog) |
-| `time_spent` | `string` | No | (Optional) New time spent in Jira format. Examples: '1h 30m', '1d', '30m', '4h'. Jira validates it and converts days and weeks using the site's time tracking settings. |
-| `comment` | `string` | No | (Optional) New worklog comment in Markdown format |
-| `started` | `string` | No | (Optional) New start time in ISO format. Example: '2023-08-01T12:00:00.000+0000' |
-| `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |
-
----
-
-### Delete Worklog
-
-Delete a worklog entry from a Jira issue.
-
-<Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `worklog_id` | `string` | Yes | The ID of the worklog to delete (from jira_get_worklog) |
+| `action` | `string` | No | (Optional) 'add' (default) logs new time, 'update' changes an existing worklog, 'delete' removes it. 'update' and 'delete' need worklog_id. |
+| `worklog_id` | `string` | No | (Optional) ID of the worklog to update or delete (from jira_get_worklog). Required for 'update' and 'delete', not allowed for 'add'. |
+| `time_spent` | `string` | No | Time spent in Jira format. Examples: '1h 30m' (1 hour and 30 minutes), '1d' (1 day), '30m' (30 minutes), '4h' (4 hours). Required for 'add', optional for 'update', not allowed for 'delete'. On 'update' Jira validates it and converts days and weeks using the site's time tracking settings. |
+| `comment` | `string` | No | (Optional) Comment for the worklog in Markdown format. Not allowed for 'delete'. |
+| `started` | `string` | No | (Optional) Start time in ISO format. On 'add' defaults to the current time. Not allowed for 'delete'. Example: '2023-08-01T12:00:00.000+0000' |
+| `original_estimate` | `string` | No | (Optional) New value for the original estimate. Only for 'add'. |
 | `remaining_estimate` | `string` | No | (Optional) New value for the remaining estimate |
 
 ---

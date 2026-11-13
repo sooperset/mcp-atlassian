@@ -5,7 +5,7 @@ import base64
 import binascii
 import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
@@ -2823,7 +2823,7 @@ async def edit_comment(
 
 @jira_mcp.tool(
     tags={"jira", "write", "toolset:jira_worklog"},
-    annotations={"title": "Add Worklog", "destructiveHint": True},
+    annotations={"title": "Add, Update or Delete Worklog", "destructiveHint": True},
 )
 @check_write_access
 async def add_worklog(
@@ -2835,110 +2835,64 @@ async def add_worklog(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
+    action: Annotated[
+        Literal["add", "update", "delete"],
+        Field(
+            description=(
+                "(Optional) 'add' (default) logs new time, 'update' changes an "
+                "existing worklog, 'delete' removes it. 'update' and 'delete' "
+                "need worklog_id."
+            )
+        ),
+    ] = "add",
+    worklog_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) ID of the worklog to update or delete "
+                "(from jira_get_worklog). Required for 'update' and 'delete', "
+                "not allowed for 'add'."
+            ),
+            pattern=r"^\d+$",
+        ),
+    ] = None,
     time_spent: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "Time spent in Jira format. Examples: "
-                "'1h 30m' (1 hour and 30 minutes), '1d' (1 day), '30m' (30 minutes), '4h' (4 hours)"
-            )
-        ),
-    ],
-    comment: Annotated[
-        str | None,
-        Field(description="(Optional) Comment for the worklog in Markdown format"),
-    ] = None,
-    started: Annotated[
-        str | None,
-        Field(
-            description=(
-                "(Optional) Start time in ISO format. If not provided, the current time will be used. "
-                "Example: '2023-08-01T12:00:00.000+0000'"
-            )
-        ),
-    ] = None,
-    # Add original_estimate and remaining_estimate as per original tool
-    original_estimate: Annotated[
-        str | None, Field(description="(Optional) New value for the original estimate")
-    ] = None,
-    remaining_estimate: Annotated[
-        str | None, Field(description="(Optional) New value for the remaining estimate")
-    ] = None,
-) -> str:
-    """Add a worklog entry to a Jira issue.
-
-    Args:
-        ctx: The FastMCP context.
-        issue_key: Jira issue key.
-        time_spent: Time spent in Jira format.
-        comment: Optional comment in Markdown.
-        started: Optional start time in ISO format.
-        original_estimate: Optional new original estimate.
-        remaining_estimate: Optional new remaining estimate.
-
-
-    Returns:
-        JSON string representing the added worklog object.
-
-    Raises:
-        ValueError: If in read-only mode or Jira client unavailable.
-    """
-    jira = await get_jira_fetcher(ctx)
-    # add_worklog returns dict
-    worklog_result = jira.add_worklog(
-        issue_key=issue_key,
-        time_spent=time_spent,
-        comment=comment,
-        started=started,
-        original_estimate=original_estimate,
-        remaining_estimate=remaining_estimate,
-    )
-    result = {"message": "Worklog added successfully", "worklog": worklog_result}
-    return json.dumps(result, indent=2, ensure_ascii=False)
-
-
-@jira_mcp.tool(
-    tags={"jira", "write", "toolset:jira_worklog"},
-    annotations={"title": "Update Worklog", "destructiveHint": True},
-)
-@check_write_access
-async def update_worklog(
-    ctx: Context,
-    issue_key: Annotated[
-        str,
-        Field(
-            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
-            pattern=ISSUE_KEY_PATTERN,
-        ),
-    ],
-    worklog_id: Annotated[
-        str,
-        Field(
-            description="The ID of the worklog to update (from jira_get_worklog)",
-            pattern=r"^\d+$",
-        ),
-    ],
-    time_spent: Annotated[
-        str | None,
-        Field(
-            description=(
-                "(Optional) New time spent in Jira format. Examples: "
-                "'1h 30m', '1d', '30m', '4h'. Jira validates it and converts "
-                "days and weeks using the site's time tracking settings."
+                "'1h 30m' (1 hour and 30 minutes), '1d' (1 day), '30m' (30 minutes), "
+                "'4h' (4 hours). Required for 'add', optional for 'update', "
+                "not allowed for 'delete'. On 'update' Jira validates it and "
+                "converts days and weeks using the site's time tracking settings."
             ),
             min_length=1,
         ),
     ] = None,
     comment: Annotated[
         str | None,
-        Field(description="(Optional) New worklog comment in Markdown format"),
+        Field(
+            description=(
+                "(Optional) Comment for the worklog in Markdown format. "
+                "Not allowed for 'delete'."
+            )
+        ),
     ] = None,
     started: Annotated[
         str | None,
         Field(
             description=(
-                "(Optional) New start time in ISO format. "
+                "(Optional) Start time in ISO format. On 'add' defaults to the "
+                "current time. Not allowed for 'delete'. "
                 "Example: '2023-08-01T12:00:00.000+0000'"
+            )
+        ),
+    ] = None,
+    original_estimate: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) New value for the original estimate. Only for 'add'."
             )
         ),
     ] = None,
@@ -2946,88 +2900,90 @@ async def update_worklog(
         str | None, Field(description="(Optional) New value for the remaining estimate")
     ] = None,
 ) -> str:
-    """Update an existing worklog entry on a Jira issue.
+    """Add, update or delete a worklog entry on a Jira issue.
 
-    Only the provided values change; at least one of time_spent, comment or
-    started is required.
-
-    Args:
-        ctx: The FastMCP context.
-        issue_key: Jira issue key.
-        worklog_id: The ID of the worklog to update.
-        time_spent: Optional new time spent in Jira format.
-        comment: Optional new comment in Markdown.
-        started: Optional new start time in ISO format.
-        remaining_estimate: Optional new remaining estimate.
-
-    Returns:
-        JSON string representing the updated worklog object.
-
-    Raises:
-        ValueError: If in read-only mode, Jira client unavailable, or nothing
-            to update is provided.
-    """
-    jira = await get_jira_fetcher(ctx)
-    worklog_result = jira.update_worklog(
-        issue_key=issue_key,
-        worklog_id=worklog_id,
-        time_spent=time_spent,
-        comment=comment,
-        started=started,
-        remaining_estimate=remaining_estimate,
-    )
-    result = {"message": "Worklog updated successfully", "worklog": worklog_result}
-    return json.dumps(result, indent=2, ensure_ascii=False)
-
-
-@jira_mcp.tool(
-    tags={"jira", "write", "toolset:jira_worklog"},
-    annotations={"title": "Delete Worklog", "destructiveHint": True},
-)
-@check_write_access
-async def delete_worklog(
-    ctx: Context,
-    issue_key: Annotated[
-        str,
-        Field(
-            description="Jira issue key (e.g., 'PROJ-123', 'ACV2-642')",
-            pattern=ISSUE_KEY_PATTERN,
-        ),
-    ],
-    worklog_id: Annotated[
-        str,
-        Field(
-            description="The ID of the worklog to delete (from jira_get_worklog)",
-            pattern=r"^\d+$",
-        ),
-    ],
-    remaining_estimate: Annotated[
-        str | None, Field(description="(Optional) New value for the remaining estimate")
-    ] = None,
-) -> str:
-    """Delete a worklog entry from a Jira issue.
-
-    The deleted entry is returned so it can be re-created with jira_add_worklog.
+    action='add' (default) logs new time and requires time_spent.
+    action='update' changes the worklog given by worklog_id; only the provided
+    values change, and at least one of time_spent, comment or started is required.
+    action='delete' removes the worklog given by worklog_id and returns the
+    deleted entry.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        worklog_id: The ID of the worklog to delete.
+        action: 'add', 'update' or 'delete'.
+        worklog_id: ID of the worklog to update or delete.
+        time_spent: Time spent in Jira format.
+        comment: Optional comment in Markdown.
+        started: Optional start time in ISO format.
+        original_estimate: Optional new original estimate, only for 'add'.
         remaining_estimate: Optional new remaining estimate.
 
     Returns:
-        JSON string representing the deleted worklog object.
+        JSON string representing the added, updated or deleted worklog object.
 
     Raises:
-        ValueError: If in read-only mode or Jira client unavailable.
+        ValueError: If in read-only mode, Jira client unavailable, or the
+            parameters do not fit the action.
     """
-    jira = await get_jira_fetcher(ctx)
-    worklog_result = jira.delete_worklog(
-        issue_key=issue_key,
-        worklog_id=worklog_id,
-        remaining_estimate=remaining_estimate,
-    )
-    result = {"message": "Worklog deleted successfully", "worklog": worklog_result}
+    if action == "add":
+        if worklog_id is not None:
+            raise ValueError(
+                "worklog_id is not allowed for action 'add'; use 'update' or 'delete'"
+            )
+        if time_spent is None:
+            raise ValueError("time_spent is required for action 'add'")
+        jira = await get_jira_fetcher(ctx)
+        worklog_result = jira.add_worklog(
+            issue_key=issue_key,
+            time_spent=time_spent,
+            comment=comment,
+            started=started,
+            original_estimate=original_estimate,
+            remaining_estimate=remaining_estimate,
+        )
+        message = "Worklog added successfully"
+    else:
+        if worklog_id is None:
+            msg = f"worklog_id is required for action '{action}'"
+            raise ValueError(msg)
+        if original_estimate is not None:
+            raise ValueError("original_estimate is only supported for action 'add'")
+        if action == "update":
+            jira = await get_jira_fetcher(ctx)
+            worklog_result = jira.update_worklog(
+                issue_key=issue_key,
+                worklog_id=worklog_id,
+                time_spent=time_spent,
+                comment=comment,
+                started=started,
+                remaining_estimate=remaining_estimate,
+            )
+            message = "Worklog updated successfully"
+        else:
+            extra = [
+                name
+                for name, value in (
+                    ("time_spent", time_spent),
+                    ("comment", comment),
+                    ("started", started),
+                )
+                if value is not None
+            ]
+            if extra:
+                msg = (
+                    f"{', '.join(extra)} not allowed for action 'delete'; "
+                    "use action 'update' to change a worklog"
+                )
+                raise ValueError(msg)
+            jira = await get_jira_fetcher(ctx)
+            worklog_result = jira.delete_worklog(
+                issue_key=issue_key,
+                worklog_id=worklog_id,
+                remaining_estimate=remaining_estimate,
+            )
+            message = "Worklog deleted successfully"
+    result = {"message": message, "worklog": worklog_result}
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 

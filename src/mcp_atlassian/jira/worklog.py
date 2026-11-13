@@ -241,7 +241,7 @@ class WorklogMixin(JiraClient):
             remaining_estimate: Optional new value for the remaining estimate
 
         Returns:
-            The deleted worklog details, enough to re-create the entry
+            The deleted worklog details
 
         Raises:
             Exception: If there's an error deleting the worklog
