@@ -10,6 +10,11 @@ logger = logging.getLogger("mcp-atlassian")
 
 _ISSUE_KEY_PATTERN = r"[A-Z][A-Z0-9_]+-\d+(?:-\d+)*"
 
+# Markdown autolink: <scheme:...> or <user@example.com>
+_MARKDOWN_AUTOLINK_PATTERN = (
+    r"<((?:[A-Za-z][A-Za-z0-9+.-]*:[^>\s]+|[^<>\s@]+@[^<>\s@]+))>"
+)
+
 
 def _convert_panel(params: str | None, content: str) -> str:
     """Convert a Jira {panel} block to markdown."""
@@ -512,7 +517,7 @@ class JiraPreprocessor(BasePreprocessor):
             output,
         )
         output = re.sub(
-            r"<((?:[A-Za-z][A-Za-z0-9+.-]*:[^>\s]+|[^<>\s@]+@[^<>\s@]+))>",
+            _MARKDOWN_AUTOLINK_PATTERN,
             protect_markdown_autolink_target,
             output,
         )
@@ -620,7 +625,9 @@ class JiraPreprocessor(BasePreprocessor):
 
         # Links
         output = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"[\1|\2]", output)
-        output = re.sub(r"<([^>]+)>", r"[\1]", output)
+        # Only autolinks become Jira links. Other angle-bracket text such as
+        # placeholders (<release>) or generics (List<String>) stays as it is.
+        output = re.sub(_MARKDOWN_AUTOLINK_PATTERN, r"[\1]", output)
 
         # Convert markdown tables to Jira table format
         # Issue #1343: parse full table blocks (header + separator + data rows),

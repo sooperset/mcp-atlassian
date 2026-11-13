@@ -1788,3 +1788,84 @@ class TestHtmlConversionCodeProtection:
         """Direct test of _convert_html_to_markdown with markdown code spans."""
         result = preprocessor._convert_html_to_markdown(md_input)
         assert expected_substr in result, f"Expected '{expected_substr}' in: {result!r}"
+
+
+class TestPlainTextAngleBrackets:
+    """Angle-bracket text that is not HTML must survive both conversions.
+
+    Placeholders such as ``<release>`` or generics such as ``List<String>``
+    in plain text (outside code spans) were parsed as HTML tags on read and
+    dropped, and turned into ``[...]`` links on write.
+    """
+
+    @pytest.fixture
+    def preprocessor(self):
+        return JiraPreprocessor(base_url="https://example.atlassian.net")
+
+    @pytest.mark.parametrize(
+        "jira_input, expected",
+        [
+            pytest.param(
+                "https via <release>-chart.<namespace>.svc, port 8443",
+                "https via <release>-chart.<namespace>.svc, port 8443",
+                id="placeholders",
+            ),
+            pytest.param(
+                "Returns List<String> or Map<K, V>",
+                "Returns List<String> or Map<K, V>",
+                id="generics",
+            ),
+            pytest.param(
+                "Set <name> first. More content after the placeholder.",
+                "Set <name> first. More content after the placeholder.",
+                id="text-after-placeholder",
+            ),
+        ],
+    )
+    def test_clean_jira_text_keeps_plain_angle_brackets(
+        self, preprocessor, jira_input: str, expected: str
+    ):
+        """Non-HTML angle-bracket tokens in plain text are kept verbatim."""
+        assert preprocessor.clean_jira_text(jira_input) == expected
+
+    def test_clean_jira_text_html_and_placeholder(self, preprocessor):
+        """Real HTML is converted while a placeholder next to it is kept."""
+        result = preprocessor.clean_jira_text("<b>bold</b> for <release>")
+        assert "**bold**" in result
+        assert "<release>" in result
+
+    def test_convert_html_to_markdown_without_html_is_unchanged(self, preprocessor):
+        """Text without any HTML element is returned unchanged."""
+        text = "Use <release>-chart.<namespace>.svc"
+        assert preprocessor._convert_html_to_markdown(text) == text
+
+    @pytest.mark.parametrize(
+        "markdown, expected",
+        [
+            pytest.param(
+                "https via <release>-chart.<namespace>.svc",
+                "https via <release>-chart.<namespace>.svc",
+                id="placeholders",
+            ),
+            pytest.param(
+                "Returns List<String>",
+                "Returns List<String>",
+                id="generics",
+            ),
+            pytest.param(
+                "See <https://example.com/docs>",
+                "See [https://example.com/docs]",
+                id="url-autolink",
+            ),
+            pytest.param(
+                "Mail <user@example.com>",
+                "Mail [user@example.com]",
+                id="email-autolink",
+            ),
+        ],
+    )
+    def test_markdown_to_jira_only_converts_autolinks(
+        self, preprocessor, markdown: str, expected: str
+    ):
+        """Only markdown autolinks become Jira links on write."""
+        assert preprocessor.markdown_to_jira(markdown) == expected

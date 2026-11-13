@@ -12,6 +12,92 @@ from markdownify import markdownify as md
 
 logger = logging.getLogger("mcp-atlassian")
 
+# HTML elements that may occur in Jira content. Angle-bracket tokens with any
+# other name, such as placeholders (``<release>``) or generics
+# (``List<String>``), are plain text and must not be parsed as HTML, or
+# BeautifulSoup drops them.
+_HTML_ELEMENT_NAMES = frozenset(
+    {
+        "a",
+        "abbr",
+        "acronym",
+        "address",
+        "article",
+        "aside",
+        "b",
+        "bdi",
+        "bdo",
+        "big",
+        "blockquote",
+        "body",
+        "br",
+        "caption",
+        "center",
+        "cite",
+        "code",
+        "col",
+        "colgroup",
+        "dd",
+        "del",
+        "details",
+        "dfn",
+        "div",
+        "dl",
+        "dt",
+        "em",
+        "figcaption",
+        "figure",
+        "font",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "head",
+        "header",
+        "hr",
+        "html",
+        "i",
+        "img",
+        "ins",
+        "kbd",
+        "li",
+        "main",
+        "mark",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "q",
+        "s",
+        "samp",
+        "section",
+        "small",
+        "span",
+        "strike",
+        "strong",
+        "sub",
+        "summary",
+        "sup",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "time",
+        "tr",
+        "tt",
+        "u",
+        "ul",
+        "var",
+        "wbr",
+    }
+)
+_ANGLE_TOKEN_RE = re.compile(r"</?([A-Za-z][\w:.-]*)[^<>]*>")
+
 
 def _extract_blocks(
     text: str,
@@ -685,7 +771,9 @@ class BasePreprocessor:
         """Convert HTML content to markdown if needed.
 
         Protects markdown code spans (fenced and inline) from being
-        interpreted as HTML by BeautifulSoup before conversion.
+        interpreted as HTML by BeautifulSoup before conversion. Angle-bracket
+        tokens that are not HTML elements (e.g. ``<release>``) are kept as
+        text, and text without any HTML element is returned unchanged.
         """
         # Protect fenced code blocks and inline code from HTML parsing
         code_blocks: list[str] = []
@@ -706,11 +794,21 @@ class BasePreprocessor:
             "HTMLCVTINLINE",
         )
 
-        if re.search(r"<[^>]+>", text):
+        has_html = False
+
+        def _keep_html_or_escape(match: re.Match[str]) -> str:
+            nonlocal has_html
+            if match.group(1).lower() in _HTML_ELEMENT_NAMES:
+                has_html = True
+                return match.group(0)
+            return "&lt;" + match.group(0)[1:-1] + "&gt;"
+
+        escaped = _ANGLE_TOKEN_RE.sub(_keep_html_or_escape, text)
+        if has_html:
             try:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)
-                    soup = BeautifulSoup(f"<div>{text}</div>", "html.parser")
+                    soup = BeautifulSoup(f"<div>{escaped}</div>", "html.parser")
                     html = str(soup.div.decode_contents()) if soup.div else text
                     text = md(html)
             except Exception as e:
