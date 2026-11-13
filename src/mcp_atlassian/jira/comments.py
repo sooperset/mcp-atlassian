@@ -646,9 +646,10 @@ class CommentsMixin(JiraClient):
         issue_key: str,
         adf_body: dict[str, Any],
         visibility: dict[str, str] | None = None,
+        comment_id: str | None = None,
     ) -> dict[str, Any]:
         """
-        Add a comment from a pre-built ADF document.
+        Add a comment from a pre-built ADF document, or replace one's body.
 
         Used for rich comments that Markdown cannot express, such as inline
         media (screenshots embedded in the body). Cloud only, since the v3 API
@@ -658,9 +659,12 @@ class CommentsMixin(JiraClient):
             issue_key: The issue key (e.g. 'PROJ-123')
             adf_body: A complete ADF document (``version``/``type``/``content``)
             visibility: (optional) Restrict comment visibility
+            comment_id: (optional) Replace this existing comment's body instead
+                of adding a new comment. The caller is responsible for the
+                internal-only edit guard.
 
         Returns:
-            The created comment details
+            The created (or updated) comment details
 
         Raises:
             ValueError: If the Jira instance is not Cloud
@@ -675,10 +679,13 @@ class CommentsMixin(JiraClient):
             data: dict[str, Any] = {"body": adf_body}
             if visibility:
                 data["visibility"] = visibility
-            result = self._post_api3(f"issue/{issue_key}/comment", data)
+            if comment_id:
+                result = self._put_api3(f"issue/{issue_key}/comment/{comment_id}", data)
+            else:
+                result = self._post_api3(f"issue/{issue_key}/comment", data)
 
             if not isinstance(result, dict):
-                msg = f"Unexpected return value type from `_post_api3`: {type(result)}"
+                msg = f"Unexpected return value type from the v3 API: {type(result)}"
                 logger.error(msg)
                 raise TypeError(msg)
 
@@ -686,15 +693,18 @@ class CommentsMixin(JiraClient):
             body_text = (
                 adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
             )
+            # Mirror add_comment / edit_comment, which report created / updated.
+            date_key = "updated" if comment_id else "created"
             return {
                 "id": result.get("id"),
                 "body": self._clean_text(body_text or ""),
-                "created": str(parse_date(result.get("created"))),
+                date_key: str(parse_date(result.get(date_key))),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }
         except Exception as e:
-            logger.error(f"Error adding ADF comment to issue {issue_key}: {str(e)}")
-            raise Exception(f"Error adding ADF comment: {str(e)}") from e
+            verb = "editing" if comment_id else "adding"
+            logger.error(f"Error {verb} ADF comment on issue {issue_key}: {str(e)}")
+            raise Exception(f"Error {verb} ADF comment: {str(e)}") from e
 
     @staticmethod
     def _resolve_media_sources(media: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -833,9 +843,10 @@ class CommentsMixin(JiraClient):
         body: str,
         media: list[dict[str, Any]],
         visibility: dict[str, str] | None = None,
+        comment_id: str | None = None,
     ) -> dict[str, Any]:
         """
-        Add a Jira Cloud comment whose body embeds images inline.
+        Add (or edit) a Jira Cloud comment whose body embeds images inline.
 
         Each media entry is uploaded as an issue attachment, its Media Services
         file UUID is resolved, and the image is embedded in the comment body at
@@ -852,17 +863,21 @@ class CommentsMixin(JiraClient):
             media: Ordered media entries, each with ``file_path`` or raw
                 ``content`` bytes (plus ``filename`` for inline content)
             visibility: (optional) Restrict comment visibility
+            comment_id: (optional) Replace this existing comment's body
+                instead of adding a new comment. Attachments the old body
+                embedded are left on the issue.
 
         Returns:
-            A dict with the created ``comment`` and the ``embedded``
-            attachments (filename, attachment id, media id)
+            A dict with the created (or updated) ``comment`` and the
+            ``embedded`` attachments (filename, attachment id, media id)
 
         Raises:
             ValueError: If the instance is not Cloud, the media entries or
                 placeholders are invalid, or issue_key's project is listed in
-                JIRA_INTERNAL_ONLY_PROJECTS (an inline-media comment is always
-                customer-visible, so it cannot satisfy that guard)
-            Exception: If an upload, media-id resolution, or the comment post
+                JIRA_INTERNAL_ONLY_PROJECTS and the guard rejects the write
+                (a new inline-media comment is always customer-visible; an
+                edit is rejected when the target comment is public)
+            Exception: If an upload, media-id resolution, or the comment write
                 fails
         """
         if not self.config.is_cloud:
@@ -870,11 +885,14 @@ class CommentsMixin(JiraClient):
         if not media:
             raise ValueError("At least one media entry is required.")
 
+        if comment_id:
+            # Same guard as edit_comment, checked before anything is uploaded.
+            self._enforce_internal_only_edit(issue_key, comment_id)
         # Inline-media comments post through the ordinary (customer-visible)
         # comment API, so the internal-only guard applies here exactly as it
         # does to add_comment. Issues in a guarded project that are not JSM
         # customer requests have no portal audience and stay exempt.
-        if self._is_internal_only_project(issue_key):
+        elif self._is_internal_only_project(issue_key):
             issue_key = self._require_canonical_guarded_issue_key(issue_key)
             if self._is_servicedesk_request(issue_key):
                 self._enforce_internal_only_add(issue_key, None)
@@ -946,7 +964,9 @@ class CommentsMixin(JiraClient):
                 for segment in plan
             ]
             adf_body = build_media_comment_adf(segments, self.config.url or "")
-            comment = self.add_comment_adf(issue_key, adf_body, visibility)
+            comment = self.add_comment_adf(
+                issue_key, adf_body, visibility, comment_id=comment_id
+            )
         except Exception:
             self._rollback_attachments(issue_key, uploaded_ids)
             raise

@@ -1029,6 +1029,46 @@ class TestInternalOnlyProjectsGuard:
         )
         assert result["embedded"][0]["media_id"] == "uuid-1"
 
+    def test_media_edit_internal_only_rejects_public_comment(self, guarded_mixin):
+        """Editing a public comment with media hits the same guard as
+        edit_comment, before anything is uploaded."""
+        guarded_mixin.jira.get.return_value = {"id": "5", "public": True}
+        guarded_mixin.upload_attachment_from_content = Mock()
+        with pytest.raises(ValueError, match="PUBLIC"):
+            guarded_mixin.add_comment_with_media(
+                "CC-1",
+                "see ![shot](media:0)",
+                [{"filename": "s.png", "content": b"x"}],
+                comment_id="5",
+            )
+        guarded_mixin.upload_attachment_from_content.assert_not_called()
+
+    def test_media_edit_puts_to_the_existing_comment(self, guarded_mixin):
+        """With comment_id the ADF body replaces that comment via PUT."""
+        guarded_mixin.upload_attachment_from_content = Mock(
+            return_value={"success": True, "id": "42"}
+        )
+        guarded_mixin.get_attachment_media_id = Mock(return_value="uuid-1")
+        guarded_mixin._post_api3 = Mock()
+        guarded_mixin._put_api3 = Mock(
+            return_value={
+                "id": "5",
+                "body": {"version": 1, "type": "doc", "content": []},
+                "updated": "2024-01-01T10:00:00.000+0000",
+                "author": {"displayName": "A"},
+            }
+        )
+        result = guarded_mixin.add_comment_with_media(
+            "TEST-1",
+            "see ![shot](media:0)",
+            [{"filename": "s.png", "content": b"x"}],
+            comment_id="5",
+        )
+        assert guarded_mixin._put_api3.call_args.args[0] == "issue/TEST-1/comment/5"
+        guarded_mixin._post_api3.assert_not_called()
+        assert result["comment"]["id"] == "5"
+        assert "updated" in result["comment"]
+
 
 class TestInternalOnlyNonRequestIssues:
     """A guarded project may also hold issues that are not JSM requests.

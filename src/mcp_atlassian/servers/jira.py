@@ -5,7 +5,7 @@ import base64
 import binascii
 import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
@@ -336,6 +336,22 @@ def _parse_base64_attachments(
         decoded.append({"filename": filename, "content": content})
 
     return decoded
+
+
+_COMMENT_MEDIA_DESCRIPTION = (
+    "(Optional, Jira Cloud only) JSON array of images to embed "
+    "inline in the comment body. Each entry is either "
+    '{"file_path":"screenshots/before.png"} — a path inside the '
+    "server's working directory — or "
+    '{"filename":"before.png","content_base64":"<b64>"} for '
+    "content the server cannot read from disk. Position each "
+    "image in 'body' with Markdown image syntax targeting its "
+    "index or filename, e.g. '![before](media:0)' or "
+    "'![before](before.png)', to render text -> screenshot -> "
+    "text -> screenshot; unreferenced images are appended at the "
+    "end. Images are uploaded to the issue as attachments; if any "
+    "step fails they are all deleted again."
+)
 
 
 def _parse_comment_media(media: str | None) -> list[dict[str, Any]]:
@@ -2277,17 +2293,6 @@ async def update_issue(
             default=None,
         ),
     ] = None,
-    delete_comments: Annotated[
-        str | None,
-        Field(
-            description=(
-                "(Optional) JSON array or comma-separated list of comment IDs "
-                "to delete from the issue. IDs come from the issue's comments "
-                "(e.g. jira_get_issue with comments included)."
-            ),
-            default=None,
-        ),
-    ] = None,
     transition: Annotated[
         str | None,
         Field(
@@ -2367,8 +2372,6 @@ async def update_issue(
             'content_base64'} objects uploaded without server filesystem access.
         delete_attachments: Optional JSON array or comma-separated list of
             attachment IDs to remove from the issue.
-        delete_comments: Optional JSON array or comma-separated list of comment
-            IDs to remove from the issue.
         transition: Optional transition name or ID.
         comment: Optional issue comment in Markdown format.
         comment_visibility: Optional JSON string restricting comment visibility.
@@ -2420,7 +2423,6 @@ async def update_issue(
 
     inline_attachments = _parse_base64_attachments(attachments_base64)
     attachment_ids_to_delete = _parse_id_list(delete_attachments, "delete_attachments")
-    comment_ids_to_delete = _parse_id_list(delete_comments, "delete_comments")
 
     # Combine fields and additional_fields
     all_updates = {**update_fields, **extra_fields}
@@ -2509,17 +2511,6 @@ async def update_issue(
                 f"delete_attachment {attachment_id}: "
                 f"{deletion.get('error', 'deletion failed')}"
             )
-
-    for comment_id in comment_ids_to_delete:
-        try:
-            jira.delete_comment(issue_key, comment_id)
-            operations_performed.append(f"comment_deleted:{comment_id}")
-        except Exception as e:  # noqa: BLE001 - preserve later operations
-            logger.error(
-                f"Error deleting comment {comment_id} on issue {issue_key}: {str(e)}",
-                exc_info=True,
-            )
-            operations_failed.append(f"delete_comment {comment_id}: {e}")
 
     if transition:
         try:
@@ -2810,19 +2801,7 @@ async def add_comment(
         str | None,
         Field(
             description=(
-                "(Optional, Jira Cloud only) JSON array of images to embed "
-                "inline in the comment body. Each entry is either "
-                '{"file_path":"screenshots/before.png"} — a path inside the '
-                "server's working directory — or "
-                '{"filename":"before.png","content_base64":"<b64>"} for '
-                "content the server cannot read from disk. Position each "
-                "image in 'body' with Markdown image syntax targeting its "
-                "index or filename, e.g. '![before](media:0)' or "
-                "'![before](before.png)', to render text -> screenshot -> "
-                "text -> screenshot; unreferenced images are appended at the "
-                "end. Images are uploaded to the issue as attachments; if any "
-                "step fails they are all deleted again. Cannot be combined "
-                "with 'public'."
+                _COMMENT_MEDIA_DESCRIPTION + " Cannot be combined with 'public'."
             )
         ),
     ] = None,
@@ -2919,36 +2898,89 @@ async def edit_comment(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
-    comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
-    body: Annotated[str, Field(description="Updated comment text in Markdown format")],
+    comment_id: Annotated[
+        str, Field(description="The ID of the comment to edit or delete")
+    ],
+    body: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Updated comment text in Markdown format. Required when "
+                "action is 'edit'."
+            )
+        ),
+    ] = None,
     visibility: Annotated[
         str | None,
         Field(
             description='(Optional) Comment visibility as JSON string (e.g. \'{"type":"group","value":"jira-users"}\')'
         ),
     ] = None,
+    media: Annotated[
+        str | None,
+        Field(description=_COMMENT_MEDIA_DESCRIPTION),
+    ] = None,
+    action: Annotated[
+        Literal["edit", "delete"],
+        Field(
+            description=(
+                "(Optional) 'edit' (default) replaces the comment body; "
+                "'delete' removes the comment and takes no body, media, or "
+                "visibility."
+            )
+        ),
+    ] = "edit",
 ) -> str:
-    """Edit an existing comment on a Jira issue.
+    """Edit or delete an existing comment on a Jira issue.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        comment_id: The ID of the comment to edit.
-        body: Updated comment text in Markdown.
+        comment_id: The ID of the comment to edit or delete.
+        body: Updated comment text in Markdown. Required for 'edit'.
         visibility: (Optional) Comment visibility as JSON string.
+        media: (Optional) JSON array of images to embed inline in the body.
+            Jira Cloud only.
+        action: 'edit' (default) or 'delete'.
 
     Returns:
-        JSON string representing the updated comment object.
+        JSON string representing the updated comment object (with 'media',
+        it also carries the embedded attachments), or a deletion result.
 
     Raises:
-        ValueError: If in read-only mode, Jira client unavailable, or
+        ValueError: If in read-only mode, Jira client unavailable, the
+            arguments don't fit the action, media is used on Server/DC, or
             the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
             and the target comment is currently public (customer-visible)
-            — editing public comments there is blocked server-side.
+            — editing or deleting public comments there is blocked
+            server-side.
     """
     jira = await get_jira_fetcher(ctx)
+
+    if action == "delete":
+        # Reject rather than silently drop content the caller meant to write.
+        if body or media or visibility:
+            raise ValueError(
+                "action='delete' takes no 'body', 'media', or 'visibility'."
+            )
+        jira.delete_comment(issue_key, comment_id)
+        result: dict[str, Any] = {
+            "success": True,
+            "issue_key": issue_key,
+            "deleted_comment_id": comment_id,
+        }
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    if not body:
+        raise ValueError("'body' is required when action is 'edit'.")
     visibility_dict = _parse_visibility(visibility)
-    result = jira.edit_comment(issue_key, comment_id, body, visibility_dict)
+    media_entries = _parse_comment_media(media)
+    if media_entries:
+        result = jira.add_comment_with_media(
+            issue_key, body, media_entries, visibility_dict, comment_id=comment_id
+        )
+    else:
+        result = jira.edit_comment(issue_key, comment_id, body, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 

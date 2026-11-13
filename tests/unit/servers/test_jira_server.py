@@ -5167,24 +5167,24 @@ class TestParseIdList:
         ]
 
     def test_json_array_of_strings(self):
-        assert _parse_id_list('["10001", "10002"]', "delete_comments") == [
+        assert _parse_id_list('["10001", "10002"]', "delete_attachments") == [
             "10001",
             "10002",
         ]
 
     def test_json_array_of_numbers_is_stringified(self):
-        assert _parse_id_list("[10001, 10002]", "delete_comments") == [
+        assert _parse_id_list("[10001, 10002]", "delete_attachments") == [
             "10001",
             "10002",
         ]
 
     def test_malformed_json_array_is_rejected(self):
         with pytest.raises(ValueError, match="not valid JSON"):
-            _parse_id_list("[10001,", "delete_comments")
+            _parse_id_list("[10001,", "delete_attachments")
 
     def test_nested_structures_are_rejected(self):
         with pytest.raises(ValueError, match="must be a JSON array of ids"):
-            _parse_id_list('[{"id": "10001"}]', "delete_comments")
+            _parse_id_list('[{"id": "10001"}]', "delete_attachments")
 
 
 @pytest.mark.anyio
@@ -5367,42 +5367,75 @@ async def test_update_issue_refuses_a_foreign_attachment_id(
 
 
 @pytest.mark.anyio
-async def test_update_issue_deletes_comments(jira_client, mock_jira_fetcher):
-    """Comment removal lives beside comment creation on the same tool."""
+async def test_edit_comment_delete_action(jira_client, mock_jira_fetcher):
+    """Comment removal is an action on jira_edit_comment, not a new tool."""
     mock_jira_fetcher.delete_comment = MagicMock(return_value=True)
 
     response = await jira_client.call_tool(
-        "jira_update_issue",
-        {
-            "issue_key": "TEST-123",
-            "fields": "{}",
-            "delete_comments": '["10001", "10002"]',
-        },
+        "jira_edit_comment",
+        {"issue_key": "TEST-123", "comment_id": "10001", "action": "delete"},
     )
 
+    mock_jira_fetcher.delete_comment.assert_called_once_with("TEST-123", "10001")
+    mock_jira_fetcher.edit_comment.assert_not_called()
     content = json.loads(response.content[0].text)
-    assert mock_jira_fetcher.delete_comment.call_args_list == [
-        call("TEST-123", "10001"),
-        call("TEST-123", "10002"),
-    ]
-    assert "comment_deleted:10001" in content["operations_performed"]
+    assert content["deleted_comment_id"] == "10001"
 
 
 @pytest.mark.anyio
-async def test_update_issue_reports_a_failed_comment_deletion(
+async def test_edit_comment_delete_rejects_a_body(jira_client, mock_jira_fetcher):
+    """A body with action='delete' is refused rather than silently dropped."""
+    mock_jira_fetcher.delete_comment = MagicMock()
+
+    with pytest.raises(ToolError, match="takes no 'body'"):
+        await jira_client.call_tool(
+            "jira_edit_comment",
+            {
+                "issue_key": "TEST-123",
+                "comment_id": "10001",
+                "body": "New text",
+                "action": "delete",
+            },
+        )
+
+    mock_jira_fetcher.delete_comment.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_edit_comment_requires_a_body(jira_client, mock_jira_fetcher):
+    """The default 'edit' action still needs a body."""
+    with pytest.raises(ToolError, match="'body' is required"):
+        await jira_client.call_tool(
+            "jira_edit_comment", {"issue_key": "TEST-123", "comment_id": "10001"}
+        )
+
+    mock_jira_fetcher.edit_comment.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_edit_comment_with_media_calls_the_media_path(
     jira_client, mock_jira_fetcher
 ):
-    """A failing deletion is collected, not raised, like the other operations."""
-    mock_jira_fetcher.delete_comment = MagicMock(side_effect=Exception("404 Not Found"))
+    """An edit carrying 'media' replaces the body through the inline-media flow."""
+    mock_jira_fetcher.add_comment_with_media = MagicMock(
+        return_value={"comment": {"id": "10001"}, "embedded": []}
+    )
 
-    response = await jira_client.call_tool(
-        "jira_update_issue",
+    await jira_client.call_tool(
+        "jira_edit_comment",
         {
             "issue_key": "TEST-123",
-            "fields": "{}",
-            "delete_comments": "10001",
+            "comment_id": "10001",
+            "body": "Now ![shot](media:0)",
+            "media": '[{"filename": "shot.png", "content_base64": "SGVsbG8="}]',
         },
     )
 
-    content = json.loads(response.content[0].text)
-    assert any("404 Not Found" in item for item in content["operations_failed"])
+    mock_jira_fetcher.add_comment_with_media.assert_called_once_with(
+        "TEST-123",
+        "Now ![shot](media:0)",
+        [{"filename": "shot.png", "content": b"Hello"}],
+        None,
+        comment_id="10001",
+    )
+    mock_jira_fetcher.edit_comment.assert_not_called()
