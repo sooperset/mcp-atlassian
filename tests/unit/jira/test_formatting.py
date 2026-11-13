@@ -31,6 +31,30 @@ def test_markdown_to_jira(formatting_mixin):
     )
 
 
+def test_markdown_to_jira_wiki_passthrough(formatting_mixin):
+    """Wiki content_format returns the raw string without conversion."""
+    formatting_mixin.config.content_format = "wiki"
+    wiki_text = "* item\n** nested item"
+
+    result = formatting_mixin.markdown_to_jira(wiki_text)
+
+    assert result == wiki_text
+    formatting_mixin.preprocessor.markdown_to_jira.assert_not_called()
+
+
+def test_markdown_to_jira_markdown_default_converts(formatting_mixin):
+    """Markdown content_format (default) still routes through the preprocessor."""
+    formatting_mixin.config.content_format = "markdown"
+    formatting_mixin.preprocessor.markdown_to_jira.return_value = "Converted text"
+
+    result = formatting_mixin.markdown_to_jira("# Markdown text")
+
+    assert result == "Converted text"
+    formatting_mixin.preprocessor.markdown_to_jira.assert_called_once_with(
+        "# Markdown text"
+    )
+
+
 def test_markdown_to_jira_empty_input(formatting_mixin):
     """Test markdown_to_jira method with empty input."""
     result = formatting_mixin.markdown_to_jira("")
