@@ -1520,6 +1520,92 @@ class TestDownloadAttachmentServerTool:
     """Tests for the server-level download_attachment tool (EmbeddedResource return)."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("site_url", "expected_base"),
+        [
+            ("https://test.atlassian.net", "https://test.atlassian.net/wiki"),
+            ("https://test.atlassian.net/", "https://test.atlassian.net/wiki"),
+            ("https://test.atlassian.net/wiki", "https://test.atlassian.net/wiki"),
+            ("https://test.atlassian.net/wiki/", "https://test.atlassian.net/wiki"),
+            ("https://confluence.example.com", "https://confluence.example.com"),
+            (
+                "https://confluence.example.com/confluence/",
+                "https://confluence.example.com/confluence",
+            ),
+        ],
+    )
+    async def test_metadata_url_uses_instance_rest_base(self, site_url, expected_base):
+        """Use the real URL helpers with mocked metadata and binary responses."""
+        with patch(
+            "mcp_atlassian.confluence.attachments.ConfluenceClient.__init__",
+            return_value=None,
+        ):
+            fetcher = AttachmentsMixin()
+        fetcher.config = ConfluenceConfig(url=site_url, auth_type="basic")
+        fetcher.confluence = MagicMock()
+        fetcher.confluence._session.get.return_value.json.return_value = {
+            "title": "report.pdf",
+            "_links": {"download": "/download/report.pdf"},
+            "extensions": {"mediaType": "application/pdf", "fileSize": 11},
+        }
+
+        with (
+            patch(
+                "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+                AsyncMock(return_value=fetcher),
+            ),
+            patch.object(
+                fetcher, "fetch_attachment_content", return_value=b"pdf content"
+            ) as fetch_content,
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment(
+                ctx=MagicMock(), attachment_id="att123456"
+            )
+
+        fetcher.confluence._session.get.assert_called_once_with(
+            f"{expected_base}/rest/api/content/att123456"
+        )
+        fetch_content.assert_called_once_with(f"{expected_base}/download/report.pdf")
+        assert isinstance(result, EmbeddedResource)
+        assert result.resource.mimeType == "application/pdf"
+        assert result.resource.blob == "cGRmIGNvbnRlbnQ="
+
+    @pytest.mark.asyncio
+    async def test_oauth_metadata_still_uses_v2_adapter(self):
+        """Keep OAuth metadata reads on the existing v2 adapter path."""
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter.get_attachment_by_id.return_value = {
+            "title": "report.pdf",
+            "_links": {"download": "/download/report.pdf"},
+            "extensions": {"mediaType": "application/pdf", "fileSize": 11},
+        }
+        mock_fetcher.fetch_attachment_content.return_value = b"pdf content"
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment(
+                ctx=MagicMock(), attachment_id="att123456"
+            )
+
+        mock_fetcher._v2_adapter.get_attachment_by_id.assert_called_once_with(
+            "att123456"
+        )
+        mock_fetcher._rest_base_url.assert_not_called()
+        mock_fetcher.confluence._session.get.assert_not_called()
+        assert isinstance(result, EmbeddedResource)
+        assert result.resource.blob == "cGRmIGNvbnRlbnQ="
+
+    @pytest.mark.asyncio
     async def test_returns_embedded_resource_on_success(self):
         mock_fetcher = MagicMock()
         mock_fetcher._v2_adapter = None
