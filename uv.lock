@@ -1558,7 +1558,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.3" },
     { name = "cachetools", specifier = ">=5.0.0" },
     { name = "click", specifier = ">=8.1.7" },
-    { name = "cryptography", specifier = ">=48.0.1" },
+    { name = "cryptography", specifier = ">=50.0.0" },
     { name = "fakeredis", specifier = ">=2.32.1,<2.35.0" },
     { name = "fastmcp", specifier = ">=3.4.7,<4.0.0" },
     { name = "httpx", specifier = ">=0.28.0" },
