@@ -62,6 +62,40 @@ def _origin(url: str) -> tuple[str, str, int | None]:
     return scheme, (parts.hostname or "").lower(), port
 
 
+DRAWIO_MEDIA_TYPE = "application/vnd.jgraph.mxfile"
+
+
+def _guess_attachment_content_type(filename: str, file_obj: Any) -> str:
+    """Pick the multipart Content-Type for an attachment upload.
+
+    Without it Confluence Server/DC stores every attachment as
+    ``application/octet-stream``; the draw.io macro then cannot find its
+    diagram (it looks for ``application/vnd.jgraph.mxfile``) and shows 404.
+    draw.io diagrams are stored without a file extension, so they are
+    recognised by their ``<mxfile`` header.
+    """
+    if filename.lower().endswith(".drawio"):
+        return DRAWIO_MEDIA_TYPE
+    guessed = mimetypes.guess_type(filename)[0]
+    if guessed:
+        return guessed
+    head = b""
+    if isinstance(file_obj, (bytes, bytearray)):
+        head = bytes(file_obj[:256])
+    elif hasattr(file_obj, "read") and hasattr(file_obj, "seek"):
+        try:
+            pos = file_obj.tell()
+            head = file_obj.read(256)
+            file_obj.seek(pos)
+        except (OSError, ValueError):
+            head = b""
+    if isinstance(head, str):
+        head = head.encode("utf-8", "ignore")
+    if head.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"<mxfile"):
+        return DRAWIO_MEDIA_TYPE
+    return "application/octet-stream"
+
+
 class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
     """Mixin for Confluence attachment operations."""
 
@@ -792,11 +826,13 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             Attachment metadata dict.
         """
 
+        content_type = _guess_attachment_content_type(filename, file_obj)
+
         def make_files(content: Any) -> dict[str, Any]:
-            # Confluence Cloud rejects a file part without a Content-Type
-            # (HTTP 415 on /child/attachment/{id}/data), so always send one.
-            mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-            files: dict[str, Any] = {"file": (filename, content, mime_type)}
+            # Always send a Content-Type: Confluence Cloud rejects a file part
+            # without one (HTTP 415), and Server/DC needs the right type for
+            # draw.io diagrams.
+            files: dict[str, Any] = {"file": (filename, content, content_type)}
             if comment:
                 files["comment"] = (None, comment, "text/plain; charset=utf-8")
             return files
