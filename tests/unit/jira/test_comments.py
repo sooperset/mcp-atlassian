@@ -1,5 +1,6 @@
 """Tests for the Jira Comments mixin."""
 
+from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
@@ -10,6 +11,69 @@ from mcp_atlassian.jira.comments import CommentsMixin
 
 class TestCommentsMixin:
     """Tests for the CommentsMixin class."""
+
+    @pytest.mark.parametrize("operation", ["get", "add", "edit"])
+    @pytest.mark.parametrize("is_cloud", [True, False])
+    @pytest.mark.parametrize(
+        "stored_visibility",
+        [
+            {"type": "group", "value": "stored-group", "identifier": "group-id"},
+            {"type": "role", "value": "Administrators"},
+            None,
+        ],
+        ids=["group", "role", "unrestricted"],
+    )
+    def test_comment_responses_preserve_stored_visibility(
+        self,
+        comments_mixin: CommentsMixin,
+        server_comments_mixin: CommentsMixin,
+        operation: str,
+        is_cloud: bool,
+        stored_visibility: dict[str, str] | None,
+    ) -> None:
+        """Read/write responses report Jira's restriction, not the request value."""
+        mixin = comments_mixin if is_cloud else server_comments_mixin
+        response = {
+            "id": "10001",
+            "body": "Stored comment",
+            "author": {"displayName": "Test User"},
+        }
+        if stored_visibility is not None:
+            response["visibility"] = stored_visibility
+        original = deepcopy(response)
+        mixin.jira.issue_get_comments.return_value = {"comments": [response]}
+        mixin.jira.issue_add_comment.return_value = response
+        mixin.jira.issue_edit_comment.return_value = response
+        mixin._post_api3 = Mock(return_value=response)
+        mixin._put_api3 = Mock(return_value=response)
+        requested_visibility = {"type": "group", "value": "requested-group"}
+
+        if operation == "get":
+            output = mixin.get_issue_comments("TEST-123")[0]
+            mixin.jira.issue_get_comments.assert_called_once_with("TEST-123")
+        elif operation == "add":
+            output = mixin.add_comment(
+                "TEST-123", "Comment", visibility=requested_visibility
+            )
+            if is_cloud:
+                mixin._post_api3.assert_called_once()
+            else:
+                mixin.jira.issue_add_comment.assert_called_once()
+        else:
+            output = mixin.edit_comment(
+                "TEST-123", "10001", "Comment", visibility=requested_visibility
+            )
+            if is_cloud:
+                mixin._put_api3.assert_called_once()
+            else:
+                mixin.jira.issue_edit_comment.assert_called_once()
+
+        if stored_visibility is None:
+            assert "visibility" not in output
+        else:
+            assert output["visibility"] == stored_visibility
+        assert output["body"] == "Stored comment"
+        assert response == original
 
     @pytest.fixture
     def comments_mixin(self, jira_client):
