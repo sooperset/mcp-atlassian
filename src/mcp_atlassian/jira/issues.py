@@ -159,14 +159,6 @@ class IssuesMixin(
                     ):
                         additional_fields.append("rendered")
 
-                # Add appropriate fields based on properties parameter
-                if (
-                    properties
-                    and "properties" not in default_fields_list
-                    and "properties" not in additional_fields
-                ):
-                    additional_fields.append("properties")
-
                 comment_limit_int = self._normalize_comment_limit(comment_limit)
                 if (
                     (comment_limit_int is None or comment_limit_int > 0)
