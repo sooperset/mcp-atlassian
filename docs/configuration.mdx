@@ -423,7 +423,7 @@ TOOLSETS=legacy
 # Core tools plus deprecated tools during migration
 TOOLSETS=default,legacy
 
-# All toolsets (same as current default when TOOLSETS is unset)
+# All toolsets (opt in; unset now enables only the core toolsets)
 TOOLSETS=all
 ```
 
@@ -441,11 +441,11 @@ tools, or combine it with another selection such as `TOOLSETS=default,legacy`.
 It is not included in `TOOLSETS=default`.
 
 When both `TOOLSETS` and `ENABLED_TOOLS` are set, they intersect — a tool must pass
-both filters. If `TOOLSETS` is not set, all toolsets are currently enabled.
+both filters. If unset, only the 6 core toolsets are enabled.
 
 <Warning>
-In v0.22.0, the default will change from all toolsets to 6 core toolsets only.
-Set `TOOLSETS=all` explicitly to preserve current behavior.
+Set `TOOLSETS=all` explicitly to enable all toolsets. Unset `TOOLSETS`
+enables only the 6 core toolsets.
 </Warning>
 
 <Note>
