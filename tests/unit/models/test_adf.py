@@ -876,6 +876,129 @@ class TestMarkdownToAdf:
             assert word in text_back
 
 
+class TestMarkdownToAdfImages:
+    """Images become mediaSingle blocks, native when a resolver knows the URL."""
+
+    ATTACHMENT = "https://x.atlassian.net/rest/api/3/attachment/content/42"
+
+    @staticmethod
+    def _resolver(url: str) -> dict[str, Any] | None:
+        if url.endswith("/42"):
+            return {"type": "file", "id": "media-42", "collection": ""}
+        return None
+
+    def test_image_line_becomes_external_media_single(self):
+        """Without a resolver an image is an external media node with alt text."""
+        result = markdown_to_adf("![Login page](https://example.com/shot.png)")
+        assert result["content"] == [
+            {
+                "type": "mediaSingle",
+                "attrs": {"layout": "center"},
+                "content": [
+                    {
+                        "type": "media",
+                        "attrs": {
+                            "type": "external",
+                            "url": "https://example.com/shot.png",
+                            "alt": "Login page",
+                        },
+                    }
+                ],
+            }
+        ]
+
+    def test_resolver_turns_known_url_into_file_media(self):
+        """A resolver result replaces the external attrs; alt is still added."""
+        result = markdown_to_adf(
+            f"![shot]({self.ATTACHMENT})", media_resolver=self._resolver
+        )
+        media = result["content"][0]["content"][0]
+        assert media["attrs"] == {
+            "type": "file",
+            "id": "media-42",
+            "collection": "",
+            "alt": "shot",
+        }
+
+    def test_resolver_none_and_empty_alt_fall_back_to_external_without_alt(self):
+        """Unknown URLs stay external; empty alt adds no alt attr."""
+        result = markdown_to_adf(
+            "![](https://example.com/other.png)", media_resolver=self._resolver
+        )
+        assert result["content"][0]["content"][0]["attrs"] == {
+            "type": "external",
+            "url": "https://example.com/other.png",
+        }
+
+    def test_resolver_exception_falls_back_to_external(self):
+        """A failing resolver never drops the image."""
+
+        def boom(url: str) -> dict[str, Any] | None:
+            raise RuntimeError("lookup failed")
+
+        result = markdown_to_adf(f"![shot]({self.ATTACHMENT})", media_resolver=boom)
+        assert result["content"][0]["content"][0]["attrs"]["type"] == "external"
+
+    def test_text_around_image_splits_into_paragraphs(self):
+        """Text before and after an image keeps its order around the block."""
+        result = markdown_to_adf("Before ![a](https://e.com/1.png) after **bold**")
+        types = [n["type"] for n in result["content"]]
+        assert types == ["paragraph", "mediaSingle", "paragraph"]
+        assert result["content"][0]["content"][0]["text"] == "Before"
+        after = result["content"][2]["content"]
+        assert after[0]["text"] == "after "
+        assert after[1]["marks"] == [{"type": "strong"}]
+
+    def test_two_images_on_one_line(self):
+        result = markdown_to_adf("![a](https://e.com/1.png) ![b](https://e.com/2.png)")
+        assert [n["type"] for n in result["content"]] == ["mediaSingle", "mediaSingle"]
+
+    def test_image_inside_table_cell(self):
+        """A cell with an image holds a paragraph for its text plus the media block."""
+        md = (
+            "| Case | Evidence |\n| --- | --- |\n"
+            f"| Login | note ![shot]({self.ATTACHMENT}) |"
+        )
+        result = markdown_to_adf(md, media_resolver=self._resolver)
+        table = next(n for n in result["content"] if n["type"] == "table")
+        evidence_cell = table["content"][1]["content"][1]
+        assert [n["type"] for n in evidence_cell["content"]] == [
+            "paragraph",
+            "mediaSingle",
+        ]
+        assert evidence_cell["content"][0]["content"][0]["text"] == "note"
+        assert evidence_cell["content"][1]["content"][0]["attrs"]["id"] == "media-42"
+
+    def test_cell_without_image_is_unchanged(self):
+        """Cells without images keep the single-paragraph shape."""
+        result = markdown_to_adf(
+            "| A |\n| --- |\n| plain |", media_resolver=self._resolver
+        )
+        table = next(n for n in result["content"] if n["type"] == "table")
+        cell = table["content"][1]["content"][0]
+        assert cell["content"] == [
+            {"type": "paragraph", "content": [{"type": "text", "text": "plain"}]}
+        ]
+
+    def test_images_render_inside_expand_blocks(self):
+        """The resolver is threaded through recursive conversion."""
+        md = f"{{expand:Shots}}\n![s]({self.ATTACHMENT})\n{{expand}}"
+        result = markdown_to_adf(md, media_resolver=self._resolver)
+        expand = result["content"][0]
+        assert expand["type"] == "expand"
+        assert expand["content"][0]["content"][0]["attrs"]["id"] == "media-42"
+
+    def test_image_syntax_is_not_mistaken_for_a_link(self):
+        """The link pattern must not consume the bracket part of an image."""
+        result = markdown_to_adf("![alt](https://e.com/1.png)")
+        assert not any(
+            m["type"] == "link"
+            for node in result["content"]
+            for child in node.get("content", [])
+            for m in child.get("marks", [])
+        )
+
+
 class TestAdfMediaPreservation:
     """Tests for preserving existing media nodes during description rewrites."""
 
