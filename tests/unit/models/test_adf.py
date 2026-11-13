@@ -630,6 +630,42 @@ class TestMarkdownToAdf:
         assert len(ordered_lists) == 1
         assert len(ordered_lists[0]["content"]) == 3
 
+    def test_bullet_list_with_blank_lines(self) -> None:
+        """Blank lines between bullet items keep one loose bulletList (#1695)."""
+        result = markdown_to_adf("- alpha\n\n- beta\n\n- gamma")
+        bullet_lists = [
+            node for node in result["content"] if node["type"] == "bulletList"
+        ]
+        assert len(bullet_lists) == 1
+        assert len(bullet_lists[0]["content"]) == 3
+
+    @pytest.mark.parametrize(
+        ("md", "list_type"),
+        [
+            ("- Item one\ncontinuation text\n- Item two", "bulletList"),
+            ("1. Item one\ncontinuation text\n2. Item two", "orderedList"),
+        ],
+    )
+    def test_list_lazy_continuation_line(self, md: str, list_type: str) -> None:
+        """A bare non-marker line right after an item continues it, one list (#1695)."""
+        result = markdown_to_adf(md)
+        lists = [node for node in result["content"] if node["type"] == list_type]
+        assert len(lists) == 1
+        items = lists[0]["content"]
+        assert len(items) == 2
+        first_item_text = items[0]["content"][0]["content"][0]["text"]
+        assert first_item_text == "Item one continuation text"
+        second_item_text = items[1]["content"][0]["content"][0]["text"]
+        assert second_item_text == "Item two"
+
+    def test_list_continuation_stops_at_a_new_block(self) -> None:
+        """A heading right after a list item ends the list, not a continuation (#1695)."""
+        result = markdown_to_adf("- Item one\n# Heading")
+        types = [node["type"] for node in result["content"]]
+        assert types == ["bulletList", "heading"]
+        bl = next(n for n in result["content"] if n["type"] == "bulletList")
+        assert len(bl["content"]) == 1
+
     def test_task_list_checked(self):
         """- [x] items produce a taskList with taskItem state=DONE."""
         md = "- [x] done task"
