@@ -5,7 +5,7 @@ import base64
 import binascii
 import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
@@ -346,6 +346,140 @@ def _parse_base64_attachments(
         decoded.append({"filename": filename, "content": content})
 
     return decoded
+
+
+_COMMENT_MEDIA_DESCRIPTION = (
+    "(Optional, Jira Cloud only) JSON array of images to embed "
+    "inline in the comment body. Each entry is either "
+    '{"file_path":"screenshots/before.png"} — a path inside the '
+    "server's file directory (MCP_ATLASSIAN_FILES_DIR) — or "
+    '{"filename":"before.png","content_base64":"<b64>"} for '
+    "content the server cannot read from disk. Position each "
+    "image in 'body' with Markdown image syntax targeting its "
+    "index or filename, e.g. '![before](media:0)' or "
+    "'![before](before.png)', to render text -> screenshot -> "
+    "text -> screenshot; unreferenced images are appended at the "
+    "end. Images are uploaded to the issue as attachments; if any "
+    "step fails they are all deleted again."
+)
+
+
+def _parse_comment_media(media: str | None) -> list[dict[str, Any]]:
+    """Parse the images to embed inline in a comment body.
+
+    Each entry names exactly one source: ``file_path``, a path inside the
+    server workspace, or ``content_base64`` together with a ``filename``.
+    Base64 is decoded here so the client layer only ever sees raw bytes; path
+    reads stay in the client layer, where they are confined to the workspace.
+
+    Args:
+        media: JSON array string of media objects, or None
+
+    Returns:
+        A list of media entries for ``add_comment_with_media``, empty if
+        nothing was supplied
+
+    Raises:
+        ValueError: If the JSON or an entry is invalid, or if inline content
+            is undecodable, empty, or over ``ATTACHMENT_MAX_BYTES``
+    """
+    stripped = (media or "").strip()
+    if not stripped:
+        return []
+
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as e:
+        msg = f"media is not valid JSON: {e}"
+        raise ValueError(msg) from e
+
+    if not isinstance(parsed, list):
+        raise ValueError("media must be a JSON array of media objects.")
+
+    entries: list[dict[str, Any]] = []
+    for index, item in enumerate(parsed):
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"media[{index}] must be an object with 'file_path' or "
+                "'content_base64'."
+            )
+
+        file_path = item.get("file_path")
+        content_base64 = item.get("content_base64")
+        filename = item.get("filename")
+
+        if file_path and content_base64:
+            raise ValueError(
+                f"media[{index}]: provide 'file_path' OR 'content_base64', not both."
+            )
+
+        if file_path:
+            if not isinstance(file_path, str):
+                raise ValueError(f"media[{index}]: 'file_path' must be a string.")
+            entry: dict[str, Any] = {"file_path": file_path}
+            if filename:
+                entry["filename"] = filename
+            entries.append(entry)
+            continue
+
+        if not isinstance(content_base64, str):
+            raise ValueError(
+                f"media[{index}] requires 'file_path' or 'content_base64'."
+            )
+        if not filename or not isinstance(filename, str):
+            raise ValueError(
+                f"media[{index}] requires a 'filename' alongside 'content_base64'."
+            )
+
+        try:
+            content = base64.b64decode(content_base64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            msg = f"media[{index}] ({filename}) has invalid base64 content: {e}"
+            raise ValueError(msg) from e
+
+        if not content:
+            raise ValueError(f"media[{index}] ({filename}) is empty.")
+        if len(content) > ATTACHMENT_MAX_BYTES:
+            raise ValueError(
+                f"media[{index}] ({filename}) exceeds the "
+                f"{ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB inline limit."
+            )
+
+        entries.append({"filename": filename, "content": content})
+
+    return entries
+
+
+def _parse_id_list(value: str | None, param_name: str) -> list[str]:
+    """Parse a JSON array string or comma-separated string of ids.
+
+    Args:
+        value: JSON array string, comma-separated string, or None
+        param_name: The parameter name, used in error messages
+
+    Returns:
+        A list of id strings, empty if nothing was supplied
+
+    Raises:
+        ValueError: If a JSON payload is not an array of scalars
+    """
+    stripped = (value or "").strip()
+    if not stripped:
+        return []
+
+    if stripped.startswith("["):
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            msg = f"{param_name} is not valid JSON: {e}"
+            raise ValueError(msg) from e
+        if not isinstance(parsed, list):
+            raise ValueError(f"{param_name} must be a JSON array of ids.")
+        if any(isinstance(item, dict | list) for item in parsed):
+            raise ValueError(f"{param_name} must be a JSON array of ids.")
+        return [str(item).strip() for item in parsed if str(item).strip()]
+
+    return [item.strip() for item in stripped.split(",") if item.strip()]
 
 
 @jira_mcp.tool(
@@ -2248,6 +2382,18 @@ async def update_issue(
             default=None,
         ),
     ] = None,
+    delete_attachments: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON array or comma-separated list of attachment "
+                "IDs to delete from the issue. IDs come from the issue's "
+                "attachment metadata (e.g. jira_get_issue). Example: "
+                "'10001,10002'."
+            ),
+            default=None,
+        ),
+    ] = None,
     transition: Annotated[
         str | None,
         Field(
@@ -2325,6 +2471,8 @@ async def update_issue(
         attachments: Optional JSON array string or comma-separated list of file paths.
         attachments_base64: Optional JSON array string of {'filename',
             'content_base64'} objects uploaded without server filesystem access.
+        delete_attachments: Optional JSON array or comma-separated list of
+            attachment IDs to remove from the issue.
         transition: Optional transition name or ID.
         comment: Optional issue comment in Markdown format.
         comment_visibility: Optional JSON string restricting comment visibility.
@@ -2375,6 +2523,7 @@ async def update_issue(
             )
 
     inline_attachments = _parse_base64_attachments(attachments_base64)
+    attachment_ids_to_delete = _parse_id_list(delete_attachments, "delete_attachments")
 
     # Combine fields and additional_fields
     all_updates = {**update_fields, **extra_fields}
@@ -2425,6 +2574,44 @@ async def update_issue(
                 exc_info=True,
             )
             operations_failed.append(f"fields_updated: {e}")
+
+    # The REST deletion endpoint is instance-wide: an id that belongs to some
+    # other issue would be deleted just the same, and reported as if it had
+    # been an attachment of issue_key. Scope it to this issue first, failing
+    # closed if the issue's attachments cannot be listed.
+    issue_attachment_ids: set[str] | None = None
+    if attachment_ids_to_delete:
+        try:
+            issue_attachment_ids = {
+                str(attachment.id)
+                for attachment in jira.get_issue_attachments(issue_key)
+            }
+        except Exception as e:  # noqa: BLE001 - preserve later operations
+            logger.error(
+                f"Could not list attachments of {issue_key}: {str(e)}",
+                exc_info=True,
+            )
+
+    for attachment_id in attachment_ids_to_delete:
+        if issue_attachment_ids is None:
+            operations_failed.append(
+                f"delete_attachment {attachment_id}: could not verify that it "
+                f"belongs to {issue_key}"
+            )
+            continue
+        if attachment_id not in issue_attachment_ids:
+            operations_failed.append(
+                f"delete_attachment {attachment_id}: not an attachment of {issue_key}"
+            )
+            continue
+        deletion = jira.delete_attachment(attachment_id)
+        if deletion.get("success"):
+            operations_performed.append(f"attachment_deleted:{attachment_id}")
+        else:
+            operations_failed.append(
+                f"delete_attachment {attachment_id}: "
+                f"{deletion.get('error', 'deletion failed')}"
+            )
 
     if transition:
         try:
@@ -2711,6 +2898,14 @@ async def add_comment(
             )
         ),
     ] = None,
+    media: Annotated[
+        str | None,
+        Field(
+            description=(
+                _COMMENT_MEDIA_DESCRIPTION + " Cannot be combined with 'public'."
+            )
+        ),
+    ] = None,
     public: Annotated[
         bool | None,
         Field(
@@ -2741,20 +2936,40 @@ async def add_comment(
         issue_key: Jira issue key.
         body: Comment text in Markdown.
         visibility: (Optional) Comment visibility as JSON string.
+        media: (Optional) JSON array of images to embed inline in the body.
+            Jira Cloud only.
         public: (Optional) For JSM requests. True = customer-visible,
             False = internal/agent-only. Uses ServiceDesk API; ignored
             on an issue that is not a JSM customer request.
 
     Returns:
-        JSON string representing the added comment object.
+        JSON string representing the added comment object. With 'media', the
+        object also carries the embedded attachments.
 
     Raises:
-        ValueError: If in read-only mode, Jira client unavailable, or
-            the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
-            and public is not exactly False.
+        ValueError: If in read-only mode, Jira client unavailable, media is
+            combined with public or used on Server/DC, or the issue's project
+            is listed in JIRA_INTERNAL_ONLY_PROJECTS and public is not
+            exactly False.
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
+
+    media_entries = _parse_comment_media(media)
+    if media_entries:
+        if public is not None:
+            # The ServiceDesk comment API takes a raw string, so it cannot
+            # carry ADF media nodes. Fail rather than silently dropping either
+            # the images or the requested audience.
+            raise ValueError(
+                "'media' cannot be combined with 'public': inline media "
+                "comments post as ADF through the regular comment API, which "
+                "the JSM ServiceDesk comment endpoint does not accept."
+            )
+        result = jira.add_comment_with_media(
+            issue_key, body, media_entries, visibility_dict
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False)
     # Preserve the tri-state ``public`` value at the MCP boundary (#1726).
     #
     # Rewriting every bare ``public=False`` to ``None`` for projects outside
@@ -2788,36 +3003,89 @@ async def edit_comment(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
-    comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
-    body: Annotated[str, Field(description="Updated comment text in Markdown format")],
+    comment_id: Annotated[
+        str, Field(description="The ID of the comment to edit or delete")
+    ],
+    body: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Updated comment text in Markdown format. Required when "
+                "action is 'edit'."
+            )
+        ),
+    ] = None,
     visibility: Annotated[
         str | None,
         Field(
             description='(Optional) Comment visibility as JSON string (e.g. \'{"type":"group","value":"jira-users"}\')'
         ),
     ] = None,
+    media: Annotated[
+        str | None,
+        Field(description=_COMMENT_MEDIA_DESCRIPTION),
+    ] = None,
+    action: Annotated[
+        Literal["edit", "delete"],
+        Field(
+            description=(
+                "(Optional) 'edit' (default) replaces the comment body; "
+                "'delete' removes the comment and takes no body, media, or "
+                "visibility."
+            )
+        ),
+    ] = "edit",
 ) -> str:
-    """Edit an existing comment on a Jira issue.
+    """Edit or delete an existing comment on a Jira issue.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
-        comment_id: The ID of the comment to edit.
-        body: Updated comment text in Markdown.
+        comment_id: The ID of the comment to edit or delete.
+        body: Updated comment text in Markdown. Required for 'edit'.
         visibility: (Optional) Comment visibility as JSON string.
+        media: (Optional) JSON array of images to embed inline in the body.
+            Jira Cloud only.
+        action: 'edit' (default) or 'delete'.
 
     Returns:
-        JSON string representing the updated comment object.
+        JSON string representing the updated comment object (with 'media',
+        it also carries the embedded attachments), or a deletion result.
 
     Raises:
-        ValueError: If in read-only mode, Jira client unavailable, or
+        ValueError: If in read-only mode, Jira client unavailable, the
+            arguments don't fit the action, media is used on Server/DC, or
             the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS
             and the target comment is currently public (customer-visible)
-            — editing public comments there is blocked server-side.
+            — editing or deleting public comments there is blocked
+            server-side.
     """
     jira = await get_jira_fetcher(ctx)
+
+    if action == "delete":
+        # Reject rather than silently drop content the caller meant to write.
+        if body or media or visibility:
+            raise ValueError(
+                "action='delete' takes no 'body', 'media', or 'visibility'."
+            )
+        jira.delete_comment(issue_key, comment_id)
+        result: dict[str, Any] = {
+            "success": True,
+            "issue_key": issue_key,
+            "deleted_comment_id": comment_id,
+        }
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    if not body:
+        raise ValueError("'body' is required when action is 'edit'.")
     visibility_dict = _parse_visibility(visibility)
-    result = jira.edit_comment(issue_key, comment_id, body, visibility_dict)
+    media_entries = _parse_comment_media(media)
+    if media_entries:
+        result = jira.add_comment_with_media(
+            issue_key, body, media_entries, visibility_dict, comment_id=comment_id
+        )
+    else:
+        result = jira.edit_comment(issue_key, comment_id, body, visibility_dict)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 

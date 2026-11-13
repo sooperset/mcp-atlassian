@@ -44,6 +44,31 @@ class AttachmentsOperationsProto(Protocol):
         """
 
 
+class AttachmentMediaOperationsProto(Protocol):
+    """Attachment operations the comment mixin needs for inline media.
+
+    Deliberately separate from :class:`AttachmentsOperationsProto`, and
+    deliberately not abstract: this protocol is only ever used to type a
+    ``cast`` of ``self`` inside a mixin that JiraFetcher composes alongside
+    AttachmentsMixin, so it must not impose new members on the implementers
+    (or the test doubles) of that contract.
+    """
+
+    def upload_attachment_from_content(
+        self, issue_key: str, filename: str, content: bytes
+    ) -> dict[str, Any]:
+        """Upload one attachment to a Jira issue from in-memory bytes."""
+        ...
+
+    def delete_attachment(self, attachment_id: str) -> dict[str, Any]:
+        """Delete a Jira attachment by its ID."""
+        ...
+
+    def get_attachment_media_id(self, attachment_id: str) -> str | None:
+        """Resolve the Media Services file UUID for an uploaded attachment."""
+        ...
+
+
 class FormsOperationsProto(Protocol):
     """Protocol defining ProForma forms operations interface."""
 

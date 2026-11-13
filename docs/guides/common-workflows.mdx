@@ -63,6 +63,30 @@ jira_batch_create_issues: {
 }
 ```
 
+### Comment with Screenshots
+
+Embed images inline in a comment, so the body reads text → screenshot → text → screenshot:
+```json
+jira_add_comment: {
+  "issue_key": "PROJ-123",
+  "body": "Before the fix:\n\n![before](media:0)\n\nAfter:\n\n![after](media:1)",
+  "media": "[{\"file_path\": \"screens/before.png\"}, {\"file_path\": \"screens/after.png\"}]"
+}
+```
+
+Place each image with Markdown image syntax targeting its index (`media:0`) or its filename (`before.png`). Images you don't reference are appended at the end.
+
+Paths must sit inside the server's working directory. If the server can't read your files — a remote or containerized deployment — pass the bytes instead:
+```json
+jira_add_comment: {
+  "issue_key": "PROJ-123",
+  "body": "Stack trace:\n\n![trace](media:0)",
+  "media": "[{\"filename\": \"trace.png\", \"content_base64\": \"iVBORw0KGgo...\"}]"
+}
+```
+
+<Note>Inline media is Jira Cloud only, and can't be combined with `public` (JSM internal/customer comments post through an API that doesn't accept rich content). Images are uploaded to the issue as attachments; if any step fails, they're all removed again.</Note>
+
 ### Track Issue Changes
 
 Monitor what changed across multiple issues:

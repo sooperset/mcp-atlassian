@@ -551,6 +551,71 @@ def merge_adf_with_preserved_media(
     return merged
 
 
+def build_media_comment_adf(
+    segments: list[dict[str, Any]], jira_base_url: str = ""
+) -> dict[str, Any]:
+    """Build an ADF document interleaving text and inline media (images).
+
+    Used to compose a Jira Cloud comment whose body mixes rich text with
+    inline screenshots, e.g. text -> image -> text -> image.
+
+    Args:
+        segments: Ordered list of segment dicts. Each is either
+            ``{"type": "text", "text": "<markdown>"}``, converted to ADF
+            paragraphs/lists via :func:`markdown_to_adf`, or
+            ``{"type": "media", "media_id": "<uuid>"}``, a Media Services
+            file UUID (NOT the REST attachment id) rendered as an inline
+            ``mediaSingle`` node. A media segment may also carry integer
+            ``width``/``height`` pixel dimensions; when present they are
+            written to the ``media`` node, because the ADF spec warns that
+            media inside ``mediaSingle`` "isn't displayed" without them.
+        jira_base_url: Base URL passed through to :func:`markdown_to_adf` so
+            inline links to the same instance are rendered consistently.
+
+    Returns:
+        An ADF document dict (``version``/``type``/``content``).
+    """
+    content: list[dict[str, Any]] = []
+
+    for segment in segments:
+        seg_type = segment.get("type")
+        if seg_type == "text":
+            text = segment.get("text", "")
+            if not text.strip():
+                continue
+            sub_doc = markdown_to_adf(text, jira_base_url)
+            content.extend(sub_doc.get("content", []))
+        elif seg_type == "media":
+            media_attrs: dict[str, Any] = {
+                "id": segment.get("media_id"),
+                "type": "file",
+                "collection": "",
+            }
+            width = segment.get("width")
+            height = segment.get("height")
+            if (
+                isinstance(width, int)
+                and isinstance(height, int)
+                and width > 0
+                and height > 0
+            ):
+                media_attrs["width"] = width
+                media_attrs["height"] = height
+            content.append(
+                {
+                    "type": "mediaSingle",
+                    "attrs": {"layout": "center"},
+                    "content": [{"type": "media", "attrs": media_attrs}],
+                }
+            )
+
+    # An ADF doc must contain at least one node.
+    if not content:
+        content.append({"type": "paragraph", "content": []})
+
+    return {"version": 1, "type": "doc", "content": content}
+
+
 def adf_to_text(adf_content: dict | list | str | None) -> str | None:
     """
     Convert Atlassian Document Format (ADF) content to plain text.

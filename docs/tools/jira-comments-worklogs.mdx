@@ -16,6 +16,7 @@ Add a comment to a Jira issue.
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `body` | `string` | Yes | Comment text in Markdown format |
 | `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '`{"type":"group","value":"jira-users"}`') |
+| `media` | `string` | No | (Optional, Jira Cloud only) JSON array of images to embed inline in the comment body. Each entry is either `{"file_path":"screenshots/before.png"}` — a path inside the server's file directory (MCP_ATLASSIAN_FILES_DIR) — or `{"filename":"before.png","content_base64":"<b64>"}` for content the server cannot read from disk. Position each image in 'body' with Markdown image syntax targeting its index or filename, e.g. '![before](media:0)' or '![before](before.png)', to render text -> screenshot -> text -> screenshot; unreferenced images are appended at the end. Images are uploaded to the issue as attachments; if any step fails they are all deleted again. Cannot be combined with 'public'. |
 | `public` | `boolean` | No | (Optional) For JSM customer requests. Set to true for customer-visible comment, false for internal agent-only comment. Posted via the ServiceDesk API as a raw string; Jira Cloud renders it server-side and stores ADF (markdown observed to render on Cloud, without the client-side markdown-to-ADF guarantees of the regular comment path). Cannot be combined with visibility on a request. On an issue that is not a JSM customer request (e.g. a plain Jira Task) this field is ignored and an ordinary comment is posted. If the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS, only public=false is accepted on a request — public=true or omitting this field is rejected. |
 **Example:**
 
@@ -33,7 +34,7 @@ For an ordinary comment, omit `public`. On a Jira Service Management customer re
 
 ### Edit Comment
 
-Edit an existing comment on a Jira issue.
+Edit or delete an existing comment on a Jira issue.
 
 <Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
 
@@ -42,9 +43,11 @@ Edit an existing comment on a Jira issue.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
-| `comment_id` | `string` | Yes | The ID of the comment to edit |
-| `body` | `string` | Yes | Updated comment text in Markdown format |
+| `comment_id` | `string` | Yes | The ID of the comment to edit or delete |
+| `body` | `string` | No | Updated comment text in Markdown format. Required when action is 'edit'. |
 | `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '`{"type":"group","value":"jira-users"}`') |
+| `media` | `string` | No | (Optional, Jira Cloud only) JSON array of images to embed inline in the comment body. Each entry is either `{"file_path":"screenshots/before.png"}` — a path inside the server's file directory (MCP_ATLASSIAN_FILES_DIR) — or `{"filename":"before.png","content_base64":"<b64>"}` for content the server cannot read from disk. Position each image in 'body' with Markdown image syntax targeting its index or filename, e.g. '![before](media:0)' or '![before](before.png)', to render text -> screenshot -> text -> screenshot; unreferenced images are appended at the end. Images are uploaded to the issue as attachments; if any step fails they are all deleted again. |
+| `action` | `string` | No | (Optional) 'edit' (default) replaces the comment body; 'delete' removes the comment and takes no body, media, or visibility. |
 
 ---
 
