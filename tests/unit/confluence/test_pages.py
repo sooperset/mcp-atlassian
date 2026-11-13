@@ -539,7 +539,97 @@ class TestPagesMixin:
                 minor_edit=is_minor_edit,
                 version_comment=version_comment,
                 always_update=True,
+                full_width=False,
             )
+
+    def test_update_page_preserves_existing_full_width(self, pages_mixin):
+        """Updating content must not reset a full-width page to fixed-width.
+
+        atlassian-python-api's update_page always writes the content-appearance-*
+        properties and defaults full_width to False, so without carrying the current
+        width through the call a plain content update silently changes the layout on
+        Confluence Cloud.
+        """
+        page_id = "987654321"
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {
+                    "key": "content-appearance-published",
+                    "value": {"value": "full-width"},
+                }
+            ]
+        }
+        mock_document = ConfluencePage(
+            id=page_id,
+            title="Updated Page",
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},
+        )
+
+        with patch.object(pages_mixin, "get_page_content", return_value=mock_document):
+            pages_mixin.update_page(
+                page_id, "Updated Page", "<p>Updated content</p>", is_markdown=False
+            )
+
+        assert pages_mixin.confluence.update_page.call_args.kwargs["full_width"] is True
+
+    def test_update_page_restores_max_width(self, pages_mixin):
+        """'max' cannot be expressed through the boolean full_width, so it is restored."""
+        page_id = "987654321"
+        pages_mixin.confluence.get_page_properties.return_value = {
+            "results": [
+                {"key": "content-appearance-published", "value": {"value": "max"}}
+            ]
+        }
+        mock_document = ConfluencePage(
+            id=page_id,
+            title="Updated Page",
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=mock_document),
+            patch.object(
+                pages_mixin, "_set_page_width", return_value=True
+            ) as mock_set_width,
+        ):
+            pages_mixin.update_page(
+                page_id, "Updated Page", "<p>Updated content</p>", is_markdown=False
+            )
+
+        assert (
+            pages_mixin.confluence.update_page.call_args.kwargs["full_width"] is False
+        )
+        mock_set_width.assert_called_once_with(page_id, "max")
+
+    def test_update_page_explicit_width_skips_preservation_lookup(self, pages_mixin):
+        """An explicit page_width is applied afterwards, so no width lookup is needed."""
+        page_id = "987654321"
+        mock_document = ConfluencePage(
+            id=page_id,
+            title="Updated Page",
+            content="Updated content",
+            space={"key": "PROJ", "name": "Project"},
+            version={"number": 1},
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=mock_document),
+            patch.object(pages_mixin, "_get_page_width") as mock_get_width,
+            patch.object(pages_mixin, "_set_page_width", return_value=True),
+        ):
+            pages_mixin.update_page(
+                page_id,
+                "Updated Page",
+                "<p>Updated content</p>",
+                is_markdown=False,
+                page_width="full-width",
+            )
+
+        mock_get_width.assert_not_called()
 
     def test_update_page_emoji_removal_failure_is_reported(self, pages_mixin):
         """Test that a failed emoji removal prevents returning stale page data."""
@@ -693,6 +783,7 @@ class TestPagesMixin:
                 minor_edit=False,
                 version_comment=version_comment,
                 always_update=True,
+                full_width=False,
             )
 
             # Verify no markdown conversion happened
@@ -1418,6 +1509,7 @@ class TestPagesMixin:
                 minor_edit=True,
                 version_comment="Updated test",
                 always_update=True,
+                full_width=False,
             )
 
     def test_update_page_with_parent_id(self, pages_mixin):
@@ -1460,6 +1552,7 @@ class TestPagesMixin:
                 minor_edit=is_minor_edit,
                 version_comment=version_comment,
                 always_update=True,
+                full_width=False,
                 parent_id=parent_id,
             )
             assert result.id == page_id
