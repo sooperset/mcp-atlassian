@@ -1984,8 +1984,12 @@ async def upload_attachment(
             minor_edit=minor_edit,
         )
 
+    uploaded = bool(result.get("success")) if isinstance(result, dict) else bool(result)
+    message = (
+        "Attachment uploaded successfully" if uploaded else "Attachment upload failed"
+    )
     return json.dumps(
-        {"message": "Attachment uploaded successfully", "attachment": result},
+        {"message": message, "attachment": result},
         indent=2,
         ensure_ascii=False,
     )

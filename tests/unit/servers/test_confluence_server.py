@@ -1365,6 +1365,24 @@ async def test_upload_attachment_base64(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_upload_attachment_failure_message(client, mock_confluence_fetcher):
+    """A failed upload does not report success."""
+    mock_confluence_fetcher.upload_attachment.return_value = {
+        "success": False,
+        "error": "410 Client Error: Gone",
+    }
+
+    response = await client.call_tool(
+        "confluence_upload_attachment",
+        {"content_id": "123456", "file_path": "/path/to/test-file.txt"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Attachment upload failed"
+    assert result_data["attachment"]["error"] == "410 Client Error: Gone"
+
+
+@pytest.mark.anyio
 async def test_upload_attachment_base64_allows_empty_content(
     client, mock_confluence_fetcher
 ):
