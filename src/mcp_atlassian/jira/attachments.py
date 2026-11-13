@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from ..models.jira import JiraAttachment
-from ..utils.io import validate_safe_path
+from ..utils.io import (
+    get_file_root,
+    is_in_cwd_root,
+    open_confined,
+    validate_safe_path,
+)
 from ..utils.media import ATTACHMENT_MAX_BYTES
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
@@ -35,9 +40,13 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             return False
 
         try:
-            # Convert to absolute path if relative
+            # Relative paths resolve against the configured file root (the
+            # working directory unless MCP_ATLASSIAN_FILES_DIR or a remote
+            # transport sets another one).
             if not os.path.isabs(target_path):
-                target_path = os.path.abspath(target_path)
+                target_path = os.path.normpath(
+                    os.path.join(get_file_root(), target_path)
+                )
 
             # Guard against path traversal (resolves symlinks)
             validate_safe_path(target_path)
@@ -46,8 +55,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             # Python resolves imports first, so a download landing there could
             # overwrite an importable module and gain code execution (GHSA-6vmq).
             # Attachments must be saved into a subdirectory.
-            resolved = Path(target_path).resolve()
-            if resolved.parent == Path(os.getcwd()).resolve():
+            if is_in_cwd_root(target_path):
                 logger.error(
                     f"Refusing to download into the working-directory root: {target_path}"
                 )
@@ -60,12 +68,17 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
 
             # Use the Jira session to download the file
             response = self.jira._session.get(url, stream=True)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
 
-            # Write the file to disk
-            with open(target_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                # Write the file to disk. open_confined re-checks the boundary
+                # on the descriptor it opens, so a symlink swapped in since the
+                # validation above cannot redirect the write.
+                with open_confined(target_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            finally:
+                response.close()
 
             # Verify the file was created
             if os.path.exists(target_path):
@@ -99,17 +112,21 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         try:
             logger.info(f"Fetching attachment from {url}")
             response = self.jira._session.get(url, stream=True)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
 
-            chunks: list[bytes] = []
-            for chunk in response.iter_content(chunk_size=8192):
-                chunks.append(chunk)
+                chunks: list[bytes] = []
+                for chunk in response.iter_content(chunk_size=8192):
+                    chunks.append(chunk)
 
-            data = b"".join(chunks)
-            logger.info(
-                f"Successfully fetched attachment from {url} (size: {len(data)} bytes)"
-            )
-            return data
+                data = b"".join(chunks)
+                logger.info(
+                    f"Successfully fetched attachment from {url} "
+                    f"(size: {len(data)} bytes)"
+                )
+                return data
+            finally:
+                response.close()
 
         except Exception as e:
             logger.error(f"Error fetching attachment: {str(e)}")
@@ -273,9 +290,11 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         Returns:
             A dictionary with download results
         """
-        # Convert to absolute path if relative
+        # Relative paths resolve against the configured file root (the
+        # working directory unless MCP_ATLASSIAN_FILES_DIR or a remote
+        # transport sets another one).
         if not os.path.isabs(target_dir):
-            target_dir = os.path.abspath(target_dir)
+            target_dir = os.path.normpath(os.path.join(get_file_root(), target_dir))
 
         # Guard against path traversal (resolves symlinks)
         validate_safe_path(target_dir)
@@ -395,10 +414,10 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
 
             # Use the Jira API to upload the file
             filename = os.path.basename(file_path)
-            with open(file_path, "rb") as file:
-                attachment = self.jira.add_attachment(
-                    issue_key=issue_key, filename=file_path
-                )
+            # Upload from the verified descriptor; add_attachment(filename=...)
+            # would reopen the path after the check.
+            with open_confined(file_path, "rb") as file:
+                attachment = self.jira.add_attachment_object(issue_key, file)
 
             if attachment:
                 file_size = os.path.getsize(file_path)

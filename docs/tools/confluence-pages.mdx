@@ -175,7 +175,7 @@ Update a single section of a Confluence page without affecting the rest.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | The ID of the page to update |
-| `heading_text` | `string` | Yes | Exact text of the heading that starts the section to replace. Matching is case-sensitive. Use confluence_get_page with convert_to_markdown=false to inspect exact heading text when unsure. |
+| `heading_text` | `string` | Yes | Exact text of the heading that starts the section to replace. Matching is case-sensitive. The page title is not a section: passing it is refused so the whole page is not overwritten. Use confluence_get_page with convert_to_markdown=false to inspect exact heading text when unsure. |
 | `new_content` | `string` | Yes | Replacement content for the section body. Do NOT include the heading itself — only the body beneath it. Format is controlled by content_format. |
 | `content_format` | `string` | No | (Optional) Format of new_content. Options: 'markdown' (default) or 'storage' (raw Confluence storage XML). Use 'storage' to insert macros or elements that markdown cannot express. |
 | `is_minor_edit` | `boolean` | No | Whether this is a minor edit |
@@ -192,6 +192,8 @@ Use this instead of `confluence_update_page` when the page contains macros, layo
 
 <Warning>
 `heading_text` must match the heading exactly as it appears in Confluence (case-sensitive, no surrounding emoji — emoji in headings are stripped automatically). If the heading is not found, a `ValueError` is raised without updating the page.
+
+The section ends at the next same-or-higher heading, including a heading nested in a following excerpt, expand, or layout macro. That wrapper is left intact. Info panels and other macros are not boundaries. Lower-level sibling headings (an `h3` after an `h2`) are still part of the section.
 </Warning>
 
 ---

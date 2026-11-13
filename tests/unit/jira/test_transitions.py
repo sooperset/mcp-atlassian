@@ -48,7 +48,9 @@ class TestTransitionsMixin:
             )
         ]
         mixin.get_transitions_models = MagicMock(return_value=mock_transitions)
-        mixin._post_api3 = MagicMock()
+        mixin.jira.resource_url.return_value = (
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions"
+        )
 
         return mixin
 
@@ -56,31 +58,68 @@ class TestTransitionsMixin:
         self, transitions_mixin: TransitionsMixin
     ):
         """Test get_available_transitions with list format response."""
-        # Setup mock response - list format
-        mock_transitions = [
-            {"id": "10", "name": "In Progress", "to_status": "In Progress"},
-            {"id": "11", "name": "Done", "status": "Done"},
-        ]
-        transitions_mixin.jira.get_issue_transitions.return_value = mock_transitions
+        # Setup mock response - via get_issue_transitions_full
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "10",
+                    "name": "In Progress",
+                    "to": {"name": "In Progress"},
+                    "hasScreen": False,
+                },
+                {
+                    "id": "11",
+                    "name": "Done",
+                    "to": {"name": "Done"},
+                    "hasScreen": True,
+                    "fields": {
+                        "resolution": {
+                            "required": True,
+                            "name": "Resolution",
+                            "schema": {"type": "resolution", "system": "resolution"},
+                            "allowedValues": [
+                                {"id": "1", "name": "Fixed"},
+                                {"id": "2", "name": "Won't Fix"},
+                            ],
+                        }
+                    },
+                },
+            ],
+        }
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
 
         # Call the method
-        result = transitions_mixin.get_available_transitions("TEST-123")
+        result = transitions_mixin.get_available_transitions(
+            "TEST-123", expand_fields=True
+        )
 
         # Verify
         assert len(result) == 2
         assert result[0]["id"] == "10"
         assert result[0]["name"] == "In Progress"
         assert result[0]["to_status"] == "In Progress"
+        assert result[0]["to"]["name"] == "In Progress"
+        assert result[0]["has_screen"] is False
+        assert "required_fields" not in result[0]
+
         assert result[1]["id"] == "11"
         assert result[1]["name"] == "Done"
-        assert result[1]["to_status"] == "Done"
+        assert result[1]["has_screen"] is True
+        required_fields = result[1]["required_fields"]
+        assert len(required_fields) == 1
+        assert required_fields[0]["key"] == "resolution"
+        assert required_fields[0]["name"] == "Resolution"
+        assert required_fields[0]["schema"]["type"] == "resolution"
+        allowed = required_fields[0]["allowed_values"]
+        assert len(allowed) == 2
+        assert allowed[0]["name"] == "Fixed"
 
     def test_get_available_transitions_empty_response(
         self, transitions_mixin: TransitionsMixin
     ):
         """Test get_available_transitions with empty response."""
-        # Setup mock response - empty
-        transitions_mixin.jira.get_issue_transitions.return_value = {}
+        # Setup mock response - empty via get_issue_transitions_full
+        transitions_mixin.jira.get_issue_transitions_full.return_value = {}
 
         # Call the method
         result = transitions_mixin.get_available_transitions("TEST-123")
@@ -94,7 +133,7 @@ class TestTransitionsMixin:
     ):
         """Test get_available_transitions with invalid format response."""
         # Setup mock response - invalid format
-        transitions_mixin.jira.get_issue_transitions.return_value = "invalid"
+        transitions_mixin.jira.get_issue_transitions_full.return_value = "invalid"
 
         # Call the method
         result = transitions_mixin.get_available_transitions("TEST-123")
@@ -103,12 +142,22 @@ class TestTransitionsMixin:
         assert isinstance(result, list)
         assert len(result) == 0
 
+    def test_get_available_transitions_invalid_transitions_value(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test get_available_transitions handles a malformed transitions value."""
+        transitions_mixin.jira.get_issue_transitions_full.return_value = {
+            "transitions": "invalid"
+        }
+
+        assert transitions_mixin.get_available_transitions("TEST-123") == []
+
     def test_get_available_transitions_with_error(
         self, transitions_mixin: TransitionsMixin
     ):
         """Test get_available_transitions error handling."""
         # Setup mock to raise exception
-        transitions_mixin.jira.get_issue_transitions.side_effect = Exception(
+        transitions_mixin.jira.get_issue_transitions_full.side_effect = Exception(
             "Transition fetch error"
         )
 
@@ -123,10 +172,11 @@ class TestTransitionsMixin:
         # Call the method
         result = transitions_mixin.transition_issue("TEST-123", "10")
 
-        # Verify POST to the Cloud v3 endpoint with a minimal payload
-        transitions_mixin._post_api3.assert_called_once_with(
-            "issue/TEST-123/transitions",
-            {"transition": {"id": "10"}},
+        # Verify
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={"transition": {"id": "10"}},
+            params=None,
         )
         transitions_mixin.get_issue.assert_called_once_with("TEST-123")
         assert isinstance(result, JiraIssue)
@@ -139,10 +189,10 @@ class TestTransitionsMixin:
         # Call the method with int ID
         transitions_mixin.transition_issue("TEST-123", 10)
 
-        # Verify the transition ID is stringified in the payload
-        transitions_mixin._post_api3.assert_called_once_with(
-            "issue/TEST-123/transitions",
-            {"transition": {"id": "10"}},
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={"transition": {"id": "10"}},
+            params=None,
         )
 
     def test_transition_issue_with_fields(self, transitions_mixin: TransitionsMixin):
@@ -156,13 +206,13 @@ class TestTransitionsMixin:
         fields = {"summary": "Updated"}
         transitions_mixin.transition_issue("TEST-123", "10", fields=fields)
 
-        # Verify fields are included in the POST payload
-        transitions_mixin._post_api3.assert_called_once_with(
-            "issue/TEST-123/transitions",
-            {
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={
                 "transition": {"id": "10"},
                 "fields": {"summary": "Updated"},
             },
+            params=None,
         )
 
     def test_transition_issue_with_empty_sanitized_fields(
@@ -176,28 +226,130 @@ class TestTransitionsMixin:
         fields = {"invalid": "field"}
         transitions_mixin.transition_issue("TEST-123", "10", fields=fields)
 
-        # Empty sanitized fields should result in no "fields" key in the payload
-        transitions_mixin._post_api3.assert_called_once_with(
-            "issue/TEST-123/transitions",
-            {"transition": {"id": "10"}},
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={"transition": {"id": "10"}},
+            params=None,
         )
 
     def test_transition_issue_with_comment(self, transitions_mixin: TransitionsMixin):
         """Test transition_issue with comment."""
+        # Setup
         comment = "Test comment"
+
+        # Define a side effect to record what's passed to _add_comment_to_transition_data
+        def add_comment_side_effect(transition_data, comment_text):
+            transition_data["update"] = {"comment": [{"add": {"body": comment_text}}]}
+
+        # Mock _add_comment_to_transition_data
+        transitions_mixin._add_comment_to_transition_data = MagicMock(
+            side_effect=add_comment_side_effect
+        )
 
         # Call the method with comment
         transitions_mixin.transition_issue("TEST-123", "10", comment=comment)
 
-        # Cloud sends the converted ADF comment through REST v3.
-        transitions_mixin._post_api3.assert_called_once()
-        resource, payload = transitions_mixin._post_api3.call_args.args
-        assert resource == "issue/TEST-123/transitions"
-        assert payload["transition"] == {"id": "10"}
-        body = payload["update"]["comment"][0]["add"]["body"]
-        assert body["version"] == 1
-        assert body["type"] == "doc"
-        assert body["content"][0]["content"][0]["text"] == comment
+        # Verify _add_comment_to_transition_data was called
+        transitions_mixin._add_comment_to_transition_data.assert_called_once()
+
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {"comment": [{"add": {"body": comment}}]},
+            },
+            params=None,
+        )
+
+    def test_transition_issue_rejects_update_comment_for_internal_only_project(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Top-level update comment operations cannot bypass the JSM guard."""
+        transitions_mixin.config.internal_only_projects = frozenset({"CC"})
+
+        with pytest.raises(ValueError, match="internal-only"):
+            transitions_mixin.transition_issue(
+                "CC-123",
+                "10",
+                update_data={"comment": [{"add": {"body": "Customer-visible"}}]},
+            )
+
+        transitions_mixin.get_transitions_models.assert_not_called()
+        transitions_mixin.jira.post.assert_not_called()
+
+    def test_transition_issue_uses_requested_id_for_duplicate_destination(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Transitions sharing a destination status retain the requested ID."""
+        destination = JiraStatus(id="2", name="In Progress")
+        transitions_mixin.get_transitions_models.return_value = [
+            JiraTransition(id="10", name="Start Progress", to_status=destination),
+            JiraTransition(id="20", name="Escalate", to_status=destination),
+        ]
+        transitions_mixin.jira.resource_url.return_value = (
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions"
+        )
+
+        transitions_mixin.transition_issue("TEST-123", "20")
+
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={"transition": {"id": "20"}},
+            params=None,
+        )
+
+    def test_transition_issue_cloud_posts_adf_to_v3(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Cloud transition comments use ADF and the REST v3 endpoint."""
+        adf_comment = {"version": 1, "type": "doc", "content": []}
+        transitions_mixin._markdown_to_jira = MagicMock(return_value=adf_comment)
+        transitions_mixin.jira.resource_url.return_value = (
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions"
+        )
+
+        transitions_mixin.transition_issue(
+            "TEST-123",
+            "10",
+            comment="Done",
+            update_data={"worklog": [{"add": {"timeSpent": "1h"}}]},
+        )
+
+        transitions_mixin.jira.resource_url.assert_called_once_with(
+            "issue/TEST-123/transitions", api_version="3"
+        )
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {
+                    "worklog": [{"add": {"timeSpent": "1h"}}],
+                    "comment": [{"add": {"body": adf_comment}}],
+                },
+            },
+            params=None,
+        )
+
+    def test_transition_issue_dc_posts_wiki_markup_to_v2(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Server/DC transition comments use wiki markup and REST v2."""
+        transitions_mixin.config.url = "https://jira.example.com"
+        transitions_mixin._markdown_to_jira = MagicMock(return_value="h2. Done")
+        transitions_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+
+        transitions_mixin.transition_issue("TEST-123", "10", comment="Done")
+
+        transitions_mixin.jira.resource_url.assert_called_once_with("issue")
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {"comment": [{"add": {"body": "h2. Done"}}]},
+            },
+        )
 
     # --- JIRA_INTERNAL_ONLY_PROJECTS guard on transition comments ---
 
@@ -212,7 +364,7 @@ class TestTransitionsMixin:
         with pytest.raises(ValueError, match="internal-only"):
             transitions_mixin.transition_issue("CC-1", "10", comment="Client update")
 
-        transitions_mixin._post_api3.assert_not_called()
+        transitions_mixin.jira.post.assert_not_called()
 
     @pytest.mark.parametrize("issue_key", [" CC-1", "CC%2D1", "%43C-1"])
     def test_transition_comment_internal_only_noncanonical_key_rejected(
@@ -224,7 +376,7 @@ class TestTransitionsMixin:
         with pytest.raises(ValueError, match="internal-only"):
             transitions_mixin.transition_issue(issue_key, "10", comment="Client update")
 
-        transitions_mixin._post_api3.assert_not_called()
+        transitions_mixin.jira.post.assert_not_called()
 
     def test_transition_comment_unlisted_project_unaffected(
         self, transitions_mixin: TransitionsMixin
@@ -235,7 +387,7 @@ class TestTransitionsMixin:
 
         transitions_mixin.transition_issue("TEST-123", "10", comment="Test comment")
 
-        transitions_mixin._post_api3.assert_called_once()
+        transitions_mixin.jira.post.assert_called_once()
 
     def test_transition_without_comment_internal_only_project_unaffected(
         self, transitions_mixin: TransitionsMixin
@@ -246,30 +398,31 @@ class TestTransitionsMixin:
 
         transitions_mixin.transition_issue("CC-1", "10")
 
-        transitions_mixin._post_api3.assert_called_once_with(
-            "issue/CC-1/transitions",
-            {"transition": {"id": "10"}},
+        transitions_mixin.jira.resource_url.assert_called_once_with(
+            "issue/CC-1/transitions", api_version="3"
+        )
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={"transition": {"id": "10"}},
+            params=None,
         )
 
     def test_transition_issue_with_error(self, transitions_mixin: TransitionsMixin):
         """Test transition_issue error handling."""
-        # Setup mock to raise exception on the POST
-        transitions_mixin._post_api3.side_effect = Exception("Transition error")
+        # Setup mock to raise exception
+        transitions_mixin.jira.post.side_effect = Exception("Transition error")
 
         # Call the method and verify exception
         with pytest.raises(
             ValueError,
-            match=(
-                "Error transitioning issue TEST-123 with transition ID 10: "
-                "Transition error"
-            ),
+            match="Error transitioning issue TEST-123 with transition ID 10: Transition error",
         ):
             transitions_mixin.transition_issue("TEST-123", "10")
 
     def test_transition_issue_without_status_name(
         self, transitions_mixin: TransitionsMixin
     ):
-        """Test transition_issue when target status name is not available."""
+        """Test transition_issue when status name is not available."""
         # Setup - create a transition without to_status
         mock_transitions = [
             JiraTransition(
@@ -281,55 +434,39 @@ class TestTransitionsMixin:
         transitions_mixin.get_transitions_models = MagicMock(
             return_value=mock_transitions
         )
+
         # Call the method
         result = transitions_mixin.transition_issue("TEST-123", "10")
 
-        # Verify the unified POST still happens with the transition id
-        transitions_mixin._post_api3.assert_called_once_with(
-            "issue/TEST-123/transitions",
-            {"transition": {"id": "10"}},
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={"transition": {"id": "10"}},
+            params=None,
         )
 
         # Verify result
         transitions_mixin.get_issue.assert_called_once_with("TEST-123")
         assert isinstance(result, JiraIssue)
 
-    def test_transition_issue_uses_v3_on_cloud(
+    def test_get_transitions_drops_non_dict_entries(
         self, transitions_mixin: TransitionsMixin
     ):
-        """Regression test for issue #1262.
+        """Regression for #1355: malformed transition entries are skipped."""
+        transitions_mixin.jira.get_issue_transitions_full.return_value = {
+            "transitions": ["bad", None, {"id": "11", "name": "Done"}]
+        }
 
-        Cloud transition comments are converted to ADF, so their atomic
-        transition payload must use REST v3.
-        """
-        transitions_mixin.transition_issue("TEST-123", "10", comment="Required")
-
-        transitions_mixin._post_api3.assert_called_once()
-        transitions_mixin.jira.post.assert_not_called()
-
-    def test_transition_issue_uses_v2_on_data_center(
-        self, transitions_mixin: TransitionsMixin
-    ):
-        """Server/DC sends wiki markup through the dependency's REST v2 URL."""
-        transitions_mixin.config.url = "https://jira.example.com"
-        transitions_mixin._markdown_to_jira = MagicMock(return_value="*Required*")
-        transitions_mixin.jira.resource_url = MagicMock(
-            return_value="https://jira.example.com/rest/api/2/issue"
-        )
-
-        transitions_mixin.transition_issue("TEST-123", "10", comment="**Required**")
-
-        transitions_mixin.jira.resource_url.assert_called_once_with("issue")
-        transitions_mixin.jira.post.assert_called_once_with(
-            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
-            data={
-                "transition": {"id": "10"},
-                "update": {
-                    "comment": [{"add": {"body": "*Required*"}}],
-                },
-            },
-        )
-        transitions_mixin._post_api3.assert_not_called()
+        assert transitions_mixin.get_transitions("TEST-123") == [
+            {"id": "11", "name": "Done"}
+        ]
+        assert transitions_mixin.get_available_transitions("TEST-123") == [
+            {
+                "id": "11",
+                "name": "Done",
+                "has_screen": False,
+                "is_conditional": False,
+            }
+        ]
 
     def test_get_transitions_uses_full_api(self, transitions_mixin: TransitionsMixin):
         """Test that get_transitions uses get_issue_transitions_full for complete data.
@@ -390,8 +527,8 @@ class TestTransitionsMixin:
     ):
         """Test that get_transitions_models correctly parses full 'to' status objects.
 
-        This verifies that get_issue_transitions_full returns complete 'to'
-        objects and the JiraTransition models are created with proper to_status.
+        This verifies that when get_issue_transitions_full returns complete 'to' objects,
+        the JiraTransition models are created with proper to_status.
         """
         # Setup mock response matching real Jira API format
         mock_response = {
@@ -440,14 +577,10 @@ class TestTransitionsMixin:
     def test_transition_issue_with_resolution_field(
         self, transitions_mixin: TransitionsMixin
     ):
-        """Test transition_issue with resolution field includes it in the payload.
+        """Test transition_issue includes a resolution field atomically.
 
-        Regression test for issue #602 - the fields parameter (e.g. resolution)
-        must be sent atomically with the transition so the resolution is set
-        as part of the status change rather than dropped.
-
-        After the unification onto a single direct POST path, this is verified
-        directly by inspecting the request payload.
+        This is the end-to-end test for issue #602 - when transitioning with fields
+        like resolution, the transition ID and fields must share one request.
         """
         # Setup mock for get_issue_transitions_full (used by get_transitions)
         mock_response = {
@@ -465,6 +598,7 @@ class TestTransitionsMixin:
         transitions_mixin.jira.get_issue_transitions_full = MagicMock(
             return_value=mock_response
         )
+
         # Don't mock get_transitions_models - let it use real implementation
         # to test the full flow
         transitions_mixin.get_transitions_models = (
@@ -483,14 +617,13 @@ class TestTransitionsMixin:
             fields={"resolution": {"id": "10001"}},
         )
 
-        # Verify the resolution field is present in the POST payload alongside
-        # the transition id, so Jira sets it atomically with the status change
-        transitions_mixin._post_api3.assert_called_once_with(
-            "issue/TEST-123/transitions",
-            {
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={
                 "transition": {"id": "731"},
                 "fields": {"resolution": {"id": "10001"}},
             },
+            params=None,
         )
 
     def test_normalize_transition_id(self, transitions_mixin: TransitionsMixin):
@@ -510,8 +643,9 @@ class TestTransitionsMixin:
         # Test with dict containing int id
         assert transitions_mixin._normalize_transition_id({"id": 10}) == 10
 
-        # Test with None
-        assert transitions_mixin._normalize_transition_id(None) == 0
+        # Test with None raises ValueError
+        with pytest.raises(ValueError, match="transition_id cannot be None"):
+            transitions_mixin._normalize_transition_id(None)
 
     def test_sanitize_transition_fields_basic(
         self, transitions_mixin: TransitionsMixin
@@ -541,7 +675,7 @@ class TestTransitionsMixin:
     def test_sanitize_transition_fields_with_assignee_and_get_account_id(
         self, transitions_mixin
     ):
-        """Test assignee sanitization when _get_account_id is available."""
+        """Test _sanitize_transition_fields with assignee when _get_account_id is available."""
         # Setup mock for _get_account_id
         transitions_mixin._get_account_id = MagicMock(return_value="account-123")
 
@@ -634,3 +768,577 @@ class TestTransitionsMixin:
             transition_data["update"]["comment"][0]["add"]["body"]
             == "Converted comment"
         )
+
+    def test_transition_comment_format_cloud_adf(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Transition comment payload carries ADF dict on Cloud."""
+        transitions_mixin._markdown_to_jira = MagicMock(
+            return_value={"version": 1, "type": "doc", "content": []}
+        )
+        transitions_mixin._add_comment_to_transition_data = MagicMock(
+            wraps=TransitionsMixin._add_comment_to_transition_data.__get__(
+                transitions_mixin, type(transitions_mixin)
+            )
+        )
+
+        transitions_mixin.transition_issue("TEST-123", "10", comment="Fixed")
+
+        transitions_mixin.jira.post.assert_called_once()
+        update = transitions_mixin.jira.post.call_args.kwargs["data"]["update"]
+        body = update["comment"][0]["add"]["body"]
+        assert isinstance(body, dict)
+        assert body["type"] == "doc"
+
+    def test_transition_comment_format_dc_wiki(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Transition comment payload carries wiki markup on Server/DC."""
+        transitions_mixin.config.url = "https://jira.example.com"
+        transitions_mixin._markdown_to_jira = MagicMock(return_value="h2. Fixed")
+        transitions_mixin._add_comment_to_transition_data = MagicMock(
+            wraps=TransitionsMixin._add_comment_to_transition_data.__get__(
+                transitions_mixin, type(transitions_mixin)
+            )
+        )
+
+        transitions_mixin.transition_issue("TEST-123", "10", comment="Fixed")
+
+        transitions_mixin.jira.post.assert_called_once()
+        update = transitions_mixin.jira.post.call_args.kwargs["data"]["update"]
+        body = update["comment"][0]["add"]["body"]
+        assert isinstance(body, str)
+        assert "h2." in body
+
+    def test_extract_required_fields_with_resolution(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test _extract_required_fields with resolution field."""
+        fields = {
+            "resolution": {
+                "required": True,
+                "name": "Resolution",
+                "schema": {"type": "resolution", "system": "resolution"},
+                "allowedValues": [
+                    {"id": "1", "name": "Fixed"},
+                    {"id": "3", "name": "Done"},
+                ],
+            },
+            "summary": {
+                "required": False,
+                "name": "Summary",
+                "schema": {"type": "string", "system": "summary"},
+            },
+        }
+
+        result = TransitionsMixin._extract_required_fields(fields)
+
+        assert len(result) == 1
+        assert result[0]["key"] == "resolution"
+        assert result[0]["name"] == "Resolution"
+        assert result[0]["schema"]["type"] == "resolution"
+        assert len(result[0]["allowed_values"]) == 2
+        assert result[0]["allowed_values"][0]["id"] == "1"
+        assert result[0]["allowed_values"][0]["name"] == "Fixed"
+
+    def test_extract_required_fields_with_timetracking(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test _extract_required_fields with numeric custom field (e.g. Time Spent)."""
+        fields = {
+            "customfield_10000": {
+                "required": True,
+                "name": "Time Spent",
+                "schema": {
+                    "type": "number",
+                    "custom": (
+                        "com.atlassian.jira.plugin.system.customfieldtypes:float"
+                    ),
+                    "customId": 10000,
+                },
+            }
+        }
+
+        result = TransitionsMixin._extract_required_fields(fields)
+
+        assert len(result) == 1
+        assert result[0]["key"] == "customfield_10000"
+        assert result[0]["name"] == "Time Spent"
+        assert result[0]["schema"]["type"] == "number"
+        assert "allowed_values" not in result[0]
+
+    def test_extract_required_fields_empty(self):
+        """Test _extract_required_fields with no required fields."""
+        assert TransitionsMixin._extract_required_fields({}) == []
+
+        fields = {
+            "summary": {"required": False, "name": "Summary"},
+        }
+        assert TransitionsMixin._extract_required_fields(fields) == []
+
+    def test_normalize_allowed_value_scalar(self):
+        """Test _normalize_allowed_value preserves scalar choices."""
+        result = TransitionsMixin._normalize_allowed_value("Fixed")
+        assert result == "Fixed"
+
+    def test_normalize_allowed_value_int_scalar(self):
+        """Test _normalize_allowed_value preserves numeric scalar choices."""
+        result = TransitionsMixin._normalize_allowed_value(42)
+        assert result == 42
+
+    def test_normalize_allowed_value_with_id_and_value(self):
+        """Test _normalize_allowed_value exposes a value label as name."""
+        result = TransitionsMixin._normalize_allowed_value(
+            {"id": "1", "value": "Fixed"}
+        )
+        assert result == {"id": "1", "value": "Fixed", "name": "Fixed"}
+
+    def test_normalize_allowed_value_with_id_and_name(self):
+        """Test _normalize_allowed_value preserves a named option."""
+        result = TransitionsMixin._normalize_allowed_value(
+            {"id": "2", "name": "Won't Fix"}
+        )
+        assert result == {"id": "2", "name": "Won't Fix"}
+
+    def test_normalize_allowed_value_with_option_id(self):
+        """Test _normalize_allowed_value preserves optionId-shaped data."""
+        result = TransitionsMixin._normalize_allowed_value(
+            {"optionId": "100", "value": "Option A"}
+        )
+        assert result == {
+            "optionId": "100",
+            "value": "Option A",
+            "name": "Option A",
+        }
+
+    def test_normalize_allowed_value_empty_dict(self):
+        """Test _normalize_allowed_value preserves an empty option mapping."""
+        result = TransitionsMixin._normalize_allowed_value({})
+        assert result == {}
+
+    def test_normalize_allowed_value_with_description(self):
+        """Test _normalize_allowed_value preserves extra option metadata."""
+        result = TransitionsMixin._normalize_allowed_value(
+            {"id": "1", "name": "Fixed", "description": "A fix has been implemented"}
+        )
+        assert result == {
+            "id": "1",
+            "name": "Fixed",
+            "description": "A fix has been implemented",
+        }
+
+    def test_normalize_allowed_value_with_empty_description(self):
+        """Test _normalize_allowed_value preserves an empty description."""
+        result = TransitionsMixin._normalize_allowed_value(
+            {"id": "2", "name": "Done", "description": ""}
+        )
+        assert result == {"id": "2", "name": "Done", "description": ""}
+
+    def test_extract_required_fields_with_scalar_allowed_values(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test _extract_required_fields with scalar allowed values."""
+        fields = {
+            "customfield_10001": {
+                "required": True,
+                "name": "Category",
+                "schema": {"type": "option", "custom": "..."},
+                "allowedValues": ["Fixed", "Won't Fix", 42],
+            }
+        }
+
+        result = TransitionsMixin._extract_required_fields(fields)
+
+        assert len(result) == 1
+        allowed = result[0]["allowed_values"]
+        assert len(allowed) == 3
+        assert allowed[0] == "Fixed"
+        assert allowed[2] == 42
+
+    def test_extract_required_fields_with_id_value_allowed_values(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test _extract_required_fields with {id, value} allowed values."""
+        fields = {
+            "versions": {
+                "required": True,
+                "name": "Fix Versions",
+                "schema": {"type": "array", "items": "version"},
+                "allowedValues": [
+                    {"id": "10001", "value": "v1.0"},
+                    {"id": "10002", "value": "v2.0"},
+                ],
+            }
+        }
+
+        result = TransitionsMixin._extract_required_fields(fields)
+
+        assert len(result) == 1
+        allowed = result[0]["allowed_values"]
+        assert len(allowed) == 2
+        assert allowed[0] == {"id": "10001", "value": "v1.0", "name": "v1.0"}
+        assert allowed[1] == {"id": "10002", "value": "v2.0", "name": "v2.0"}
+
+    def test_extract_required_fields_with_mixed_allowed_values(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test _extract_required_fields with mixed shapes."""
+        fields = {
+            "customfield_10002": {
+                "required": True,
+                "name": "Mixed Field",
+                "allowedValues": [
+                    "Scalar",
+                    {"id": "1", "name": "Named"},
+                    {"id": "2", "value": "Valued"},
+                ],
+            }
+        }
+
+        result = TransitionsMixin._extract_required_fields(fields)
+
+        assert len(result) == 1
+        allowed = result[0]["allowed_values"]
+        assert len(allowed) == 3
+        assert allowed[0] == "Scalar"
+        assert allowed[1] == {"id": "1", "name": "Named"}
+        assert allowed[2] == {"id": "2", "value": "Valued", "name": "Valued"}
+
+    def test_get_available_transitions_no_expand_by_default(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test get_available_transitions uses lightweight call by default."""
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "11",
+                    "name": "Done",
+                    "hasScreen": True,
+                    "fields": {
+                        "resolution": {
+                            "required": True,
+                            "name": "Resolution",
+                            "allowedValues": [{"id": "1", "name": "Fixed"}],
+                        }
+                    },
+                }
+            ]
+        }
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
+
+        result = transitions_mixin.get_available_transitions("TEST-123")
+
+        transitions_mixin.jira.get_issue_transitions_full.assert_called_once_with(
+            "TEST-123"
+        )
+        assert result == [
+            {"id": "11", "name": "Done", "has_screen": True, "is_conditional": False}
+        ]
+
+    def test_get_available_transitions_with_expand(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test get_available_transitions opts into field expansion."""
+        mock_response = {"transitions": []}
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
+
+        transitions_mixin.get_available_transitions("TEST-123", expand_fields=True)
+
+        transitions_mixin.jira.get_issue_transitions_full.assert_called_once_with(
+            "TEST-123", expand="transitions.fields"
+        )
+
+    def test_get_available_transitions_with_timetracking_field(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test get_available_transitions with Time Spent (timetracking) required."""
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "51",
+                    "name": "Resolve Issue",
+                    "to": {"name": "Resolved", "id": "5"},
+                    "hasScreen": True,
+                    "fields": {
+                        "timetracking": {
+                            "required": True,
+                            "name": "Time Spent",
+                            "schema": {
+                                "type": "timetracking",
+                                "system": "timetracking",
+                            },
+                        },
+                        "resolution": {
+                            "required": True,
+                            "name": "Resolution",
+                            "schema": {"type": "resolution", "system": "resolution"},
+                            "allowedValues": [
+                                {"id": "1", "name": "Fixed"},
+                            ],
+                        },
+                    },
+                }
+            ]
+        }
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
+
+        result = transitions_mixin.get_available_transitions(
+            "TEST-123", expand_fields=True
+        )
+
+        assert len(result) == 1
+        assert result[0]["has_screen"] is True
+        required = result[0]["required_fields"]
+        assert len(required) == 2
+
+        # Verify timetracking field
+        tt = next(r for r in required if r["key"] == "timetracking")
+        assert tt["name"] == "Time Spent"
+        assert tt["schema"]["type"] == "timetracking"
+
+        # Verify resolution field
+        res = next(r for r in required if r["key"] == "resolution")
+        assert res["name"] == "Resolution"
+        assert len(res["allowed_values"]) == 1
+
+    def test_transition_issue_with_update_data(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Cloud converts a worklog comment in update_data to ADF for REST v3."""
+        adf_comment = {"version": 1, "type": "doc", "content": []}
+        transitions_mixin._markdown_to_jira = MagicMock(return_value=adf_comment)
+        update_data = {"worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]}
+        transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
+
+        transitions_mixin._markdown_to_jira.assert_called_once_with("Resolved")
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {
+                    "worklog": [{"add": {"timeSpent": "1h", "comment": adf_comment}}]
+                },
+            },
+            params=None,
+        )
+        # The caller's update_data is not mutated.
+        assert update_data == {
+            "worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}]
+        }
+
+    def test_transition_issue_cloud_converts_update_data_comment_body(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Cloud converts string comment bodies in update_data to ADF."""
+        adf_body = {"version": 1, "type": "doc", "content": []}
+        transitions_mixin._markdown_to_jira = MagicMock(return_value=adf_body)
+
+        transitions_mixin.transition_issue(
+            "TEST-123",
+            "10",
+            update_data={"comment": [{"add": {"body": "**Done**"}}]},
+        )
+
+        transitions_mixin._markdown_to_jira.assert_called_once_with("**Done**")
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {"comment": [{"add": {"body": adf_body}}]},
+            },
+            params=None,
+        )
+
+    def test_transition_issue_cloud_keeps_adf_in_update_data(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Cloud leaves ADF bodies and non-text operations unchanged."""
+        transitions_mixin._markdown_to_jira = MagicMock()
+        adf_body = {"version": 1, "type": "doc", "content": []}
+        update_data = {
+            "comment": [{"add": {"body": adf_body}}],
+            "worklog": [{"add": {"timeSpent": "1h"}}],
+            "labels": [{"add": "triaged"}],
+        }
+
+        transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
+
+        transitions_mixin._markdown_to_jira.assert_not_called()
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={"transition": {"id": "10"}, "update": update_data},
+            params=None,
+        )
+
+    def test_transition_issue_dc_keeps_update_data_text(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Server/DC sends update_data text unchanged to REST v2."""
+        transitions_mixin.config.url = "https://jira.example.com"
+        transitions_mixin._markdown_to_jira = MagicMock()
+        transitions_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+        update_data = {
+            "comment": [{"add": {"body": "Done"}}],
+            "worklog": [{"add": {"timeSpent": "1h", "comment": "Resolved"}}],
+        }
+
+        transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
+
+        transitions_mixin._markdown_to_jira.assert_not_called()
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            data={"transition": {"id": "10"}, "update": update_data},
+        )
+
+    def test_transition_issue_with_comment_and_update_data(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test transition_issue with both comment and update_data."""
+
+        # Setup mock for _add_comment_to_transition_data
+        def add_comment_side_effect(transition_data, comment_text):
+            transition_data.setdefault("update", {}).setdefault("comment", []).append(
+                {"add": {"body": comment_text}}
+            )
+
+        transitions_mixin._add_comment_to_transition_data = MagicMock(
+            side_effect=add_comment_side_effect
+        )
+
+        # Call with both comment and update_data
+        update_data = {"worklog": [{"add": {"timeSpent": "2h"}}]}
+        transitions_mixin.transition_issue(
+            "TEST-123", "10", comment="Done", update_data=update_data
+        )
+
+        # Verify update contains both comment and worklog
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {
+                    "comment": [{"add": {"body": "Done"}}],
+                    "worklog": [{"add": {"timeSpent": "2h"}}],
+                },
+            },
+            params=None,
+        )
+
+    def test_transition_issue_preserves_update_data_comments(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test comment combines with comment operations in update_data."""
+        transitions_mixin._markdown_to_jira = MagicMock(side_effect=lambda text: text)
+        existing_comment = {"add": {"body": "Existing comment"}}
+
+        transitions_mixin.transition_issue(
+            "TEST-123",
+            "10",
+            comment="New comment",
+            update_data={"comment": [existing_comment]},
+        )
+
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {
+                    "comment": [
+                        existing_comment,
+                        {"add": {"body": "New comment"}},
+                    ]
+                },
+            },
+            params=None,
+        )
+
+    def test_transition_issue_with_update_data_no_status_name(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Test transition_issue with update_data when no status name."""
+        # Setup - transition without to_status
+        mock_transitions = [
+            JiraTransition(id="10", name="Start Progress", to_status=None)
+        ]
+        transitions_mixin.get_transitions_models = MagicMock(
+            return_value=mock_transitions
+        )
+        transitions_mixin.config.url = "https://jira.example.com"
+        transitions_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+
+        update_data = {"worklog": [{"add": {"timeSpent": "1h"}}]}
+        transitions_mixin.transition_issue("TEST-123", "10", update_data=update_data)
+
+        # Verify a single atomic request includes the transition and update data.
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {"worklog": [{"add": {"timeSpent": "1h"}}]},
+            },
+        )
+
+    def test_get_available_transitions_to_object_with_status_category(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """get_available_transitions returns structured 'to' with statusCategory."""
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "41",
+                    "name": "Send to team",
+                    "to": {
+                        "id": "3",
+                        "name": "In Progress",
+                        "statusCategory": {
+                            "id": 4,
+                            "key": "indeterminate",
+                            "name": "In Progress",
+                        },
+                    },
+                    "hasScreen": False,
+                },
+            ],
+        }
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
+
+        result = transitions_mixin.get_available_transitions("TEST-123")
+
+        assert len(result) == 1
+        # Backward-compatible string
+        assert result[0]["to_status"] == "In Progress"
+        # Structured object
+        to_obj = result[0]["to"]
+        assert to_obj["id"] == "3"
+        assert to_obj["name"] == "In Progress"
+        assert to_obj["statusCategory"]["id"] == "4"
+        assert to_obj["statusCategory"]["key"] == "indeterminate"
+        assert to_obj["statusCategory"]["name"] == "In Progress"
+
+    def test_get_available_transitions_to_object_no_status_category(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """'to' object without statusCategory omits the key."""
+        mock_response = {
+            "transitions": [
+                {
+                    "id": "51",
+                    "name": "Resolve",
+                    "to": {"id": "5", "name": "Resolved"},
+                    "hasScreen": True,
+                },
+            ],
+        }
+        transitions_mixin.jira.get_issue_transitions_full.return_value = mock_response
+
+        result = transitions_mixin.get_available_transitions("TEST-123")
+
+        assert len(result) == 1
+        assert result[0]["to_status"] == "Resolved"
+        assert result[0]["to"]["id"] == "5"
+        assert result[0]["to"]["name"] == "Resolved"
+        assert "statusCategory" not in result[0]["to"]
