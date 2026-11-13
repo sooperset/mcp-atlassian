@@ -1517,10 +1517,11 @@ class TestAttachmentsMixin:
 
 
 class TestDownloadAttachmentServerTool:
-    """Tests for the server-level download_attachment tool (EmbeddedResource return)."""
+    """Tests for the server-level download_attachment tool."""
 
     @pytest.mark.asyncio
-    async def test_returns_embedded_resource_on_success(self):
+    async def test_returns_text_content_for_non_image_on_success(self):
+        """Regression for #1731: non-image must not be EmbeddedResource media."""
         mock_fetcher = MagicMock()
         mock_fetcher._v2_adapter = None
         mock_fetcher.config.url = "https://test.atlassian.net/wiki"
@@ -1548,9 +1549,85 @@ class TestDownloadAttachmentServerTool:
                 ctx=MagicMock(), attachment_id="att123456"
             )
 
+        assert isinstance(result, TextContent)
+        data = json.loads(result.text)
+        assert data["success"] is True
+        assert data["filename"] == "report.pdf"
+        assert data["mime_type"] == "application/pdf"
+        assert data["encoding"] == "base64"
+        assert data["content"]
+
+    @pytest.mark.asyncio
+    async def test_returns_embedded_resource_for_image_on_success(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter = None
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+
+        meta_resp = MagicMock()
+        meta_resp.json.return_value = {
+            "title": "photo.png",
+            "_links": {"download": "/download/photo.png"},
+            "extensions": {"mediaType": "image/png", "fileSize": 12},
+        }
+        meta_resp.raise_for_status.return_value = None
+        mock_fetcher.confluence._session.get.return_value = meta_resp
+
+        mock_fetcher.fetch_attachment_content.return_value = b"png-bytes!!"
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment(
+                ctx=MagicMock(), attachment_id="att_img"
+            )
+
         assert isinstance(result, EmbeddedResource)
-        assert result.resource.mimeType == "application/pdf"
+        assert result.resource.mimeType == "image/png"
         assert result.resource.blob
+
+    @pytest.mark.asyncio
+    async def test_octet_stream_zip_returns_text_not_media(self):
+        """application/octet-stream must stay TextContent (#1731 crash case)."""
+        mock_fetcher = MagicMock()
+        mock_fetcher._v2_adapter = None
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+
+        meta_resp = MagicMock()
+        meta_resp.json.return_value = {
+            "title": "bundle.zip",
+            "_links": {"download": "/download/bundle.zip"},
+            "extensions": {
+                "mediaType": "application/octet-stream",
+                "fileSize": 4,
+            },
+        }
+        meta_resp.raise_for_status.return_value = None
+        mock_fetcher.confluence._session.get.return_value = meta_resp
+        mock_fetcher.fetch_attachment_content.return_value = b"PK\x03\x04"
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_attachment as server_download_attachment,
+            )
+
+            result = await server_download_attachment(
+                ctx=MagicMock(), attachment_id="att_zip"
+            )
+
+        assert isinstance(result, TextContent)
+        assert not isinstance(result, EmbeddedResource)
+        data = json.loads(result.text)
+        assert data["success"] is True
+        assert data["mime_type"] == "application/octet-stream"
+        assert data["encoding"] == "base64"
 
     @pytest.mark.asyncio
     async def test_returns_text_on_missing_download_url(self):
@@ -1645,10 +1722,10 @@ class TestDownloadAttachmentServerTool:
 
 
 class TestDownloadContentAttachmentsServerTool:
-    """Tests for the server-level download_content_attachments tool (EmbeddedResource return)."""
+    """Tests for the server-level download_content_attachments tool."""
 
     @pytest.mark.asyncio
-    async def test_returns_summary_plus_embedded_resources(self):
+    async def test_returns_summary_plus_text_for_non_image(self):
         mock_fetcher = MagicMock()
         mock_fetcher.config.url = "https://test.atlassian.net/wiki"
         mock_fetcher.get_content_attachments.return_value = {
@@ -1682,8 +1759,49 @@ class TestDownloadContentAttachmentsServerTool:
         summary = json.loads(results[0].text)
         assert summary["success"] is True
         assert summary["downloaded"] == 1
+        assert isinstance(results[1], TextContent)
+        payload = json.loads(results[1].text)
+        assert payload["success"] is True
+        assert payload["filename"] == "file1.txt"
+        assert payload["mime_type"] == "text/plain"
+        assert payload["encoding"] == "base64"
+
+    @pytest.mark.asyncio
+    async def test_returns_summary_plus_embedded_for_image(self):
+        mock_fetcher = MagicMock()
+        mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+        mock_fetcher.get_content_attachments.return_value = {
+            "success": True,
+            "attachments": [
+                {
+                    "id": "att1",
+                    "title": "shot.png",
+                    "extensions": {"mediaType": "image/png", "fileSize": 8},
+                    "_links": {"download": "/download/shot.png"},
+                }
+            ],
+        }
+
+        mock_fetcher.fetch_attachment_content.return_value = b"pngdata!"
+
+        with patch(
+            "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+            AsyncMock(return_value=mock_fetcher),
+        ):
+            from mcp_atlassian.servers.confluence import (
+                download_content_attachments as server_download_content,
+            )
+
+            results = await server_download_content(
+                ctx=MagicMock(), content_id="123456"
+            )
+
+        assert len(results) == 2
+        assert isinstance(results[0], TextContent)
+        summary = json.loads(results[0].text)
+        assert summary["downloaded"] == 1
         assert isinstance(results[1], EmbeddedResource)
-        assert results[1].resource.mimeType == "text/plain"
+        assert results[1].resource.mimeType == "image/png"
 
     @pytest.mark.asyncio
     async def test_returns_text_when_no_attachments(self):

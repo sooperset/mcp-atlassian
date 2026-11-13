@@ -2203,20 +2203,22 @@ async def download_attachment(
         ),
     ],
 ) -> TextContent | EmbeddedResource:
-    """Download an attachment from Confluence as an embedded resource.
+    """Download an attachment from Confluence over MCP.
 
-    Returns the attachment content as a base64-encoded embedded resource so
-    that it is available over the MCP protocol without requiring filesystem
-    access on the server. Files larger than 50 MB are not downloaded inline;
-    a descriptive error message is returned instead.
+    Image attachments are returned as base64-encoded embedded resources.
+    Non-image attachments are returned as TextContent carrying a JSON payload
+    with base64 ``content``, matching the Jira download path so agent clients
+    that reject non-image media parts still receive the bytes (#1731).
+    Files larger than 50 MB are not downloaded inline; a descriptive error
+    message is returned instead.
 
     Args:
         ctx: The FastMCP context.
         attachment_id: The ID of the attachment.
 
     Returns:
-        An EmbeddedResource with base64-encoded content, or a TextContent
-        with an error or size-exceeded message.
+        An EmbeddedResource for images, or TextContent for non-image payloads
+        and errors.
     """
 
     confluence_fetcher = await get_confluence_fetcher(ctx)
@@ -2316,12 +2318,33 @@ async def download_attachment(
             )
 
         encoded = base64.b64encode(data_bytes).decode("ascii")
-        return EmbeddedResource(
-            type="resource",
-            resource=BlobResourceContents(
-                uri=f"attachment:///{attachment_id}/{filename}",
-                mimeType=mime_type,
-                blob=encoded,
+        is_image, resolved_mime_type = is_image_attachment(mime_type, filename)
+        if is_image:
+            return EmbeddedResource(
+                type="resource",
+                resource=BlobResourceContents(
+                    uri=f"attachment:///{attachment_id}/{filename}",
+                    mimeType=resolved_mime_type,
+                    blob=encoded,
+                ),
+            )
+
+        # Non-image blobs as EmbeddedResource become media/data parts in many
+        # agent runtimes; non-multimodal LLMs then reject application/octet-stream
+        # (#1731). Match Jira (#1419): put the base64 payload in TextContent.
+        return TextContent(
+            type="text",
+            text=json.dumps(
+                {
+                    "success": True,
+                    "attachment_id": attachment_id,
+                    "filename": filename,
+                    "mime_type": mime_type,
+                    "encoding": "base64",
+                    "content": encoded,
+                },
+                indent=2,
+                ensure_ascii=False,
             ),
         )
 
@@ -2355,19 +2378,18 @@ async def download_content_attachments(
         ),
     ],
 ) -> list[TextContent | EmbeddedResource]:
-    """Download all attachments for a Confluence content item as embedded resources.
+    """Download all attachments for a Confluence content item over MCP.
 
-    Returns attachment contents as base64-encoded embedded resources so that
-    they are available over the MCP protocol without requiring filesystem
-    access on the server. Files larger than 50 MB are skipped with an error
-    entry in the summary.
+    Image attachments are embedded resources; non-image attachments use
+    TextContent with a base64 JSON payload (same split as Jira / #1731).
+    Files larger than 50 MB are skipped with an error entry in the summary.
 
     Args:
         ctx: The FastMCP context.
         content_id: The ID of the content.
 
     Returns:
-        A list with a text summary followed by one EmbeddedResource per
+        A list with a text summary followed by one content item per
         successfully downloaded attachment.
     """
 
@@ -2464,16 +2486,38 @@ async def download_content_attachments(
             continue
 
         fetched.append({"filename": filename, "size": fetched_bytes})
-        contents.append(
-            EmbeddedResource(
-                type="resource",
-                resource=BlobResourceContents(
-                    uri=f"attachment:///{content_id}/{filename}",
-                    mimeType=mime_type,
-                    blob=encoded,
-                ),
+        is_image, resolved_mime_type = is_image_attachment(mime_type, filename)
+        if is_image:
+            contents.append(
+                EmbeddedResource(
+                    type="resource",
+                    resource=BlobResourceContents(
+                        uri=f"attachment:///{content_id}/{filename}",
+                        mimeType=resolved_mime_type,
+                        blob=encoded,
+                    ),
+                )
             )
-        )
+        else:
+            # See download_attachment / #1731 — keep non-image bytes out of
+            # EmbeddedResource so non-multimodal agent clients do not crash.
+            contents.append(
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "success": True,
+                            "content_id": content_id,
+                            "filename": filename,
+                            "mime_type": mime_type,
+                            "encoding": "base64",
+                            "content": encoded,
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    ),
+                )
+            )
 
     summary: dict[str, object] = {
         "success": True,
