@@ -886,6 +886,7 @@ class TestGetJiraFetcher:
             ValueError, match="Invalid header-based Jira token or configuration"
         ):
             await get_jira_fetcher(mock_context)
+        mock_fetcher.close.assert_called_once()
 
     @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
@@ -1126,6 +1127,8 @@ class TestGetJiraFetcher:
             assert_mock_called_with_partial(
                 mock_jira_fetcher_class, config=app_context.full_jira_config
             )
+            if scenario["setup_http"]:
+                assert mock_request.state.jira_fetcher == mock_fetcher
 
             # Reset mocks for next iteration
             mock_jira_fetcher_class.reset_mock()
@@ -1722,6 +1725,7 @@ class TestGetConfluenceFetcher:
             ValueError, match="Invalid header-based Confluence token or configuration"
         ):
             await get_confluence_fetcher(mock_context)
+        mock_fetcher.close.assert_called_once()
 
     @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
@@ -1885,6 +1889,8 @@ class TestGetConfluenceFetcher:
             assert_mock_called_with_partial(
                 mock_confluence_fetcher_class, config=app_context.full_confluence_config
             )
+            if scenario["setup_http"]:
+                assert mock_request.state.confluence_fetcher == mock_fetcher
 
             # Reset mocks for next iteration
             mock_confluence_fetcher_class.reset_mock()
