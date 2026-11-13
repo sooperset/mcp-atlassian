@@ -32,7 +32,7 @@ from mcp_atlassian.utils.ssrf_adapter import (
 from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
 from mcp_atlassian.utils.user_agent import get_default_user_agent
 
-from ..models.jira.adf import markdown_to_adf
+from ..models.jira.adf import adf_to_markdown, markdown_to_adf
 from .config import JiraConfig, normalize_project_key
 
 # Configure logging
@@ -325,6 +325,22 @@ class JiraClient:
         # Otherwise create a temporary one
         _ = self.config.url if hasattr(self, "config") else ""
         return self.preprocessor.clean_jira_text(text)
+
+    def _body_to_markdown(self, body: Any) -> str:
+        """Convert a Jira rich-text body to Markdown.
+
+        REST v3 returns ADF dicts, which convert directly. Strings are wiki
+        markup or HTML from REST v2 and go through :meth:`_clean_text`.
+
+        Args:
+            body: ADF dict, wiki markup string, or None
+
+        Returns:
+            Markdown text
+        """
+        if isinstance(body, dict):
+            return adf_to_markdown(body) or ""
+        return self._clean_text(body or "")
 
     def _markdown_to_jira(self, markdown_text: str) -> str | dict[str, Any]:
         """Convert Markdown to Jira format (ADF for Cloud, wiki markup for Server).

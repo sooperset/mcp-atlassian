@@ -17,7 +17,7 @@ from ..constants import (
     JIRA_DEFAULT_ID,
     JIRA_DEFAULT_KEY,
 )
-from .adf import adf_to_text
+from .adf import adf_to_markdown
 from .comment import JiraComment
 from .common import (
     JiraAttachment,
@@ -305,8 +305,7 @@ class JiraIssue(ApiModel, TimestampMixin):
         # Handle description - can be string (legacy) or ADF dict (Jira Cloud new editor)
         raw_description = fields.get("description")
         if isinstance(raw_description, dict):
-            # Convert ADF to plain text
-            description = adf_to_text(raw_description)
+            description = adf_to_markdown(raw_description)
         else:
             description = raw_description
 
@@ -314,7 +313,7 @@ class JiraIssue(ApiModel, TimestampMixin):
         # classic editor) or an ADF dict (Jira Cloud new editor)
         raw_environment = fields.get("environment")
         if isinstance(raw_environment, dict):
-            environment = adf_to_text(raw_environment)
+            environment = adf_to_markdown(raw_environment)
         else:
             environment = raw_environment
 
