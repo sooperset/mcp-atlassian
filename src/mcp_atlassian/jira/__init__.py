@@ -30,6 +30,7 @@ from .queues import QueuesMixin
 from .sla import SLAMixin
 from .search import SearchMixin
 from .sprints import SprintsMixin
+from .statuses import StatusesMixin
 from .transitions import TransitionsMixin
 from .users import UsersMixin
 from .watchers import WatchersMixin
@@ -42,6 +43,7 @@ class JiraFetcher(
     FieldOptionsMixin,
     FormsApiMixin,  # Use new Forms REST API instead of FormsMixin
     FormattingMixin,
+    StatusesMixin,
     TransitionsMixin,
     WorklogMixin,
     EpicsMixin,
@@ -69,6 +71,7 @@ class JiraFetcher(
     - ProjectsMixin: Project-related operations
     - FieldsMixin: Field-related operations
     - FormattingMixin: Content formatting utilities
+    - StatusesMixin: Status discovery operations
     - TransitionsMixin: Issue transition operations
     - WorklogMixin: Worklog operations
     - EpicsMixin: Epic operations
