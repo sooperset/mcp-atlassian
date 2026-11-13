@@ -9,7 +9,9 @@ from .io import is_read_only_mode, validate_safe_path
 # Export lifecycle utilities
 from .lifecycle import (
     ensure_clean_exit,
+    is_shutdown_requested,
     setup_signal_handlers,
+    wait_for_shutdown_request,
 )
 from .logging import setup_logging
 from .media import (
@@ -47,6 +49,8 @@ __all__ = [
     "resolve_relative_url",
     "setup_signal_handlers",
     "ensure_clean_exit",
+    "is_shutdown_requested",
+    "wait_for_shutdown_request",
     "fetch_and_encode_attachment",
     "validate_url_for_ssrf",
 ]

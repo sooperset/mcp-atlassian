@@ -1074,8 +1074,10 @@ async def update_page_section(
         Field(
             description=(
                 "Exact text of the heading that starts the section to replace. "
-                "Matching is case-sensitive. Use confluence_get_page with "
-                "convert_to_markdown=false to inspect exact heading text when unsure."
+                "Matching is case-sensitive. The page title is not a section: "
+                "passing it is refused so the whole page is not overwritten. "
+                "Use confluence_get_page with convert_to_markdown=false to "
+                "inspect exact heading text when unsure."
             )
         ),
     ],

@@ -483,6 +483,68 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="Error editing comment"):
             comments_mixin.edit_comment("TEST-123", "10001", "Updated comment")
 
+    def test_edit_comment_preserves_existing_media(self, comments_mixin):
+        """Editing a comment keeps the images it already had."""
+        media_node = {
+            "type": "mediaSingle",
+            "attrs": {"layout": "center"},
+            "content": [
+                {
+                    "type": "media",
+                    "attrs": {"id": "uuid-1", "type": "file", "collection": "jira"},
+                }
+            ],
+        }
+        comments_mixin.jira.get = Mock(
+            return_value={
+                "id": "10001",
+                "body": {
+                    "version": 1,
+                    "type": "doc",
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [{"type": "text", "text": "old"}],
+                        },
+                        media_node,
+                    ],
+                },
+            }
+        )
+        comments_mixin._put_api3 = Mock(
+            return_value={
+                "id": "10001",
+                "body": "new text",
+                "updated": "2024-01-01T12:00:00.000+0000",
+                "author": {"displayName": "John Doe"},
+            }
+        )
+
+        comments_mixin.edit_comment("TEST-123", "10001", "new text")
+
+        sent_body = comments_mixin._put_api3.call_args[0][1]["body"]
+        assert media_node in sent_body["content"]
+        comments_mixin.jira.get.assert_called_once_with(
+            "rest/api/3/issue/TEST-123/comment/10001"
+        )
+
+    def test_edit_comment_media_lookup_failure_still_edits(self, comments_mixin):
+        """A failed lookup does not block the edit."""
+        comments_mixin.jira.get = Mock(side_effect=ValueError("boom"))
+        comments_mixin._put_api3 = Mock(
+            return_value={
+                "id": "10001",
+                "body": "new text",
+                "updated": "2024-01-01T12:00:00.000+0000",
+                "author": {"displayName": "John Doe"},
+            }
+        )
+
+        result = comments_mixin.edit_comment("TEST-123", "10001", "new text")
+
+        assert result["id"] == "10001"
+        comments_mixin._put_api3.assert_called_once()
+
     def test_markdown_to_jira_cloud(self, comments_mixin):
         """Test _markdown_to_jira returns ADF dict on Cloud."""
         result = comments_mixin._markdown_to_jira("Markdown text")
@@ -923,7 +985,12 @@ class TestInternalOnlyProjectsGuard:
             }
         )
         result = guarded_mixin.edit_comment("TEST-1", "1", "updated")
-        guarded_mixin.jira.get.assert_not_called()
+        # The media-preservation read is expected; the ServiceDesk lookup is not.
+        assert not [
+            call
+            for call in guarded_mixin.jira.get.call_args_list
+            if "servicedeskapi" in str(call)
+        ]
         guarded_mixin._put_api3.assert_called_once()
         assert result["id"] == "1"
 
@@ -948,7 +1015,12 @@ class TestInternalOnlyProjectsGuard:
             }
         )
         result = guarded_mixin.edit_comment("CC-1", "5", "Updated text")
-        guarded_mixin.jira.get.assert_called_once()
+        servicedesk_calls = [
+            call
+            for call in guarded_mixin.jira.get.call_args_list
+            if "servicedeskapi" in str(call)
+        ]
+        assert len(servicedesk_calls) == 1
         guarded_mixin._put_api3.assert_called_once()
         assert result["id"] == "5"
 
