@@ -6,6 +6,7 @@ including handling of various inline and block node types,
 and the reverse conversion from Markdown to ADF.
 """
 
+import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -438,6 +439,69 @@ class TestMarkdownToAdf:
         assert link_nodes[0]["text"] == "click here"
         link_mark = next(m for m in link_nodes[0]["marks"] if m["type"] == "link")
         assert link_mark["attrs"]["href"] == "https://example.com"
+
+    def test_link_title(self):
+        """An optional title follows the URL and is not part of it."""
+        for markdown, href, title in (
+            (
+                '[docs](https://example.com/p "Docs home")',
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p 'Docs home')",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p (Docs home))",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            # CommonMark allows whitespace between the title and the paren.
+            (
+                '[docs](https://example.com/p "Docs home" )',
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p 'Docs home' )",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p (Docs home) )",
+                "https://example.com/p",
+                "Docs home",
+            ),
+        ):
+            para = markdown_to_adf(markdown)["content"][0]
+            nodes = [n for n in para["content"] if n["type"] == "text"]
+            mark = next(m for m in nodes[0]["marks"] if m["type"] == "link")
+            assert mark["attrs"]["href"] == href, markdown
+            assert mark["attrs"]["title"] == title, markdown
+            # The paren form used to leave a stray ")" behind.
+            assert len(nodes) == 1, markdown
+
+    def test_link_without_title(self):
+        """A URL containing a space still resolves as one href."""
+        para = markdown_to_adf("[docs](https://example.com/a b)")["content"][0]
+        mark = next(
+            m
+            for n in para["content"]
+            if n["type"] == "text"
+            for m in n.get("marks", [])
+            if m["type"] == "link"
+        )
+        assert mark["attrs"]["href"] == "https://example.com/a b"
+        assert "title" not in mark["attrs"]
+
+    def test_unclosed_link_does_not_backtrack(self) -> None:
+        """An unclosed link followed by long whitespace converts in linear time."""
+        markdown = "[a](x" + " " * 30000 + "y"
+        start = time.perf_counter()
+        markdown_to_adf(markdown)
+        assert time.perf_counter() - start < 1.0
 
     # -- Mentions -----------------------------------------------------------
 
