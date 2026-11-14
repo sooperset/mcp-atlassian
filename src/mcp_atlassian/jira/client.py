@@ -8,6 +8,7 @@ from urllib.parse import unquote
 from atlassian import Jira
 from requests import Session
 from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import RequestException
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
 from mcp_atlassian.preprocessing import JiraPreprocessor
@@ -249,9 +250,11 @@ class JiraClient:
         )
 
         # Initialize the text preprocessor for text processing capabilities
+        self._mention_display_names: dict[str, str | None] = {}
         self.preprocessor = JiraPreprocessor(
             base_url=self.config.url,
             disable_translation=self.config.disable_jira_markup_translation,
+            user_resolver=self._resolve_mention_display_name,
         )
         self._field_ids_cache = None
         self._current_user_account_id = None
@@ -317,6 +320,32 @@ class JiraClient:
         for header_name, header_value in self.config.custom_headers.items():
             self.jira._session.headers[header_name] = header_value
             logger.debug(f"Applied custom header: {header_name}")
+
+    def _resolve_mention_display_name(self, account_id: str) -> str | None:
+        """Look up the display name for a Cloud account ID in a mention.
+
+        Results, including failed lookups, are cached for the life of the
+        client, so a name mentioned many times costs one request.
+
+        Args:
+            account_id: The account ID from a [~accountid:...] mention
+
+        Returns:
+            The user's display name, or None if it cannot be looked up
+        """
+        if account_id in self._mention_display_names:
+            return self._mention_display_names[account_id]
+
+        display_name: str | None = None
+        try:
+            user = self.jira.user(account_id=account_id)
+            if isinstance(user, dict):
+                display_name = user.get("displayName") or None
+        except (RequestException, ValueError) as e:
+            logger.debug(f"Could not resolve mention for {account_id}: {e}")
+
+        self._mention_display_names[account_id] = display_name
+        return display_name
 
     def _clean_text(self, text: str) -> str:
         """Clean text content by:
