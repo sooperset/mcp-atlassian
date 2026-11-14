@@ -631,6 +631,35 @@ class TestAttachmentsMixin:
             "text/plain",
         )
 
+    def test_comma_comment_sanitized(self, attachments_mixin: AttachmentsMixin):
+        """Commas in the comment are swapped so Confluence does not split it."""
+        self._mock_rest_api_upload(attachments_mixin)
+
+        attachments_mixin.upload_attachment_from_content(
+            "123456", "a.txt", b"x", comment="redrawn (chain, broker)"
+        )
+
+        files = attachments_mixin.confluence._session.post.call_args[1]["files"]
+        assert files["comment"][1] == "redrawn (chain\uff0c broker)"
+
+    def test_http_error_has_body(self, attachments_mixin: AttachmentsMixin):
+        """The HTTP error text reaches the caller with the response body."""
+        from requests.exceptions import HTTPError
+
+        response = Mock()
+        response.status_code = 400
+        response.text = "Must be same number of attachment files and comments."
+        response.raise_for_status.side_effect = HTTPError("400 Client Error")
+        attachments_mixin.confluence._session.post.return_value = response
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456", "a.txt", b"x"
+        )
+
+        assert result["success"] is False
+        assert "400" in result["error"]
+        assert "Must be same number" in result["error"]
+
     def test_upload_attachment_from_content_no_content_id(
         self, attachments_mixin: AttachmentsMixin
     ):
