@@ -39,7 +39,7 @@ pre-commit install                    # setup hooks
 pre-commit run --all-files           # Ruff + mypy
 uv run pytest -xvs                   # full test suite
 uv run pytest tests/unit/ -xvs       # unit tests only
-uv run pytest tests/integration/     # integration tests
+uv run pytest tests/integration/ --integration  # integration tests
 uv run pytest --cov=src/mcp_atlassian --cov-report=term-missing  # coverage
 ```
 
@@ -76,7 +76,7 @@ uv run pytest --cov=src/mcp_atlassian --cov-report=term-missing  # coverage
 - **Cloud vs Server/DC**: API endpoints, field names, and auth methods differ. Always check `is_cloud` before assuming behavior.
 - **OAuth 2.0**: Supported on both Cloud and Server/Data Center. PAT is also available for Server/DC. Basic auth (user + API token) works on both Cloud and Server/DC.
 - **Read-only mode**: `READ_ONLY_MODE=true` blocks all write tools at server level.
-- **Type checking**: pre-commit runs **mypy** (strict mode).
+- **Type checking**: pre-commit runs **mypy** with the options in `.pre-commit-config.yaml`.
 - **Environment**: See `.env.example` for all configuration options (auth, proxy, SLA, filtering).
 
 ---

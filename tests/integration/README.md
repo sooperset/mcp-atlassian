@@ -4,7 +4,9 @@ This directory contains integration tests for the MCP Atlassian project. These t
 
 ## Test Categories
 
-### 1. Authentication Integration (`test_authentication.py`)
+Categories below include related unit tests, linked at their current paths.
+
+### 1. Authentication Integration ([test_authentication.py](../unit/auth/test_authentication.py))
 Tests various authentication flows including OAuth, Basic Auth, and PAT tokens.
 
 - **OAuth Token Refresh**: Validates token refresh on expiration
@@ -13,7 +15,7 @@ Tests various authentication flows including OAuth, Basic Auth, and PAT tokens.
 - **Fallback Patterns**: Tests authentication fallback (OAuth → Basic → PAT)
 - **Mixed Scenarios**: Tests different authentication combinations
 
-### 2. Cross-Service Integration (`test_cross_service.py`)
+### 2. Cross-Service Integration ([test_cross_service.py](../unit/servers/test_cross_service.py))
 Tests integration between Jira and Confluence services.
 
 - **User Resolution**: Consistent user handling across services
@@ -22,7 +24,7 @@ Tests integration between Jira and Confluence services.
 - **Configuration Sharing**: SSL and proxy settings consistency
 - **Service Discovery**: Dynamic service availability detection
 
-### 3. MCP Protocol Integration (`test_mcp_protocol.py`)
+### 3. MCP Protocol Integration ([test_mcp_protocol.py](../unit/servers/test_mcp_protocol.py))
 Tests the FastMCP server implementation and tool management.
 
 - **Tool Discovery**: Dynamic tool listing based on configuration
@@ -31,7 +33,7 @@ Tests the FastMCP server implementation and tool management.
 - **Concurrent Execution**: Parallel tool execution support
 - **Error Propagation**: Proper error handling through the stack
 
-### 4. Content Processing Integration (`test_content_processing.py`)
+### 4. Content Processing Integration ([test_content_processing.py](../unit/preprocessing/test_content_processing.py))
 Tests HTML/Markdown conversion and content preprocessing.
 
 - **Roundtrip Conversion**: HTML ↔ Markdown accuracy
@@ -48,7 +50,7 @@ Tests SSL certificate handling and verification.
 - **Multiple Domains**: SSL adapter mounting for various domains
 - **Error Handling**: Certificate validation failures
 
-### 6. Proxy Configuration (`test_proxy.py`)
+### 6. Proxy Configuration ([test_proxy.py](../unit/utils/test_proxy.py))
 Tests HTTP/HTTPS/SOCKS proxy support.
 
 - **Proxy Types**: HTTP, HTTPS, and SOCKS5 proxies
@@ -71,11 +73,11 @@ Tests with actual Atlassian APIs (requires `--use-real-data` flag).
 
 ### Basic Execution
 ```bash
-# Run all integration tests (mocked)
+# Run integration tests (real API tests remain skipped)
 uv run pytest tests/integration/ --integration
 
 # Run specific test file
-uv run pytest tests/integration/test_authentication.py --integration
+uv run pytest tests/integration/test_ssl_verification.py --integration
 
 # Run with coverage
 uv run pytest tests/integration/ --integration --cov=src/mcp_atlassian
