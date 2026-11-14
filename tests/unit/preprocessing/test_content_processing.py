@@ -1055,7 +1055,7 @@ class TestTaskLists:
         assert "[ ]" not in result
         assert "[x]" not in result
 
-    def test_task_lists_and_table_layout_are_both_applied(self):
+    def test_task_lists_compose_with_table_layout(self):
         """Task-list conversion composes with the table layout post-processor."""
         markdown = "- [ ] Todo\n\n| A | B |\n| - | - |\n| 1 | 2 |"
 

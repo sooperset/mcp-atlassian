@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 from md2conf.converter import (
     ConfluencePageCollection,
     ConfluenceStorageFormatConverter,
