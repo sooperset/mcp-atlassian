@@ -1,6 +1,6 @@
 """Unit tests for the LabelsMixin class."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -127,3 +127,74 @@ class TestLabelsMixin:
         # Act/Assert
         with pytest.raises(Exception, match="Failed to add label"):
             labels_mixin.add_page_label("987654321", "test")
+
+
+class TestLabelsMixinCloudOAuth:
+    """Label reads on Cloud OAuth go through the v2 API.
+
+    Atlassian answers 410 Gone for ``GET /rest/api/content/{id}/label`` on
+    the OAuth gateway, so the v1 read must not be used there.
+    """
+
+    @pytest.fixture
+    def oauth_labels_mixin(self, oauth_confluence_client):
+        """Create a LabelsMixin configured for Cloud OAuth."""
+        with patch(
+            "mcp_atlassian.confluence.labels.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = LabelsMixin()
+            mixin.confluence = oauth_confluence_client.confluence
+            mixin.config = oauth_confluence_client.config
+            mixin.preprocessor = oauth_confluence_client.preprocessor
+            return mixin
+
+    def test_get_page_labels_uses_v2_on_cloud_oauth(self, oauth_labels_mixin):
+        """The v2 adapter is used and the v1 library call is never made."""
+        with patch(
+            "mcp_atlassian.confluence.labels.ConfluenceV2Adapter"
+        ) as adapter_class:
+            adapter = MagicMock()
+            adapter.get_page_labels.return_value = {
+                "results": [
+                    {
+                        "id": "1311178753",
+                        "prefix": "global",
+                        "name": "scratch",
+                        "label": "scratch",
+                    }
+                ],
+                "size": 1,
+            }
+            adapter_class.return_value = adapter
+
+            result = oauth_labels_mixin.get_page_labels("1310359554")
+
+        adapter.get_page_labels.assert_called_once_with("1310359554")
+        oauth_labels_mixin.confluence.get_page_labels.assert_not_called()
+        assert len(result) == 1
+        assert result[0].id == "1311178753"
+        assert result[0].name == "scratch"
+        assert result[0].prefix == "global"
+
+    def test_add_page_label_reads_back_through_v2(self, oauth_labels_mixin):
+        """The v1 write still works on the gateway; the read-back uses v2."""
+        with patch(
+            "mcp_atlassian.confluence.labels.ConfluenceV2Adapter"
+        ) as adapter_class:
+            adapter = MagicMock()
+            adapter.get_page_labels.return_value = {
+                "results": [
+                    {"id": "1", "prefix": "global", "name": "new", "label": "new"}
+                ],
+                "size": 1,
+            }
+            adapter_class.return_value = adapter
+
+            result = oauth_labels_mixin.add_page_label("1310359554", "new")
+
+        oauth_labels_mixin.confluence.set_page_label.assert_called_once_with(
+            page_id="1310359554", label="new"
+        )
+        oauth_labels_mixin.confluence.get_page_labels.assert_not_called()
+        assert [label.name for label in result] == ["new"]

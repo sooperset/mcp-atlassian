@@ -715,3 +715,467 @@ class TestConfluenceV2AdapterComments:
         assert payload["pageId"] == "12345"
         assert "parentCommentId" not in payload
         assert result["id"] == "333444555"
+
+
+class TestConfluenceV2AdapterPageByVersion:
+    """Tests for ConfluenceV2Adapter.get_page_by_version.
+
+    The versions listing carries a ``number`` but no id, and ``/versions/{n}``
+    returns metadata without a body, so the page is fetched at the version
+    with ``GET /pages/{id}?version={n}``.
+    """
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    @staticmethod
+    def _response(payload):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = payload
+        return response
+
+    def test_fetches_page_at_version(self, v2_adapter, mock_session):
+        """One page fetch with the version parameter, body included."""
+        mock_session.get.side_effect = [
+            self._response(
+                {
+                    "id": "1310359554",
+                    "status": "current",
+                    "title": "Scratch",
+                    "spaceId": "120193605",
+                    "authorId": "author-1",
+                    "createdAt": "2026-10-20T20:25:55.662Z",
+                    "version": {
+                        "number": 1,
+                        "message": "",
+                        "createdAt": "2026-10-20T20:25:55.662Z",
+                        "authorId": "author-1",
+                    },
+                    "body": {
+                        "storage": {
+                            "value": "<p>Version one of the body.</p>",
+                            "representation": "storage",
+                        }
+                    },
+                }
+            ),
+            self._response({"id": "120193605", "key": "~me", "name": "Me"}),
+        ]
+
+        result = v2_adapter.get_page_by_version("1310359554", 1)
+
+        assert mock_session.get.call_args_list[0] == call(
+            "https://example.atlassian.net/wiki/api/v2/pages/1310359554",
+            params={"body-format": "storage", "version": 1},
+        )
+        assert result["id"] == "1310359554"
+        assert result["version"]["number"] == 1
+        assert result["body"]["storage"]["value"] == "<p>Version one of the body.</p>"
+        assert result["space"] == {"key": "~me", "id": "120193605"}
+
+    def test_version_mismatch_is_not_found(self, v2_adapter, mock_session):
+        """A response for another version number is reported as not found."""
+        mock_session.get.return_value = self._response(
+            {
+                "id": "1",
+                "title": "Scratch",
+                "spaceId": "120193605",
+                "version": {"number": 2},
+                "body": {"storage": {"value": ""}},
+            }
+        )
+
+        with pytest.raises(ValueError, match="Version 1 not found for page '1'"):
+            v2_adapter.get_page_by_version("1", 1)
+
+    def test_http_error_is_reported(self, v2_adapter, mock_session):
+        """An HTTP error becomes a ValueError naming the page and version."""
+        response = Mock()
+        response.status_code = 404
+        response.text = "Not found"
+        response.raise_for_status.side_effect = HTTPError(response=response)
+        mock_session.get.return_value = response
+
+        with pytest.raises(ValueError, match="Failed to get page '1' version 7"):
+            v2_adapter.get_page_by_version("1", 7)
+
+
+class TestConfluenceV2AdapterSpacePagesForTree:
+    """Tests for ConfluenceV2Adapter.get_space_pages_for_tree."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    @staticmethod
+    def _response(payload):
+        response = Mock()
+        response.status_code = 200
+        response.links = {}
+        response.json.return_value = payload
+        return response
+
+    def test_reads_pages_across_cursors(self, v2_adapter, mock_session):
+        """The space id is resolved, then every cursor page is read."""
+        mock_session.get.side_effect = [
+            self._response({"results": [{"id": "120193605", "key": "FDE"}]}),
+            self._response(
+                {
+                    "results": [
+                        {"id": 1, "title": "Root", "parentId": None, "position": 2},
+                        {"id": 2, "title": "Child", "parentId": 1, "position": 1},
+                    ],
+                    "_links": {"next": "/wiki/api/v2/spaces/120193605/pages?cursor=c2"},
+                }
+            ),
+            self._response(
+                {
+                    "results": [
+                        {"id": 3, "title": "", "parentId": 2, "position": None}
+                    ],
+                    "_links": {},
+                }
+            ),
+        ]
+
+        result = v2_adapter.get_space_pages_for_tree("FDE", limit=10)
+
+        assert mock_session.get.call_args_list[0] == call(
+            "https://example.atlassian.net/wiki/api/v2/spaces", params={"keys": "FDE"}
+        )
+        assert mock_session.get.call_args_list[1] == call(
+            "https://example.atlassian.net/wiki/api/v2/spaces/120193605/pages",
+            params={"status": "current", "limit": 10},
+        )
+        assert mock_session.get.call_args_list[2] == call(
+            "https://example.atlassian.net/wiki/api/v2/spaces/120193605/pages",
+            params={"status": "current", "limit": 8, "cursor": "c2"},
+        )
+        assert result["has_more"] is False
+        assert result["pages"] == [
+            {"id": "1", "title": "Root", "parent_id": None, "position": 2},
+            {"id": "2", "title": "Child", "parent_id": "1", "position": 1},
+            {"id": "3", "title": "Untitled", "parent_id": "2", "position": None},
+        ]
+
+    def test_stops_at_limit_and_reports_more(self, v2_adapter, mock_session):
+        """Reaching the limit with a cursor left sets has_more."""
+        mock_session.get.side_effect = [
+            self._response({"results": [{"id": "120193605", "key": "FDE"}]}),
+            self._response(
+                {
+                    "results": [
+                        {"id": 1, "title": "A", "parentId": None, "position": 0},
+                        {"id": 2, "title": "B", "parentId": None, "position": 1},
+                    ],
+                    "_links": {"next": "/wiki/api/v2/spaces/120193605/pages?cursor=c2"},
+                }
+            ),
+        ]
+
+        result = v2_adapter.get_space_pages_for_tree("FDE", limit=2)
+
+        assert mock_session.get.call_count == 2
+        assert result["has_more"] is True
+        assert [p["id"] for p in result["pages"]] == ["1", "2"]
+
+    def test_unknown_space_is_an_error(self, v2_adapter, mock_session):
+        """A space key that resolves to nothing raises ValueError."""
+        mock_session.get.return_value = self._response({"results": []})
+
+        with pytest.raises(ValueError, match="Failed to list pages for space 'NOPE'"):
+            v2_adapter.get_space_pages_for_tree("NOPE", limit=5)
+
+
+class TestConfluenceV2AdapterFooterComments:
+    """Tests for ConfluenceV2Adapter.get_footer_comments."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    @staticmethod
+    def _response(results, next_link=None):
+        response = Mock()
+        response.status_code = 200
+        response.links = {}
+        links = {"next": next_link} if next_link else {}
+        response.json.return_value = {"results": results, "_links": links}
+        return response
+
+    def test_get_footer_comments_reads_threads_and_replies(
+        self, v2_adapter, mock_session
+    ):
+        """Roots come from the page endpoint, replies from each thread."""
+        mock_session.get.side_effect = [
+            self._response(
+                [
+                    {
+                        "id": "10",
+                        "status": "current",
+                        "title": "Re: Page",
+                        "body": {"storage": {"value": "<p>Root</p>"}},
+                        "version": {"number": 1, "createdAt": "2026-10-19T11:45:01Z"},
+                    }
+                ]
+            ),
+            self._response(
+                [
+                    {
+                        "id": "11",
+                        "status": "current",
+                        "title": "Re: Page",
+                        "body": {"storage": {"value": "<p>Reply</p>"}},
+                        "version": {"number": 1, "createdAt": "2026-10-19T12:00:00Z"},
+                    }
+                ]
+            ),
+            self._response([]),
+        ]
+
+        result = v2_adapter.get_footer_comments("1")
+
+        assert mock_session.get.call_args_list[0] == call(
+            "https://example.atlassian.net/wiki/api/v2/pages/1/footer-comments",
+            params={"body-format": "storage"},
+        )
+        assert mock_session.get.call_args_list[1] == call(
+            "https://example.atlassian.net/wiki/api/v2/footer-comments/10/children",
+            params={"body-format": "storage"},
+        )
+        assert [c["id"] for c in result] == ["10", "11"]
+        assert result[0]["body"]["view"]["value"] == "<p>Root</p>"
+        assert result[0]["extensions"] == {"location": "footer"}
+        assert result[1]["parentCommentId"] == "10"
+
+    def test_get_footer_comments_http_error(self, v2_adapter, mock_session):
+        """An HTTP error is reported as a ValueError."""
+        response = Mock()
+        response.status_code = 410
+        response.text = "Gone"
+        response.raise_for_status.side_effect = HTTPError(response=response)
+        mock_session.get.return_value = response
+
+        with pytest.raises(ValueError, match="Failed to get footer comments"):
+            v2_adapter.get_footer_comments("1")
+
+
+class TestConfluenceV2AdapterSpaces:
+    """Tests for ConfluenceV2Adapter.get_spaces."""
+
+    URL = "https://example.atlassian.net/wiki/api/v2/spaces"
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    @staticmethod
+    def _response(keys, next_cursor=None):
+        response = Mock()
+        response.status_code = 200
+        response.links = {}
+        links = {"next": f"/wiki/api/v2/spaces?cursor={next_cursor}"}
+        response.json.return_value = {
+            "results": [
+                {
+                    "id": str(100 + index),
+                    "key": key,
+                    "name": f"Space {key}",
+                    "type": "global",
+                    "status": "current",
+                    "homepageId": str(900 + index),
+                    "_links": {"webui": f"/spaces/{key}"},
+                }
+                for index, key in enumerate(keys)
+            ],
+            "_links": links if next_cursor else {},
+        }
+        return response
+
+    def test_get_spaces_returns_v1_shape(self, v2_adapter, mock_session):
+        """Spaces come back in the v1 listing shape."""
+        mock_session.get.return_value = self._response(["ENG", "OPS"])
+
+        result = v2_adapter.get_spaces(start=0, limit=10)
+
+        mock_session.get.assert_called_once_with(self.URL, params={"limit": 10})
+        assert result["start"] == 0
+        assert result["limit"] == 10
+        assert result["size"] == 2
+        assert "next" not in result["_links"]
+        assert result["results"][0] == {
+            "id": 100,
+            "key": "ENG",
+            "name": "Space ENG",
+            "type": "global",
+            "status": "current",
+            "homepage": {"id": "900"},
+            "_links": {"webui": "/spaces/ENG"},
+        }
+
+    def test_get_spaces_applies_start_across_cursor_pages(
+        self, v2_adapter, mock_session
+    ):
+        """``start`` is an offset into the cursor-paged listing."""
+        mock_session.get.side_effect = [
+            self._response(["A", "B"], next_cursor="c1"),
+            self._response(["C"], next_cursor="c2"),
+        ]
+
+        result = v2_adapter.get_spaces(start=1, limit=2)
+
+        assert [space["key"] for space in result["results"]] == ["B", "C"]
+        assert mock_session.get.call_args_list == [
+            call(self.URL, params={"limit": 3}),
+            call(self.URL, params={"limit": 1, "cursor": "c1"}),
+        ]
+        assert result["_links"]["next"] == "/rest/api/space?start=3&limit=2"
+
+    def test_get_spaces_start_past_the_end(self, v2_adapter, mock_session):
+        """An offset beyond the last space gives an empty page, not an error."""
+        mock_session.get.return_value = self._response(["A"])
+
+        result = v2_adapter.get_spaces(start=5, limit=10)
+
+        assert result["results"] == []
+        assert result["size"] == 0
+        assert "next" not in result["_links"]
+
+    def test_get_spaces_stops_on_repeated_cursor(self, v2_adapter, mock_session):
+        """A cursor that repeats does not loop forever."""
+        mock_session.get.side_effect = [
+            self._response(["A"], next_cursor="same"),
+            self._response(["B"], next_cursor="same"),
+        ]
+
+        result = v2_adapter.get_spaces(start=0, limit=10)
+
+        assert [space["key"] for space in result["results"]] == ["A", "B"]
+        assert mock_session.get.call_count == 2
+
+    def test_get_spaces_http_error(self, v2_adapter, mock_session):
+        """An HTTP error is reported as a ValueError."""
+        response = Mock()
+        response.status_code = 401
+        response.text = "scope does not match"
+        response.raise_for_status.side_effect = HTTPError(response=response)
+        mock_session.get.return_value = response
+
+        with pytest.raises(ValueError, match="Failed to list spaces"):
+            v2_adapter.get_spaces()
+
+
+class TestConfluenceV2AdapterLabels:
+    """Tests for ConfluenceV2Adapter.get_page_labels."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    def test_get_page_labels_returns_v1_shape(self, v2_adapter, mock_session):
+        """Labels come back in the v1 results shape with ``label`` mirrored."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.links = {}
+        mock_response.json.return_value = {
+            "results": [
+                {"id": "1311178753", "name": "scratch", "prefix": "global"},
+                {"id": "1311178754", "name": "draft", "prefix": "my"},
+            ],
+            "_links": {"base": "https://example.atlassian.net/wiki"},
+        }
+        mock_session.get.return_value = mock_response
+
+        result = v2_adapter.get_page_labels("1310359554")
+
+        mock_session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/pages/1310359554/labels",
+            params={"limit": 250},
+        )
+        assert result["size"] == 2
+        assert result["results"][0] == {
+            "id": "1311178753",
+            "prefix": "global",
+            "name": "scratch",
+            "label": "scratch",
+        }
+        assert result["results"][1]["prefix"] == "my"
+
+    def test_get_page_labels_follows_cursor(self, v2_adapter, mock_session):
+        """Every cursor page is read."""
+        first = Mock()
+        first.status_code = 200
+        first.links = {}
+        first.json.return_value = {
+            "results": [{"id": "1", "name": "a", "prefix": "global"}],
+            "_links": {"next": "/wiki/api/v2/pages/1/labels?cursor=abc"},
+        }
+        second = Mock()
+        second.status_code = 200
+        second.links = {}
+        second.json.return_value = {
+            "results": [{"id": "2", "name": "b", "prefix": "global"}],
+            "_links": {},
+        }
+        mock_session.get.side_effect = [first, second]
+
+        result = v2_adapter.get_page_labels("1")
+
+        assert [label["name"] for label in result["results"]] == ["a", "b"]
+        assert mock_session.get.call_args_list[1] == call(
+            "https://example.atlassian.net/wiki/api/v2/pages/1/labels",
+            params={"limit": 250, "cursor": "abc"},
+        )
+
+    def test_get_page_labels_http_error(self, v2_adapter, mock_session):
+        """An HTTP error is reported as a ValueError."""
+        mock_response = Mock()
+        mock_response.status_code = 410
+        mock_response.text = "Gone"
+        mock_response.raise_for_status.side_effect = HTTPError(response=mock_response)
+        mock_session.get.return_value = mock_response
+
+        with pytest.raises(ValueError, match="Failed to get labels for page '1'"):
+            v2_adapter.get_page_labels("1")

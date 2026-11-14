@@ -158,6 +158,34 @@ ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all
 Include `offline_access` in your scope to allow automatic token refresh.
 </Warning>
 
+#### Confluence Cloud granular scopes
+
+On Cloud, OAuth requests go through the `api.atlassian.com` gateway. Atlassian
+has removed most Confluence v1 REST endpoints there (410 Gone), so the server
+uses the v2 REST API for those operations. v2 endpoints accept only granular
+scopes: with classic scopes such as `read:confluence-content.all` alone they
+answer `401 scope does not match`.
+
+Add the granular scopes to your app in the developer console (Permissions,
+Confluence API, Granular scopes), list them in `ATLASSIAN_OAUTH_SCOPE`, and
+authorize again so the token carries them.
+
+| Scope | Needed for |
+|---|---|
+| `read:page:confluence` | Reading pages, page history and diffs, page labels, the space page tree |
+| `read:space:confluence` | Listing spaces and resolving a space key |
+| `read:comment:confluence` | Reading footer and inline comments |
+| `read:attachment:confluence` | Listing and reading attachments |
+| `read:hierarchical-content:confluence` | Listing a page's children |
+| `write:page:confluence` | Creating, updating and moving pages, setting the page emoji |
+| `delete:page:confluence` | Deleting pages |
+| `write:comment:confluence` | Adding comments and replies |
+| `delete:attachment:confluence` | Deleting attachments |
+
+Keep the classic scopes as well. Search and a few writes (adding a label,
+uploading an attachment) still use v1 endpoints that remain on the gateway.
+A read-only setup needs only the `read:` rows.
+
 ### MCP OAuth Proxy (DCR + Discovery)
 
 Enable this when running a remote MCP endpoint that should onboard MCP clients
