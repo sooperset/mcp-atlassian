@@ -7,10 +7,31 @@ import warnings
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag
 from markdownify import markdownify as md
 
 logger = logging.getLogger("mcp-atlassian")
+
+_QUOTED_MACROS = frozenset({"panel", "info", "note", "warning", "tip"})
+_RESOURCE_ATTRS = (
+    ("ri:page", "ri:content-title"),
+    ("ri:attachment", "ri:filename"),
+    ("ri:url", "ri:value"),
+    ("ri:space", "ri:space-key"),
+)
+
+
+def _macro_placeholder(name: str, macro: Tag, params: dict[str, str]) -> str:
+    if name == "jira" and params.get("key"):
+        return f"[{params['key']}]"
+    for param_name in ("key", "jqlQuery", "jql", "url"):
+        if value := params.get(param_name):
+            return f"[{name}: {value}]"
+    for tag_name, attr_name in _RESOURCE_ATTRS:
+        ref = macro.find(tag_name)
+        if isinstance(ref, Tag) and (value := str(ref.get(attr_name, "")).strip()):
+            return f"[{name}: {value}]"
+    return f"[{name} macro]"
 
 
 def _extract_blocks(
@@ -291,6 +312,7 @@ class BasePreprocessor:
             # it cannot shorten their fences or strip boundary newlines, while
             # the pre/code wrapper keeps nested Markdown containers intact.
             code_macro_blocks = self._process_code_macros_in_soup(soup)
+            self._process_remaining_macros_in_soup(soup)
             processed_markdown = md(
                 str(soup),
                 code_language_callback=_code_language_from_element,
@@ -357,6 +379,62 @@ class BasePreprocessor:
             macro.replace_with(pre_tag)
 
         return code_blocks
+
+    @staticmethod
+    def _process_remaining_macros_in_soup(soup: BeautifulSoup) -> None:
+        """Replace macros without a dedicated handler with their visible text.
+
+        Runs after the code-macro pass, so only macros nobody handled reach
+        here. Their ``ac:parameter`` values are configuration (colours, widths,
+        flags) and are dropped with the macro. Panels and their info/note/
+        warning/tip variants become a blockquote led by the bold ``title``, a
+        status becomes ``[title]``, other macros keep their title and body, and
+        a bodyless macro keeps its content parameter (such as a Jira issue
+        ``key`` or ``ri:*`` target) before falling back to ``[name macro]``.
+        Innermost macros go first so nested bodies are already flattened.
+        """
+        for macro in reversed(soup.find_all("ac:structured-macro")):
+            name = str(macro.get("ac:name", "")).lower()
+            params: dict[str, str] = {
+                str(param.get("ac:name", "")): param.get_text(strip=True)
+                for param in macro.find_all("ac:parameter", recursive=False)
+            }
+            title = params.get("title", "")
+
+            if name == "status":
+                macro.replace_with(f"[{title or 'status'}]")
+                continue
+
+            body = macro.find(
+                ["ac:rich-text-body", "ac:plain-text-body"], recursive=False
+            )
+            content: list[Any] = []
+            if body is not None and body.name == "ac:plain-text-body":
+                if text := body.get_text().strip():
+                    content.append(NavigableString(text))
+            elif body is not None:
+                content = list(body.contents)
+
+            if not title and not content:
+                macro.replace_with(_macro_placeholder(name, macro, params))
+                continue
+
+            if title:
+                heading = soup.new_tag("p")
+                strong = soup.new_tag("strong")
+                strong.string = title
+                heading.append(strong)
+                content.insert(0, heading)
+
+            if name in _QUOTED_MACROS:
+                quote = soup.new_tag("blockquote")
+                for node in content:
+                    quote.append(node)
+                macro.replace_with(quote)
+            else:
+                for node in content:
+                    macro.insert_before(node)
+                macro.decompose()
 
     @staticmethod
     def _process_date_elements_in_soup(soup: BeautifulSoup) -> None:
