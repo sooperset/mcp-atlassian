@@ -1770,3 +1770,62 @@ async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     summary = json.loads(response.content[0].text)
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("batch", "expected_message"),
+    [
+        (
+            {
+                "success": True,
+                "content_id": "123",
+                "total": 2,
+                "uploaded": [{"filename": "a.txt"}, {"filename": "b.txt"}],
+                "failed": [],
+            },
+            "Uploaded 2 attachment(s) successfully",
+        ),
+        (
+            {
+                "success": False,
+                "content_id": "123",
+                "total": 2,
+                "uploaded": [{"filename": "a.txt"}],
+                "failed": [{"filename": "b.txt", "error": "denied"}],
+            },
+            "Uploaded 1 of 2 attachment(s); 1 failed",
+        ),
+        (
+            {
+                "success": False,
+                "content_id": "123",
+                "total": 2,
+                "uploaded": [],
+                "failed": [
+                    {"filename": "a.txt", "error": "denied"},
+                    {"filename": "b.txt", "error": "denied"},
+                ],
+            },
+            "Failed to upload 2 of 2 attachment(s)",
+        ),
+        (
+            {"success": False, "error": "No content ID provided"},
+            "No content ID provided",
+        ),
+    ],
+)
+async def test_upload_attachments_message_matches_outcomes(
+    client, mock_confluence_fetcher, batch, expected_message
+):
+    """The batch summary must describe the per-file outcomes."""
+    mock_confluence_fetcher.upload_attachments.return_value = batch
+
+    response = await client.call_tool(
+        "confluence_upload_attachments",
+        {"content_id": "123", "file_paths": "a.txt,b.txt"},
+    )
+
+    payload = json.loads(response.content[0].text)
+    assert payload["message"] == expected_message
+    assert payload["attachments"] == batch
