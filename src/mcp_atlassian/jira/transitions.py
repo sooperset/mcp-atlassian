@@ -7,13 +7,13 @@ from requests.exceptions import HTTPError
 
 from ..models import JiraIssue, JiraTransition
 from ..utils.decorators import handle_auth_errors
-from .client import JiraClient
 from .protocols import IssueOperationsProto, UsersOperationsProto
+from .scope import ScopeMixin
 
 logger = logging.getLogger("mcp-jira")
 
 
-class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
+class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
     """Mixin for Jira transition operations."""
 
     @handle_auth_errors("Jira API")
@@ -352,6 +352,7 @@ class TransitionsMixin(JiraClient, IssueOperationsProto, UsersOperationsProto):
                 payload["fields"] = fields_for_api
             if update_for_api:
                 payload["update"] = update_for_api
+            self.ensure_issue_relations_allowed(fields_for_api, update_for_api)
 
             if self.config.is_cloud:
                 # Cloud comments are ADF and require the REST v3 endpoint.

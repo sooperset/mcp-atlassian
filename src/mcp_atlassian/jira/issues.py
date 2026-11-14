@@ -9,12 +9,11 @@ from typing import Any
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import HTTPError
 
-from ..exceptions import MCPAtlassianAuthenticationError
+from ..exceptions import MCPAtlassianAuthenticationError, ScopeViolationError
 from ..models.jira import JiraIssue
 from ..models.jira.adf import merge_adf_with_preserved_media
 from ..models.jira.common import JiraChangelog
 from ..utils import parse_date
-from .client import JiraClient
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import (
     AttachmentsOperationsProto,
@@ -25,7 +24,7 @@ from .protocols import (
     ProjectsOperationsProto,
     UsersOperationsProto,
 )
-from .scope import allowed_project_keys
+from .scope import ScopeMixin, allowed_project_keys
 
 logger = logging.getLogger("mcp-jira")
 
@@ -35,7 +34,7 @@ _EPIC_NAME_FIELD_SCHEMA = "com.pyxis.greenhopper.jira:gh-epic-label"
 
 
 class IssuesMixin(
-    JiraClient,
+    ScopeMixin,
     AttachmentsOperationsProto,
     EpicOperationsProto,
     FieldsOperationsProto,
@@ -246,6 +245,9 @@ class IssuesMixin(
                             if isinstance(raw_body, str) and raw_body:
                                 comment["body"] = self._clean_text(raw_body)
 
+            # An epic outside the allowlist is neither fetched nor returned.
+            self._drop_out_of_scope_epic_link(fields_data)
+
             # Extract epic information
             try:
                 epic_info = self._extract_epic_information(issue)
@@ -384,6 +386,28 @@ class IssuesMixin(
                 logger.warning(f"Error getting comments for {issue_key}: {str(e)}")
                 return []
         return []
+
+    def _drop_out_of_scope_epic_link(self, fields: dict[str, Any]) -> None:
+        """Remove an Epic Link value that points outside JIRA_PROJECTS_FILTER.
+
+        The epic is resolved to its current project before anything is read
+        from it. When it is outside the allowlist the Epic Link value is
+        removed, so the epic is not fetched and its key and name are not
+        returned.
+
+        Args:
+            fields: The ``fields`` of the issue returned by Jira (mutated).
+        """
+        if self.allowed_projects() is None:
+            return
+        field_id = self._epic_link_field_id()
+        if not field_id or not fields.get(field_id):
+            return
+        try:
+            self.ensure_issue_allowed(fields[field_id])
+        except ScopeViolationError:
+            logger.info("Dropping an Epic Link outside JIRA_PROJECTS_FILTER")
+            fields.pop(field_id, None)
 
     def _extract_epic_information(self, issue: dict) -> dict[str, str | None]:
         """
@@ -722,6 +746,9 @@ class IssuesMixin(
 
             # Process **kwargs using the dynamic field map
             self._process_additional_fields(fields, kwargs_copy)
+
+            # The parent and epic link must not point outside the allowlist.
+            self.ensure_issue_relations_allowed(fields)
 
             # Create the issue (use v3 API on Cloud for any ADF field)
             has_adf = self._contains_adf_document(fields)
@@ -1369,6 +1396,7 @@ class IssuesMixin(
 
             # Update the issue fields (use v3 API on Cloud for any ADF field)
             if update_fields:
+                self.ensure_issue_relations_allowed(update_fields)
                 has_adf = self._contains_adf_document(update_fields)
                 if has_adf and self.config.is_cloud:
                     if preserve_description_media:
@@ -1457,6 +1485,8 @@ class IssuesMixin(
 
             return issue
 
+        except ScopeViolationError:
+            raise
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error updating issue {issue_key}: {error_msg}")
@@ -1556,6 +1586,7 @@ class IssuesMixin(
 
         # First update any fields if needed
         if fields:
+            self.ensure_issue_relations_allowed(fields)
             self.jira.update_issue(issue_key=issue_key, update={"fields": fields})
 
         # If no status change is requested, return the issue
@@ -2064,6 +2095,7 @@ class IssuesMixin(
 
                 # Add any remaining custom fields
                 self._process_additional_fields(fields, issue_data)
+                self.ensure_issue_relations_allowed(fields)
 
                 if validate_only:
                     # For validation, just log the issue that would be created
@@ -2075,6 +2107,8 @@ class IssuesMixin(
                 # Add to bulk creation list
                 issue_updates.append({"fields": fields})
 
+            except ScopeViolationError:
+                raise
             except Exception as e:
                 logger.error(f"Failed to prepare issue for creation: {str(e)}")
                 if not issue_updates:

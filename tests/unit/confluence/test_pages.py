@@ -3923,6 +3923,53 @@ class TestUpdatePageSection:
             with pytest.raises(ValueError, match="not found in page"):
                 pages_mixin.update_page_section("1", "Nonexistent Heading", "data")
 
+    def test_page_title_as_heading_raises(self, pages_mixin):
+        """The leading <h1> page title is refused instead of wiping the page."""
+        storage = (
+            "<h1>My Page</h1><p>intro</p>"
+            "<h2>Section A</h2><p>a content</p>"
+            "<h2>Section B</h2><p>b content</p>"
+        )
+        raw_page = self._make_page("1", "My Page", storage)
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(pages_mixin, "update_page") as mock_update,
+        ):
+            with pytest.raises(ValueError, match="is the title of page"):
+                pages_mixin.update_page_section("1", "My Page", "new body")
+
+        mock_update.assert_not_called()
+
+    def test_section_heading_matching_title_is_used(self, pages_mixin):
+        """An h2 whose text equals the page title is still a real section."""
+        storage = (
+            "<h1>My Page</h1><p>intro</p>"
+            "<h2>My Page</h2><p>old</p>"
+            "<h2>Other</h2><p>other</p>"
+        )
+        raw_page = self._make_page("1", "My Page", storage)
+        updated_page = self._make_page("1", "My Page", "")
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "My Page", "new")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert "<p>intro</p>" in body
+        assert "<p>new</p>" in body
+        assert "<p>old</p>" not in body
+        assert "<h2>Other</h2>" in body
+        assert "<p>other</p>" in body
+
     def test_invalid_content_format_raises(self, pages_mixin):
         """ValueError is raised for unsupported content_format values."""
         with pytest.raises(ValueError, match="Invalid content_format"):

@@ -1019,6 +1019,8 @@ class PagesMixin(ConfluenceClient):
             page_id: The ID of the page to update.
             heading_text: Exact text of the heading that starts the section to
                 replace. Matching is case-sensitive and whitespace-normalised.
+                A leading ``<h1>`` repeating the page title is not a section
+                and is refused.
             new_content: Replacement content for the section body (excluding the
                 heading itself).
             content_format: Format of new_content — ``'markdown'`` (default) or
@@ -1060,18 +1062,35 @@ class PagesMixin(ConfluenceClient):
         soup = BeautifulSoup(raw_storage, "html.parser")
 
         heading_tags = ["h1", "h2", "h3", "h4", "h5", "h6"]
+        wanted = heading_text.strip()
+        page_title = (page.title or "").strip()
+        # A page body often repeats the page title as its leading <h1>. That
+        # heading starts no section: everything below it is the page, so
+        # replacing "its" body replaces the whole page. Skip it, and say so
+        # when it was the only match (2026-10-06 data-loss report, #1732).
+        title_heading_skipped = False
         target_heading: Tag | None = None
         for tag in soup.find_all(heading_tags):
-            if (
-                isinstance(tag, Tag)
-                and tag.get_text(strip=True) == heading_text.strip()
-            ):
-                target_heading = tag
-                break
+            if not isinstance(tag, Tag) or tag.get_text(strip=True) != wanted:
+                continue
+            if tag.name == "h1" and page_title and wanted == page_title:
+                title_heading_skipped = True
+                continue
+            target_heading = tag
+            break
 
         if target_heading is None:
+            if title_heading_skipped:
+                error_msg = (
+                    f"'{wanted}' is the title of page {page_id}, not a section "
+                    "heading. Replacing it would overwrite the whole page. "
+                    "Pass the heading of the section you want to replace "
+                    "(h2-h6), or use the page update tool to rewrite the page "
+                    "on purpose."
+                )
+                raise ValueError(error_msg)
             error_msg = (
-                f"Heading '{heading_text.strip()}' not found in page {page_id}. "
+                f"Heading '{wanted}' not found in page {page_id}. "
                 "Heading text must match exactly (case-sensitive)."
             )
             raise ValueError(error_msg)

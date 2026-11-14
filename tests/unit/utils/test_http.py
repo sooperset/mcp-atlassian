@@ -23,6 +23,7 @@ from mcp_atlassian.utils.http import (
     _reset_rate_limit_bucket_for_tests,
     configure_circuit_breaker,
     configure_concurrency,
+    configure_default_timeout,
     configure_rate_limit,
     configure_retry,
     format_rate_limit_error,
@@ -775,3 +776,42 @@ def test_circuit_breaker_allows_only_one_half_open_probe(
 
     assert results.count("sent") == 1
     assert results.count("blocked") == 3
+
+
+def test_configure_default_timeout_bounds_request_without_timeout():
+    """A direct ``session.get()`` without ``timeout=`` against a server that
+    accepts the connection but never answers must time out instead of blocking
+    forever (requests' default is no timeout)."""
+    import socket
+
+    import requests
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    port = server.getsockname()[1]
+    try:
+        session = _new_session()
+        configure_default_timeout(session, 0.5, service="Test")
+
+        started = time.monotonic()
+        with pytest.raises(requests.exceptions.ReadTimeout):
+            session.get(f"http://127.0.0.1:{port}/")
+        assert time.monotonic() - started < 5
+    finally:
+        server.close()
+
+
+def test_configure_default_timeout_keeps_explicit_timeout():
+    session = Session()
+    adapter = MagicMock(spec=HTTPAdapter)
+    original_send = adapter.send
+    session.mount("https://", adapter)
+    configure_default_timeout(session, 75, service="Test")
+
+    session.adapters["https://"].send(MagicMock(), timeout=3)
+    session.adapters["https://"].send(MagicMock(), timeout=None)
+    session.adapters["https://"].send(MagicMock())
+
+    timeouts = [c.kwargs["timeout"] for c in original_send.call_args_list]
+    assert timeouts == [3, 75, 75]
