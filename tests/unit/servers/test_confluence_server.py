@@ -249,7 +249,6 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page_children,
         get_page_images,
         get_page_template,
-        get_rendered_page,
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
@@ -280,7 +279,6 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp = FastMCP(name="TestConfluenceSubMCP")
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
-    confluence_sub_mcp.add_tool(get_rendered_page)
     confluence_sub_mcp.add_tool(get_page_children)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
@@ -623,42 +621,132 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
-async def test_get_rendered_page(client, mock_confluence_fetcher):
-    """Test the get_rendered_page tool returns rendered content."""
+async def test_get_page_content_format_rendered(client, mock_confluence_fetcher):
+    """content_format='rendered' fetches the rendered view, not storage."""
     response = await client.call_tool(
-        "confluence_get_rendered_page", {"page_id": "123456"}
+        "confluence_get_page", {"page_id": "123456", "content_format": "rendered"}
     )
 
     mock_confluence_fetcher.get_page_rendered_content.assert_called_once_with("123456")
+    mock_confluence_fetcher.get_page_content.assert_not_called()
 
     result_data = json.loads(response.content[0].text)
-    assert "metadata" in result_data
     assert result_data["metadata"]["title"] == "Test Page Mock Title"
 
 
 @pytest.mark.anyio
-async def test_get_rendered_page_resolves_url(client, mock_confluence_fetcher):
-    """Test get_rendered_page resolves full URLs before fetching."""
+async def test_get_page_content_format_rendered_resolves_url(
+    client, mock_confluence_fetcher
+):
+    """content_format='rendered' resolves full URLs before fetching."""
     await client.call_tool(
-        "confluence_get_rendered_page",
-        {"page_id": "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Title"},
+        "confluence_get_page",
+        {
+            "page_id": (
+                "https://example.atlassian.net/wiki/spaces/TEAM/pages/123456789/Title"
+            ),
+            "content_format": "rendered",
+        },
     )
 
-    mock_confluence_fetcher.get_page_rendered_content.assert_called_once_with("123456789")
+    mock_confluence_fetcher.get_page_rendered_content.assert_called_once_with(
+        "123456789"
+    )
 
 
 @pytest.mark.anyio
-async def test_get_rendered_page_error(client, mock_confluence_fetcher):
-    """Test get_rendered_page returns error JSON on failure."""
-    mock_confluence_fetcher.get_page_rendered_content.side_effect = Exception("not found")
+async def test_get_page_content_format_rendered_no_metadata(
+    client, mock_confluence_fetcher
+):
+    """content_format='rendered' with metadata off returns the rendered content."""
+    response = await client.call_tool(
+        "confluence_get_page",
+        {
+            "page_id": "123456",
+            "content_format": "rendered",
+            "include_metadata": False,
+        },
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "metadata" not in result_data
+    assert "This is a test page content" in result_data["content"]["value"]
+
+
+@pytest.mark.anyio
+async def test_get_page_content_format_rendered_by_title(
+    client, mock_confluence_fetcher
+):
+    """content_format='rendered' with title+space_key resolves the page ID first."""
+    found = MagicMock(spec=ConfluencePage)
+    found.id = "555"
+    mock_confluence_fetcher.get_page_by_title.return_value = found
+
+    await client.call_tool(
+        "confluence_get_page",
+        {"title": "By Title", "space_key": "TEST", "content_format": "rendered"},
+    )
+
+    mock_confluence_fetcher.get_page_by_title.assert_called_once_with(
+        "TEST", "By Title", convert_to_markdown=False
+    )
+    mock_confluence_fetcher.get_page_rendered_content.assert_called_once_with("555")
+
+
+@pytest.mark.anyio
+async def test_get_page_content_format_rendered_error(client, mock_confluence_fetcher):
+    """content_format='rendered' returns error JSON on failure."""
+    mock_confluence_fetcher.get_page_rendered_content.side_effect = Exception(
+        "not found"
+    )
 
     response = await client.call_tool(
-        "confluence_get_rendered_page", {"page_id": "999"}
+        "confluence_get_page", {"page_id": "999", "content_format": "rendered"}
     )
 
     result_data = json.loads(response.content[0].text)
     assert "error" in result_data
     assert "999" in result_data["error"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("content_format", "convert_to_markdown", "expected"),
+    [
+        ("markdown", False, True),
+        ("markdown", True, True),
+        ("storage", True, False),
+        ("storage", False, False),
+    ],
+)
+async def test_get_page_content_format_overrides_convert_to_markdown(
+    client, mock_confluence_fetcher, content_format, convert_to_markdown, expected
+):
+    """content_format wins over convert_to_markdown when both are given."""
+    await client.call_tool(
+        "confluence_get_page",
+        {
+            "page_id": "123456",
+            "content_format": content_format,
+            "convert_to_markdown": convert_to_markdown,
+        },
+    )
+
+    mock_confluence_fetcher.get_page_content.assert_called_once_with(
+        "123456", convert_to_markdown=expected
+    )
+
+
+@pytest.mark.anyio
+async def test_get_page_content_format_invalid(client, mock_confluence_fetcher):
+    """An unknown content_format is rejected before any fetch."""
+    with pytest.raises(ToolError):
+        await client.call_tool(
+            "confluence_get_page", {"page_id": "123456", "content_format": "html"}
+        )
+
+    mock_confluence_fetcher.get_page_content.assert_not_called()
+    mock_confluence_fetcher.get_page_rendered_content.assert_not_called()
 
 
 @pytest.mark.anyio

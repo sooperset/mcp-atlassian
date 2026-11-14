@@ -348,9 +348,7 @@ class PagesMixin(ConfluenceClient):
                 )
                 page = v2_adapter.get_page_view(page_id=page_id)
             else:
-                logger.debug(
-                    f"Using v1 API to get rendered page '{page_id}'"
-                )
+                logger.debug(f"Using v1 API to get rendered page '{page_id}'")
                 page = self.confluence.get_page_by_id(
                     page_id=page_id,
                     expand="body.view,version,space,children.attachment,history",
