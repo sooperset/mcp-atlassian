@@ -13,6 +13,25 @@ from markdownify import markdownify as md
 logger = logging.getLogger("mcp-atlassian")
 
 _QUOTED_MACROS = frozenset({"panel", "info", "note", "warning", "tip"})
+_RESOURCE_ATTRS = (
+    ("ri:page", "ri:content-title"),
+    ("ri:attachment", "ri:filename"),
+    ("ri:url", "ri:value"),
+    ("ri:space", "ri:space-key"),
+)
+
+
+def _macro_placeholder(name: str, macro: Tag, params: dict[str, str]) -> str:
+    if name == "jira" and params.get("key"):
+        return f"[{params['key']}]"
+    for param_name in ("key", "jqlQuery", "jql", "url"):
+        if value := params.get(param_name):
+            return f"[{name}: {value}]"
+    for tag_name, attr_name in _RESOURCE_ATTRS:
+        ref = macro.find(tag_name)
+        if isinstance(ref, Tag) and (value := str(ref.get(attr_name, "")).strip()):
+            return f"[{name}: {value}]"
+    return f"[{name} macro]"
 
 
 def _extract_blocks(
@@ -370,8 +389,9 @@ class BasePreprocessor:
         flags) and are dropped with the macro. Panels and their info/note/
         warning/tip variants become a blockquote led by the bold ``title``, a
         status becomes ``[title]``, other macros keep their title and body, and
-        a macro with neither becomes ``[name macro]``. Innermost macros go
-        first so nested bodies are already flattened.
+        a bodyless macro keeps its content parameter (such as a Jira issue
+        ``key`` or ``ri:*`` target) before falling back to ``[name macro]``.
+        Innermost macros go first so nested bodies are already flattened.
         """
         for macro in reversed(soup.find_all("ac:structured-macro")):
             name = str(macro.get("ac:name", "")).lower()
@@ -396,7 +416,7 @@ class BasePreprocessor:
                 content = list(body.contents)
 
             if not title and not content:
-                macro.replace_with(f"[{name} macro]")
+                macro.replace_with(_macro_placeholder(name, macro, params))
                 continue
 
             if title:

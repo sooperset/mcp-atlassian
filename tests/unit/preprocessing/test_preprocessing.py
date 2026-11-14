@@ -1899,3 +1899,42 @@ class TestConfluenceMacroParameterLeak:
             "</ac:structured-macro>"
         )
         assert self._markdown(html) == "**More**\n\nHidden text"
+
+    def test_jira_macro_keeps_key(self):
+        html = (
+            "<p>See "
+            '<ac:structured-macro ac:name="jira">'
+            '<ac:parameter ac:name="server">System JIRA</ac:parameter>'
+            '<ac:parameter ac:name="key">KAN-12</ac:parameter>'
+            "</ac:structured-macro> for details.</p>"
+        )
+        assert self._markdown(html) == "See [KAN-12] for details."
+
+    def test_jira_jql_keeps_query(self):
+        html = (
+            '<ac:structured-macro ac:name="jira">'
+            '<ac:parameter ac:name="server">System JIRA</ac:parameter>'
+            '<ac:parameter ac:name="columns">key,summary</ac:parameter>'
+            '<ac:parameter ac:name="jqlQuery">project = KAN</ac:parameter>'
+            "</ac:structured-macro>"
+        )
+        assert self._markdown(html) == "[jira: project = KAN]"
+
+    def test_resource_ref_kept(self):
+        include_html = (
+            '<ac:structured-macro ac:name="include">'
+            '<ac:parameter ac:name="">'
+            '<ac:link><ri:page ri:content-title="Runbook"/></ac:link>'
+            "</ac:parameter>"
+            "</ac:structured-macro>"
+        )
+        file_html = (
+            '<ac:structured-macro ac:name="view-file">'
+            '<ac:parameter ac:name="height">250</ac:parameter>'
+            '<ac:parameter ac:name="name">'
+            '<ri:attachment ri:filename="spec.pdf"/>'
+            "</ac:parameter>"
+            "</ac:structured-macro>"
+        )
+        assert self._markdown(include_html) == "[include: Runbook]"
+        assert self._markdown(file_html) == "[view-file: spec.pdf]"
