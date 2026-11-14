@@ -1215,11 +1215,10 @@ class ConfluenceV2Adapter:
         version: int,
         expand: str | None = None,
     ) -> dict[str, Any]:
-        """Get a specific version of a page using the versions API.
+        """Get a specific version of a page using the v2 pages API.
 
-        Note: The v2 API uses version IDs, not version numbers. We need to:
-        1. List all versions to find the version ID for the given version number
-        2. Fetch the specific version using its version ID
+        Uses ``GET /api/v2/pages/{id}?version={number}``, which returns the
+        page body as it was at that version number.
 
         Args:
             page_id: The ID of page
@@ -1233,26 +1232,14 @@ class ConfluenceV2Adapter:
             ValueError: If page retrieval fails or version not found
         """
         try:
-            # Step 1: Get all versions to find the version ID
-            versions_list = self.get_page_versions_list(page_id)
-
-            # Find the version with the matching version number
-            version_id = None
-            for ver in versions_list:
-                if ver.get("number") == version:
-                    version_id = ver.get("id")
-                    break
-
-            if not version_id:
-                raise ValueError(f"Version {version} not found for page '{page_id}'")
-
-            # Step 2: Fetch the specific version using its version ID
-            url = f"{self.base_url}/api/v2/versions/{version_id}"
-
-            # Convert v1 expand parameters to v2 format
-            params = {"body-format": "storage"}
+            # v2 version list entries carry no "id" and there is no
+            # /api/v2/versions/{id} endpoint, so fetch the page at that version.
+            url = f"{self.base_url}/api/v2/pages/{page_id}"
+            params = {"version": str(version), "body-format": "storage"}
 
             response = self.session.get(url, params=params)
+            if response.status_code == 404:
+                raise ValueError(f"Version {version} not found for page '{page_id}'")
             response.raise_for_status()
 
             v2_response = response.json()

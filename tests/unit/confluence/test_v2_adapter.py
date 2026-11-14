@@ -305,6 +305,55 @@ class TestConfluenceV2Adapter:
 
         assert result["_links"]["next"].endswith("cursor=next-token")
 
+    def test_get_page_by_version_queries_page_with_version_number(
+        self, v2_adapter, mock_session
+    ):
+        """Regression: fetch /pages/{id}?version=N by number (issue #1373)."""
+        page_response = Mock()
+        page_response.status_code = 200
+        page_response.json.return_value = {
+            "id": "123456",
+            "status": "current",
+            "title": "Old Title",
+            "spaceId": "789",
+            "version": {
+                "number": 3,
+                "createdAt": "2024-01-03T10:00:00.000Z",
+                "authorId": "editor-account-id",
+                "message": "third edit",
+            },
+            "body": {"storage": {"value": "<p>v3</p>", "representation": "storage"}},
+        }
+        space_response = Mock()
+        space_response.status_code = 200
+        space_response.json.return_value = {"key": "TEST"}
+        mock_session.get.side_effect = [page_response, space_response]
+
+        result = v2_adapter.get_page_by_version(page_id="123456", version=3)
+
+        mock_session.get.assert_any_call(
+            "https://example.atlassian.net/wiki/api/v2/pages/123456",
+            params={"version": "3", "body-format": "storage"},
+        )
+        requested_urls = [c[0][0] for c in mock_session.get.call_args_list]
+        assert not any("/api/v2/versions/" in url for url in requested_urls)
+        assert result["title"] == "Old Title"
+        assert result["version"]["number"] == 3
+        assert result["version"]["by"]["accountId"] == "editor-account-id"
+        assert result["body"]["storage"]["value"] == "<p>v3</p>"
+        assert result["space"]["key"] == "TEST"
+
+    def test_get_page_by_version_not_found(self, v2_adapter, mock_session):
+        """A missing version is reported as 'Version N not found'."""
+        not_found = Mock()
+        not_found.status_code = 404
+        not_found.text = "Not Found"
+        not_found.raise_for_status.side_effect = HTTPError(response=not_found)
+        mock_session.get.return_value = not_found
+
+        with pytest.raises(ValueError, match="Version 99 not found for page '123456'"):
+            v2_adapter.get_page_by_version(page_id="123456", version=99)
+
     @pytest.mark.parametrize(
         "method,call_kwargs,expected_path",
         [
