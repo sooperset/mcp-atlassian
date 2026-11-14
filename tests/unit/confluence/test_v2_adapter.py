@@ -165,9 +165,37 @@ class TestConfluenceV2Adapter:
         assert result["id"] == "page-123"
         assert result["subtype"] == "live"
 
-    def test_get_page_with_expand_parameter(self, v2_adapter, mock_session):
-        """Test that expand parameter is accepted but not used."""
-        # Mock the v2 API response
+    def test_get_page_maps_body_view_expand_to_view_format(
+        self, v2_adapter, mock_session
+    ):
+        """body.view in expand should request rendered HTML from the v2 API."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "id": "123456",
+            "status": "current",
+            "title": "Rendered Page",
+            "body": {
+                "view": {
+                    "value": '<p><a href="/wiki/x/abc">Docs</a></p>',
+                    "representation": "view",
+                }
+            },
+        }
+        mock_session.get.return_value = mock_response
+
+        result = v2_adapter.get_page("123456", expand="body.view,version")
+
+        mock_session.get.assert_called_once_with(
+            "https://example.atlassian.net/wiki/api/v2/pages/123456",
+            params={"body-format": "view"},
+        )
+        assert result["body"]["view"]["value"].startswith("<p><a")
+
+    def test_get_page_maps_body_storage_expand_to_storage_format(
+        self, v2_adapter, mock_session
+    ):
+        """body.storage (or no view expand) should request storage from the v2 API."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -177,17 +205,96 @@ class TestConfluenceV2Adapter:
         }
         mock_session.get.return_value = mock_response
 
-        # Call with expand parameter
         result = v2_adapter.get_page("123456", expand="body.storage,version")
 
-        # Verify the API call doesn't include expand in params
         mock_session.get.assert_called_once_with(
             "https://example.atlassian.net/wiki/api/v2/pages/123456",
             params={"body-format": "storage"},
         )
-
-        # Verify we still get a result
         assert result["id"] == "123456"
+
+    def test_get_page_by_version_view_uses_pages_endpoint(
+        self, v2_adapter, mock_session
+    ):
+        """Historical markdown reads should use pages+version, not version-detail."""
+        versions_response = Mock()
+        versions_response.json.return_value = {
+            "results": [{"id": "ver-id-2", "number": 2}],
+        }
+        page_response = Mock()
+        page_response.json.return_value = {
+            "id": "123456",
+            "status": "current",
+            "title": "Historical Page",
+            "spaceId": "789",
+            "version": {"number": 2},
+            "body": {
+                "view": {
+                    "value": '<p><a href="/wiki/x/abc">Docs</a></p>',
+                    "representation": "view",
+                }
+            },
+        }
+        space_response = Mock()
+        space_response.json.return_value = {"key": "TEST"}
+        mock_session.get.side_effect = [
+            versions_response,
+            page_response,
+            space_response,
+        ]
+
+        result = v2_adapter.get_page_by_version(
+            "123456",
+            2,
+            expand="body.view,version,space",
+        )
+
+        mock_session.get.assert_any_call(
+            "https://example.atlassian.net/wiki/api/v2/pages/123456",
+            params={"body-format": "view", "version": 2},
+        )
+        assert result["body"]["view"]["value"].startswith("<p><a")
+        assert result["version"]["number"] == 2
+
+    def test_get_page_by_version_storage_uses_version_detail_endpoint(
+        self, v2_adapter, mock_session
+    ):
+        """Storage-only historical reads keep using the version-detail endpoint."""
+        versions_response = Mock()
+        versions_response.json.return_value = {
+            "results": [{"id": "ver-id-2", "number": 2}],
+        }
+        version_response = Mock()
+        version_response.json.return_value = {
+            "id": "ver-id-2",
+            "number": 2,
+            "spaceId": "789",
+            "body": {
+                "storage": {
+                    "value": "<p>Storage content</p>",
+                    "representation": "storage",
+                }
+            },
+        }
+        space_response = Mock()
+        space_response.json.return_value = {"key": "TEST"}
+        mock_session.get.side_effect = [
+            versions_response,
+            version_response,
+            space_response,
+        ]
+
+        result = v2_adapter.get_page_by_version(
+            "123456",
+            2,
+            expand="body.storage,version",
+        )
+
+        mock_session.get.assert_any_call(
+            "https://example.atlassian.net/wiki/api/v2/versions/ver-id-2",
+            params={"body-format": "storage"},
+        )
+        assert result["body"]["storage"]["value"] == "<p>Storage content</p>"
 
     def test_get_page_direct_children_resolves_space_key(
         self, v2_adapter, mock_session
