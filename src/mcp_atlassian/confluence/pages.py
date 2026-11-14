@@ -1621,6 +1621,15 @@ class PagesMixin(ConfluenceClient):
                     target_id=target_parent_id,
                     position=position,
                 )
+                # movepage.action is a web-UI action: it can answer below 400
+                # when Confluence refuses the move (e.g. a cross-space move
+                # without "manage content"), so confirm the page actually moved.
+                self._verify_page_moved(
+                    page_id=page_id,
+                    expected_space_key=space_key,
+                    target_parent_id=target_parent_id,
+                    position=position,
+                )
 
             # Re-fetch the page to return updated state
             return self.get_page_content(page_id)
@@ -1631,6 +1640,48 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error moving page {page_id}: {str(e)}")
             raise Exception(f"Failed to move page {page_id}: {str(e)}") from e
+
+    def _verify_page_moved(
+        self,
+        page_id: str,
+        expected_space_key: str,
+        target_parent_id: str | None,
+        position: str,
+    ) -> None:
+        """Raise unless the page now sits where the move asked for."""
+        page = self.confluence.get_page_by_id(page_id, expand="space,ancestors")
+        actual_space_key = (page.get("space") or {}).get("key")
+        ancestors = page.get("ancestors") or []
+        actual_parent_id = str(ancestors[-1]["id"]) if ancestors else None
+
+        expected_parent_id: str | None = None
+        if target_parent_id:
+            if position == "append":
+                expected_parent_id = str(target_parent_id)
+            else:
+                target = self.confluence.get_page_by_id(
+                    target_parent_id, expand="ancestors"
+                )
+                target_ancestors = target.get("ancestors") or []
+                expected_parent_id = (
+                    str(target_ancestors[-1]["id"]) if target_ancestors else None
+                )
+
+        problems = []
+        if expected_space_key and actual_space_key != expected_space_key:
+            problems.append(
+                f"space is {actual_space_key!r}, expected {expected_space_key!r}"
+            )
+        if target_parent_id and actual_parent_id != expected_parent_id:
+            problems.append(
+                f"parent is {actual_parent_id!r}, expected {expected_parent_id!r}"
+            )
+        if problems:
+            raise ValueError(
+                f"Confluence did not move page {page_id}: "
+                + "; ".join(problems)
+                + ". The account may lack permission for this move."
+            )
 
     @handle_auth_errors("Confluence API")
     def get_page_version_diff(
