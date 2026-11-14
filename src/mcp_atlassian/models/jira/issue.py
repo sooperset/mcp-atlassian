@@ -837,7 +837,8 @@ class JiraIssue(ApiModel, TimestampMixin):
             field_value: The value to process
 
         Returns:
-            Processed value suitable for API response
+            Processed value suitable for API response. Cascading selects with a
+            selected child retain both options' values and available IDs.
         """
         if field_value is None or isinstance(field_value, str | int | float | bool):
             return field_value
@@ -845,6 +846,18 @@ class JiraIssue(ApiModel, TimestampMixin):
         if isinstance(field_value, dict):
             # For single-select, user pickers, etc., try to extract 'value' or 'name'
             if "value" in field_value:
+                child = field_value.get("child")
+                if isinstance(child, dict) and "value" in child:
+                    return {
+                        **{
+                            key: field_value[key]
+                            for key in ("value", "id")
+                            if key in field_value
+                        },
+                        "child": {
+                            key: child[key] for key in ("value", "id") if key in child
+                        },
+                    }
                 return field_value["value"]
             elif "name" in field_value:
                 # Standard Jira reference objects (priority, user, group) have a

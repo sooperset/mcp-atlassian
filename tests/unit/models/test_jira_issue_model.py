@@ -6,6 +6,8 @@ epic field extraction, and simplified dict conversion.
 """
 
 import re
+from copy import deepcopy
+from typing import Any
 
 import pytest
 
@@ -843,6 +845,77 @@ class TestProcessCustomFieldValue:
         field = simplified["customfield_10200"]
         assert field["name"] == "Okapya Checklist"
         assert field["value"] == checklist_items
+
+
+@pytest.mark.parametrize(
+    "requested_fields", ["*all", "customfield_10050", "cf_10050", "Device type"]
+)
+@pytest.mark.parametrize("use_display_names", [False, True])
+def test_cascading_select_preserves_selected_options(
+    requested_fields: str, use_display_names: bool
+) -> None:
+    """Issue output retains both selected levels without modifying API data."""
+    selection = {
+        "self": "https://jira.example.com/rest/api/2/customFieldOption/10100",
+        "value": "Hardware",
+        "id": "10100",
+        "child": {
+            "self": "https://jira.example.com/rest/api/2/customFieldOption/10105",
+            "value": "Laptop",
+            "id": "10105",
+        },
+    }
+    api_data = {
+        "id": "1",
+        "key": "DEMO-1",
+        "fields": {"summary": "Device request", "customfield_10050": selection},
+        "names": {"customfield_10050": "Device type"},
+    }
+    original = deepcopy(api_data)
+    issue = JiraIssue.from_api_response(api_data, requested_fields=requested_fields)
+    expected = {
+        "value": "Hardware",
+        "id": "10100",
+        "child": {"value": "Laptop", "id": "10105"},
+    }
+
+    if use_display_names:
+        output = issue.to_display_name_dict()
+        assert output["Device type"] == {
+            "field_id": "customfield_10050",
+            "value": expected,
+        }
+    else:
+        output = issue.to_simplified_dict()
+        assert output["customfield_10050"] == {"name": "Device type", "value": expected}
+    assert issue.get_custom_field_by_name("Device type") == expected
+    assert issue.custom_fields_by_display_name["Device type"]["value"] == selection
+    assert api_data == original
+
+
+@pytest.mark.parametrize(
+    ("selection", "expected"),
+    [
+        (
+            {"value": "Hardware", "child": {"value": "Laptop"}},
+            {"value": "Hardware", "child": {"value": "Laptop"}},
+        ),
+        ({"value": "Hardware", "id": "10100"}, "Hardware"),
+        ({"value": "Hardware", "child": None}, "Hardware"),
+        ({"value": "Hardware", "child": {}}, "Hardware"),
+        ({"value": "Hardware", "child": "invalid"}, "Hardware"),
+    ],
+    ids=["without-ids", "parent-only", "null-child", "empty-child", "invalid-child"],
+)
+def test_cascading_select_optional_data(
+    selection: dict[str, Any], expected: Any
+) -> None:
+    """Missing IDs are allowed; unselected child options keep scalar output."""
+    issue = JiraIssue.from_api_response(
+        {"id": "1", "key": "DEMO-1", "fields": {"customfield_10050": selection}},
+        requested_fields="*all",
+    )
+    assert issue.to_simplified_dict()["customfield_10050"] == {"value": expected}
 
 
 class TestDisplayNameMethods:
