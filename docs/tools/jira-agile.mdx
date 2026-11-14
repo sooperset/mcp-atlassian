@@ -45,6 +45,23 @@ Get all issues linked to a specific board filtered by JQL.
 
 ---
 
+### Get Board Backlog
+
+Get the issues in a board's backlog.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `board_id` | `string` | Yes | The id of the board (e.g., '1001') |
+| `jql` | `string` | No | Optional JQL query string to further filter the backlog. Leave empty to return the full backlog. |
+| `fields` | `string` | No | Comma-separated fields to return in the results. Use '*all' for all fields, or specify individual fields like 'summary,status,assignee,priority' |
+| `start_at` | `integer` | No | Starting index for pagination (0-based) |
+| `limit` | `integer` | No | Maximum number of results (1-50) |
+| `expand` | `string` | No | Optional fields to expand in the response (e.g., 'changelog'). |
+
+---
+
 ### Get Sprints from Board
 
 Get jira sprints from board by state.
