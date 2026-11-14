@@ -259,10 +259,15 @@ class JiraPreprocessor(BasePreprocessor):
         )
         output = _extract_blocks(
             output,
-            r"\{\{([^}]+)\}\}",
+            # Inline code may contain "}". A negated character class stops at the
+            # first one, so {{"a": 1}} closed a brace early and {{a}b}} did not
+            # match at all (#1717). DOTALL keeps multi-line spans matching, which
+            # the negated class used to allow implicitly.
+            r"\{\{(.+?\}*)\}\}(?!\})",
             lambda m: f"`{m.group(1)}`",
             inline_codes,
             "INLINECODE",
+            flags=re.DOTALL,
         )
 
         # Block quotes
