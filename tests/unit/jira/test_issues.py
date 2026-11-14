@@ -441,6 +441,28 @@ class TestIssuesMixin:
             {"name": "UI"}
         ]
 
+    def test_create_issue_components_by_id_and_name(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Components can be names or {"id"} / {"name"} objects (#1796)."""
+        issues_mixin.jira.create_issue.return_value = {"id": "1", "key": "TEST-1"}
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            components=["UI", {"id": "10688"}, {"name": "API"}, " ", {"x": 1}],
+        )
+
+        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
+        assert fields["components"] == [
+            {"name": "UI"},
+            {"id": "10688"},
+            {"name": "API"},
+        ]
+
     def test_create_issue_multiple_components(
         self, issues_mixin: IssuesMixin, make_issue_data
     ):

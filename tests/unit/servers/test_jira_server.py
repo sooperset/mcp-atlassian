@@ -1193,6 +1193,86 @@ async def test_create_issue_additional_fields_non_dict_json(jira_client):
     assert "not a JSON object" in str(excinfo.value)
 
 
+@pytest.mark.parametrize(
+    ("components", "extra_components", "expected"),
+    [
+        (None, [{"id": "10688"}], [{"id": "10688"}]),
+        ("Frontend", [{"id": "10688"}], ["Frontend", {"id": "10688"}]),
+        ("Frontend", "API, UI", ["Frontend", "API", "UI"]),
+    ],
+    ids=["ids_only", "param_and_ids", "param_and_names"],
+)
+@pytest.mark.anyio
+async def test_create_issue_components_in_additional_fields(
+    jira_client, mock_jira_fetcher, components, extra_components, expected
+):
+    """components in additional_fields no longer collides with the parameter.
+
+    Regression test for #1796 (got multiple values for keyword argument).
+    """
+    args = {
+        "project_key": "TEST",
+        "summary": "Test issue",
+        "issue_type": "Task",
+        "additional_fields": json.dumps(
+            {"components": extra_components, "labels": ["x"]}
+        ),
+    }
+    if components is not None:
+        args["components"] = components
+
+    await jira_client.call_tool("jira_create_issue", args)
+
+    kwargs = mock_jira_fetcher.create_issue.call_args.kwargs
+    assert kwargs["components"] == expected
+    assert kwargs["labels"] == ["x"]
+
+
+@pytest.mark.parametrize(
+    ("name", "param_value", "extra_value", "expected"),
+    [
+        ("description", None, "From fields", "From fields"),
+        ("assignee", None, "user@example.com", "user@example.com"),
+        ("summary", "Test issue", "Test issue", "Test issue"),
+        ("project_key", "TEST", "TEST", "TEST"),
+        ("issue_type", "Task", "Task", "Task"),
+    ],
+)
+@pytest.mark.anyio
+async def test_create_issue_named_param_in_additional_fields(
+    jira_client, mock_jira_fetcher, name, param_value, extra_value, expected
+):
+    """A named parameter repeated in additional_fields is passed once (#1796)."""
+    args = {"project_key": "TEST", "summary": "Test issue", "issue_type": "Task"}
+    if param_value is not None:
+        args[name] = param_value
+    args["additional_fields"] = json.dumps({name: extra_value})
+
+    await jira_client.call_tool("jira_create_issue", args)
+
+    assert mock_jira_fetcher.create_issue.call_args.kwargs[name] == expected
+
+
+@pytest.mark.anyio
+async def test_create_issue_conflicting_param_in_additional_fields(
+    jira_client, mock_jira_fetcher
+):
+    """A parameter and additional_fields that disagree are rejected (#1796)."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_create_issue",
+            {
+                "project_key": "TEST",
+                "summary": "Test issue",
+                "issue_type": "Task",
+                "description": "From parameter",
+                "additional_fields": '{"description": "From fields"}',
+            },
+        )
+    assert "'description' is set both as a parameter" in str(excinfo.value)
+    mock_jira_fetcher.create_issue.assert_not_called()
+
+
 @pytest.mark.anyio
 async def test_batch_create_issues(jira_client, mock_jira_fetcher):
     """Test batch creation of Jira issues."""
