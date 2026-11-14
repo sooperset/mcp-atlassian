@@ -7,7 +7,7 @@ import logging
 import mimetypes
 import re
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import parse_qs, urlsplit
 
 from fastmcp import Context
@@ -348,6 +348,19 @@ async def get_page(
             default=True,
         ),
     ] = True,
+    content_format: Annotated[
+        Literal["markdown", "storage", "rendered"] | None,
+        Field(
+            description=(
+                "Format of the page body. 'markdown' and 'storage' behave like "
+                "convert_to_markdown true and false. 'rendered' returns the view "
+                "HTML with macros and dynamic content expanded, as users see it. "
+                "When set, this overrides convert_to_markdown. Omit to use "
+                "convert_to_markdown."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Get content of a specific Confluence page by its ID, or by its title and space key.
 
@@ -359,13 +372,18 @@ async def get_page(
         space_key: The key of the space. Must be used with 'title'.
         include_metadata: Whether to include page metadata.
         convert_to_markdown: Convert content to markdown (true) or return raw
-            Confluence storage XHTML (false).
+            Confluence storage XHTML (false). Ignored when content_format is set.
+        content_format: 'markdown', 'storage', or 'rendered'. Overrides
+            convert_to_markdown when set.
 
     Returns:
         JSON string representing the page content and/or metadata, or an error if not found or parameters are invalid.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     page_object = None
+    rendered = content_format == "rendered"
+    if content_format is not None:
+        convert_to_markdown = content_format == "markdown"
 
     if page_id:
         if title or space_key:
@@ -378,9 +396,12 @@ async def get_page(
             # Resolve page ID from URL or tiny link
             page_id_str = _resolve_page_id(page_id_str)
 
-            page_object = confluence_fetcher.get_page_content(
-                page_id_str, convert_to_markdown=convert_to_markdown
-            )
+            if rendered:
+                page_object = confluence_fetcher.get_page_rendered_content(page_id_str)
+            else:
+                page_object = confluence_fetcher.get_page_content(
+                    page_id_str, convert_to_markdown=convert_to_markdown
+                )
         except Exception as e:
             logger.error(f"Error fetching page by ID '{page_id}': {e}")
             return json.dumps(
@@ -392,6 +413,10 @@ async def get_page(
         page_object = confluence_fetcher.get_page_by_title(
             space_key, title, convert_to_markdown=convert_to_markdown
         )
+        if page_object and rendered:
+            page_object = confluence_fetcher.get_page_rendered_content(
+                str(page_object.id)
+            )
         if not page_object:
             return json.dumps(
                 {
