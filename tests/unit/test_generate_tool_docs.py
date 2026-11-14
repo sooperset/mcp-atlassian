@@ -349,27 +349,33 @@ def test_category_template_renders_notes_and_safe_nested_json() -> None:
 def _write_count_documents(root: Path, counts: ToolCounts) -> None:
     """Write count-bearing documents with the supplied registry values."""
     (root / "docs").mkdir()
-    (root / "README.md").write_text(f"**{counts.total_tools} tools total**\n")
+    (root / "README.md").write_text(
+        f"**{counts.total_tools} tools total**\n", encoding="utf-8"
+    )
     (root / ".env.example").write_text(
         f"# Only core tools (~{counts.core_tools} tools)\n"
         f"# All {counts.total_toolsets} toolsets ({counts.total_tools} tools)\n"
-        f"# If unset, all toolsets are enabled ({counts.total_tools} tools).\n"
+        f"# If unset, all toolsets are enabled ({counts.total_tools} tools).\n",
+        encoding="utf-8",
     )
     (root / "docs.json").write_text(
-        f'{{"description": "all {counts.total_tools} tools enabled by default"}}\n'
+        f'{{"description": "all {counts.total_tools} tools enabled by default"}}\n',
+        encoding="utf-8",
     )
     (root / "docs" / "tools-reference.mdx").write_text(
         f'---\ndescription: "Overview of all {counts.total_tools} MCP tools"\n---\n'
         f"MCP Atlassian provides **{counts.total_tools} tools**.\n"
         f"**Jira Toolsets ({counts.jira_toolsets}):**\n"
         f"**Confluence Toolsets ({counts.confluence_toolsets}):**\n"
-        f"# Enable all toolsets ({counts.total_tools} tools)\n"
+        f"# Enable all toolsets ({counts.total_tools} tools)\n",
+        encoding="utf-8",
     )
     (root / "docs" / "configuration.mdx").write_text(
         f"# Restrict to core tools only (~{counts.core_tools} tools across "
         f"{counts.core_toolsets} core toolsets)\n"
         f"In v0.22.0, the default will change from all toolsets to "
-        f"{counts.core_toolsets} core toolsets only.\n"
+        f"{counts.core_toolsets} core toolsets only.\n",
+        encoding="utf-8",
     )
 
 
@@ -425,7 +431,10 @@ def test_check_counts_rejects_valid_number_in_wrong_context(
     )
     _write_count_documents(tmp_path, counts)
     path = tmp_path / relative_path
-    path.write_text(path.read_text().replace(old_text, new_text))
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(old_text, new_text),
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(generator, "ROOT", tmp_path)
     monkeypatch.setattr(generator, "get_tool_counts", lambda tools: counts)
@@ -455,10 +464,11 @@ def test_check_mode_rejects_stale_warning_core_toolset_count(
     _write_count_documents(tmp_path, counts)
     path = tmp_path / "docs" / "configuration.mdx"
     path.write_text(
-        path.read_text().replace(
+        path.read_text(encoding="utf-8").replace(
             "to 6 core toolsets only",
             "to 30 core toolsets only",
-        )
+        ),
+        encoding="utf-8",
     )
 
     async def fake_get_all_tools() -> dict[str, dict[str, object]]:
@@ -532,10 +542,13 @@ def test_check_generated_pages_detects_stale_toolset_membership(
     )
     for path, content in rendered.items():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8")
 
     reference_output.write_text(
-        reference_output.read_text().replace("`jira_example_tool`", "`stale_jira_tool`")
+        reference_output.read_text(encoding="utf-8").replace(
+            "`jira_example_tool`", "`stale_jira_tool`"
+        ),
+        encoding="utf-8",
     )
 
     assert not check_generated_pages(

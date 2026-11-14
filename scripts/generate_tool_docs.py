@@ -402,7 +402,7 @@ def load_overrides(overrides_dir: Path) -> dict[str, ToolOverride]:
 
     for yaml_file in sorted(overrides_dir.glob("*.yaml")):
         tool_name = yaml_file.stem
-        with open(yaml_file) as f:
+        with open(yaml_file, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         overrides[tool_name] = ToolOverride(
             example=data.get("example"),
@@ -652,7 +652,7 @@ def generate_pages(
         output_dir,
         reference_output,
     ).items():
-        out_path.write_text(rendered)
+        out_path.write_text(rendered, encoding="utf-8")
         print(f"  wrote {out_path}")
 
 
@@ -801,7 +801,7 @@ def check_counts(tools: dict[str, dict[str, Any]]) -> bool:
     ok = True
     for rule in COUNT_RULES:
         path = ROOT / rule.relative_path
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         matches = list(rule.pattern.finditer(text))
         if not matches:
             print(
@@ -867,7 +867,7 @@ def check_generated_pages(
                 f"ERROR: generated documentation is missing: {_display_path(path)}",
                 file=sys.stderr,
             )
-        elif path.read_text() != rendered:
+        elif path.read_text(encoding="utf-8") != rendered:
             print(
                 f"ERROR: generated documentation is out of date: {_display_path(path)}",
                 file=sys.stderr,
