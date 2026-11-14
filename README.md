@@ -28,7 +28,7 @@ Go to https://id.atlassian.com/manage-profile/security/api-tokens and create a t
 
 ### 2. Configure Your IDE
 
-Add to your Claude Desktop or Cursor MCP configuration:
+Add to your Claude Desktop, Cursor, or GitHub Copilot MCP configuration:
 
 ```json
 {
