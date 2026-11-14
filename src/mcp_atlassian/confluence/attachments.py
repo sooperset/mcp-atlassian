@@ -8,6 +8,8 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from ..models.confluence import ConfluenceAttachment
 from ..utils.io import (
     get_file_root,
@@ -840,7 +842,13 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
             files: dict[str, Any] = {"file": (filename, content, mime_type)}
             if comment:
-                files["comment"] = (None, comment, "text/plain; charset=utf-8")
+                # Confluence splits the comment part on ASCII commas and expects
+                # one comment per file; no escaping is accepted, so use U+FF0C.
+                files["comment"] = (
+                    None,
+                    comment.replace(",", "\uff0c"),
+                    "text/plain; charset=utf-8",
+                )
             return files
 
         base_url = self._rest_base_url()
@@ -884,7 +892,11 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                     data=data,
                 )
 
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            msg = f"{e}: {response.text}" if response.text else str(e)
+            raise requests.HTTPError(msg, response=response) from e
 
         # Parse response
         result = response.json()

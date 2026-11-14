@@ -1403,6 +1403,26 @@ async def test_upload_attachment_failure_message(client, mock_confluence_fetcher
 
 
 @pytest.mark.anyio
+async def test_multi_upload_failed(client, mock_confluence_fetcher):
+    """A multi-file upload that failed does not report success."""
+    mock_confluence_fetcher.upload_attachments.return_value = {
+        "success": True,
+        "content_id": "123456",
+        "total": 2,
+        "uploaded": [{"filename": "a.txt", "id": "1"}],
+        "failed": [{"filename": "b.txt", "error": "400 Bad Request"}],
+    }
+
+    response = await client.call_tool(
+        "confluence_upload_attachments",
+        {"content_id": "123456", "file_paths": "a.txt,b.txt"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Uploaded 1 of 2 attachment(s); 1 failed"
+
+
+@pytest.mark.anyio
 async def test_upload_attachment_base64_allows_empty_content(
     client, mock_confluence_fetcher
 ):
