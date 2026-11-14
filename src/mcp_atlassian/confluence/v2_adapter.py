@@ -366,6 +366,66 @@ class ConfluenceV2Adapter:
                 logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
 
+    def get_pages_metadata(self, page_ids: list[str]) -> list[dict[str, Any]]:
+        """Get body-free page metadata by ID, with batched space resolution.
+
+        Args:
+            page_ids: IDs of pages already selected for the caller's result.
+
+        Returns:
+            Visible pages in v1-compatible format, without page bodies.
+
+        Raises:
+            HTTPError: If the metadata request fails.
+            ValueError: If metadata pagination cycles or exceeds its request bound.
+        """
+        unique_ids = list(dict.fromkeys(page_ids))
+        metadata: list[dict[str, Any]] = []
+        spaces: dict[str, dict[str, str]] = {}
+        for start in range(0, len(unique_ids), 100):
+            batch = unique_ids[start : start + 100]
+            remaining = set(batch)
+            cursor: str | None = None
+            seen_cursors: set[str] = set()
+            for _ in range(len(batch) + 1):
+                params: dict[str, Any] = {"id": batch, "limit": len(batch)}
+                if cursor is not None:
+                    params["cursor"] = cursor
+                response = self.session.get(
+                    f"{self.base_url}/api/v2/pages", params=params
+                )
+                response.raise_for_status()
+                data = response.json()
+                for page in data.get("results", []):
+                    page_id = str(page.get("id", ""))
+                    if page_id not in remaining:
+                        continue
+                    remaining.remove(page_id)
+                    space_id = str(page.get("spaceId") or "")
+                    if space_id and space_id not in spaces:
+                        spaces[space_id] = self._get_space_from_id(space_id)
+                    space = spaces.get(space_id, {})
+                    converted = self._convert_v2_to_v1_format(
+                        page, space.get("key", "")
+                    )
+                    if space:
+                        converted["space"] = space
+                    converted.pop("body", None)
+                    metadata.append(converted)
+
+                next_link = (data.get("_links") or {}).get("next")
+                if not next_link and isinstance(response.links, dict):
+                    next_link = response.links.get("next", {}).get("url")
+                if not remaining or not next_link:
+                    break
+                cursor = parse_qs(urlparse(next_link).query).get("cursor", [None])[0]
+                if not cursor or cursor in seen_cursors:
+                    raise ValueError("Invalid or repeated page metadata cursor")
+                seen_cursors.add(cursor)
+            else:
+                raise ValueError("Page metadata pagination exceeded its request limit")
+        return metadata
+
     def get_page_direct_children(
         self,
         page_id: str,

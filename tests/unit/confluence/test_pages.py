@@ -8,6 +8,7 @@ from requests.exceptions import ConnectionError, HTTPError
 
 from mcp_atlassian.confluence.pages import PagesMixin
 from mcp_atlassian.confluence.utils import extract_emoji_from_property
+from mcp_atlassian.confluence.v2_adapter import ConfluenceV2Adapter
 from mcp_atlassian.models.confluence import ConfluencePage
 
 
@@ -937,6 +938,73 @@ class TestPagesMixin:
         # Act/Assert
         with pytest.raises(Exception, match="API Error"):
             pages_mixin.get_page_children(page_id=parent_id)
+
+    @pytest.mark.parametrize("auth_type", ["basic", "oauth"])
+    def test_get_page_children_cloud_enriches_selected_page_metadata(
+        self, pages_mixin: PagesMixin, auth_type: str
+    ) -> None:
+        """Real v2 child summaries gain metadata without fetching page bodies."""
+        base_url = "https://example.atlassian.net/wiki"
+        pages_mixin.config = MagicMock(url=base_url, is_cloud=True)
+        pages_mixin.config.auth_type = auth_type
+        session = MagicMock()
+        children = MagicMock()
+        children.links = {}
+        children.json.return_value = {
+            "results": [
+                {"id": "1", "title": "Skipped", "type": "page"},
+                {"id": "2", "title": "First page", "type": "page"},
+                {"id": "3", "title": "Folder", "type": "folder"},
+                {"id": "4", "title": "Second page", "type": "page"},
+                {"id": "5", "title": "Beyond limit", "type": "page"},
+            ]
+        }
+        metadata = MagicMock()
+        metadata.links = {}
+        metadata.json.return_value = {
+            "results": [
+                {
+                    "id": page_id,
+                    "title": title,
+                    "status": "current",
+                    "spaceId": "42",
+                    "createdAt": "2026-10-01T09:00:00.000Z",
+                    "authorId": "example-author",
+                    "version": {
+                        "number": 3,
+                        "createdAt": "2026-10-02T10:00:00.000Z",
+                    },
+                }
+                for page_id, title in [("4", "Second page"), ("2", "First page")]
+            ]
+        }
+        space = MagicMock()
+        space.json.return_value = {"key": "DEMO", "name": "Demo Space"}
+        session.get.side_effect = [children, metadata, space]
+        adapter = ConfluenceV2Adapter(session=session, base_url=base_url)
+
+        with patch.object(
+            PagesMixin, "_page_children_v2_adapter", new_callable=PropertyMock
+        ) as adapter_property:
+            adapter_property.return_value = adapter
+            results = pages_mixin.get_page_children("100", start=1, limit=3)
+
+        assert [page.id for page in results] == ["2", "3", "4"]
+        for page in (results[0], results[2]):
+            simplified = page.to_simplified_dict()
+            assert simplified["space"] == {"key": "DEMO", "name": "Demo Space"}
+            assert simplified["url"] == f"{base_url}/spaces/DEMO/pages/{page.id}"
+            assert page.created == "2026-10-01T09:00:00.000Z"
+            assert page.updated == "2026-10-02T10:00:00.000Z"
+            assert simplified["author"] == "example-author"
+            assert not page.content
+        assert session.get.call_args_list[1].args == (f"{base_url}/api/v2/pages",)
+        assert session.get.call_args_list[1].kwargs == {
+            "params": {"id": ["2", "4"], "limit": 2}
+        }
+        assert session.get.call_count == 3
+        pages_mixin.preprocessor.process_html_content.assert_not_called()
+        pages_mixin.confluence.get_page_by_id.assert_not_called()
 
     def test_get_page_children_cloud_uses_v2_direct_children(self, pages_mixin):
         """Test Cloud OAuth child lookup uses the v2 direct-children endpoint."""

@@ -206,7 +206,19 @@ class PagesMixin(ConfluenceClient):
         if "body" in expand:
             return self._enrich_v2_child_pages_with_content(v2_adapter, child_items)
 
-        return child_items
+        page_ids = [
+            str(item["id"])
+            for item in child_items
+            if item.get("type", "page") == "page" and item.get("id")
+        ]
+        if not page_ids:
+            return child_items
+        metadata = {
+            str(page["id"]): page for page in v2_adapter.get_pages_metadata(page_ids)
+        }
+        return [
+            {**item, **metadata.get(str(item.get("id")), {})} for item in child_items
+        ]
 
     def _enrich_v2_child_pages_with_content(
         self,
