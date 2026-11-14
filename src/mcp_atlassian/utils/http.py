@@ -41,6 +41,7 @@ _ALL_METHODS = frozenset(["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DEL
 _THROTTLED_ATTR = "_mcp_atlassian_throttled"
 _RATE_LIMITED_ATTR = "_mcp_atlassian_rate_limited"
 _CIRCUIT_BREAKER_ATTR = "_mcp_atlassian_circuit_breaker"
+_DEFAULT_TIMEOUT_ATTR = "_mcp_atlassian_default_timeout"
 
 
 class _BoundedRetry(Retry):
@@ -492,6 +493,39 @@ def configure_circuit_breaker(session: Session, *, service: str = "atlassian") -
         threshold,
         cooldown,
     )
+
+
+def _wrap_adapter_default_timeout(adapter: BaseAdapter, timeout: float) -> None:
+    if getattr(adapter, _DEFAULT_TIMEOUT_ATTR, False):
+        return
+    original_send = adapter.send
+
+    def send_with_default_timeout(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = timeout
+        return original_send(*args, **kwargs)
+
+    adapter.send = send_with_default_timeout  # type: ignore[method-assign, assignment]
+    setattr(adapter, _DEFAULT_TIMEOUT_ATTR, True)
+
+
+def configure_default_timeout(
+    session: Session, timeout: float, *, service: str = "atlassian"
+) -> None:
+    """Apply the service timeout to requests sent without an explicit timeout.
+
+    ``requests`` waits forever when no timeout is given. atlassian-python-api
+    passes its configured timeout on its own calls, but direct
+    ``client._session.get/post/put`` calls (attachments, permissions,
+    analytics, ...) bypass it, so a stalled connect or read blocks the caller
+    indefinitely — and, from an async tool handler, the whole event loop.
+    Explicit per-call timeouts are kept.
+    """
+    if not session.adapters:
+        return
+    for adapter in session.adapters.values():
+        _wrap_adapter_default_timeout(adapter, timeout)
+    logger.debug("%s: default request timeout=%ss", service, timeout)
 
 
 def format_rate_limit_error(http_err: object, *, service: str) -> str:

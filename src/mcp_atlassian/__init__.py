@@ -42,6 +42,7 @@ from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.lifecycle import (
     ensure_clean_exit,
     setup_signal_handlers,
+    wait_for_shutdown_request,
 )
 from mcp_atlassian.utils.logging import setup_logging
 
@@ -63,6 +64,10 @@ _TRUSTSTORE_INJECTED = ssl.SSLContext.__module__.startswith("truststore")
 # this also excludes them; TLS 1.3 suites are configured separately by OpenSSL
 # and remain enabled.
 _TLS_LISTENER_CIPHERS = "ECDHE+AESGCM:ECDHE+CHACHA20:!aNULL:!eNULL:!MD5"
+
+# How long a stdio server may take to unwind after a shutdown request before
+# the process exits anyway.
+_STDIO_SHUTDOWN_GRACE_SECONDS = 5.0
 
 # Initialize logging with appropriate level
 logging_level = logging.WARNING
@@ -99,33 +104,55 @@ async def _watch_parent_exit(stop_event: threading.Event) -> None:
 async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     from mcp_atlassian.servers import main_mcp
 
-    parent_watch_stop = threading.Event()
+    watch_stop = threading.Event()
     server_task = asyncio.create_task(main_mcp.run_async(**run_kwargs))
-    parent_task = asyncio.create_task(_watch_parent_exit(parent_watch_stop))
+    parent_task = asyncio.create_task(_watch_parent_exit(watch_stop))
+    # SIGTERM is how MCP clients and `docker stop` ask a stdio server to go
+    # away. setup_signal_handlers() only records the request, so without this
+    # watcher the handler swallows the signal and the process is orphaned.
+    signal_task = asyncio.create_task(wait_for_shutdown_request(watch_stop))
 
     done, pending = await asyncio.wait(
-        {server_task, parent_task},
+        {server_task, parent_task, signal_task},
         return_when=asyncio.FIRST_COMPLETED,
     )
-    parent_watch_stop.set()
+    watch_stop.set()
 
-    if parent_task in done and not server_task.done():
-        logger.info("Parent process exited. Shutting down STDIO server.")
+    stopping = not server_task.done()
+    if stopping:
+        if signal_task in done:
+            logger.info("Shutdown signal received. Shutting down STDIO server.")
+        else:
+            logger.info("Parent process exited. Shutting down STDIO server.")
         server_task.cancel()
 
-    for task in pending:
+    for task in (parent_task, signal_task):
         task.cancel()
+    await asyncio.gather(parent_task, signal_task, return_exceptions=True)
 
-    await asyncio.gather(*pending, return_exceptions=True)
+    if stopping:
+        # The stdio transport reads stdin from a worker thread, so a blocked
+        # read swallows the cancellation and awaiting the task here would hang
+        # forever — which is how the process ends up orphaned. Give the server
+        # a bounded moment to unwind, then leave.
+        await asyncio.wait({server_task}, timeout=_STDIO_SHUTDOWN_GRACE_SECONDS)
+        if not server_task.done():
+            logger.warning(
+                "STDIO server did not stop within %ss of the shutdown request; "
+                "exiting now.",
+                _STDIO_SHUTDOWN_GRACE_SECONDS,
+            )
+            ensure_clean_exit()
+            os._exit(0)
+            return
 
-    if server_task.done():
-        server_result = await asyncio.gather(server_task, return_exceptions=True)
-        if (
-            server_result
-            and isinstance(server_result[0], Exception)
-            and not isinstance(server_result[0], asyncio.CancelledError)
-        ):
-            raise server_result[0]
+    server_result = await asyncio.gather(server_task, return_exceptions=True)
+    if (
+        server_result
+        and isinstance(server_result[0], Exception)
+        and not isinstance(server_result[0], asyncio.CancelledError)
+    ):
+        raise server_result[0]
 
 
 def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:

@@ -414,17 +414,21 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             self._ensure_same_origin(url)
             logger.info(f"Fetching attachment from {url}")
             response = self.confluence._session.get(url, stream=True)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
 
-            chunks: list[bytes] = []
-            for chunk in response.iter_content(chunk_size=8192):
-                chunks.append(chunk)
+                chunks: list[bytes] = []
+                for chunk in response.iter_content(chunk_size=8192):
+                    chunks.append(chunk)
 
-            data = b"".join(chunks)
-            logger.info(
-                f"Successfully fetched attachment from {url} (size: {len(data)} bytes)"
-            )
-            return data
+                data = b"".join(chunks)
+                logger.info(
+                    f"Successfully fetched attachment from {url} "
+                    f"(size: {len(data)} bytes)"
+                )
+                return data
+            finally:
+                response.close()
 
         except Exception as e:
             logger.error(f"Error fetching attachment: {str(e)}")
@@ -474,14 +478,17 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
 
             # Use the Confluence session to download the file
             response = self.confluence._session.get(url, stream=True)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
 
-            # Write the file to disk. open_confined re-checks the boundary on
-            # the descriptor it opens, so a symlink swapped in since the
-            # validation above cannot redirect the write.
-            with open_confined(target_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                # Write the file to disk. open_confined re-checks the boundary
+                # on the descriptor it opens, so a symlink swapped in since the
+                # validation above cannot redirect the write.
+                with open_confined(target_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            finally:
+                response.close()
 
             # Verify the file was created
             if os.path.exists(target_path):
@@ -764,6 +771,41 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             )
             raise
 
+    def _find_attachments_by_filename(
+        self,
+        content_id: str,
+        filename: str,
+        *,
+        list_url: str,
+        headers: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """Find the attachments on ``content_id`` whose title is ``filename``.
+
+        Replacing an existing attachment needs its id. Under Cloud OAuth the v1
+        list endpoint answers 410 Gone, so ask the v2 API there and keep the v1
+        GET for token, basic, and Server/DC auth.
+        """
+        v2_adapter = self._v2_adapter
+        if v2_adapter:
+            try:
+                results = v2_adapter.get_page_attachments(
+                    content_id, filename=filename
+                ).get("results", [])
+                return [r for r in results if isinstance(r, dict)]
+            except Exception as e:
+                logger.warning(
+                    f"v2 attachment lookup for '{filename}' on {content_id} "
+                    f"failed, falling back to v1: {e}"
+                )
+
+        encoded_filename = urllib.parse.quote(filename, safe="")
+        att_list = self.confluence._session.get(
+            f"{list_url}?filename={encoded_filename}",
+            headers=headers,
+        )
+        att_list.raise_for_status()
+        return att_list.json().get("results", [])
+
     def _send_attachment_request(
         self,
         content_id: str,
@@ -824,13 +866,9 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 f"Attachment '{filename}' already exists on content {content_id}, "
                 "updating existing attachment version"
             )
-            encoded_filename = urllib.parse.quote(filename, safe="")
-            att_list = self.confluence._session.get(
-                f"{url}?filename={encoded_filename}",
-                headers=headers,
+            att_results = self._find_attachments_by_filename(
+                content_id, filename, list_url=url, headers=headers
             )
-            att_list.raise_for_status()
-            att_results = att_list.json().get("results", [])
             if att_results:
                 if hasattr(file_obj, "seek"):
                     file_obj.seek(0)
