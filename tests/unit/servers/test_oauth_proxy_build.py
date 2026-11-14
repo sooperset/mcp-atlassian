@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlparse
+
 import pytest
+from mcp.server.auth.provider import AuthorizationParams, AuthorizeError
 from mcp.shared.auth import OAuthClientInformationFull
+from pydantic import AnyUrl
 
 from mcp_atlassian.servers.main import _build_auth_provider
 from mcp_atlassian.utils.oauth import CLOUD_AUTHORIZE_URL, CLOUD_TOKEN_URL
@@ -310,3 +314,111 @@ async def test_register_client_hardens_grant_types_and_scopes(monkeypatch):
     assert stored is not None
     assert stored.grant_types == ["authorization_code"]
     assert stored.scope == "read:jira-work"
+
+
+def _build_cloud_provider_without_consent(
+    monkeypatch, *, scope: str | None = "read:jira-work"
+):
+    if scope is None:
+        monkeypatch.delenv("ATLASSIAN_OAUTH_SCOPE", raising=False)
+    else:
+        monkeypatch.setenv("ATLASSIAN_OAUTH_SCOPE", scope)
+    monkeypatch.setenv("ATLASSIAN_OAUTH_REQUIRE_CONSENT", "false")
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("ATLASSIAN_OAUTH_INSTANCE_URL", raising=False)
+    monkeypatch.setenv("JIRA_URL", "https://acme.atlassian.net")
+    _set_required_oauth_env(
+        monkeypatch, redirect_uri="https://mcp.example.com/callback"
+    )
+
+    provider = _build_auth_provider()
+
+    assert provider is not None
+    provider.set_mcp_path("/mcp")
+    return provider
+
+
+def _authorization_params(resource: str | None) -> AuthorizationParams:
+    return AuthorizationParams(
+        state="client-state",
+        scopes=["read:jira-work"],
+        code_challenge="x" * 43,
+        redirect_uri=AnyUrl("http://localhost:1234/callback"),
+        redirect_uri_provided_explicitly=True,
+        resource=resource,
+    )
+
+
+def _client() -> OAuthClientInformationFull:
+    return OAuthClientInformationFull(
+        client_id="client-123",
+        redirect_uris=[AnyUrl("http://localhost:1234/callback")],
+        scope="read:jira-work",
+    )
+
+
+@pytest.mark.anyio
+async def test_authorize_does_not_forward_resource_to_atlassian(monkeypatch):
+    """Regression test for #1137: Atlassian rejects the resource indicator."""
+    provider = _build_cloud_provider_without_consent(monkeypatch)
+
+    upstream_url = await provider.authorize(
+        _client(), _authorization_params(resource="https://mcp.example.com/mcp")
+    )
+
+    query = parse_qs(urlparse(upstream_url).query)
+    assert upstream_url.startswith(CLOUD_AUTHORIZE_URL)
+    assert "resource" not in query
+    assert query["scope"] == ["read:jira-work"]
+
+
+@pytest.mark.anyio
+async def test_authorize_still_rejects_resource_for_another_server(monkeypatch):
+    provider = _build_cloud_provider_without_consent(monkeypatch)
+
+    with pytest.raises(AuthorizeError) as exc_info:
+        await provider.authorize(
+            _client(), _authorization_params(resource="https://other.example.com/mcp")
+        )
+
+    assert exc_info.value.error == "invalid_target"
+
+
+async def _upstream_scope(provider, requested: list[str] | None) -> list[str]:
+    client = OAuthClientInformationFull(
+        client_id="client-123",
+        redirect_uris=[AnyUrl("http://localhost:1234/callback")],
+        scope="read:jira-work read:me",
+    )
+    params = AuthorizationParams(
+        state="client-state",
+        scopes=requested,
+        code_challenge="x" * 43,
+        redirect_uri=AnyUrl("http://localhost:1234/callback"),
+        redirect_uri_provided_explicitly=True,
+    )
+
+    upstream_url = await provider.authorize(client, params)
+
+    assert upstream_url.startswith(CLOUD_AUTHORIZE_URL)
+    return parse_qs(urlparse(upstream_url).query)["scope"][0].split(" ")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("requested", [["read:jira-work"], None])
+async def test_authorize_requests_forced_scopes_upstream(monkeypatch, requested):
+    """A client requesting a subset of scopes still gets a full-scope token."""
+    provider = _build_cloud_provider_without_consent(
+        monkeypatch, scope="read:jira-work read:me"
+    )
+
+    assert await _upstream_scope(provider, requested) == ["read:jira-work", "read:me"]
+
+
+@pytest.mark.anyio
+async def test_authorize_forwards_requested_scopes_without_forced_scopes(
+    monkeypatch,
+):
+    provider = _build_cloud_provider_without_consent(monkeypatch, scope=None)
+
+    assert await _upstream_scope(provider, ["read:jira-work"]) == ["read:jira-work"]

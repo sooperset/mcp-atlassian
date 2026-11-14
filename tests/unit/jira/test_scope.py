@@ -352,3 +352,266 @@ def test_board_listing_keeps_unlocated_board_inside_filter() -> None:
     }
     fetcher.jira.get.side_effect = lambda path, **kw: responses[path]
     assert [b["id"] for b in fetcher.get_all_agile_boards()] == [1, 5]
+
+
+# --- epic and parent references (GHSA-qx5g-fhgg-wm59) --------------------------
+
+_EPIC_FIELDS = {"epic_link": "customfield_10014", "epic_name": "customfield_10011"}
+
+
+def _epic_fetcher(projects_filter: str | None = "ALLOWED") -> JiraFetcher:
+    fetcher = _fetcher(projects_filter)
+    fetcher.get_field_ids_to_epic = MagicMock(  # type: ignore[method-assign]
+        return_value=dict(_EPIC_FIELDS)
+    )
+    fetcher._generate_field_map = MagicMock(  # type: ignore[method-assign]
+        return_value={"summary": "summary", "epic link": "customfield_10014"}
+    )
+    fetcher.get_field_by_id = MagicMock(return_value=None)  # type: ignore[method-assign]
+    fetcher.jira.issue.side_effect = lambda key, fields=None: _issue(
+        key.rsplit("-", 1)[0], key=key
+    )
+    return fetcher
+
+
+def _issue_linked_to_epic(epic_key: str) -> dict[str, Any]:
+    return {
+        "id": "1",
+        "key": "ALLOWED-1",
+        "fields": {
+            "summary": "s",
+            "project": {"key": "ALLOWED"},
+            "issuetype": {"name": "Task"},
+            "customfield_10014": epic_key,
+        },
+    }
+
+
+def _epic(epic_key: str) -> dict[str, Any]:
+    return {
+        "id": "9",
+        "key": epic_key,
+        "fields": {
+            "summary": "Hidden epic summary",
+            "project": {"key": epic_key.rsplit("-", 1)[0]},
+            "issuetype": {"name": "Epic"},
+            "customfield_10011": "Hidden Epic Name",
+        },
+    }
+
+
+def _serve(fetcher: JiraFetcher, epic_key: str) -> None:
+    def get_issue(key: str, **_: Any) -> dict[str, Any]:
+        return _issue_linked_to_epic(epic_key) if key == "ALLOWED-1" else _epic(key)
+
+    fetcher.jira.get_issue.side_effect = get_issue
+
+
+def test_get_issue_does_not_fetch_epic_outside_allowlist() -> None:
+    fetcher = _epic_fetcher()
+    _serve(fetcher, "SECRET-9")
+
+    result = fetcher.get_issue("ALLOWED-1", fields="*all").to_simplified_dict()
+
+    fetched = [c.args[0] for c in fetcher.jira.get_issue.call_args_list]
+    assert fetched == ["ALLOWED-1"]
+    dumped = repr(result)
+    assert "SECRET" not in dumped
+    assert "Hidden" not in dumped
+
+
+def test_get_issue_keeps_epic_inside_allowlist() -> None:
+    fetcher = _epic_fetcher("ALLOWED")
+    _serve(fetcher, "ALLOWED-9")
+
+    result = fetcher.get_issue("ALLOWED-1", fields="*all").to_simplified_dict()
+
+    assert result["epic_key"] == "ALLOWED-9"
+    assert result["epic_name"] == "Hidden Epic Name"
+
+
+def test_get_issue_epic_untouched_without_allowlist() -> None:
+    fetcher = _epic_fetcher(None)
+    _serve(fetcher, "SECRET-9")
+
+    result = fetcher.get_issue("ALLOWED-1", fields="*all").to_simplified_dict()
+
+    assert result["epic_key"] == "SECRET-9"
+    assert result["epic_name"] == "Hidden Epic Name"
+
+
+@pytest.mark.parametrize("with_names", [True, False])
+def test_restrict_references_clears_epic_name_and_epic_fields(
+    with_names: bool,
+) -> None:
+    from mcp_atlassian.models.jira import JiraIssue
+
+    data = _issue_linked_to_epic("SECRET-9")
+    data["fields"]["customfield_10011"] = "Hidden Epic Name"
+    if with_names:
+        data["names"] = {
+            "customfield_10014": "Epic Link",
+            "customfield_10011": "Epic Name",
+        }
+
+    issue = JiraIssue.from_api_response(
+        data, requested_fields="*all", allowed_projects=frozenset({"ALLOWED"})
+    )
+
+    assert issue.epic_key is None
+    assert issue.epic_name is None
+    dumped = repr(issue.to_simplified_dict())
+    assert "SECRET" not in dumped
+    assert "Hidden" not in dumped
+
+
+def test_restrict_references_keeps_own_epic_name() -> None:
+    from mcp_atlassian.models.jira import JiraIssue
+
+    data = _epic("ALLOWED-9")
+    data["names"] = {"customfield_10011": "Epic Name"}
+
+    issue = JiraIssue.from_api_response(
+        data, requested_fields="*all", allowed_projects=frozenset({"ALLOWED"})
+    )
+
+    assert issue.epic_name == "Hidden Epic Name"
+
+
+def _created(fetcher: JiraFetcher) -> None:
+    fetcher.jira.create_issue.return_value = {"key": "ALLOWED-2"}
+    fetcher.jira.create_issues.return_value = {"issues": [{"key": "ALLOWED-2"}]}
+    fetcher.jira.get_issue.return_value = _issue("ALLOWED", key="ALLOWED-2")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"parent": "SECRET-1"},
+        {"parent": {"key": "SECRET-1"}},
+        {"epicKey": "SECRET-1"},
+        {"customfield_10014": "SECRET-1"},
+        {"Epic Link": "SECRET-1"},
+    ],
+)
+def test_create_issue_refuses_parent_or_epic_outside_allowlist(
+    kwargs: dict[str, Any],
+) -> None:
+    fetcher = _epic_fetcher()
+    _created(fetcher)
+
+    with pytest.raises(ScopeViolationError, match="JIRA_PROJECTS_FILTER"):
+        fetcher.create_issue("ALLOWED", "s", "Task", **kwargs)
+
+    fetcher.jira.create_issue.assert_not_called()
+
+
+def test_create_subtask_refuses_parent_outside_allowlist() -> None:
+    fetcher = _epic_fetcher()
+    _created(fetcher)
+    fetcher._find_subtask_issue_type_id = MagicMock(return_value=None)  # type: ignore[method-assign]
+
+    with pytest.raises(ScopeViolationError):
+        fetcher.create_issue("ALLOWED", "s", "Subtask", parent="SECRET-1")
+
+    fetcher.jira.create_issue.assert_not_called()
+
+
+def test_create_issue_accepts_parent_inside_allowlist() -> None:
+    fetcher = _epic_fetcher()
+    _created(fetcher)
+
+    fetcher.create_issue("ALLOWED", "s", "Task", parent="ALLOWED-1")
+
+    sent = fetcher.jira.create_issue.call_args.kwargs["fields"]
+    assert sent["parent"] == {"key": "ALLOWED-1"}
+
+
+def test_batch_create_refuses_epic_link_outside_allowlist() -> None:
+    fetcher = _epic_fetcher()
+    _created(fetcher)
+
+    with pytest.raises(ScopeViolationError):
+        fetcher.batch_create_issues(
+            [
+                {
+                    "project_key": "ALLOWED",
+                    "summary": "s",
+                    "issue_type": "Task",
+                    "customfield_10014": "SECRET-1",
+                }
+            ]
+        )
+
+    fetcher.jira.create_issues.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("fields", "kwargs"),
+    [
+        (None, {"parent": "SECRET-1"}),
+        ({"parent": {"key": "SECRET-1"}}, {}),
+        (None, {"epic_link": "SECRET-1"}),
+        ({"customfield_10014": "SECRET-1"}, {}),
+        (None, {"parent": "SECRET-1", "status": "Done"}),
+    ],
+)
+def test_update_issue_refuses_parent_or_epic_outside_allowlist(
+    fields: dict[str, Any] | None, kwargs: dict[str, Any]
+) -> None:
+    fetcher = _epic_fetcher()
+    fetcher.jira.get_issue.return_value = _issue("ALLOWED")
+
+    with pytest.raises(ScopeViolationError, match="JIRA_PROJECTS_FILTER"):
+        fetcher.update_issue("ALLOWED-1", fields=fields, **kwargs)
+
+    fetcher.jira.update_issue.assert_not_called()
+    fetcher.jira.put.assert_not_called()
+
+
+def test_update_issue_allows_clearing_parent() -> None:
+    fetcher = _epic_fetcher()
+    fetcher.config.url = "https://example.atlassian.net"
+    fetcher.jira.get_issue.return_value = _issue("ALLOWED")
+
+    fetcher.update_issue("ALLOWED-1", parent=None)
+
+    sent = fetcher.jira.update_issue.call_args.kwargs["update"]["fields"]
+    assert sent["parent"] is None
+
+
+@pytest.mark.parametrize(
+    ("fields", "update_data"),
+    [
+        ({"parent": {"key": "SECRET-1"}}, None),
+        ({"customfield_10014": "SECRET-1"}, None),
+        (None, {"parent": [{"set": {"key": "SECRET-1"}}]}),
+        (None, {"customfield_10014": [{"set": "SECRET-1"}]}),
+        (
+            None,
+            {
+                "issuelinks": [
+                    {
+                        "add": {
+                            "type": {"name": "Blocks"},
+                            "outwardIssue": {"key": "SECRET-1"},
+                        }
+                    }
+                ]
+            },
+        ),
+    ],
+)
+def test_transition_refuses_references_outside_allowlist(
+    fields: dict[str, Any] | None, update_data: dict[str, Any] | None
+) -> None:
+    fetcher = _epic_fetcher()
+    fetcher.get_transitions_models = MagicMock(return_value=[])  # type: ignore[method-assign]
+
+    with pytest.raises(ScopeViolationError):
+        fetcher.transition_issue(
+            "ALLOWED-1", "31", fields=fields, update_data=update_data
+        )
+
+    fetcher.jira.set_issue_status.assert_not_called()
+    fetcher.jira.post.assert_not_called()

@@ -4,7 +4,14 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
+from unittest.mock import (
+    AsyncMock,
+    MagicMock,
+    Mock,
+    PropertyMock,
+    mock_open,
+    patch,
+)
 
 import pytest
 from mcp.types import EmbeddedResource, TextContent
@@ -414,6 +421,69 @@ class TestAttachmentsMixin:
         ][0]
         assert "/child/attachment/att12345/data" in second_call_url
 
+    def test_upload_attachment_versioning_fallback_uses_v2_under_oauth(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Cloud OAuth looks the attachment id up through v2, not the v1 list.
+
+        Atlassian removed the v1 ``child/attachment`` read endpoint from the
+        OAuth gateway (410 Gone), so the v1 GET made re-uploading an existing
+        filename impossible.
+        """
+        filename = "report.pdf"
+        updated_attachment = {"id": "att999", "title": filename}
+
+        conflict_response = Mock()
+        conflict_response.status_code = 400
+        conflict_response.text = (
+            f"Attachment with same file name already exists: {filename}"
+        )
+        update_response = Mock()
+        update_response.status_code = 200
+        update_response.raise_for_status.return_value = None
+        update_response.json.return_value = updated_attachment
+
+        attachments_mixin.confluence._session.post.side_effect = [
+            conflict_response,
+            update_response,
+        ]
+        v2_adapter = Mock()
+        v2_adapter.get_page_attachments.return_value = {
+            "results": [{"id": "att999", "title": filename}]
+        }
+
+        with (
+            patch.object(
+                type(attachments_mixin),
+                "_v2_adapter",
+                new_callable=PropertyMock,
+                return_value=v2_adapter,
+            ),
+            patch("os.getcwd", return_value="/absolute/path"),
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getsize", return_value=200),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.abspath", return_value=f"/absolute/path/{filename}"),
+            patch("os.path.basename", return_value=filename),
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined",
+                mock_open(read_data=b"updated content"),
+            ),
+        ):
+            result = attachments_mixin.upload_attachment(
+                "123456", f"/absolute/path/{filename}"
+            )
+
+        assert result["success"] is True
+        v2_adapter.get_page_attachments.assert_called_once_with(
+            "123456", filename=filename
+        )
+        attachments_mixin.confluence._session.get.assert_not_called()
+        second_call_url = attachments_mixin.confluence._session.post.call_args_list[1][
+            0
+        ][0]
+        assert "/child/attachment/att999/data" in second_call_url
+
     # Tests for upload_attachments method
 
     def test_upload_attachments_success(self, attachments_mixin: AttachmentsMixin):
@@ -700,6 +770,7 @@ class TestAttachmentsMixin:
             mock_file.assert_called_once_with(test_path, "wb")
             mock_file().write.assert_called_once_with(b"test content")
             mock_makedirs.assert_called_once()
+            mock_response.close.assert_called_once()
 
     def test_download_attachment_relative_path(
         self, attachments_mixin: AttachmentsMixin
@@ -756,6 +827,7 @@ class TestAttachmentsMixin:
                 "https://example.atlassian.net/attachment", "/tmp/test_file.txt"
             )
         assert result is False
+        mock_response.close.assert_called_once()
 
     def test_download_attachment_file_write_error(
         self, attachments_mixin: AttachmentsMixin
@@ -781,6 +853,7 @@ class TestAttachmentsMixin:
                 "https://example.atlassian.net/attachment", "/tmp/test_file.txt"
             )
             assert result is False
+            mock_response.close.assert_called_once()
 
     def test_download_attachment_file_not_created(
         self, attachments_mixin: AttachmentsMixin
@@ -827,6 +900,7 @@ class TestAttachmentsMixin:
         attachments_mixin.confluence._session.get.assert_called_once_with(
             "https://example.atlassian.net/download/att123", stream=True
         )
+        mock_response.close.assert_called_once()
 
     def test_fetch_attachment_content_empty_url(
         self, attachments_mixin: AttachmentsMixin
@@ -847,6 +921,7 @@ class TestAttachmentsMixin:
             "https://example.atlassian.net/download/att123"
         )
         assert result is None
+        mock_response.close.assert_called_once()
 
     def test_fetch_attachment_content_network_exception(
         self, attachments_mixin: AttachmentsMixin

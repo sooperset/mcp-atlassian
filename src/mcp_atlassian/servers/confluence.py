@@ -1074,8 +1074,10 @@ async def update_page_section(
         Field(
             description=(
                 "Exact text of the heading that starts the section to replace. "
-                "Matching is case-sensitive. Use confluence_get_page with "
-                "convert_to_markdown=false to inspect exact heading text when unsure."
+                "Matching is case-sensitive. The page title is not a section: "
+                "passing it is refused so the whole page is not overwritten. "
+                "Use confluence_get_page with convert_to_markdown=false to "
+                "inspect exact heading text when unsure."
             )
         ),
     ],
@@ -1984,8 +1986,12 @@ async def upload_attachment(
             minor_edit=minor_edit,
         )
 
+    uploaded = bool(result.get("success")) if isinstance(result, dict) else bool(result)
+    message = (
+        "Attachment uploaded successfully" if uploaded else "Attachment upload failed"
+    )
     return json.dumps(
-        {"message": "Attachment uploaded successfully", "attachment": result},
+        {"message": message, "attachment": result},
         indent=2,
         ensure_ascii=False,
     )

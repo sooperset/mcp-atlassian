@@ -253,13 +253,21 @@ def open_confined(
         msg = f"Not a file path: {path}"
         raise ValueError(msg)
 
-    dir_fd = os.open(parent, os.O_RDONLY | _O_DIRECTORY | _O_CLOEXEC)
+    # Anchor the open on a directory descriptor only where ``os.open`` accepts
+    # ``dir_fd``. Windows cannot open a directory with ``os.open`` (it raises
+    # PermissionError), so it opens the file by path below. On other platforms
+    # a failure to open the directory is a real error and is not downgraded.
+    if os.open in os.supports_dir_fd:
+        dir_fd = os.open(parent, os.O_RDONLY | _O_DIRECTORY | _O_CLOEXEC)
+    else:
+        dir_fd = -1
     fd = -1
     try:
         real_parent = Path(os.path.realpath(parent))
-        if not real_parent.is_relative_to(resolved_base) or not os.path.samestat(
-            os.fstat(dir_fd), os.stat(real_parent)
-        ):
+        outside = not real_parent.is_relative_to(resolved_base)
+        if not outside and dir_fd >= 0:
+            outside = not os.path.samestat(os.fstat(dir_fd), os.stat(real_parent))
+        if outside:
             msg = f"Path {path} resolves outside {resolved_base}"
             raise ValueError(msg)
 
@@ -269,9 +277,9 @@ def open_confined(
         else:
             flags |= os.O_WRONLY | os.O_CREAT | os.O_TRUNC
         try:
-            if os.open in os.supports_dir_fd:
+            if dir_fd >= 0:
                 fd = os.open(name, flags, 0o666, dir_fd=dir_fd)
-            else:  # pragma: no cover - platforms without dir_fd (Windows)
+            else:  # no dir_fd support (Windows)
                 if os.path.islink(real_parent / name):
                     msg = f"Refusing to follow a symlink: {path}"
                     raise ValueError(msg)
@@ -292,7 +300,8 @@ def open_confined(
     finally:
         if fd >= 0:
             os.close(fd)
-        os.close(dir_fd)
+        if dir_fd >= 0:
+            os.close(dir_fd)
     # Keep the path as the name (requests uses it as the upload filename).
     file_obj.raw.name = str(real_parent / name)  # type: ignore[attr-defined]
     return file_obj
