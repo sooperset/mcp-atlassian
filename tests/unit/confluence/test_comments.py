@@ -370,7 +370,10 @@ class TestReplyToComment:
         assert result is not None
         assert result.parent_comment_id == "456789123"
         assert comments_mixin.confluence.get_page_by_id.call_args_list == [
-            call(page_id="456789123", expand="container,ancestors"),
+            call(
+                page_id="456789123",
+                expand="container,ancestors,extensions.inlineProperties",
+            ),
             call(page_id="987654321", expand="space"),
         ]
         comments_mixin.confluence.post.assert_called_once_with(
@@ -428,6 +431,84 @@ class TestReplyToComment:
         payload = comments_mixin_dc.confluence.post.call_args.kwargs["data"]
         assert payload["container"] == {"id": "987654321", "type": "page"}
         assert payload["ancestors"] == [{"id": "456789123"}]
+
+    def test_reply_to_inline_comment_v1_server_dc_keeps_inline_location(
+        self, comments_mixin_dc
+    ):
+        """Server/DC replies to inline comments stay in the inline thread."""
+        comments_mixin_dc.confluence.get_page_by_id.side_effect = [
+            {
+                **MOCK_PARENT_COMMENT_V1_RESPONSE,
+                "extensions": {"location": "inline"},
+            },
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
+        comments_mixin_dc.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
+
+        result = comments_mixin_dc.reply_to_comment("456789123", "This is a reply")
+
+        assert result is not None
+        payload = comments_mixin_dc.confluence.post.call_args.kwargs["data"]
+        assert payload["ancestors"] == [{"id": "456789123"}]
+        assert payload["extensions"] == {"location": "inline"}
+
+    def test_reply_to_footer_comment_v1_has_no_inline_location(self, comments_mixin_dc):
+        """Footer comment replies keep the default footer location."""
+        comments_mixin_dc.confluence.get_page_by_id.side_effect = [
+            {
+                **MOCK_PARENT_COMMENT_V1_RESPONSE,
+                "extensions": {"location": "footer"},
+            },
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
+        comments_mixin_dc.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
+
+        result = comments_mixin_dc.reply_to_comment("456789123", "This is a reply")
+
+        assert result is not None
+        payload = comments_mixin_dc.confluence.post.call_args.kwargs["data"]
+        assert "extensions" not in payload
+
+    @pytest.mark.parametrize("auth_type", ["basic", "oauth"])
+    def test_reply_to_inline_comment_cloud_uses_inline_v2(
+        self, comments_mixin, auth_type
+    ):
+        """Cloud replies to inline comments use the v2 inline endpoint."""
+        comments_mixin.config.auth_type = auth_type
+        comments_mixin.confluence.get_page_by_id.return_value = {
+            **MOCK_PARENT_COMMENT_V1_RESPONSE,
+            "extensions": {"location": "inline"},
+        }
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>Inline reply</p>"
+        )
+        mock_adapter = MagicMock()
+        mock_adapter.create_inline_comment_reply.return_value = {
+            **MOCK_INLINE_COMMENT_V2_RESPONSE,
+            "parentCommentId": "456789123",
+        }
+
+        with (
+            patch.object(
+                type(comments_mixin),
+                "_inline_v2_adapter",
+                new_callable=lambda: property(lambda self: mock_adapter),
+            ),
+            patch.object(
+                type(comments_mixin),
+                "_v2_adapter",
+                new_callable=lambda: property(lambda self: mock_adapter),
+            ),
+        ):
+            result = comments_mixin.reply_to_comment("456789123", "Inline reply")
+
+        assert result is not None
+        mock_adapter.create_inline_comment_reply.assert_called_once_with(
+            parent_comment_id="456789123",
+            body="<p>Inline reply</p>",
+        )
+        mock_adapter.create_footer_comment.assert_not_called()
+        comments_mixin.confluence.post.assert_not_called()
 
     def test_reply_to_comment_v2_oauth_success(self, comments_mixin):
         """T2: reply_to_comment v2/OAuth routes through v2_adapter."""

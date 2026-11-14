@@ -223,8 +223,24 @@ class CommentsMixin(ConfluenceClient):
             if not content.strip().startswith("<"):
                 content = self.preprocessor.markdown_to_confluence_storage(content)
 
+            parent = self.confluence.get_page_by_id(
+                page_id=comment_id,
+                expand="container,ancestors,extensions.inlineProperties",
+            )
+            extensions = parent.get("extensions")
+            is_inline = (
+                isinstance(extensions, dict) and extensions.get("location") == "inline"
+            )
+
+            # Inline replies need the v2 inline endpoint on every Cloud auth type
+            inline_v2_adapter = self._inline_v2_adapter if is_inline else None
             v2_adapter = self._v2_adapter
-            if v2_adapter:
+            if inline_v2_adapter:
+                response = inline_v2_adapter.create_inline_comment_reply(
+                    parent_comment_id=comment_id, body=content
+                )
+                space_key = ""
+            elif v2_adapter:
                 response = v2_adapter.create_footer_comment(
                     parent_comment_id=comment_id, body=content
                 )
@@ -232,7 +248,7 @@ class CommentsMixin(ConfluenceClient):
             else:
                 # v1 API: thread replies under the parent page with ancestors,
                 # not as a direct child of the parent comment.
-                page_id = self._resolve_page_id_for_parent_comment(comment_id)
+                page_id = self._resolve_page_id_for_parent_comment(comment_id, parent)
                 page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
                 space_key = page.get("space", {}).get("key", "")
                 data: dict[str, Any] = {
@@ -249,6 +265,9 @@ class CommentsMixin(ConfluenceClient):
                         },
                     },
                 }
+                if is_inline:
+                    # Keep replies in the inline thread instead of the footer
+                    data["extensions"] = {"location": "inline"}
                 response = self.confluence.post("rest/api/content/", data=data)
                 space_key = ""
 
@@ -278,11 +297,14 @@ class CommentsMixin(ConfluenceClient):
         page_id = reference.get("id")
         return str(page_id) if page_id is not None else None
 
-    def _resolve_page_id_for_parent_comment(self, comment_id: str) -> str:
+    def _resolve_page_id_for_parent_comment(
+        self, comment_id: str, parent: dict[str, Any]
+    ) -> str:
         """Resolve the page containing a parent comment, including nested replies.
 
         Args:
             comment_id: The ID of the parent comment.
+            parent: The parent comment, expanded with container and ancestors.
 
         Returns:
             The page ID that owns the comment thread.
@@ -290,10 +312,6 @@ class CommentsMixin(ConfluenceClient):
         Raises:
             ValueError: If the parent response contains no page reference.
         """
-        parent = self.confluence.get_page_by_id(
-            page_id=comment_id, expand="container,ancestors"
-        )
-
         page_id = self._page_id_from_reference(parent.get("container"))
         if page_id:
             return page_id
