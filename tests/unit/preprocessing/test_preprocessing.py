@@ -147,10 +147,9 @@ def test_clean_jira_text_smart_links(preprocessor_with_jira):
     confluence_url = (
         f"{base_url}/wiki/spaces/PROJ/pages/987654321/Example+Meeting+Notes"
     )
-    processed_url = f"{base_url}/wiki/spaces/PROJ/pages/987654321/ExampleMeetingNotes"
     text = f"[Meeting Notes|{confluence_url}|smart-link]"
     cleaned = preprocessor_with_jira.clean_jira_text(text)
-    assert cleaned == f"[Example Meeting Notes]({processed_url})"
+    assert cleaned == f"[Example Meeting Notes]({confluence_url})"
 
 
 @pytest.mark.parametrize(
@@ -329,6 +328,65 @@ def test_jira_to_markdown_list_markers_are_not_emphasis(
     preprocessor_with_jira, wiki, expected
 ):
     """Preserve list depth and format emphasis within the item body (#1651)."""
+    assert preprocessor_with_jira.jira_to_markdown(wiki) == expected
+
+
+@pytest.mark.parametrize(
+    ("wiki", "expected"),
+    [
+        (
+            "TIFF stored for a RENDER_INVOICE_PDF_TO_TIFF buyer",
+            "TIFF stored for a RENDER_INVOICE_PDF_TO_TIFF buyer",
+        ),
+        ("AP_INVOICE_SEARCH_CONSTRAINT", "AP_INVOICE_SEARCH_CONSTRAINT"),
+        (
+            "set customfield_10101 and snake_case_word",
+            "set customfield_10101 and snake_case_word",
+        ),
+        ("say _hi_ there", "say *hi* there"),
+        ("(_hi_), _two words_.", "(*hi*), *two words*."),
+        ("_hi_ then snake_case_word", "*hi* then snake_case_word"),
+        ("see {{RENDER_INVOICE_PDF_TO_TIFF}}", "see `RENDER_INVOICE_PDF_TO_TIFF`"),
+        ("{noformat}\na_b_c _d_\n{noformat}", "```\n\na_b_c _d_\n\n```"),
+        ("*bold* and a*b*c", "**bold** and a*b*c"),
+        ("call __init__ then __del__ later", "call __init__ then __del__ later"),
+        ("__main__ and _hi_", "__main__ and *hi*"),
+        ("foo__bar__baz", "foo__bar__baz"),
+    ],
+)
+def test_jira_to_markdown_intraword_underscores_are_literal(
+    preprocessor_with_jira, wiki, expected
+):
+    """Jira's renderer never italicizes an underscore between letters or digits."""
+    assert preprocessor_with_jira.jira_to_markdown(wiki) == expected
+
+
+@pytest.mark.parametrize(
+    ("wiki", "expected"),
+    [
+        # Expected output mirrors Jira Cloud's wiki renderer for each input.
+        ("a foo_bar_baz b", "a foo_bar_baz b"),
+        ("~ABC-1 and ~XYZ-2", "~ABC-1 and ~XYZ-2"),
+        ("x^2^ and a ^sup^ b", "x^2^ and a <sup>sup</sup> b"),
+        ("1+2+3 and a +ins+ b", "1+2+3 and a <ins>ins</ins> b"),
+        ("x*y*z and *bold*", "x*y*z and **bold**"),
+        ("H~2~O and (~sub~)", "H~2~O and (<sub>sub</sub>)"),
+        ("*bold*text and text*bold*", "**bold*text and text*bold**"),
+        ("foo*bar* baz and *bar*foo", "foo*bar* baz and *bar*foo"),
+        ("(+ins+). and ~sub~", "(<ins>ins</ins>). and <sub>sub</sub>"),
+        ("_it_, *b* and a_b _c_", "*it*, **b** and a_b *c*"),
+        ("see a + b\nthen c + d", "see a + b\nthen c + d"),
+        ("+one\ntwo+ and *three\nfour*", "+one\ntwo+ and *three\nfour*"),
+        ("_one\ntwo_ and ~x\ny~ and ^p\nq^", "_one\ntwo_ and ~x\ny~ and ^p\nq^"),
+        ("a + b + c and 2 * 3 * 4", "a + b + c and 2 * 3 * 4"),
+        ("a ~ b ~ c and x ^ y ^ z", "a ~ b ~ c and x ^ y ^ z"),
+        ("_ spaced _ and *bold *", "_ spaced _ and *bold *"),
+    ],
+)
+def test_jira_to_markdown_phrase_delimiters_match_jira_renderer(
+    preprocessor_with_jira, wiki, expected
+):
+    """Phrase markup opens and closes only where Jira's renderer would."""
     assert preprocessor_with_jira.jira_to_markdown(wiki) == expected
 
 
