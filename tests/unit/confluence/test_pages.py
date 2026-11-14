@@ -3836,6 +3836,53 @@ class TestUpdatePageSection:
             with pytest.raises(ValueError, match="not found in page"):
                 pages_mixin.update_page_section("1", "Nonexistent Heading", "data")
 
+    def test_page_title_as_heading_raises(self, pages_mixin):
+        """The leading <h1> page title is refused instead of wiping the page."""
+        storage = (
+            "<h1>My Page</h1><p>intro</p>"
+            "<h2>Section A</h2><p>a content</p>"
+            "<h2>Section B</h2><p>b content</p>"
+        )
+        raw_page = self._make_page("1", "My Page", storage)
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(pages_mixin, "update_page") as mock_update,
+        ):
+            with pytest.raises(ValueError, match="is the title of page"):
+                pages_mixin.update_page_section("1", "My Page", "new body")
+
+        mock_update.assert_not_called()
+
+    def test_section_heading_matching_title_is_used(self, pages_mixin):
+        """An h2 whose text equals the page title is still a real section."""
+        storage = (
+            "<h1>My Page</h1><p>intro</p>"
+            "<h2>My Page</h2><p>old</p>"
+            "<h2>Other</h2><p>other</p>"
+        )
+        raw_page = self._make_page("1", "My Page", storage)
+        updated_page = self._make_page("1", "My Page", "")
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "My Page", "new")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert "<p>intro</p>" in body
+        assert "<p>new</p>" in body
+        assert "<p>old</p>" not in body
+        assert "<h2>Other</h2>" in body
+        assert "<p>other</p>" in body
+
     def test_invalid_content_format_raises(self, pages_mixin):
         """ValueError is raised for unsupported content_format values."""
         with pytest.raises(ValueError, match="Invalid content_format"):
@@ -3886,3 +3933,129 @@ class TestUpdatePageSection:
             )
 
         pages_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("wrapper", "marker"),
+        [
+            (
+                '<ac:structured-macro ac:name="excerpt">'
+                "<ac:rich-text-body>{content}</ac:rich-text-body>"
+                "</ac:structured-macro>",
+                'ac:name="excerpt"',
+            ),
+            (
+                '<ac:structured-macro ac:name="expand">'
+                "<ac:rich-text-body>{content}</ac:rich-text-body>"
+                "</ac:structured-macro>",
+                'ac:name="expand"',
+            ),
+            (
+                '<ac:layout><ac:layout-section ac:type="single">'
+                "<ac:layout-cell>{content}</ac:layout-cell>"
+                "</ac:layout-section></ac:layout>",
+                "ac:layout-cell",
+            ),
+        ],
+    )
+    def test_structural_wrapper_with_same_level_heading_is_not_wiped(
+        self, pages_mixin, wrapper, marker
+    ):
+        """A following structural wrapper with a peer heading is a boundary."""
+        wrapped_section = wrapper.format(
+            content="<h1>Notes</h1><ul><li>keep these notes</li></ul>"
+        )
+        storage = (
+            "<h1>Agenda</h1>"
+            "<ul><li>old agenda</li></ul>"
+            f"{wrapped_section}"
+            "<h1>Next steps</h1>"
+            "<ul><li>follow up Friday</li></ul>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+        updated_page = self._make_page("1", "P", "")
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<ul><li>new agenda</li></ul>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "Agenda", "new agenda")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert "old agenda" not in body
+        assert "new agenda" in body
+        assert marker in body
+        assert "<h1>Notes</h1>" in body
+        assert "<li>keep these notes</li>" in body
+        assert "<h1>Next steps</h1>" in body
+        assert "<li>follow up Friday</li>" in body
+
+    def test_heading_inside_excerpt_can_still_be_the_target(self, pages_mixin):
+        """Updating a heading that lives inside an excerpt only replaces that section."""
+        storage = (
+            "<h1>Agenda</h1><ul><li>keep agenda</li></ul>"
+            '<ac:structured-macro ac:name="excerpt">'
+            "<ac:rich-text-body>"
+            "<h1>Notes</h1><ul><li>old notes</li></ul>"
+            "</ac:rich-text-body>"
+            "</ac:structured-macro>"
+            "<h1>Next steps</h1><ul><li>follow up Friday</li></ul>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+        updated_page = self._make_page("1", "P", "")
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<ul><li>new notes</li></ul>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "Notes", "new notes")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert "old notes" not in body
+        assert "new notes" in body
+        assert "keep agenda" in body
+        assert "<h1>Next steps</h1>" in body
+        assert "<li>follow up Friday</li>" in body
+
+    def test_info_panel_with_heading_is_not_a_boundary(self, pages_mixin):
+        """Non-structural wrappers with headings stay in the section body."""
+        storage = (
+            "<h1>Agenda</h1>"
+            "<ul><li>old agenda</li></ul>"
+            '<ac:structured-macro ac:name="info">'
+            "<ac:rich-text-body>"
+            "<h1>Note</h1><p>panel note</p>"
+            "</ac:rich-text-body>"
+            "</ac:structured-macro>"
+            "<h1>Next steps</h1>"
+            "<ul><li>follow up Friday</li></ul>"
+        )
+        raw_page = self._make_page("1", "P", storage)
+        updated_page = self._make_page("1", "P", "")
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<ul><li>new agenda</li></ul>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "Agenda", "new agenda")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert "old agenda" not in body
+        assert "panel note" not in body
+        assert 'ac:name="info"' not in body
+        assert "new agenda" in body
+        assert "<h1>Next steps</h1>" in body

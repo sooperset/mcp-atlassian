@@ -52,6 +52,61 @@ class TestUsersMixin:
         # Verify self.jira.myself was called
         users_mixin.jira.myself.assert_called_once()
 
+    def test_get_current_user_profile_from_api(self, users_mixin):
+        """get_current_user_profile returns simplified fields from /myself."""
+        users_mixin.jira.resource_url = MagicMock(return_value="rest/api/2/myself")
+        users_mixin.jira.get = MagicMock(
+            return_value={
+                "name": "jdoe",
+                "key": "JIRAUSER12345",
+                "displayName": "John Doe",
+                "emailAddress": "john.doe@example.com",
+            }
+        )
+
+        user = users_mixin.get_current_user_profile()
+
+        users_mixin.jira.get.assert_called_once_with("rest/api/2/myself", params=None)
+        assert user["name"] == "jdoe"
+        assert user["key"] == "JIRAUSER12345"
+        assert user["display_name"] == "John Doe"
+        assert user["email"] == "john.doe@example.com"
+
+    def test_get_current_user_profile_with_expand(self, users_mixin):
+        """expand is forwarded to the API and known sections are returned."""
+        users_mixin.jira.resource_url = MagicMock(return_value="rest/api/2/myself")
+        users_mixin.jira.get = MagicMock(
+            return_value={
+                "accountId": "5b10ac8d82e05b22cc7d4ef5",
+                "displayName": "John Doe",
+                "groups": {"size": 1, "items": [{"name": "jira-users"}]},
+                "applicationRoles": {
+                    "size": 1,
+                    "items": [{"key": "jira-software", "name": "Jira Software"}],
+                },
+            }
+        )
+
+        user = users_mixin.get_current_user_profile(expand="groups")
+
+        users_mixin.jira.get.assert_called_once_with(
+            "rest/api/2/myself", params={"expand": "groups"}
+        )
+        assert user["account_id"] == "5b10ac8d82e05b22cc7d4ef5"
+        assert user["groups"] == {"size": 1, "items": [{"name": "jira-users"}]}
+        assert user["applicationRoles"] == {
+            "size": 1,
+            "items": [{"key": "jira-software", "name": "Jira Software"}],
+        }
+
+    def test_get_current_user_profile_unexpected_type(self, users_mixin):
+        """A non-dict /myself response raises an error."""
+        users_mixin.jira.resource_url = MagicMock(return_value="rest/api/2/myself")
+        users_mixin.jira.get = MagicMock(return_value=["not", "a", "dict"])
+
+        with pytest.raises(Exception, match="Error processing current user profile"):
+            users_mixin.get_current_user_profile()
+
     def test_get_current_user_account_id_data_center_timestamp_issue(self, users_mixin):
         """Test that get_current_user_account_id handles Jira Data Center with problematic timestamps."""
         # Ensure no cached value
@@ -1181,23 +1236,21 @@ class TestUserProfileMeIdentifier:
     """
 
     def test_me_resolves_to_current_user(self, jira_fetcher):
-        """'me' identifier resolves via get_current_user_account_id."""
+        """'me' identifier fetches the profile directly from /myself."""
         user_response = {
             "accountId": "5b10ac8d82e05b22cc7d4ef5",
             "displayName": "Test User",
             "emailAddress": "test@example.com",
             "active": True,
         }
-        with patch.object(
-            jira_fetcher,
-            "get_current_user_account_id",
-            return_value="5b10ac8d82e05b22cc7d4ef5",
-        ) as mock_get_current:
-            jira_fetcher.jira.user = MagicMock(return_value=user_response)
-            result = jira_fetcher.get_user_profile_by_identifier("me")
-            assert result is not None
-            assert result.account_id == "5b10ac8d82e05b22cc7d4ef5"
-            mock_get_current.assert_called_once()
+        jira_fetcher.jira.resource_url = MagicMock(return_value="rest/api/2/myself")
+        jira_fetcher.jira.get = MagicMock(return_value=user_response)
+
+        result = jira_fetcher.get_user_profile_by_identifier("me")
+
+        assert result.account_id == "5b10ac8d82e05b22cc7d4ef5"
+        jira_fetcher.jira.get.assert_called_once_with("rest/api/2/myself", params=None)
+        jira_fetcher.jira.user.assert_not_called()
 
     def test_me_case_insensitive(self, jira_fetcher):
         """'Me', 'ME', 'mE' all resolve to current user."""
@@ -1206,15 +1259,15 @@ class TestUserProfileMeIdentifier:
             "displayName": "Test User",
             "active": True,
         }
-        with patch.object(
-            jira_fetcher,
-            "get_current_user_account_id",
-            return_value="5b10ac8d82e05b22cc7d4ef5",
-        ):
-            jira_fetcher.jira.user = MagicMock(return_value=user_response)
-            for variant in ["Me", "ME", "mE"]:
-                result = jira_fetcher.get_user_profile_by_identifier(variant)
-                assert result is not None
+        jira_fetcher.jira.resource_url = MagicMock(return_value="rest/api/2/myself")
+        jira_fetcher.jira.get = MagicMock(return_value=user_response)
+
+        for variant in ["Me", "ME", "mE"]:
+            result = jira_fetcher.get_user_profile_by_identifier(variant)
+            assert result.account_id == "5b10ac8d82e05b22cc7d4ef5"
+
+        assert jira_fetcher.jira.get.call_count == 3
+        jira_fetcher.jira.user.assert_not_called()
 
 
 class TestGetAccountIdServerDC:

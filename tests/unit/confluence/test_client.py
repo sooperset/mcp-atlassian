@@ -60,6 +60,26 @@ def test_init_with_basic_auth():
         )
 
 
+def test_close_closes_underlying_session():
+    """close() should close the underlying requests session connection pool."""
+    config = ConfluenceConfig(
+        url="https://test.atlassian.net/wiki",
+        auth_type="basic",
+        username="test_user",
+        api_token="test_token",
+    )
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        client = ConfluenceClient(config=config)
+
+        client.close()
+
+        mock_confluence.return_value._session.close.assert_called_once()
+
+
 def test_init_with_token_auth():
     """Test initializing the client with token auth configuration."""
     # Arrange
@@ -427,7 +447,7 @@ def test_confluence_fetcher_attachment_method_calls():
             patch("os.path.isabs", return_value=True),
             patch("os.path.basename", return_value="test.txt"),
             patch("os.path.getsize", return_value=100),
-            patch("builtins.open", MagicMock()),
+            patch("mcp_atlassian.confluence.attachments.open_confined", MagicMock()),
         ):
             result = fetcher.upload_attachment("123", "/path/to/test.txt")
             assert result["success"] is True
