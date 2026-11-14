@@ -327,9 +327,7 @@ class BasePreprocessor:
         def _cell(value: object) -> str:
             return str(value or "").replace("|", "\\|").replace("\n", " ").strip()
 
-        for macro in soup.find_all(
-            "ac:structured-macro", attrs={"ac:name": "roadmap"}
-        ):
+        for macro in soup.find_all("ac:structured-macro", attrs={"ac:name": "roadmap"}):
             params = {
                 p.get("ac:name", ""): p.get_text()
                 for p in macro.find_all("ac:parameter", recursive=False)

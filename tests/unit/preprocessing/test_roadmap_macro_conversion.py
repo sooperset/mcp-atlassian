@@ -3,9 +3,6 @@
 import json
 import urllib.parse
 
-import pytest
-from bs4 import BeautifulSoup
-
 from mcp_atlassian.preprocessing.base import BasePreprocessor
 
 
@@ -126,11 +123,22 @@ def test_roadmap_macro_fallback_on_missing_source():
 def test_roadmap_macro_pipe_escaping():
     data = {
         "title": "Plan",
-        "timeline": {"startDate": "2024-01-01", "endDate": "2024-12-31", "displayOption": "Month"},
+        "timeline": {
+            "startDate": "2024-01-01",
+            "endDate": "2024-12-31",
+            "displayOption": "Month",
+        },
         "lanes": [
             {
                 "title": "Lane|A",
-                "bars": [{"title": "Bar|B", "startDate": "2024-01-01", "duration": 1, "description": "desc|C"}],
+                "bars": [
+                    {
+                        "title": "Bar|B",
+                        "startDate": "2024-01-01",
+                        "duration": 1,
+                        "description": "desc|C",
+                    }
+                ],
             }
         ],
     }
