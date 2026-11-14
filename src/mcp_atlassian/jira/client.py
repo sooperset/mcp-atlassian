@@ -14,6 +14,7 @@ from mcp_atlassian.preprocessing import JiraPreprocessor
 from mcp_atlassian.utils.http import (
     configure_circuit_breaker,
     configure_concurrency,
+    configure_default_timeout,
     configure_rate_limit,
     configure_retry,
 )
@@ -219,6 +220,9 @@ class JiraClient:
         configure_concurrency(self.jira._session, service="Jira")
         configure_rate_limit(self.jira._session, service="Jira")
         configure_circuit_breaker(self.jira._session, service="Jira")
+        configure_default_timeout(
+            self.jira._session, self.config.timeout, service="Jira"
+        )
 
         self.jira._session = apply_proxy_configuration(
             logger=logger,

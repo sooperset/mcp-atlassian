@@ -11,6 +11,7 @@ from ..exceptions import MCPAtlassianAuthenticationError
 from ..utils.http import (
     configure_circuit_breaker,
     configure_concurrency,
+    configure_default_timeout,
     configure_rate_limit,
     configure_retry,
 )
@@ -202,6 +203,9 @@ class ConfluenceClient:
         configure_concurrency(self.confluence._session, service="Confluence")
         configure_rate_limit(self.confluence._session, service="Confluence")
         configure_circuit_breaker(self.confluence._session, service="Confluence")
+        configure_default_timeout(
+            self.confluence._session, self.config.timeout, service="Confluence"
+        )
 
         self.confluence._session = apply_proxy_configuration(
             logger=logger,
