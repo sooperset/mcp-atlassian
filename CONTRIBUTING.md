@@ -133,10 +133,13 @@ Thank you for your interest in contributing to MCP Atlassian! This document prov
 
 ## Release Process
 
-Releases follow semantic versioning:
-- **MAJOR** version for incompatible API changes
-- **MINOR** version for backwards-compatible functionality additions
-- **PATCH** version for backwards-compatible bug fixes
+Versions use `0.MINOR.PATCH`, the same scheme as [uv](https://docs.astral.sh/uv/reference/policies/versioning/) and [Ruff](https://docs.astral.sh/ruff/versioning/):
+
+- **PATCH** (`0.24.3` → `0.24.4`): new features and bug fixes. We aim to release about once a week.
+- **MINOR** (`0.24.x` → `0.25.0`): any change that can break an existing setup, such as removing or renaming a tool, parameter, or response field, changing a default or the meaning of an environment variable, or dropping a Python version. The release notes open with a **Breaking changes** section.
+- Security fixes ship as a PATCH release as soon as they are ready.
+
+Pinning to a minor line (`mcp-atlassian>=0.24,<0.25` or the Docker tag `:0.24`) keeps you on features, fixes, and security patches without breaking changes.
 
 ---
 

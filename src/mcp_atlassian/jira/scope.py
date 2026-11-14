@@ -36,6 +36,26 @@ def _denied(kind: str, value: object) -> ScopeViolationError:
     )
 
 
+def _issue_reference(value: object) -> object:
+    """Return the issue key or ID a parent/epic value points at.
+
+    ``None`` and ``""`` clear a reference and are returned as None. A dict
+    yields its ``key`` or ``id``; any other dict is returned unchanged so the
+    check denies it.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, dict):
+        ref = value.get("key") or value.get("id")
+        return ref if ref is not None else value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return value
+
+
+_REFERENCE_VERBS = ("set", "add", "edit")
+
+
 def _path_segment(value: object) -> str:
     return quote(str(value).strip(), safe="")
 
@@ -154,6 +174,65 @@ class ScopeMixin(JiraClient):
             raise _denied("issue", issue_key) from e
         if not isinstance(project_key, str) or project_key.upper() not in allowed:
             raise _denied("issue", issue_key)
+
+    def _epic_link_field_id(self) -> str | None:
+        try:
+            field_ids = self.get_field_ids_to_epic()  # type: ignore[attr-defined]
+        except Exception as e:  # noqa: BLE001 - no epic link field known
+            logger.debug(f"Could not discover the Epic Link field: {e}")
+            return None
+        field_id = field_ids.get("epic_link") if isinstance(field_ids, dict) else None
+        return field_id if isinstance(field_id, str) and field_id else None
+
+    def ensure_issue_relations_allowed(
+        self,
+        fields: dict[str, Any] | None,
+        update: dict[str, Any] | None = None,
+    ) -> None:
+        """Check the issues a create, update or transition payload points at.
+
+        ``fields.parent``, the Epic Link custom field, and the ``parent``,
+        Epic Link and ``issuelinks`` operations of an ``update`` payload each
+        name another issue. Writing them would attach the issue to an issue
+        outside the allowlist, so every named issue must be allowed. Clearing
+        a parent or epic link (``None``) is allowed.
+
+        Args:
+            fields: The ``fields`` payload sent to Jira.
+            update: The ``update`` payload sent to Jira, if any.
+        """
+        if self.allowed_projects() is None:
+            return
+        fields = fields or {}
+        update = update or {}
+        epic_link = None
+        if any(k.startswith("customfield_") for k in (*fields, *update)):
+            epic_link = self._epic_link_field_id()
+
+        refs: list[object] = []
+        for name in ("parent", epic_link):
+            if name and name in fields:
+                refs.append(_issue_reference(fields[name]))
+        for name, operations in update.items():
+            ops = operations if isinstance(operations, list) else [operations]
+            for op in ops:
+                if not isinstance(op, dict):
+                    continue
+                for verb in _REFERENCE_VERBS:
+                    if verb not in op:
+                        continue
+                    value = op[verb]
+                    if name in ("parent", epic_link):
+                        refs.append(_issue_reference(value))
+                    elif name == "issuelinks" and isinstance(value, dict):
+                        refs.extend(
+                            _issue_reference(value.get(side))
+                            for side in ("inwardIssue", "outwardIssue")
+                            if side in value
+                        )
+        for ref in refs:
+            if ref is not None:
+                self.ensure_issue_allowed(ref)
 
     def ensure_issues_allowed(self, issue_keys: object) -> None:
         """Check every issue in a list or comma-separated string."""
