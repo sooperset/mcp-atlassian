@@ -986,6 +986,119 @@ class TestConfluenceV2AdapterFooterComments:
             v2_adapter.get_footer_comments("1")
 
 
+class TestConfluenceV2AdapterSpaces:
+    """Tests for ConfluenceV2Adapter.get_spaces."""
+
+    URL = "https://example.atlassian.net/wiki/api/v2/spaces"
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock session."""
+        return MagicMock(spec=requests.Session)
+
+    @pytest.fixture
+    def v2_adapter(self, mock_session):
+        """Create a ConfluenceV2Adapter instance."""
+        return ConfluenceV2Adapter(
+            session=mock_session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    @staticmethod
+    def _response(keys, next_cursor=None):
+        response = Mock()
+        response.status_code = 200
+        response.links = {}
+        links = {"next": f"/wiki/api/v2/spaces?cursor={next_cursor}"}
+        response.json.return_value = {
+            "results": [
+                {
+                    "id": str(100 + index),
+                    "key": key,
+                    "name": f"Space {key}",
+                    "type": "global",
+                    "status": "current",
+                    "homepageId": str(900 + index),
+                    "_links": {"webui": f"/spaces/{key}"},
+                }
+                for index, key in enumerate(keys)
+            ],
+            "_links": links if next_cursor else {},
+        }
+        return response
+
+    def test_get_spaces_returns_v1_shape(self, v2_adapter, mock_session):
+        """Spaces come back in the v1 listing shape."""
+        mock_session.get.return_value = self._response(["ENG", "OPS"])
+
+        result = v2_adapter.get_spaces(start=0, limit=10)
+
+        mock_session.get.assert_called_once_with(self.URL, params={"limit": 10})
+        assert result["start"] == 0
+        assert result["limit"] == 10
+        assert result["size"] == 2
+        assert "next" not in result["_links"]
+        assert result["results"][0] == {
+            "id": 100,
+            "key": "ENG",
+            "name": "Space ENG",
+            "type": "global",
+            "status": "current",
+            "homepage": {"id": "900"},
+            "_links": {"webui": "/spaces/ENG"},
+        }
+
+    def test_get_spaces_applies_start_across_cursor_pages(
+        self, v2_adapter, mock_session
+    ):
+        """``start`` is an offset into the cursor-paged listing."""
+        mock_session.get.side_effect = [
+            self._response(["A", "B"], next_cursor="c1"),
+            self._response(["C"], next_cursor="c2"),
+        ]
+
+        result = v2_adapter.get_spaces(start=1, limit=2)
+
+        assert [space["key"] for space in result["results"]] == ["B", "C"]
+        assert mock_session.get.call_args_list == [
+            call(self.URL, params={"limit": 3}),
+            call(self.URL, params={"limit": 1, "cursor": "c1"}),
+        ]
+        assert result["_links"]["next"] == "/rest/api/space?start=3&limit=2"
+
+    def test_get_spaces_start_past_the_end(self, v2_adapter, mock_session):
+        """An offset beyond the last space gives an empty page, not an error."""
+        mock_session.get.return_value = self._response(["A"])
+
+        result = v2_adapter.get_spaces(start=5, limit=10)
+
+        assert result["results"] == []
+        assert result["size"] == 0
+        assert "next" not in result["_links"]
+
+    def test_get_spaces_stops_on_repeated_cursor(self, v2_adapter, mock_session):
+        """A cursor that repeats does not loop forever."""
+        mock_session.get.side_effect = [
+            self._response(["A"], next_cursor="same"),
+            self._response(["B"], next_cursor="same"),
+        ]
+
+        result = v2_adapter.get_spaces(start=0, limit=10)
+
+        assert [space["key"] for space in result["results"]] == ["A", "B"]
+        assert mock_session.get.call_count == 2
+
+    def test_get_spaces_http_error(self, v2_adapter, mock_session):
+        """An HTTP error is reported as a ValueError."""
+        response = Mock()
+        response.status_code = 401
+        response.text = "scope does not match"
+        response.raise_for_status.side_effect = HTTPError(response=response)
+        mock_session.get.return_value = response
+
+        with pytest.raises(ValueError, match="Failed to list spaces"):
+            v2_adapter.get_spaces()
+
+
 class TestConfluenceV2AdapterLabels:
     """Tests for ConfluenceV2Adapter.get_page_labels."""
 

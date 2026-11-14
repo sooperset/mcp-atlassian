@@ -366,6 +366,104 @@ class ConfluenceV2Adapter:
                 logger.error(f"Error getting page '{page_id}': {e}")
             raise ValueError(f"Failed to get page '{page_id}': {e}") from e
 
+    def get_spaces(self, start: int = 0, limit: int = 10) -> dict[str, Any]:
+        """List spaces using the v2 API, in the v1 ``get_all_spaces`` shape.
+
+        Confluence Cloud has removed ``GET /rest/api/space`` from the OAuth
+        gateway (410 Gone). ``GET /spaces`` pages by cursor, not by offset, so
+        the listing is read from the beginning and the ``start`` offset is
+        applied to what comes back.
+
+        Args:
+            start: Number of spaces to skip
+            limit: Maximum number of spaces to return
+
+        Returns:
+            A v1-compatible dict with ``results``, ``start``, ``limit``,
+            ``size`` and, when more spaces follow, ``_links.next``.
+
+        Raises:
+            ValueError: If the request fails
+        """
+        try:
+            start = max(0, start)
+            limit = max(0, limit)
+            wanted = start + limit
+            url = f"{self.base_url}/api/v2/spaces"
+            spaces: list[dict[str, Any]] = []
+            cursor: str | None = None
+            seen_cursors: set[str] = set()
+            has_more = False
+
+            while len(spaces) < wanted:
+                params: dict[str, Any] = {"limit": min(250, wanted - len(spaces))}
+                if cursor is not None:
+                    params["cursor"] = cursor
+
+                response = self.session.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+                batch = data.get("results", [])
+                if isinstance(batch, list):
+                    spaces.extend(item for item in batch if isinstance(item, dict))
+
+                cursor = self._comment_next_cursor(response, data)
+                has_more = bool(cursor)
+                if not cursor or cursor in seen_cursors:
+                    break
+                seen_cursors.add(cursor)
+
+            results = [
+                self._convert_v2_space_to_v1_format(space)
+                for space in spaces[start:wanted]
+            ]
+            result: dict[str, Any] = {
+                "results": results,
+                "start": start,
+                "limit": limit,
+                "size": len(results),
+                "_links": {},
+            }
+            if has_more or len(spaces) > wanted:
+                result["_links"]["next"] = (
+                    f"/rest/api/space?start={start + len(results)}&limit={limit}"
+                )
+            logger.debug(f"Retrieved {len(results)} spaces (start={start})")
+            return result
+
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    f"HTTP error listing spaces: {e}\nResponse: {e.response.text}"
+                )
+            else:
+                logger.error(f"Error listing spaces: {e}")
+            raise ValueError(f"Failed to list spaces: {e}") from e
+
+    @staticmethod
+    def _convert_v2_space_to_v1_format(space: dict[str, Any]) -> dict[str, Any]:
+        """Convert a v2 space to the fields the v1 space listing returns."""
+        raw_id = space.get("id")
+        space_id: Any = raw_id
+        if isinstance(raw_id, str) and raw_id.isdigit():
+            # v1 returns the id as a number, v2 as a string.
+            space_id = int(raw_id)
+        links = space.get("_links")
+        webui = links.get("webui") if isinstance(links, dict) else None
+        key = space.get("key")
+        converted: dict[str, Any] = {
+            "id": space_id,
+            "key": key,
+            "name": space.get("name"),
+            "type": space.get("type"),
+            "status": space.get("status"),
+            "_links": {"webui": webui or (f"/spaces/{key}" if key else None)},
+        }
+        homepage_id = space.get("homepageId")
+        if homepage_id:
+            converted["homepage"] = {"id": str(homepage_id)}
+        return converted
+
     def get_space_pages_for_tree(self, space_key: str, limit: int) -> dict[str, Any]:
         """List a space's current pages for a page tree using the v2 API.
 

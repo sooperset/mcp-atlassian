@@ -1,6 +1,6 @@
 """Unit tests for the SpacesMixin class."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -165,3 +165,46 @@ class TestSpacesMixin:
 
         # Assert
         assert result == {}
+
+
+class TestSpacesMixinCloudOAuth:
+    """The space listing on Cloud OAuth goes through the v2 API.
+
+    Atlassian answers 410 Gone for ``GET /rest/api/space`` on the OAuth
+    gateway, so the v1 listing must not be used there.
+    """
+
+    @pytest.fixture
+    def oauth_spaces_mixin(self, oauth_confluence_client):
+        """Create a SpacesMixin configured for Cloud OAuth."""
+        with patch(
+            "mcp_atlassian.confluence.spaces.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = SpacesMixin()
+            mixin.confluence = oauth_confluence_client.confluence
+            mixin.config = oauth_confluence_client.config
+            mixin.preprocessor = oauth_confluence_client.preprocessor
+            return mixin
+
+    def test_get_spaces_uses_v2_on_cloud_oauth(self, oauth_spaces_mixin):
+        """The v2 adapter is used and the v1 library call is never made."""
+        listing = {
+            "results": [{"id": 100, "key": "ENG", "name": "Engineering"}],
+            "start": 10,
+            "limit": 20,
+            "size": 1,
+            "_links": {},
+        }
+        with patch(
+            "mcp_atlassian.confluence.spaces.ConfluenceV2Adapter"
+        ) as adapter_class:
+            adapter = MagicMock()
+            adapter.get_spaces.return_value = listing
+            adapter_class.return_value = adapter
+
+            result = oauth_spaces_mixin.get_spaces(start=10, limit=20)
+
+        adapter.get_spaces.assert_called_once_with(10, 20)
+        oauth_spaces_mixin.confluence.get_all_spaces.assert_not_called()
+        assert result == listing
