@@ -9,10 +9,138 @@ import time
 from typing import Any
 
 import pytest
+from bs4 import BeautifulSoup
 
 from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
 from mcp_atlassian.preprocessing.jira import JiraPreprocessor
 from tests.utils.mocks import MockConfluenceClient
+
+
+@pytest.mark.parametrize("section", ["tbody", ""])
+@pytest.mark.parametrize(
+    ("rows", "expected_rows"),
+    [
+        (
+            '<tr><td rowspan="2">A</td><td>a1</td><td>alpha</td></tr>'
+            "<tr><td>a2</td><td>beta</td></tr>"
+            '<tr><td colspan="2">Total</td><td>2</td></tr>',
+            ["| A | a1 | alpha |", "|  | a2 | beta |", "| Total | | 2 |"],
+        ),
+        (
+            '<tr><td>a1</td><td rowspan="2">A</td><td>alpha</td></tr>'
+            "<tr><td>a2</td><td>beta</td></tr>",
+            ["| a1 | A | alpha |", "| a2 |  | beta |"],
+        ),
+        (
+            '<tr><td>a1</td><td>alpha</td><td rowspan="2">A</td></tr>'
+            "<tr><td>a2</td><td>beta</td></tr>",
+            ["| a1 | alpha | A |", "| a2 | beta |  |"],
+        ),
+        (
+            '<tr><td rowspan="3">A</td><td rowspan="2">B</td><td>1</td></tr>'
+            "<tr><td>2</td></tr><tr><td>C</td><td>3</td></tr>",
+            ["| A | B | 1 |", "|  |  | 2 |", "|  | C | 3 |"],
+        ),
+        (
+            '<tr><td rowspan="2" colspan="2">A</td><td>1</td></tr><tr><td>2</td></tr>',
+            ["| A | | 1 |", "|  |  | 2 |"],
+        ),
+        (
+            '<tr><td rowspan="0">A</td><td>1</td><td>x</td></tr>'
+            "<tr><td>2</td><td>y</td></tr>",
+            ["| A | 1 | x |", "|  | 2 | y |"],
+        ),
+        (
+            '<tr><td rowspan="999999999">A</td><td>1</td><td>x</td></tr>'
+            "<tr><td>2</td><td>y</td></tr>",
+            ["| A | 1 | x |", "|  | 2 | y |"],
+        ),
+        (
+            '<tr><td rowspan="bad">A</td><td>1</td><td>x</td></tr>'
+            "<tr><td>B</td><td>2</td><td>y</td></tr>",
+            ["| A | 1 | x |", "| B | 2 | y |"],
+        ),
+    ],
+    ids=[
+        "first-column",
+        "middle-column",
+        "last-column",
+        "overlapping-lifetimes",
+        "row-and-column-span",
+        "to-end-of-section",
+        "oversized",
+        "malformed",
+    ],
+)
+def test_confluence_rowspan_markdown_keeps_columns(
+    rows: str, expected_rows: list[str], section: str
+) -> None:
+    """Merged cells leave blank positions rather than shifting later values."""
+    table_body = "<tr><th>Group</th><th>Item</th><th>Owner</th></tr>" + rows
+    if section:
+        table_body = f"<{section}>{table_body}</{section}>"
+    html = f"<table>{table_body}</table>"
+    processed_html, markdown = ConfluencePreprocessor("").process_html_content(html)
+    table_rows = [line for line in markdown.splitlines() if line.startswith("|")]
+
+    assert table_rows == [
+        "| Group | Item | Owner |",
+        "| --- | --- | --- |",
+        *expected_rows,
+    ]
+    assert BeautifulSoup(processed_html, "html.parser") == BeautifulSoup(
+        html, "html.parser"
+    )
+
+
+def test_confluence_rowspan_stops_at_row_group_boundary() -> None:
+    """A header span cannot consume positions in the next body section."""
+    html = (
+        '<table><thead><tr><th rowspan="3">Group</th><th>Item</th></tr>'
+        "<tr><th>Detail</th></tr></thead>"
+        "<tbody><tr><td>B</td><td>body</td></tr></tbody></table>"
+    )
+    _, markdown = ConfluencePreprocessor("").process_html_content(html)
+    rows = [line for line in markdown.splitlines() if line.startswith("|")]
+    assert rows == [
+        "| Group | Item |",
+        "| --- | --- |",
+        "|  | Detail |",
+        "| B | body |",
+    ]
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_confluence_rowspan_tables_are_independent(nested: bool) -> None:
+    """Inner and sibling tables keep their own positions for spanned cells."""
+    inner = (
+        '<table><tr><td rowspan="2">Inner</td><td>1</td></tr>'
+        "<tr><td>2</td></tr></table>"
+    )
+    expected_inner = (
+        "<table><tr><td>Inner</td><td>1</td></tr><tr><td></td><td>2</td></tr></table>"
+    )
+    if nested:
+        html = (
+            '<table><tr><td rowspan="2">Outer</td><td>' + inner + "</td></tr>"
+            "<tr><td>Tail</td></tr></table>"
+        )
+        expected_html = (
+            "<table><tr><td>Outer</td><td>" + expected_inner + "</td></tr>"
+            "<tr><td></td><td>Tail</td></tr></table>"
+        )
+    else:
+        sibling = "<table><tr><td>Second</td><td>3</td></tr></table>"
+        html = inner + sibling
+        expected_html = expected_inner + sibling
+    processor = ConfluencePreprocessor("")
+    processed_html, markdown = processor.process_html_content(html)
+    _, expected_markdown = processor.process_html_content(expected_html)
+
+    assert markdown == expected_markdown
+    assert BeautifulSoup(processed_html, "html.parser") == BeautifulSoup(
+        html, "html.parser"
+    )
 
 
 @pytest.fixture
@@ -1104,3 +1232,25 @@ class TestTaskLists:
 
         assert "<ac:task-list>" in result
         assert 'data-table-width="1800"' in result
+
+
+def test_rowspan_table_and_code_macro_in_same_document() -> None:
+    """Preserve both column positions and code macros in mixed content."""
+    from mcp_atlassian.preprocessing.base import BasePreprocessor
+
+    source = (
+        "<table><tr><th>Group</th><th>Item</th></tr>"
+        '<tr><td rowspan="2">alpha</td><td>one</td></tr>'
+        "<tr><td>two</td></tr></table>"
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">python</ac:parameter>'
+        '<ac:plain-text-body><![CDATA[print("hello")]]></ac:plain-text-body>'
+        "</ac:structured-macro>"
+    )
+    html, markdown = BasePreprocessor(
+        base_url="https://example.invalid"
+    ).process_html_content(source)
+    assert 'rowspan="2"' in html
+    assert 'ac:name="code"' in html
+    assert "|  | two |" in markdown
+    assert '```python\nprint("hello")\n```' in markdown

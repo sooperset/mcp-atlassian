@@ -285,7 +285,8 @@ class BasePreprocessor:
             # Convert to string before the code-macro rewrite so the HTML
             # output keeps the original storage-format macros intact
             processed_html = str(soup)
-
+            if soup.find(["td", "th"], attrs={"rowspan": True}) is not None:
+                self._expand_table_rowspans(soup)
             # Convert code-block macros before markdownify strips them
             # (markdown path only). Keep their contents out of markdownify so
             # it cannot shorten their fences or strip boundary newlines, while
@@ -305,6 +306,60 @@ class BasePreprocessor:
         except Exception as e:
             logger.error(f"Error in process_html_content: {str(e)}")
             raise
+
+    @staticmethod
+    def _table_span(cell: Tag, attribute: str, maximum: int) -> int:
+        """Read a bounded span; rowspan zero extends to the row-group end."""
+        value = cell.get(attribute, "1")
+        if not isinstance(value, str) or not value.isdigit():
+            return 1
+        try:
+            span = int(value)
+        except ValueError:
+            return 1
+        if attribute == "rowspan" and span == 0:
+            return maximum
+        return max(1, min(span, maximum))
+
+    @classmethod
+    def _expand_table_rowspans(cls, soup: BeautifulSoup) -> None:
+        """Fill carried-down cells for Markdown without duplicating their text."""
+        for table in reversed(soup.find_all("table")):
+            sections = [
+                table,
+                *table.find_all(["thead", "tbody", "tfoot"], recursive=False),
+            ]
+            for section in sections:
+                rows = section.find_all("tr", recursive=False)
+                pending: dict[int, int] = {}
+                for row_index, row in enumerate(rows):
+                    column = 0
+                    for cell in row.find_all(["td", "th"], recursive=False):
+                        while pending.get(column, 0):
+                            cell.insert_before(soup.new_tag("td"))
+                            pending[column] -= 1
+                            column += 1
+                        colspan = cls._table_span(cell, "colspan", 1000)
+                        rowspan = cls._table_span(
+                            cell, "rowspan", len(rows) - row_index
+                        )
+                        if "colspan" in cell.attrs:
+                            cell["colspan"] = str(colspan)
+                        cell.attrs.pop("rowspan", None)
+                        if rowspan > 1:
+                            for offset in range(colspan):
+                                pending[column + offset] = rowspan - 1
+                        column += colspan
+                    last_column = max(
+                        (key for key, remaining in pending.items() if remaining),
+                        default=-1,
+                    )
+                    while column <= last_column:
+                        row.append(soup.new_tag("td"))
+                        if pending.get(column, 0):
+                            pending[column] -= 1
+                        column += 1
+                    pending = {key: value for key, value in pending.items() if value}
 
     @staticmethod
     def _process_code_macros_in_soup(soup: BeautifulSoup) -> dict[str, str]:
