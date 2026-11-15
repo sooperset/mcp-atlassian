@@ -1202,6 +1202,8 @@ async def delete_page(
                 "success": False,
                 "message": f"Unable to delete page {page_id}. API request completed but deletion unsuccessful.",
             }
+    except MCPAtlassianAuthenticationError:
+        raise
     except Exception as e:
         logger.error(f"Error deleting Confluence page {page_id}: {str(e)}")
         response = {
@@ -1321,6 +1323,8 @@ async def add_comment(
                 "success": False,
                 "message": f"Unable to add comment to page {page_id}. API request completed but comment creation unsuccessful.",
             }
+    except MCPAtlassianAuthenticationError:
+        raise
     except Exception as e:
         logger.error(f"Error adding comment to Confluence page {page_id}: {str(e)}")
         response = {
@@ -1374,6 +1378,8 @@ async def reply_to_comment(
                 "success": False,
                 "message": f"Unable to reply to comment {comment_id}. API request completed but reply creation unsuccessful.",
             }
+    except MCPAtlassianAuthenticationError:
+        raise
     except Exception as e:
         logger.error(f"Error replying to comment {comment_id}: {str(e)}")
         response = {
@@ -1419,6 +1425,8 @@ async def get_inline_comments(
             "count": len(comments),
             "comments": [c.to_simplified_dict() for c in comments],
         }
+    except MCPAtlassianAuthenticationError:
+        raise
     except Exception as e:
         logger.error(
             f"Error getting inline comments for Confluence page {page_id}: {str(e)}"
@@ -1514,6 +1522,8 @@ async def add_inline_comment(
                     "API request completed but comment creation unsuccessful."
                 ),
             }
+    except MCPAtlassianAuthenticationError:
+        raise
     except Exception as e:
         logger.error(
             f"Error adding inline comment to Confluence page {page_id}: {str(e)}"
