@@ -128,12 +128,13 @@ def fetch_and_encode_attachment(
         first two are ``None`` and *fetched_bytes* distinguishes
         the failure mode:
 
-        * ``fetched_bytes == 0`` -- fetch returned ``None`` or
-          raised an exception.
-        * ``fetched_bytes > 0``  -- downloaded data exceeded
-          *max_bytes*. The value is the number of bytes received: the
-          whole body, or the amount read when the download was stopped
-          at the limit.
+        * ``fetched_bytes == 0`` -- fetch returned ``None`` or raised
+          an exception other than ``AttachmentTooLargeError``.
+        * ``fetched_bytes > 0``  -- the attachment is too large: the
+          whole body was received and is larger than *max_bytes*, or
+          ``fetch_fn`` stopped at its own limit and raised
+          ``AttachmentTooLargeError``. The value is the number of
+          bytes received.
     """
     try:
         data_bytes = fetch_fn(url)
