@@ -205,6 +205,52 @@ class TestCommentsMixin:
         # Plain string body passes through adf_to_text unchanged.
         assert result[1]["body"] == "This is a plain text comment"
 
+    def test_get_issue_comments_resolves_mentions(self, jira_fetcher):
+        """Regression test for #1758: on Jira Cloud the REST v2 comment body
+        carries mentions as [~accountid:...]. They must come back as the
+        user's display name, not as a User:<accountId> placeholder, and a
+        repeated mention must not trigger a second user lookup."""
+        account_id = "5b10a2844c20165700ede21g"
+        jira_fetcher.jira.issue_get_comments.return_value = {
+            "comments": [
+                {
+                    "id": "10001",
+                    "body": (
+                        f"Thanks [~accountid:{account_id}], "
+                        f"over to [~accountid:{account_id}]"
+                    ),
+                    "created": "2024-01-01T10:00:00.000+0000",
+                    "updated": "2024-01-01T11:00:00.000+0000",
+                    "author": {"displayName": "John Doe"},
+                }
+            ]
+        }
+        jira_fetcher.jira.user.return_value = {"displayName": "Jane Doe"}
+
+        result = jira_fetcher.get_issue_comments("TEST-123")
+
+        assert result[0]["body"] == "Thanks @Jane Doe, over to @Jane Doe"
+        jira_fetcher.jira.user.assert_called_once_with(account_id=account_id)
+
+    def test_get_issue_comments_mention_lookup_fails(self, jira_fetcher):
+        """A mention whose user cannot be looked up keeps the placeholder."""
+        jira_fetcher.jira.issue_get_comments.return_value = {
+            "comments": [
+                {
+                    "id": "10001",
+                    "body": "Ping [~accountid:abc123]",
+                    "created": "2024-01-01T10:00:00.000+0000",
+                    "updated": "2024-01-01T11:00:00.000+0000",
+                    "author": {"displayName": "John Doe"},
+                }
+            ]
+        }
+        jira_fetcher.jira.user.side_effect = HTTPError("403 Client Error")
+
+        result = jira_fetcher.get_issue_comments("TEST-123")
+
+        assert result[0]["body"] == "Ping User:abc123"
+
     def test_add_comment_basic(self, comments_mixin):
         """Test add_comment with basic data (Cloud → ADF via v3 API)."""
         # Setup mock response for v3 API path

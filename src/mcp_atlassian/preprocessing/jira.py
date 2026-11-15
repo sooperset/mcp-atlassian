@@ -2,6 +2,7 @@
 
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 
 from .base import BasePreprocessor, _extract_blocks, _restore_blocks
@@ -106,7 +107,11 @@ class JiraPreprocessor(BasePreprocessor):
     }
 
     def __init__(
-        self, base_url: str = "", disable_translation: bool = False, **kwargs: Any
+        self,
+        base_url: str = "",
+        disable_translation: bool = False,
+        user_resolver: Callable[[str], str | None] | None = None,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize the Jira text preprocessor.
@@ -114,10 +119,14 @@ class JiraPreprocessor(BasePreprocessor):
         Args:
             base_url: Base URL for Jira API
             disable_translation: If True, disable markup translation between formats
+            user_resolver: Optional callable that returns the display name for an
+                account ID, or None when it cannot be resolved. Used to render
+                [~accountid:...] mentions; without it they stay User:<accountId>.
             **kwargs: Additional arguments for the base class
         """
         super().__init__(base_url=base_url, **kwargs)
         self.disable_translation = disable_translation
+        self.user_resolver = user_resolver
 
     def clean_jira_text(self, text: str) -> str:
         """
@@ -155,16 +164,22 @@ class JiraPreprocessor(BasePreprocessor):
             pattern: Regular expression pattern to match mentions
 
         Returns:
-            Text with mentions replaced with display names
+            Text with mentions replaced with @DisplayName, or with
+            User:<accountId> when no name could be resolved
         """
         mentions = re.findall(pattern, text)
         for account_id in mentions:
-            try:
-                # Note: This is a placeholder - actual user fetching should be injected
-                display_name = f"User:{account_id}"
-                text = text.replace(f"[~accountid:{account_id}]", display_name)
-            except Exception as e:
-                logger.error(f"Error processing mention for {account_id}: {str(e)}")
+            display_name = f"User:{account_id}"
+            if self.user_resolver is not None:
+                try:
+                    resolved = self.user_resolver(account_id)
+                    if resolved:
+                        display_name = f"@{resolved}"
+                except Exception as e:
+                    logger.warning(
+                        f"Error resolving mention for {account_id}: {str(e)}"
+                    )
+            text = text.replace(f"[~accountid:{account_id}]", display_name)
         return text
 
     def _process_smart_links(self, text: str) -> str:
