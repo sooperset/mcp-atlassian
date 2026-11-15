@@ -15,6 +15,7 @@ from ..utils.io import (
     open_confined,
     validate_safe_path,
 )
+from ..utils.media import ATTACHMENT_MAX_BYTES, read_capped
 from ..utils.urls import resolve_relative_url
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
@@ -417,11 +418,13 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             try:
                 response.raise_for_status()
 
-                chunks: list[bytes] = []
-                for chunk in response.iter_content(chunk_size=8192):
-                    chunks.append(chunk)
-
-                data = b"".join(chunks)
+                data = read_capped(response, ATTACHMENT_MAX_BYTES)
+                if data is None:
+                    logger.warning(
+                        f"Attachment from {url} is larger than "
+                        f"{ATTACHMENT_MAX_BYTES} bytes; stopped reading"
+                    )
+                    return None
                 logger.info(
                     f"Successfully fetched attachment from {url} "
                     f"(size: {len(data)} bytes)"

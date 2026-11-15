@@ -902,6 +902,33 @@ class TestAttachmentsMixin:
         )
         mock_response.close.assert_called_once()
 
+    def test_fetch_attachment_content_stops_past_size_limit(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body larger than the limit is refused without reading it to the end."""
+        monkeypatch.setattr(
+            "mcp_atlassian.confluence.attachments.ATTACHMENT_MAX_BYTES", 25
+        )
+        consumed: list[int] = []
+
+        def body():
+            for index in range(100):
+                consumed.append(index)
+                yield b"x" * 10
+
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_content.return_value = body()
+        attachments_mixin.confluence._session.get.return_value = mock_response
+
+        result = attachments_mixin.fetch_attachment_content(
+            "https://example.atlassian.net/download/att123"
+        )
+
+        assert result is None
+        assert len(consumed) == 3
+        mock_response.close.assert_called_once()
+
     def test_fetch_attachment_content_empty_url(
         self, attachments_mixin: AttachmentsMixin
     ):

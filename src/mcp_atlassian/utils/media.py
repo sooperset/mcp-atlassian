@@ -4,6 +4,7 @@ import base64
 import logging
 import mimetypes
 from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,26 @@ def is_image_attachment(
             return True, guessed
 
     return False, media_type or "application/octet-stream"
+
+
+def read_capped(response: Any, max_bytes: int) -> bytes | None:
+    """Read a streamed response body, giving up once it passes ``max_bytes``.
+
+    Attachment metadata is checked before a download, but the body can be
+    larger than the metadata says. Stopping here bounds memory use by the
+    limit instead of by what the upstream sends.
+
+    Returns:
+        The body, or None when it is larger than ``max_bytes``.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=8192):
+        total += len(chunk)
+        if total > max_bytes:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def fetch_and_encode_attachment(

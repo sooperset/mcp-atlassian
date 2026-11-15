@@ -992,6 +992,30 @@ class TestAttachmentsMixin:
         )
         mock_response.close.assert_called_once()
 
+    def test_fetch_attachment_content_stops_past_size_limit(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body larger than the limit is refused without reading it to the end."""
+        monkeypatch.setattr("mcp_atlassian.jira.attachments.ATTACHMENT_MAX_BYTES", 25)
+        consumed: list[int] = []
+
+        def body():
+            for index in range(100):
+                consumed.append(index)
+                yield b"x" * 10
+
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = body()
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        result = attachments_mixin.fetch_attachment_content(
+            "https://test.url/attachment"
+        )
+
+        assert result is None
+        assert len(consumed) == 3
+        mock_response.close.assert_called_once()
+
     def test_fetch_attachment_content_no_url(self, attachments_mixin: AttachmentsMixin):
         """Test fetch with no URL returns None."""
         result = attachments_mixin.fetch_attachment_content("")
