@@ -7,11 +7,28 @@ Supports both ADF → plain text (for reading) and Markdown → ADF (for writing
 
 import copy
 import json
+import logging
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
+logger = logging.getLogger("mcp-jira")
+
 _MEDIA_NODE_TYPES = frozenset({"media", "mediaSingle", "mediaGroup"})
+
+# Markdown image: ![alt](url). Parsed before inline formatting so the link
+# pattern never sees the trailing "[alt](url)".
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]\n]*)\]\((?P<url>[^)\s]+)\)")
+
+MediaResolver = Callable[[str], dict[str, Any] | None]
+"""Maps an image URL to ADF ``media`` attrs, or None for an external image.
+
+A resolver lets the caller turn a URL it recognises (for example one of the
+issue's own attachments) into a ``{"type": "file", "id": ..., "collection":
+...}`` node that Jira renders natively. Anything it returns None for becomes
+``{"type": "external", "url": url}``.
+"""
 _JIRA_ISSUE_KEY_RE = re.compile(
     r"(?<![A-Za-z0-9_/-])"
     r"([A-Z][A-Z0-9_]+-\d+(?:-\d+)*)"
@@ -239,16 +256,104 @@ def _make_task_item(
     }
 
 
-def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, Any]:
+def _make_media_single(
+    url: str, alt: str, media_resolver: MediaResolver | None
+) -> dict[str, Any]:
+    """Create a ``mediaSingle`` block for one Markdown image.
+
+    Args:
+        url: The image URL from the Markdown source.
+        alt: Alt text; stored on the media node when non-empty.
+        media_resolver: Optional resolver that can map the URL to a native
+            ``file`` media node. ``None`` or a ``None`` result yields an
+            ``external`` media node pointing at ``url``.
+
+    Returns:
+        ADF ``mediaSingle`` node containing one ``media`` node.
+    """
+    attrs: dict[str, Any] | None = None
+    if media_resolver is not None:
+        try:
+            attrs = media_resolver(url)
+        except Exception as e:  # noqa: BLE001 - a bad resolver must not drop the image
+            logger.debug(f"Media resolver failed for {url}: {e}")
+            attrs = None
+    media_attrs: dict[str, Any] = (
+        dict(attrs)
+        if attrs
+        else {
+            "type": "external",
+            "url": url,
+        }
+    )
+    if alt:
+        media_attrs["alt"] = alt
+    return {
+        "type": "mediaSingle",
+        "attrs": {"layout": "center"},
+        "content": [{"type": "media", "attrs": media_attrs}],
+    }
+
+
+def _make_block_content(
+    text: str,
+    jira_base_url: str = "",
+    media_resolver: MediaResolver | None = None,
+) -> list[dict[str, Any]]:
+    """Convert one line of Markdown into paragraph and image blocks.
+
+    Images are block-level in ADF, so a line that mixes text and
+    ``![alt](url)`` becomes a paragraph for the text around each image and
+    a ``mediaSingle`` for the image, in source order. A line without images
+    is a single paragraph.
+
+    Args:
+        text: One line of Markdown.
+        jira_base_url: Jira base URL used to link bare issue keys.
+        media_resolver: See :data:`MediaResolver`.
+
+    Returns:
+        List of ADF block nodes; a paragraph with no content when ``text``
+        has nothing but whitespace.
+    """
+    blocks: list[dict[str, Any]] = []
+    pos = 0
+    for match in _MARKDOWN_IMAGE_RE.finditer(text):
+        before = text[pos : match.start()].strip()
+        if before:
+            blocks.append(_make_paragraph(before, jira_base_url))
+        blocks.append(
+            _make_media_single(match.group("url"), match.group("alt"), media_resolver)
+        )
+        pos = match.end()
+    after = text[pos:].strip()
+    if after:
+        blocks.append(_make_paragraph(after, jira_base_url))
+    if not blocks:
+        blocks.append({"type": "paragraph", "content": []})
+    return blocks
+
+
+def markdown_to_adf(
+    markdown_text: str,
+    jira_base_url: str = "",
+    media_resolver: MediaResolver | None = None,
+) -> dict[str, Any]:
     """Convert Markdown text to ADF (Atlassian Document Format) document.
 
     Implements a line-by-line parser that handles common Markdown constructs.
     Jira Cloud expand blocks can be written as
     ``{expand:Title}...{expand}``. No external dependencies required.
 
+    Images (``![alt](url)``) become ``mediaSingle`` blocks, in paragraphs
+    and inside table cells. By default they are ``external`` media nodes
+    pointing at the URL; pass ``media_resolver`` to turn recognised URLs
+    into native ``file`` media nodes.
+
     Args:
         markdown_text: Markdown-formatted text to convert.
         jira_base_url: Jira base URL used to link bare issue keys.
+        media_resolver: See :data:`MediaResolver`.
 
     Returns:
         ADF document dict with version, type, and content keys.
@@ -279,7 +384,7 @@ def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, An
                 i += 1
             # Recursively parse the inner content as ADF
             inner_markdown = "\n".join(expand_lines)
-            inner_doc = markdown_to_adf(inner_markdown, jira_base_url)
+            inner_doc = markdown_to_adf(inner_markdown, jira_base_url, media_resolver)
             expand_node: dict[str, Any] = {
                 "type": "expand",
                 "attrs": {"title": expand_title},
@@ -385,7 +490,9 @@ def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, An
                 if i < len(lines):
                     i += 1
                 # Recursively parse panel content
-                inner_doc = markdown_to_adf("\n".join(panel_lines), jira_base_url)
+                inner_doc = markdown_to_adf(
+                    "\n".join(panel_lines), jira_base_url, media_resolver
+                )
                 panel_node: dict[str, Any] = {
                     "type": "panel",
                     "attrs": {"panelType": panel_type},
@@ -447,15 +554,16 @@ def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, An
                     cell_type = "tableHeader" if idx == 0 else "tableCell"
                     adf_cells = []
                     for cell_text in cells:
-                        content = _parse_inline_formatting(cell_text, jira_base_url)
-                        if not content:
-                            content = [{"type": "text", "text": ""}]
-                        adf_cells.append(
-                            {
-                                "type": cell_type,
-                                "content": [{"type": "paragraph", "content": content}],
-                            }
-                        )
+                        if _MARKDOWN_IMAGE_RE.search(cell_text):
+                            cell_blocks = _make_block_content(
+                                cell_text, jira_base_url, media_resolver
+                            )
+                        else:
+                            content = _parse_inline_formatting(cell_text, jira_base_url)
+                            if not content:
+                                content = [{"type": "text", "text": ""}]
+                            cell_blocks = [{"type": "paragraph", "content": content}]
+                        adf_cells.append({"type": cell_type, "content": cell_blocks})
                     adf_rows.append({"type": "tableRow", "content": adf_cells})
 
                 doc["content"].append(
@@ -472,8 +580,8 @@ def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, An
             i += 1
             continue
 
-        # --- Paragraph (default) ---
-        doc["content"].append(_make_paragraph(line, jira_base_url))
+        # --- Paragraph (default), with any images as mediaSingle blocks ---
+        doc["content"].extend(_make_block_content(line, jira_base_url, media_resolver))
         i += 1
 
     # Ensure at least one content node
