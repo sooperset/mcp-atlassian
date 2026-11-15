@@ -199,11 +199,15 @@ class TestJiraCloudVersionOperations:
             assert str(updated_version["id"]) == str(version["id"])
         finally:
             if version and version.get("id"):
-                requests.delete(
-                    f"{cloud_instance.jira_url}/rest/api/3/version/{version['id']}",
-                    auth=(cloud_instance.username, cloud_instance.api_token),
-                    timeout=30,
-                ).raise_for_status()
+                # Best-effort cleanup: never replace the real test failure.
+                try:
+                    requests.delete(
+                        f"{cloud_instance.jira_url}/rest/api/3/version/{version['id']}",
+                        auth=(cloud_instance.username, cloud_instance.api_token),
+                        timeout=30,
+                    ).raise_for_status()
+                except requests.RequestException:
+                    pass
 
 
 class TestJiraCloudSubtask:
@@ -237,7 +241,7 @@ class TestJiraCloudSubtask:
                 resource_tracker.add_jira_issue(subtask.key)
                 assert subtask.key.startswith(cloud_instance.project_key)
                 return
-            except (HTTPError, Exception):  # noqa: BLE001
+            except (HTTPError, ValueError):
                 continue
 
         pytest.skip("No subtask issue type available")
