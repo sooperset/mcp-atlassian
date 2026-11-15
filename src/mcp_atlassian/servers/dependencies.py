@@ -632,7 +632,18 @@ def _create_and_validate(
             f"{fn_name}: Failed to create/validate {auth_desc} {spec.name}Fetcher: {e}",
             exc_info=True,
         )
-        raise ValueError(f"Invalid {auth_desc} {spec.name} token or configuration: {e}")
+        raise ValueError(
+            f"Invalid {auth_desc} {spec.name} token or configuration: {e}"
+        ) from e
+
+
+async def _create_and_validate_in_thread(*args: Any, **kwargs: Any) -> Any:
+    """Run ``_create_and_validate`` off the event loop.
+
+    Validation makes a blocking network call, which would otherwise stall every
+    other request served by the loop.
+    """
+    return await asyncio.to_thread(_create_and_validate, *args, **kwargs)
 
 
 def _resolve_oauth_access_token(fallback_token: str, service: str) -> str:
@@ -945,7 +956,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 passthrough_headers=_header_url_passthrough_names(url_header_val, spec),
                 **_get_operator_filter_kwargs(ctx, spec),
             )
-            return _create_and_validate(
+            return await _create_and_validate_in_thread(
                 request,
                 spec,
                 header_config,
@@ -976,7 +987,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 auth_type="basic",
                 credentials=credentials,
             )
-            return _create_and_validate(
+            return await _create_and_validate_in_thread(
                 request,
                 spec,
                 user_config,
@@ -1026,7 +1037,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 credentials=credentials,
                 cloud_id=user_cloud_id,
             )
-            return _create_and_validate(
+            return await _create_and_validate_in_thread(
                 request,
                 spec,
                 user_config,
