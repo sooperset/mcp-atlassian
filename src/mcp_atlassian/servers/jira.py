@@ -169,6 +169,59 @@ def _parse_visibility(
         ) from e
 
 
+def _merge_named_create_fields(
+    params: dict[str, Any],
+    components: list[str] | None,
+    extra_fields: dict[str, Any],
+) -> list[str | dict[str, Any]] | None:
+    """Take create_issue's named parameters out of additional_fields.
+
+    The tool passes these parameters by name and spreads additional_fields
+    after them, so a repeated key raised ``TypeError: got multiple values for
+    keyword argument``. An unset parameter takes the value from
+    additional_fields, an equal value is dropped, and a different value is
+    rejected. Components from both places are combined.
+
+    Args:
+        params: Named parameters other than components. Updated in place.
+        components: Component names from the components parameter.
+        extra_fields: Parsed additional_fields. Updated in place.
+
+    Returns:
+        The components to pass to create_issue, or None if there are none.
+
+    Raises:
+        ValueError: If a parameter and additional_fields disagree, or if
+            additional_fields has components that are not a list or string.
+    """
+    for name, current in params.items():
+        if name not in extra_fields:
+            continue
+        value = extra_fields.pop(name)
+        if current is None or current == "":
+            params[name] = value
+        elif value != current:
+            raise ValueError(
+                f"'{name}' is set both as a parameter and in additional_fields "
+                "with different values. Set it in one place."
+            )
+
+    if "components" not in extra_fields:
+        return list(components) if components else None
+    extra_components = extra_fields.pop("components")
+    if isinstance(extra_components, str):
+        extra_components = [
+            comp.strip() for comp in extra_components.split(",") if comp.strip()
+        ]
+    if not isinstance(extra_components, list):
+        raise ValueError(
+            "components in additional_fields must be a list or a "
+            "comma-separated string."
+        )
+    merged: list[str | dict[str, Any]] = [*(components or []), *extra_components]
+    return merged or None
+
+
 def _parse_additional_fields(
     additional_fields: dict[str, Any] | str | None,
     param_name: str = "additional_fields",
@@ -1992,15 +2045,21 @@ async def create_issue(
             comp.strip() for comp in components.split(",") if comp.strip()
         ]
 
-    extra_fields = _parse_additional_fields(additional_fields)
+    extra_fields = dict(_parse_additional_fields(additional_fields))
+    params: dict[str, Any] = {
+        "project_key": project_key,
+        "summary": summary,
+        "issue_type": issue_type,
+        "description": description,
+        "assignee": assignee,
+    }
+    merged_components = _merge_named_create_fields(
+        params, components_list, extra_fields
+    )
 
     issue = jira.create_issue(
-        project_key=project_key,
-        summary=summary,
-        issue_type=issue_type,
-        description=description,
-        assignee=assignee,
-        components=components_list,
+        **params,
+        components=merged_components,
         **extra_fields,
     )
     result = issue.to_simplified_dict()
