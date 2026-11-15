@@ -143,7 +143,7 @@ def get_explicit_proxy_map(config: ProxyConfigProtocol) -> dict[str, str]:
     if config.https_proxy:
         proxies["https"] = config.https_proxy
     if config.socks_proxy:
-        proxies["socks"] = config.socks_proxy
+        proxies["all"] = config.socks_proxy
     return proxies
 
 
