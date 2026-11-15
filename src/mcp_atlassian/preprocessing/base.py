@@ -343,6 +343,10 @@ class BasePreprocessor:
             Mapping of markdownify-safe placeholders to fenced code blocks.
         """
         code_blocks: dict[str, str] = {}
+        # Serialized once: a placeholder only has to avoid text that was already
+        # in the document and the placeholders handed out so far. Serializing
+        # per macro made large pages with many code macros quadratic.
+        original = str(soup)
         for macro in soup.find_all(
             "ac:structured-macro", attrs={"ac:name": ["code", "noformat"]}
         ):
@@ -364,7 +368,7 @@ class BasePreprocessor:
 
             placeholder = f"\x00MCPCODEMACRO{len(code_blocks)}\x00"
             collision = 0
-            while placeholder in str(soup):
+            while placeholder in original or placeholder in code_blocks:
                 collision += 1
                 placeholder = f"\x00MCPCODEMACRO{len(code_blocks)}{collision}\x00"
 
