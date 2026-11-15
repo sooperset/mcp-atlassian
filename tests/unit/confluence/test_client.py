@@ -60,6 +60,26 @@ def test_init_with_basic_auth():
         )
 
 
+def test_close_closes_underlying_session():
+    """close() should close the underlying requests session connection pool."""
+    config = ConfluenceConfig(
+        url="https://test.atlassian.net/wiki",
+        auth_type="basic",
+        username="test_user",
+        api_token="test_token",
+    )
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"),
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        client = ConfluenceClient(config=config)
+
+        client.close()
+
+        mock_confluence.return_value._session.close.assert_called_once()
+
+
 def test_init_with_token_auth():
     """Test initializing the client with token auth configuration."""
     # Arrange
@@ -589,3 +609,28 @@ def test_confluence_client_custom_user_agent_overrides_default():
         ConfluenceClient(config=config)
 
         assert headers["User-Agent"] == "my-app/1.0"
+
+
+def test_session_applies_config_timeout_to_direct_session_calls():
+    """Direct ``self.confluence._session`` calls (attachment upload/download,
+    permissions, analytics) bypass atlassian-python-api's timeout; the session
+    adapters must apply ConfluenceConfig.timeout so they cannot block forever."""
+    import requests
+
+    with (
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch("mcp_atlassian.confluence.client.configure_ssl_verification"),
+    ):
+        mock_confluence.return_value._session = requests.Session()
+        client = ConfluenceClient(
+            config=ConfluenceConfig(
+                url="https://test.atlassian.net/wiki",
+                auth_type="basic",
+                username="u",
+                api_token="t",
+                timeout=12,
+            )
+        )
+
+    adapter = client.confluence._session.get_adapter("https://test.atlassian.net")
+    assert getattr(adapter, "_mcp_atlassian_default_timeout", False)

@@ -251,6 +251,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
+        move_page,
         search,
         search_user,
         update_page,
@@ -289,6 +290,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(move_page)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
@@ -334,6 +336,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
+        move_page,
         search,
         search_user,
         update_page,
@@ -374,6 +377,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(move_page)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
@@ -522,6 +526,22 @@ async def test_search_returns_error_details(client, mock_confluence_fetcher):
 
     assert "Error calling tool 'search'" in str(excinfo.value)
     assert "Confluence CQL rejected the query" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_move_page_failure_is_a_tool_error(client, mock_confluence_fetcher):
+    """A refused move must reach the client as an error, not as a JSON body."""
+    mock_confluence_fetcher.move_page.side_effect = Exception(
+        "Failed to move page 111: Confluence did not move page 111"
+    )
+
+    with pytest.raises(ToolError) as excinfo:
+        await client.call_tool(
+            "confluence_move_page",
+            {"page_id": "111", "target_space_key": "NEWSPACE"},
+        )
+
+    assert "Confluence did not move page 111" in str(excinfo.value)
 
 
 @pytest.mark.anyio
@@ -1362,6 +1382,24 @@ async def test_upload_attachment_base64(client, mock_confluence_fetcher):
     result_data = json.loads(response.content[0].text)
     assert result_data["message"] == "Attachment uploaded successfully"
     assert result_data["attachment"]["id"] == "att123"
+
+
+@pytest.mark.anyio
+async def test_upload_attachment_failure_message(client, mock_confluence_fetcher):
+    """A failed upload does not report success."""
+    mock_confluence_fetcher.upload_attachment.return_value = {
+        "success": False,
+        "error": "410 Client Error: Gone",
+    }
+
+    response = await client.call_tool(
+        "confluence_upload_attachment",
+        {"content_id": "123456", "file_path": "/path/to/test-file.txt"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Attachment upload failed"
+    assert result_data["attachment"]["error"] == "410 Client Error: Gone"
 
 
 @pytest.mark.anyio

@@ -1074,8 +1074,10 @@ async def update_page_section(
         Field(
             description=(
                 "Exact text of the heading that starts the section to replace. "
-                "Matching is case-sensitive. Use confluence_get_page with "
-                "convert_to_markdown=false to inspect exact heading text when unsure."
+                "Matching is case-sensitive. The page title is not a section: "
+                "passing it is refused so the whole page is not overwritten. "
+                "Use confluence_get_page with convert_to_markdown=false to "
+                "inspect exact heading text when unsure."
             )
         ),
     ],
@@ -1264,29 +1266,18 @@ async def move_page(
             is provided, or if Confluence client is not configured.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    try:
-        moved_page = confluence_fetcher.move_page(
-            page_id=page_id,
-            target_parent_id=target_parent_id,
-            target_space_key=target_space_key,
-            position=position,
-        )
-        page_data = moved_page.to_simplified_dict()
-        return json.dumps(
-            {"message": "Page moved successfully", "page": page_data},
-            indent=2,
-            ensure_ascii=False,
-        )
-    except ValueError:
-        raise
-    except Exception as e:
-        logger.error(f"Error moving Confluence page {page_id}: {str(e)}")
-        response = {
-            "success": False,
-            "message": f"Error moving page {page_id}",
-            "error": str(e),
-        }
-        return json.dumps(response, indent=2, ensure_ascii=False)
+    moved_page = confluence_fetcher.move_page(
+        page_id=page_id,
+        target_parent_id=target_parent_id,
+        target_space_key=target_space_key,
+        position=position,
+    )
+    page_data = moved_page.to_simplified_dict()
+    return json.dumps(
+        {"message": "Page moved successfully", "page": page_data},
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
 @confluence_mcp.tool(
@@ -1984,8 +1975,12 @@ async def upload_attachment(
             minor_edit=minor_edit,
         )
 
+    uploaded = bool(result.get("success")) if isinstance(result, dict) else bool(result)
+    message = (
+        "Attachment uploaded successfully" if uploaded else "Attachment upload failed"
+    )
     return json.dumps(
-        {"message": "Attachment uploaded successfully", "attachment": result},
+        {"message": message, "attachment": result},
         indent=2,
         ensure_ascii=False,
     )

@@ -28,7 +28,7 @@ from typing import Any
 
 from requests.exceptions import HTTPError
 
-from ..models.jira.adf import adf_to_text
+from ..models.jira.adf import adf_to_text, merge_adf_with_preserved_media
 from ..utils import parse_date
 from .client import JiraClient
 from .config import normalize_project_key
@@ -568,6 +568,42 @@ class CommentsMixin(JiraClient):
                 f"{error_msg or type(e).__name__}"
             ) from e
 
+    def _preserve_cloud_comment_media(
+        self,
+        issue_key: str,
+        comment_id: str,
+        comment_adf: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Keep the media nodes an edited Cloud comment already carried.
+
+        ``edit_comment`` rewrites the whole body from Markdown, which drops any
+        ``mediaSingle``/``mediaGroup`` node the comment had. Jira treats the
+        attachment behind a dropped node as orphaned and deletes it, so the
+        file itself is lost. Read the current body and carry its media over,
+        the same way ``update_issue`` does for descriptions.
+        """
+        try:
+            current = self.jira.get(
+                f"rest/api/3/issue/{issue_key}/comment/{comment_id}"
+            )
+            if not isinstance(current, dict):
+                return comment_adf
+            current_body = current.get("body")
+            if not isinstance(current_body, dict):
+                return comment_adf
+            return merge_adf_with_preserved_media(
+                target_adf=comment_adf,
+                source_adf=current_body,
+            )
+        except (HTTPError, OSError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Failed to preserve existing media on comment %s of %s: %s",
+                comment_id,
+                issue_key,
+                exc,
+            )
+            return comment_adf
+
     def edit_comment(
         self,
         issue_key: str,
@@ -603,7 +639,14 @@ class CommentsMixin(JiraClient):
 
             # Use v3 API on Cloud for ADF comments
             if isinstance(jira_formatted_comment, dict) and self.config.is_cloud:
-                data: dict[str, Any] = {"body": jira_formatted_comment}
+                # Rewriting the body from Markdown drops the media nodes the
+                # comment already had, and Jira deletes the attachment behind
+                # a dropped node — the file is gone, not just unlinked.
+                data: dict[str, Any] = {
+                    "body": self._preserve_cloud_comment_media(
+                        issue_key, comment_id, jira_formatted_comment
+                    )
+                }
                 if visibility:
                     data["visibility"] = visibility
                 result = self._put_api3(f"issue/{issue_key}/comment/{comment_id}", data)

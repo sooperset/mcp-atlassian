@@ -11,6 +11,7 @@ from ..exceptions import MCPAtlassianAuthenticationError
 from ..utils.http import (
     configure_circuit_breaker,
     configure_concurrency,
+    configure_default_timeout,
     configure_rate_limit,
     configure_retry,
 )
@@ -202,6 +203,9 @@ class ConfluenceClient:
         configure_concurrency(self.confluence._session, service="Confluence")
         configure_rate_limit(self.confluence._session, service="Confluence")
         configure_circuit_breaker(self.confluence._session, service="Confluence")
+        configure_default_timeout(
+            self.confluence._session, self.config.timeout, service="Confluence"
+        )
 
         self.confluence._session = apply_proxy_configuration(
             logger=logger,
@@ -241,6 +245,12 @@ class ConfluenceClient:
                     "Authentication validation failed during client initialization - "
                     "continuing anyway"
                 )
+
+    def close(self) -> None:
+        """Close the underlying requests session and release pooled connections."""
+        session = getattr(self.confluence, "_session", None)
+        if session is not None:
+            session.close()
 
     def _v1_rest_base_url(self) -> str:
         """Return the base URL for direct Confluence REST API v1 calls.

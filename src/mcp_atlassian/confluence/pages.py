@@ -1019,6 +1019,8 @@ class PagesMixin(ConfluenceClient):
             page_id: The ID of the page to update.
             heading_text: Exact text of the heading that starts the section to
                 replace. Matching is case-sensitive and whitespace-normalised.
+                A leading ``<h1>`` repeating the page title is not a section
+                and is refused.
             new_content: Replacement content for the section body (excluding the
                 heading itself).
             content_format: Format of new_content — ``'markdown'`` (default) or
@@ -1060,18 +1062,35 @@ class PagesMixin(ConfluenceClient):
         soup = BeautifulSoup(raw_storage, "html.parser")
 
         heading_tags = ["h1", "h2", "h3", "h4", "h5", "h6"]
+        wanted = heading_text.strip()
+        page_title = (page.title or "").strip()
+        # A page body often repeats the page title as its leading <h1>. That
+        # heading starts no section: everything below it is the page, so
+        # replacing "its" body replaces the whole page. Skip it, and say so
+        # when it was the only match (2026-10-06 data-loss report, #1732).
+        title_heading_skipped = False
         target_heading: Tag | None = None
         for tag in soup.find_all(heading_tags):
-            if (
-                isinstance(tag, Tag)
-                and tag.get_text(strip=True) == heading_text.strip()
-            ):
-                target_heading = tag
-                break
+            if not isinstance(tag, Tag) or tag.get_text(strip=True) != wanted:
+                continue
+            if tag.name == "h1" and page_title and wanted == page_title:
+                title_heading_skipped = True
+                continue
+            target_heading = tag
+            break
 
         if target_heading is None:
+            if title_heading_skipped:
+                error_msg = (
+                    f"'{wanted}' is the title of page {page_id}, not a section "
+                    "heading. Replacing it would overwrite the whole page. "
+                    "Pass the heading of the section you want to replace "
+                    "(h2-h6), or use the page update tool to rewrite the page "
+                    "on purpose."
+                )
+                raise ValueError(error_msg)
             error_msg = (
-                f"Heading '{heading_text.strip()}' not found in page {page_id}. "
+                f"Heading '{wanted}' not found in page {page_id}. "
                 "Heading text must match exactly (case-sensitive)."
             )
             raise ValueError(error_msg)
@@ -1602,6 +1621,15 @@ class PagesMixin(ConfluenceClient):
                     target_id=target_parent_id,
                     position=position,
                 )
+                # movepage.action is a web-UI action: it can answer below 400
+                # when Confluence refuses the move (e.g. a cross-space move
+                # without "manage content"), so confirm the page actually moved.
+                self._verify_page_moved(
+                    page_id=page_id,
+                    expected_space_key=space_key,
+                    target_parent_id=target_parent_id,
+                    position=position,
+                )
 
             # Re-fetch the page to return updated state
             return self.get_page_content(page_id)
@@ -1612,6 +1640,48 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error moving page {page_id}: {str(e)}")
             raise Exception(f"Failed to move page {page_id}: {str(e)}") from e
+
+    def _verify_page_moved(
+        self,
+        page_id: str,
+        expected_space_key: str,
+        target_parent_id: str | None,
+        position: str,
+    ) -> None:
+        """Raise unless the page now sits where the move asked for."""
+        page = self.confluence.get_page_by_id(page_id, expand="space,ancestors")
+        actual_space_key = (page.get("space") or {}).get("key")
+        ancestors = page.get("ancestors") or []
+        actual_parent_id = str(ancestors[-1]["id"]) if ancestors else None
+
+        expected_parent_id: str | None = None
+        if target_parent_id:
+            if position == "append":
+                expected_parent_id = str(target_parent_id)
+            else:
+                target = self.confluence.get_page_by_id(
+                    target_parent_id, expand="ancestors"
+                )
+                target_ancestors = target.get("ancestors") or []
+                expected_parent_id = (
+                    str(target_ancestors[-1]["id"]) if target_ancestors else None
+                )
+
+        problems = []
+        if expected_space_key and actual_space_key != expected_space_key:
+            problems.append(
+                f"space is {actual_space_key!r}, expected {expected_space_key!r}"
+            )
+        if target_parent_id and actual_parent_id != expected_parent_id:
+            problems.append(
+                f"parent is {actual_parent_id!r}, expected {expected_parent_id!r}"
+            )
+        if problems:
+            raise ValueError(
+                f"Confluence did not move page {page_id}: "
+                + "; ".join(problems)
+                + ". The account may lack permission for this move."
+            )
 
     @handle_auth_errors("Confluence API")
     def get_page_version_diff(

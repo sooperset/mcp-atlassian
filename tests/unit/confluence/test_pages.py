@@ -2695,19 +2695,33 @@ class TestMovePage:
             mixin.preprocessor = confluence_client.preprocessor
             return mixin
 
+    @staticmethod
+    def _serve_pages(pages_mixin, pages):
+        """Answer get_page_by_id from a {page_id: page_dict} map."""
+        pages_mixin.confluence.get_page_by_id.side_effect = (
+            lambda page_id, **kwargs: pages[str(page_id)]
+        )
+
     def test_move_page_to_new_parent_same_space(self, pages_mixin):
         """Test moving a page to a new parent within the same space."""
         page_id = "111"
         target_parent_id = "222"
 
-        # Mock get_page_by_id to return target page with space info
-        pages_mixin.confluence.get_page_by_id.return_value = {
-            "id": target_parent_id,
-            "title": "Target Parent",
-            "space": {"key": "PROJ", "name": "Project"},
-            "version": {"number": 1},
-            "body": {"storage": {"value": "<p>Parent content</p>"}},
-        }
+        self._serve_pages(
+            pages_mixin,
+            {
+                target_parent_id: {
+                    "id": target_parent_id,
+                    "title": "Target Parent",
+                    "space": {"key": "PROJ", "name": "Project"},
+                },
+                page_id: {
+                    "id": page_id,
+                    "space": {"key": "PROJ"},
+                    "ancestors": [{"id": "100"}, {"id": target_parent_id}],
+                },
+            },
+        )
 
         # Mock move_page
         pages_mixin.confluence.move_page.return_value = {"status": "ok"}
@@ -2741,6 +2755,10 @@ class TestMovePage:
 
         # Mock move_page
         pages_mixin.confluence.move_page.return_value = {"status": "ok"}
+        self._serve_pages(
+            pages_mixin,
+            {page_id: {"id": page_id, "space": {"key": target_space_key}}},
+        )
 
         # Mock get_page_content for the re-fetch after move
         mock_moved_page = ConfluencePage(
@@ -2772,6 +2790,16 @@ class TestMovePage:
 
         # Mock move_page
         pages_mixin.confluence.move_page.return_value = {"status": "ok"}
+        self._serve_pages(
+            pages_mixin,
+            {
+                page_id: {
+                    "id": page_id,
+                    "space": {"key": target_space_key},
+                    "ancestors": [{"id": target_parent_id}],
+                }
+            },
+        )
 
         # Mock get_page_content for the re-fetch after move
         mock_moved_page = ConfluencePage(
@@ -2807,13 +2835,22 @@ class TestMovePage:
         page_id = "111"
         target_parent_id = "222"
 
-        pages_mixin.confluence.get_page_by_id.return_value = {
-            "id": target_parent_id,
-            "title": "Target Parent",
-            "space": {"key": "PROJ", "name": "Project"},
-            "version": {"number": 1},
-            "body": {"storage": {"value": "<p>content</p>"}},
-        }
+        self._serve_pages(
+            pages_mixin,
+            {
+                target_parent_id: {
+                    "id": target_parent_id,
+                    "title": "Target Sibling",
+                    "space": {"key": "PROJ", "name": "Project"},
+                    "ancestors": [{"id": "200"}],
+                },
+                page_id: {
+                    "id": page_id,
+                    "space": {"key": "PROJ"},
+                    "ancestors": [{"id": "200"}],
+                },
+            },
+        )
         pages_mixin.confluence.move_page.return_value = {"status": "ok"}
 
         mock_moved_page = ConfluencePage(
@@ -2836,6 +2873,56 @@ class TestMovePage:
             "PROJ", page_id, target_id=target_parent_id, position="above"
         )
         assert isinstance(result, ConfluencePage)
+
+    def test_move_page_refused_cross_space_move_raises(self, pages_mixin):
+        """movepage.action can answer 2xx while refusing the move."""
+        page_id = "111"
+        pages_mixin.confluence.move_page.return_value = None
+        self._serve_pages(
+            pages_mixin,
+            {
+                page_id: {
+                    "id": page_id,
+                    "space": {"key": "OLDSPACE"},
+                    "ancestors": [{"id": "100"}],
+                }
+            },
+        )
+
+        with pytest.raises(ValueError, match="did not move page 111") as excinfo:
+            pages_mixin.move_page(
+                page_id=page_id,
+                target_parent_id="333",
+                target_space_key="NEWSPACE",
+            )
+
+        assert "space is 'OLDSPACE', expected 'NEWSPACE'" in str(excinfo.value)
+        assert "parent is '100', expected '333'" in str(excinfo.value)
+
+    def test_move_page_refused_parent_change_raises(self, pages_mixin):
+        """A same-space move whose parent did not change is reported as failed."""
+        page_id = "111"
+        target_parent_id = "222"
+        pages_mixin.confluence.move_page.return_value = None
+        self._serve_pages(
+            pages_mixin,
+            {
+                target_parent_id: {"id": target_parent_id, "space": {"key": "PROJ"}},
+                page_id: {
+                    "id": page_id,
+                    "space": {"key": "PROJ"},
+                    "ancestors": [{"id": "100"}],
+                },
+            },
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content") as get_page_content,
+            pytest.raises(ValueError, match="parent is '100', expected '222'"),
+        ):
+            pages_mixin.move_page(page_id=page_id, target_parent_id=target_parent_id)
+
+        get_page_content.assert_not_called()
 
     def test_move_page_api_error(self, pages_mixin):
         """Test that API errors are propagated correctly."""
@@ -3835,6 +3922,53 @@ class TestUpdatePageSection:
         with patch.object(pages_mixin, "get_page_content", return_value=raw_page):
             with pytest.raises(ValueError, match="not found in page"):
                 pages_mixin.update_page_section("1", "Nonexistent Heading", "data")
+
+    def test_page_title_as_heading_raises(self, pages_mixin):
+        """The leading <h1> page title is refused instead of wiping the page."""
+        storage = (
+            "<h1>My Page</h1><p>intro</p>"
+            "<h2>Section A</h2><p>a content</p>"
+            "<h2>Section B</h2><p>b content</p>"
+        )
+        raw_page = self._make_page("1", "My Page", storage)
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(pages_mixin, "update_page") as mock_update,
+        ):
+            with pytest.raises(ValueError, match="is the title of page"):
+                pages_mixin.update_page_section("1", "My Page", "new body")
+
+        mock_update.assert_not_called()
+
+    def test_section_heading_matching_title_is_used(self, pages_mixin):
+        """An h2 whose text equals the page title is still a real section."""
+        storage = (
+            "<h1>My Page</h1><p>intro</p>"
+            "<h2>My Page</h2><p>old</p>"
+            "<h2>Other</h2><p>other</p>"
+        )
+        raw_page = self._make_page("1", "My Page", storage)
+        updated_page = self._make_page("1", "My Page", "")
+
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(
+                pages_mixin, "update_page", return_value=updated_page
+            ) as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "My Page", "new")
+
+        body: str = mock_update.call_args.kwargs["body"]
+        assert "<p>intro</p>" in body
+        assert "<p>new</p>" in body
+        assert "<p>old</p>" not in body
+        assert "<h2>Other</h2>" in body
+        assert "<p>other</p>" in body
 
     def test_invalid_content_format_raises(self, pages_mixin):
         """ValueError is raised for unsupported content_format values."""
