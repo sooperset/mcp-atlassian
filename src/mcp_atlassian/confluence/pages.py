@@ -1734,8 +1734,6 @@ class PagesMixin(ConfluenceClient):
         page_id: str,
         from_version: int,
         to_version: int,
-        *,
-        convert_to_markdown: bool = True,
     ) -> dict[str, Any]:
         """Get unified diff between two versions of a page.
 
@@ -1743,7 +1741,6 @@ class PagesMixin(ConfluenceClient):
             page_id: Page ID.
             from_version: Source version number.
             to_version: Target version number.
-            convert_to_markdown: Diff markdown (default) or unchanged storage XHTML.
 
         Returns:
             Dict with page_id, title, from_version, to_version,
@@ -1752,16 +1749,8 @@ class PagesMixin(ConfluenceClient):
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails.
         """
-        from_page = self.get_page_history(
-            page_id=page_id,
-            version=from_version,
-            convert_to_markdown=convert_to_markdown,
-        )
-        to_page = self.get_page_history(
-            page_id=page_id,
-            version=to_version,
-            convert_to_markdown=convert_to_markdown,
-        )
+        from_page = self.get_page_history(page_id=page_id, version=from_version)
+        to_page = self.get_page_history(page_id=page_id, version=to_version)
 
         from_lines = (from_page.content or "").splitlines()
         to_lines = (to_page.content or "").splitlines()

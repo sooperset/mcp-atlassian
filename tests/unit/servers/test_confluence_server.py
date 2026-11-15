@@ -669,21 +669,6 @@ async def test_raw_storage_survives_mcp_serialization(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("raw", [True, False])
-async def test_diff_forwards_content_format(client, mock_confluence_fetcher, raw):
-    diff = '-<ac:link><ri:user ri:userkey="alice" /></ac:link>\n+@Alice Smith'
-    mock_confluence_fetcher.get_page_version_diff.return_value = {"diff": diff}
-    arguments = {"page_id": "123456", "from_version": 1, "to_version": 2}
-    if raw:
-        arguments["convert_to_markdown"] = False
-    response = await client.call_tool("confluence_get_page_diff", arguments)
-    mock_confluence_fetcher.get_page_version_diff.assert_called_once_with(
-        page_id="123456", from_version=1, to_version=2, convert_to_markdown=not raw
-    )
-    assert json.loads(response.content[0].text)["diff"] == diff
-
-
-@pytest.mark.anyio
 async def test_get_page_children(client, mock_confluence_fetcher):
     """Test the get_page_children tool."""
     response = await client.call_tool(

@@ -3116,32 +3116,6 @@ class TestGetPageVersionDiff:
         assert result["to_version"] == 2
         assert result["diff"] == ""
 
-    def test_raw_diff_detects_removed_mention(self, pages_mixin):
-        old = '<p>Owner: <ac:link><ri:user ri:userkey="alice" /></ac:link></p>'
-        new = "<p>Owner: @Alice Smith</p>"
-
-        def get_version(**kwargs):
-            value = old if kwargs["version"] == 1 else new
-            return {
-                "id": "12345",
-                "title": "Owners",
-                "space": {"key": "TEST"},
-                "version": {"number": kwargs["version"]},
-                "body": {"storage": {"value": value}},
-            }
-
-        pages_mixin.confluence.get_page_by_id.side_effect = get_version
-        pages_mixin.preprocessor.process_html_content.return_value = (
-            new,
-            "Owner: @Alice Smith",
-        )
-        result = pages_mixin.get_page_version_diff(
-            "12345", 1, 2, convert_to_markdown=False
-        )
-        assert "-" + old in result["diff"]
-        assert "+" + new in result["diff"]
-        pages_mixin.preprocessor.process_html_content.assert_not_called()
-
     def test_versions_passed_correctly(self, pages_mixin):
         """Test that from_version and to_version are passed to get_page_history."""
         content = "Some content"

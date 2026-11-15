@@ -1726,11 +1726,6 @@ async def get_page_diff(
             ge=1,
         ),
     ],
-    *,
-    convert_to_markdown: Annotated[
-        bool,
-        Field(description="Diff markdown (true) or unchanged storage XHTML (false)."),
-    ] = True,
 ) -> str:
     """Get a unified diff between two versions of a Confluence page.
 
@@ -1739,7 +1734,6 @@ async def get_page_diff(
         page_id: Confluence page ID.
         from_version: Source version number.
         to_version: Target version number.
-        convert_to_markdown: Diff markdown or raw storage to inspect structural changes.
 
     Returns:
         JSON string with page info and unified diff.
@@ -1750,7 +1744,6 @@ async def get_page_diff(
             page_id=page_id,
             from_version=from_version,
             to_version=to_version,
-            convert_to_markdown=convert_to_markdown,
         )
         return json.dumps(result, indent=2, ensure_ascii=False)
     except MCPAtlassianAuthenticationError as e:
