@@ -131,8 +131,9 @@ def fetch_and_encode_attachment(
         * ``fetched_bytes == 0`` -- fetch returned ``None`` or
           raised an exception.
         * ``fetched_bytes > 0``  -- downloaded data exceeded
-          *max_bytes* (the actual size is returned so callers can
-          report it).
+          *max_bytes*. The value is the number of bytes received: the
+          whole body, or the amount read when the download was stopped
+          at the limit.
     """
     try:
         data_bytes = fetch_fn(url)

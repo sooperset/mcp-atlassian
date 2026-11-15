@@ -13,6 +13,7 @@ from fastmcp.client import FastMCPTransport
 from fastmcp.exceptions import ToolError
 from starlette.requests import Request
 
+from mcp_atlassian.utils.media import AttachmentTooLargeError
 from src.mcp_atlassian.confluence import ConfluenceFetcher
 from src.mcp_atlassian.confluence.config import ConfluenceConfig
 from src.mcp_atlassian.models.confluence.page import ConfluencePage
@@ -1739,6 +1740,35 @@ async def test_get_page_images_size_limit(client, mock_confluence_fetcher):
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
     assert "50 MB" in summary["failed"][0]["error"]
+
+
+@pytest.mark.anyio
+async def test_download_attachment_stopped_at_limit_reports_bytes_read(
+    client, mock_confluence_fetcher
+):
+    """A download stopped at the limit is reported as too large, without a total size."""
+    mock_confluence_fetcher._v2_adapter = MagicMock()
+    mock_confluence_fetcher._v2_adapter.get_attachment_by_id.return_value = {
+        "title": "big.bin",
+        "extensions": {"mediaType": "application/octet-stream", "fileSize": 10},
+        "_links": {"download": "/download/attachments/123/big.bin"},
+    }
+    mock_confluence_fetcher._resolve_attachment_download_url.return_value = (
+        "https://example.atlassian.net/wiki/download/attachments/123/big.bin"
+    )
+    mock_confluence_fetcher.fetch_attachment_content.side_effect = (
+        AttachmentTooLargeError(30, 25)
+    )
+
+    response = await client.call_tool(
+        "confluence_download_attachment", {"attachment_id": "att123456789"}
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["success"] is False
+    assert result["bytes_read"] == 30
+    assert "file_size" not in result
+    assert "larger than the 50 MB inline limit" in result["error"]
 
 
 @pytest.mark.anyio

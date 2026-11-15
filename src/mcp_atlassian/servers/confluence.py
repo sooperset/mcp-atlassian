@@ -2287,7 +2287,7 @@ async def download_attachment(
                         "success": False,
                         "attachment_id": attachment_id,
                         "filename": filename,
-                        "file_size": exc.bytes_read,
+                        "bytes_read": exc.bytes_read,
                         "error": (
                             f"Attachment '{filename}' is larger than the 50 MB "
                             "inline limit. Retrieve it directly from Confluence."
