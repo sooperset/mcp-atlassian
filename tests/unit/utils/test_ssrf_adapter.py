@@ -46,7 +46,18 @@ def test_rebind_internal_address_refused_with_single_resolution():
 
 
 @pytest.mark.security_regression
-@pytest.mark.parametrize("ip", ["169.254.169.254", "127.0.0.1", "10.0.0.5", "::1"])
+@pytest.mark.parametrize(
+    "ip",
+    [
+        "169.254.169.254",
+        "127.0.0.1",
+        "10.0.0.5",
+        "::1",
+        "64:ff9b::a9fe:a9fe",
+        "2002:a9fe:a9fe::",
+        "::a9fe:a9fe",
+    ],
+)
 def test_pinning_adapter_blocks_internal_through_real_stack(ip):
     """End-to-end through the mounted adapter and the real requests/urllib3 stack:
     a host resolving to an internal address is refused — proving the adapter is
@@ -167,6 +178,51 @@ def test_operator_configured_host_may_resolve_private(env, monkeypatch):
 
 
 @pytest.mark.security_regression
+@pytest.mark.parametrize("ip", ["127.0.0.1", "169.254.169.254", "fd00:ec2::254"])
+def test_allowlisted_domain_does_not_waive_loopback_or_metadata(ip, monkeypatch):
+    """A host under an allowlisted domain may be private, never loopback or a
+    metadata address: request-supplied URLs can match the domain pattern."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "corp.example.com")
+
+    with patch(
+        "mcp_atlassian.utils.ssrf_adapter.socket.getaddrinfo",
+        side_effect=_gai_returning(ip),
+    ):
+        with pytest.raises(OSError, match="non-global"):
+            _pinned_create_connection(("rebind.corp.example.com", 443))
+
+
+@pytest.mark.security_regression
+def test_per_request_service_url_does_not_keep_operator_proxy(monkeypatch):
+    """A service URL taken from a request header must not be treated as a
+    proxy-trusted host: the proxy would resolve it outside the pinned
+    connector and reopen DNS rebinding."""
+    from mcp_atlassian.jira import JiraConfig
+    from mcp_atlassian.jira.client import JiraClient
+
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    config = JiraConfig(
+        url="https://rebind.attacker.test",
+        auth_type="pat",
+        personal_token="caller-pat",
+        https_proxy="http://proxy.example.test:8080",
+    )
+    client = JiraClient(config=config)
+    url = "https://rebind.attacker.test/rest/api/2/myself"
+    adapter = client.jira._session.get_adapter(url)
+    request = requests.Request("GET", url).prepare()
+    proxies = {"https": "http://proxy.example.test:8080"}
+
+    with patch.object(HTTPAdapter, "send", return_value=requests.Response()) as send:
+        adapter.send(request, proxies=proxies)
+
+    assert send.call_args.kwargs["proxies"] == {}
+
+
+@pytest.mark.security_regression
 def test_untrusted_host_still_refused_when_other_hosts_are_trusted(monkeypatch):
     """Trusting the operator's own host must not waive the guard for a
     caller-supplied host (the rebinding-attack case)."""
@@ -235,3 +291,169 @@ def test_global_address_connects_to_the_validated_ip():
         _pinned_create_connection(("example.com", 443))
 
     assert connected["addr"][0] == "93.184.216.34"
+
+
+def _credentialed_session(**config_kwargs):
+    from mcp_atlassian.jira import JiraConfig
+    from mcp_atlassian.jira.client import JiraClient
+
+    config = JiraConfig(
+        url="https://jira.example.test",
+        auth_type="pat",
+        personal_token="SERVICE-PAT",
+        custom_headers={"X-Gateway-Secret": "GATEWAY-SECRET"},
+        **config_kwargs,
+    )
+    return JiraClient(config=config).jira._session
+
+
+def _sent_requests(session, responses, url):
+    sent = []
+
+    def fake_send(self, request, **kwargs):
+        sent.append((request.url, dict(request.headers), kwargs.get("cert")))
+        return responses.pop(0)
+
+    public = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    with (
+        patch.object(HTTPAdapter, "send", fake_send),
+        patch("mcp_atlassian.utils.urls.socket.getaddrinfo", return_value=public),
+    ):
+        session.get(url, allow_redirects=True)
+    return sent
+
+
+def _response(status, url, location=None):
+    import io
+
+    response = requests.Response()
+    response.status_code = status
+    response.url = url
+    response.raw = io.BytesIO(b"")
+    response.request = requests.Request("GET", url).prepare()
+    if location:
+        response.headers["Location"] = location
+    return response
+
+
+@pytest.mark.security_regression
+def test_off_host_request_carries_no_service_credentials(monkeypatch):
+    """An absolute off-host URL (e.g. attachment metadata) gets no credentials."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    session = _credentialed_session()
+    url = "https://download.attacker.test/file"
+
+    [(sent_url, headers, cert)] = _sent_requests(session, [_response(200, url)], url)
+
+    assert sent_url == url
+    assert "Authorization" not in headers
+    assert "X-Gateway-Secret" not in headers
+    assert cert is None
+
+
+@pytest.mark.security_regression
+def test_cross_host_redirect_drops_custom_secret_headers(monkeypatch):
+    """requests drops Authorization on a cross-host redirect, but not custom
+    headers; the adapter drops both."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    session = _credentialed_session()
+    first = "https://jira.example.test/rest/api/2/attachment/content/1"
+    cdn = "https://cdn.attacker.test/blob"
+
+    sent = _sent_requests(
+        session, [_response(302, first, cdn), _response(200, cdn)], first
+    )
+
+    assert sent[0][1]["Authorization"] == "Bearer SERVICE-PAT"
+    assert sent[0][1]["X-Gateway-Secret"] == "GATEWAY-SECRET"
+    assert sent[1][0] == cdn
+    assert "Authorization" not in sent[1][1]
+    assert "X-Gateway-Secret" not in sent[1][1]
+
+
+def test_allowlisted_alternate_host_keeps_credentials(monkeypatch):
+    """An operator can allow a known alternate base URL via the allowlist."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "jira-alt.example.test")
+    session = _credentialed_session()
+    url = "https://jira-alt.example.test/secure/attachment/1/file"
+
+    [(_, headers, _cert)] = _sent_requests(session, [_response(200, url)], url)
+
+    assert headers["Authorization"] == "Bearer SERVICE-PAT"
+    assert headers["X-Gateway-Secret"] == "GATEWAY-SECRET"
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.jira.example.test/file",
+        "http://jira.example.test/file",
+        "https://jira.example.test:8443/file",
+    ],
+    ids=["subdomain", "scheme", "port"],
+)
+def test_credentials_bound_to_exact_service_origin(url, monkeypatch):
+    """Credentials for https://jira.example.test do not travel to a subdomain,
+    another scheme or another port of that host."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    session = _credentialed_session()
+
+    [(_, headers, cert)] = _sent_requests(session, [_response(200, url)], url)
+
+    assert "Authorization" not in headers
+    assert "X-Gateway-Secret" not in headers
+    assert cert is None
+
+
+def test_credentials_kept_for_same_origin_with_explicit_default_port(monkeypatch):
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    session = _credentialed_session()
+    url = "https://JIRA.example.test:443/rest/api/2/myself"
+
+    [(_, headers, _cert)] = _sent_requests(session, [_response(200, url)], url)
+
+    assert headers["Authorization"] == "Bearer SERVICE-PAT"
+
+
+def test_allowlisted_domain_still_covers_subdomains(monkeypatch):
+    """MCP_ALLOWED_URL_DOMAINS keeps its documented domain-and-subdomain match."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "example.test")
+    session = _credentialed_session()
+    url = "https://files.example.test/blob"
+
+    [(_, headers, _cert)] = _sent_requests(session, [_response(200, url)], url)
+
+    assert headers["Authorization"] == "Bearer SERVICE-PAT"
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://evil.jira.internal/rest/api/2",
+        "http://jira.internal/rest/api/2",
+        "https://jira.internal:8443/rest/api/2",
+    ],
+    ids=["subdomain", "scheme", "port"],
+)
+def test_proxy_trust_is_exact_service_origin(target, monkeypatch):
+    monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+    monkeypatch.delenv("CONFLUENCE_URL", raising=False)
+    monkeypatch.setenv("JIRA_URL", "https://jira.internal")
+    adapter = SsrfPinningAdapter(trusted_urls=["https://gw.internal"])
+    request = requests.Request("GET", target).prepare()
+    proxies = {"https": "http://proxy.example.test:8080"}
+
+    with patch.object(HTTPAdapter, "send", return_value=requests.Response()) as send:
+        adapter.send(request, proxies=proxies)
+
+    assert send.call_args.kwargs["proxies"] == {}

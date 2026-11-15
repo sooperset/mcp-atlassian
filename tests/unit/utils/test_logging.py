@@ -62,3 +62,59 @@ def test_setup_logging_logging_stream():
     logger = setup_logging(logging.DEBUG, stream)
     logger.debug("test")
     assert stream.getvalue() == f"DEBUG - {logger.name} - test\n"
+
+
+class TestGetMaskedSessionHeaders:
+    """Header values are redacted unless the header is known to be harmless."""
+
+    def test_redacts_lowercase_and_custom_secret_headers(self):
+        from mcp_atlassian.utils.logging import get_masked_session_headers
+
+        masked = get_masked_session_headers(
+            {
+                "authorization": "Bearer SYNTHETIC_SECRET",
+                "cookie": "session=SYNTHETIC_COOKIE",
+                "X-Gateway-Secret": "SYNTHETIC_GATEWAY",
+                "PROXY-AUTHORIZATION": "Basic SYNTHETIC_PROXY",
+            }
+        )
+
+        rendered = str(masked)
+        for secret in (
+            "SYNTHETIC_SECRET",
+            "SYNTHETIC_COOKIE",
+            "SYNTHETIC_GATEWAY",
+            "SYNTHETIC_PROXY",
+        ):
+            assert secret not in rendered
+        assert masked["authorization"] == "Bearer <redacted>"
+        assert masked["PROXY-AUTHORIZATION"] == "Basic <redacted>"
+        assert masked["X-Gateway-Secret"] == "<redacted>"
+
+    def test_keeps_allowlisted_standard_headers(self):
+        from mcp_atlassian.utils.logging import get_masked_session_headers
+
+        masked = get_masked_session_headers(
+            {"User-Agent": "mcp-atlassian/1.0", "accept": "application/json"}
+        )
+
+        assert masked == {
+            "User-Agent": "mcp-atlassian/1.0",
+            "accept": "application/json",
+        }
+
+    def test_authorization_without_scheme_is_fully_redacted(self):
+        from mcp_atlassian.utils.logging import get_masked_session_headers
+
+        masked = get_masked_session_headers({"Authorization": "RAWTOKENVALUE"})
+
+        assert masked == {"Authorization": "<redacted>"}
+
+    def test_accepts_requests_case_insensitive_dict(self):
+        from requests.structures import CaseInsensitiveDict
+
+        from mcp_atlassian.utils.logging import get_masked_session_headers
+
+        headers = CaseInsensitiveDict({"x-api-key": "SYNTHETIC_KEY"})
+
+        assert "SYNTHETIC_KEY" not in str(get_masked_session_headers(headers))

@@ -66,6 +66,26 @@ def test_init_with_basic_auth():
         assert client._current_user_account_id is None
 
 
+def test_close_closes_underlying_session():
+    """close() should close the underlying requests session connection pool."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        client = JiraClient(
+            config=JiraConfig(
+                url="https://test.atlassian.net",
+                auth_type="basic",
+                username="test_username",
+                api_token="test_token",
+            )
+        )
+
+        client.close()
+
+        mock_jira.return_value._session.close.assert_called_once()
+
+
 def test_token_auth_disables_library_retry_with_header() -> None:
     """atlassian-python-api's ``retry_with_header`` performs an unbounded,
     header-driven retry that melts down when a gateway returns ``Retry-After: 0``
@@ -712,3 +732,28 @@ def test_update_version_rejects_non_dict_response() -> None:
 
         with pytest.raises(ValueError, match="Unexpected response from Jira API"):
             client.update_version("10001", released=True)
+
+
+def test_session_applies_config_timeout_to_direct_session_calls():
+    """Direct ``self.jira._session`` calls (attachments, dev-status, users)
+    bypass atlassian-python-api's timeout; the session adapters must apply
+    JiraConfig.timeout so they cannot block forever."""
+    import requests
+
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_jira.return_value._session = requests.Session()
+        client = JiraClient(
+            config=JiraConfig(
+                url="https://test.atlassian.net",
+                auth_type="basic",
+                username="u",
+                api_token="t",
+                timeout=12,
+            )
+        )
+
+    adapter = client.jira._session.get_adapter("https://test.atlassian.net")
+    assert getattr(adapter, "_mcp_atlassian_default_timeout", False)

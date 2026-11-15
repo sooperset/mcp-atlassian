@@ -6,6 +6,7 @@ This module provides Pydantic models for Jira issues.
 
 import logging
 import re
+from collections.abc import Callable, Collection
 from typing import Any, Literal
 
 from pydantic import Field
@@ -47,6 +48,27 @@ EPIC_LINK_PATTERNS = [
     r"parent\s*link",
     r"epiclink",
 ]
+
+
+def _reference_project(ref: Any) -> str | None:
+    """Return the upper-cased project key of an issue reference, or None.
+
+    Uses ``fields.project.key`` when the reference carries it, otherwise the
+    prefix of the issue key Jira returned (the current key of the issue).
+    """
+    if not isinstance(ref, dict):
+        return None
+    fields = ref.get("fields")
+    project = fields.get("project") if isinstance(fields, dict) else None
+    project_key = project.get("key") if isinstance(project, dict) else None
+    if isinstance(project_key, str) and project_key.strip():
+        return project_key.strip().upper()
+    key = ref.get("key")
+    if isinstance(key, str) and "-" in key:
+        prefix = key.rsplit("-", 1)[0].strip()
+        if prefix:
+            return prefix.upper()
+    return None
 
 
 class JiraIssue(ApiModel, TimestampMixin):
@@ -92,6 +114,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     worklog: dict | None = None
     changelogs: list[JiraChangelog] = Field(default_factory=list)
     issuelinks: list[JiraIssueLink] = Field(default_factory=list)
+    rendered_fields: dict[str, Any] = Field(default_factory=dict)
 
     def __getattribute__(self, name: str) -> Any:
         """
@@ -481,7 +504,7 @@ class JiraIssue(ApiModel, TimestampMixin):
             requested_fields_param = [field.strip() for field in requested_fields_param]
 
         # Create the issue instance with all the extracted data
-        return cls(
+        issue = cls(
             id=issue_id,
             key=key,
             summary=summary,
@@ -517,7 +540,93 @@ class JiraIssue(ApiModel, TimestampMixin):
             requested_fields=requested_fields_param,
             changelogs=changelogs,
             issuelinks=cls._extract_issue_links(fields),
+            rendered_fields=cls._extract_rendered_fields(data.get("renderedFields")),
         )
+        allowed_projects = kwargs.get("allowed_projects")
+        if allowed_projects:
+            issue.restrict_references(allowed_projects)
+        return issue
+
+    def restrict_references(self, allowed_projects: Collection[str]) -> None:
+        """Drop references to issues outside ``allowed_projects``.
+
+        An issue inside the project allowlist can point at issues outside it
+        through its parent, subtasks, issue links and epic link. Those
+        references carry the other issue's key and summary, so they are
+        removed rather than returned. A reference whose project cannot be
+        determined is removed as well.
+
+        Args:
+            allowed_projects: Upper-cased project keys (JIRA_PROJECTS_FILTER).
+        """
+        allowed = {str(k).strip().upper() for k in allowed_projects}
+
+        def ok(ref: Any) -> bool:
+            return _reference_project(ref) in allowed
+
+        if self.parent is not None and not ok(self.parent):
+            self.parent = None
+        self.subtasks = [st for st in self.subtasks if ok(st)]
+        self.issuelinks = [
+            link
+            for link in self.issuelinks
+            if all(
+                side is None or ok({"key": side.key})
+                for side in (link.inward_issue, link.outward_issue)
+            )
+            and (link.inward_issue is not None or link.outward_issue is not None)
+        ]
+        self._restrict_epic_references(ok)
+
+    def _restrict_epic_references(self, ok: Any) -> None:
+        """Drop the epic link, and the epic name copied with it, when out of scope.
+
+        The epic link can also sit in a custom field (Epic Link on Server/DC,
+        Parent Link). Such a field is removed when it names an issue outside
+        the allowlist or holds the dropped epic key. When an epic is dropped,
+        its name is removed as well: ``epic_name`` and any Epic Name custom
+        field. An epic's own Epic Name is kept, since it has no epic link.
+        """
+        dropped_keys: set[str] = set()
+        if self.epic_key and not ok({"key": self.epic_key}):
+            dropped_keys.add(self.epic_key)
+            self.epic_key = None
+
+        def referenced_key(value: Any) -> str | None:
+            if isinstance(value, dict):
+                value = value.get("key") or value.get("value")
+            return value if isinstance(value, str) and value else None
+
+        def has_name(field: Any, patterns: list[str]) -> bool:
+            name = field.get("name") if isinstance(field, dict) else None
+            return isinstance(name, str) and any(
+                re.search(p, name, re.IGNORECASE) for p in patterns
+            )
+
+        for field_id, field in list(self.custom_fields.items()):
+            if not field_id.startswith("customfield_") or not isinstance(field, dict):
+                continue
+            key = referenced_key(field.get("value"))
+            if key is None:
+                continue
+            if key in dropped_keys or (
+                has_name(field, EPIC_LINK_PATTERNS) and not ok({"key": key})
+            ):
+                dropped_keys.add(key)
+                del self.custom_fields[field_id]
+
+        if not dropped_keys:
+            return
+        dropped_name = self.epic_name
+        self.epic_name = None
+        for field_id, field in list(self.custom_fields.items()):
+            if not field_id.startswith("customfield_") or not isinstance(field, dict):
+                continue
+            value = field.get("value")
+            if has_name(field, EPIC_NAME_PATTERNS) or (
+                dropped_name is not None and value == dropped_name
+            ):
+                del self.custom_fields[field_id]
 
     def to_simplified_dict(self) -> dict[str, Any]:
         """Convert to simplified dictionary for API response."""
@@ -661,6 +770,12 @@ class JiraIssue(ApiModel, TimestampMixin):
             result["issuelinks"] = [
                 link.to_simplified_dict() for link in self.issuelinks
             ]
+
+        # Rendered HTML is only present when expand=renderedFields was requested
+        if self.rendered_fields:
+            rendered = self._simplify_rendered_fields(should_include_field)
+            if rendered:
+                result["rendered_fields"] = rendered
 
         # Process custom fields
         if self.custom_fields:
@@ -967,6 +1082,70 @@ class JiraIssue(ApiModel, TimestampMixin):
                     return field_value.get("key") or field_value.get("value")
                 return str(field_value)
         return None
+
+    @staticmethod
+    def _extract_rendered_fields(rendered_data: Any) -> dict[str, Any]:
+        """
+        Extract non-empty rendered values from ``renderedFields``.
+
+        Jira returns ``renderedFields`` beside ``fields`` when the request
+        expands it, with an HTML value (or ``None``) for each returned field.
+        Rendered comments are reduced to their id and HTML body.
+
+        Args:
+            rendered_data: The ``renderedFields`` object from the Jira API
+
+        Returns:
+            Rendered values keyed by Jira field id
+        """
+        if not isinstance(rendered_data, dict):
+            return {}
+
+        rendered_fields: dict[str, Any] = {}
+        for field_id, value in rendered_data.items():
+            if field_id == "comment":
+                comments_data = (
+                    value.get("comments") if isinstance(value, dict) else None
+                )
+                value = (
+                    [
+                        {"id": str(comment.get("id")), "body": comment["body"]}
+                        for comment in comments_data
+                        if isinstance(comment, dict) and comment.get("body")
+                    ]
+                    if isinstance(comments_data, list)
+                    else None
+                )
+            if value:
+                rendered_fields[field_id] = value
+        return rendered_fields
+
+    def _simplify_rendered_fields(
+        self, should_include_field: Callable[[str], bool]
+    ) -> dict[str, Any]:
+        """
+        Select the rendered values to emit in ``to_simplified_dict``.
+
+        Only requested fields are kept. Rendered comments are limited to the
+        comments present on the issue, so ``comment_limit`` still applies.
+
+        Args:
+            should_include_field: Predicate deciding whether a field is requested
+
+        Returns:
+            Rendered values keyed by Jira field id
+        """
+        rendered: dict[str, Any] = {}
+        for field_id, value in self.rendered_fields.items():
+            if not should_include_field(field_id):
+                continue
+            if field_id == "comment":
+                comment_ids = {comment.id for comment in self.comments}
+                value = [c for c in value if c["id"] in comment_ids]
+                if not value:
+                    continue
+            rendered[field_id] = value
+        return rendered
 
     @staticmethod
     def _extract_issue_links(fields: dict[str, Any]) -> list[JiraIssueLink]:

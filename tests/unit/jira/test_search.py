@@ -844,7 +844,7 @@ class TestSearchMixin:
         search_mixin.search_issues(
             "  ORDER BY priority DESC  ", projects_filter="PROJ1"
         )
-        assert get_jql_from_call() == "project = PROJ1   ORDER BY priority DESC  "
+        assert get_jql_from_call() == "project = PROJ1 ORDER BY priority DESC"
 
     @pytest.mark.parametrize("is_cloud", [True, False])
     def test_search_issues_jql_reserved_word_quoted(

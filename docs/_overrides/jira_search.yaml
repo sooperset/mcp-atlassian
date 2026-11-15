@@ -6,5 +6,7 @@ tips: |
   Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`. If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
 
   Cloud supports cursor-based pagination via `page_token` for deterministic results across large datasets. Continue by passing the response's `next_page_token` back as `page_token`; Server/DC uses `start_at` instead.
+
+  The `environment` system field is returned (as plain text; Cloud ADF is converted) when you request it via `fields`, for example `fields: "summary,environment"` or `fields: "*all"`. It is not part of the default field set and is omitted when empty.
 platform_notes: |
   Some JQL functions (e.g., `issueHistory()`) are Cloud-only.

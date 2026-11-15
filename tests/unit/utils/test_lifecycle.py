@@ -1,12 +1,17 @@
 """Tests for lifecycle management utilities."""
 
+import asyncio
 import signal
+import threading
 from unittest.mock import patch
 
 from mcp_atlassian.utils.lifecycle import (
     _shutdown_event,
     ensure_clean_exit,
+    is_shutdown_requested,
+    reset_shutdown_request,
     setup_signal_handlers,
+    wait_for_shutdown_request,
 )
 
 
@@ -92,6 +97,65 @@ class TestSetupSignalHandlers:
 
         # Check shutdown event was set instead of calling sys.exit
         assert _shutdown_event.is_set()
+
+    @patch("signal.signal")
+    def test_sigpipe_does_not_request_shutdown(self, mock_signal):
+        """A broken pipe on one response must not stop the server."""
+        handlers = {}
+
+        def capture_handler(sig, func):
+            handlers[sig] = func
+
+        mock_signal.side_effect = capture_handler
+        _shutdown_event.clear()
+
+        setup_signal_handlers()
+
+        sigpipe_handler = handlers[signal.SIGPIPE]
+        assert sigpipe_handler is not handlers[signal.SIGTERM]
+        sigpipe_handler(signal.SIGPIPE, None)
+
+        assert not _shutdown_event.is_set()
+
+
+class TestWaitForShutdownRequest:
+    """Test the awaitable that the run path uses to notice a signal."""
+
+    def teardown_method(self):
+        reset_shutdown_request()
+
+    def test_returns_when_shutdown_requested(self):
+        """The waiter returns once the signal handler sets the event."""
+        reset_shutdown_request()
+        stop_event = threading.Event()
+
+        async def scenario():
+            waiter = asyncio.create_task(
+                wait_for_shutdown_request(stop_event, poll_interval=0.01)
+            )
+            await asyncio.sleep(0.02)
+            assert not waiter.done()
+            _shutdown_event.set()
+            await asyncio.wait_for(waiter, timeout=2)
+
+        asyncio.run(scenario())
+        assert is_shutdown_requested()
+
+    def test_stop_event_ends_the_wait(self):
+        """A server that stops for another reason does not leave the poll running."""
+        reset_shutdown_request()
+        stop_event = threading.Event()
+
+        async def scenario():
+            waiter = asyncio.create_task(
+                wait_for_shutdown_request(stop_event, poll_interval=0.01)
+            )
+            await asyncio.sleep(0.02)
+            stop_event.set()
+            await asyncio.wait_for(waiter, timeout=2)
+
+        asyncio.run(scenario())
+        assert not is_shutdown_requested()
 
 
 class TestEnsureCleanExit:

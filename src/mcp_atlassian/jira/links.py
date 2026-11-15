@@ -279,6 +279,10 @@ class LinksMixin(JiraClient):
         # Validate input
         if not link_id:
             raise ValueError("Link ID is required")
+        # The ID becomes a URL path segment of a DELETE request; anything but
+        # digits (e.g. "../issue/PROJ-1") could retarget the DELETE.
+        if not link_id.isascii() or not link_id.isdecimal():
+            raise ValueError("Link ID must contain only ASCII digits")
 
         try:
             self.jira.remove_issue_link(link_id)

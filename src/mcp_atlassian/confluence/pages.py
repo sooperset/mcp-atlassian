@@ -19,6 +19,57 @@ from .v2_adapter import ConfluenceV2Adapter
 
 logger = logging.getLogger("mcp-atlassian")
 
+_HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+_STRUCTURAL_MACRO_NAMES = frozenset({"excerpt", "expand", "layout"})
+_STRUCTURAL_WRAPPER_TAGS = frozenset(
+    {
+        "ac:layout",
+        "layout",
+        "ac:layout-section",
+        "layout-section",
+        "ac:layout-cell",
+        "layout-cell",
+    }
+)
+
+
+def _structured_macro_name(node: Tag) -> str:
+    raw = node.get("ac:name") or node.get("name") or ""
+    return str(raw).strip().lower()
+
+
+def _is_structural_wrapper(node: Tag) -> bool:
+    """Excerpt / expand / layout wrappers, not panels, tables, or random divs."""
+    if node.name in _STRUCTURAL_WRAPPER_TAGS:
+        return True
+    if node.name in {"ac:structured-macro", "structured-macro"}:
+        return _structured_macro_name(node) in _STRUCTURAL_MACRO_NAMES
+    return False
+
+
+def _is_section_boundary(
+    node: object,
+    section_level: int,
+    heading_tags: tuple[str, ...] | list[str] = _HEADING_TAGS,
+) -> bool:
+    """True if ``node`` ends a section of ``section_level``.
+
+    A sibling heading of the same or higher rank is a boundary. So is an
+    excerpt, expand, or layout wrapper that *contains* such a heading —
+    otherwise ``update_page_section`` treats the whole macro as body and
+    deletes it. Other wrappers (info panels, tables) are not boundaries.
+    """
+    if not isinstance(node, Tag):
+        return False
+    if node.name in heading_tags and int(node.name[1]) <= section_level:
+        return True
+    if not _is_structural_wrapper(node):
+        return False
+    for descendant in node.find_all(heading_tags):
+        if int(descendant.name[1]) <= section_level:
+            return True
+    return False
+
 
 class PagesMixin(ConfluenceClient):
     """Mixin for Confluence page operations."""
@@ -958,13 +1009,18 @@ class PagesMixin(ConfluenceClient):
         Fetches the page in raw storage format, locates the section identified by
         its heading text, replaces only the content between that heading and the
         next heading of the same or higher level, and writes the modified storage
-        XML back. This is lossless: macros, layouts, mentions, and all other
-        Confluence-specific elements outside the target section are preserved.
+        XML back. A following excerpt, expand, or layout that *contains* such
+        a heading is a boundary too (that wrapper is not replaced). Other
+        wrappers are unchanged. This is lossless: macros, layouts, mentions,
+        and all other Confluence-specific elements outside the target section
+        are preserved.
 
         Args:
             page_id: The ID of the page to update.
             heading_text: Exact text of the heading that starts the section to
                 replace. Matching is case-sensitive and whitespace-normalised.
+                A leading ``<h1>`` repeating the page title is not a section
+                and is refused.
             new_content: Replacement content for the section body (excluding the
                 heading itself).
             content_format: Format of new_content — ``'markdown'`` (default) or
@@ -1006,18 +1062,35 @@ class PagesMixin(ConfluenceClient):
         soup = BeautifulSoup(raw_storage, "html.parser")
 
         heading_tags = ["h1", "h2", "h3", "h4", "h5", "h6"]
+        wanted = heading_text.strip()
+        page_title = (page.title or "").strip()
+        # A page body often repeats the page title as its leading <h1>. That
+        # heading starts no section: everything below it is the page, so
+        # replacing "its" body replaces the whole page. Skip it, and say so
+        # when it was the only match (2026-10-06 data-loss report, #1732).
+        title_heading_skipped = False
         target_heading: Tag | None = None
         for tag in soup.find_all(heading_tags):
-            if (
-                isinstance(tag, Tag)
-                and tag.get_text(strip=True) == heading_text.strip()
-            ):
-                target_heading = tag
-                break
+            if not isinstance(tag, Tag) or tag.get_text(strip=True) != wanted:
+                continue
+            if tag.name == "h1" and page_title and wanted == page_title:
+                title_heading_skipped = True
+                continue
+            target_heading = tag
+            break
 
         if target_heading is None:
+            if title_heading_skipped:
+                error_msg = (
+                    f"'{wanted}' is the title of page {page_id}, not a section "
+                    "heading. Replacing it would overwrite the whole page. "
+                    "Pass the heading of the section you want to replace "
+                    "(h2-h6), or use the page update tool to rewrite the page "
+                    "on purpose."
+                )
+                raise ValueError(error_msg)
             error_msg = (
-                f"Heading '{heading_text.strip()}' not found in page {page_id}. "
+                f"Heading '{wanted}' not found in page {page_id}. "
                 "Heading text must match exactly (case-sensitive)."
             )
             raise ValueError(error_msg)
@@ -1026,14 +1099,15 @@ class PagesMixin(ConfluenceClient):
 
         # 4. Collect all sibling nodes that belong to this section (between
         #    this heading and the next heading of the same or higher level).
-        #    NavigableString nodes (whitespace, text) are included alongside
-        #    Tag nodes, so we type the list broadly.
+        #    Headings nested inside the next sibling (excerpt/layout/expand
+        #    macros) count as well — otherwise the whole macro is treated as
+        #    body and wiped. NavigableString nodes (whitespace, text) are
+        #    included alongside Tag nodes, so we type the list broadly.
         siblings_to_remove: list[Any] = []
         current = target_heading.next_sibling
         while current is not None:
-            if isinstance(current, Tag) and current.name in heading_tags:
-                if int(current.name[1]) <= heading_level:
-                    break
+            if _is_section_boundary(current, heading_level, heading_tags):
+                break
             siblings_to_remove.append(current)
             current = current.next_sibling
 
@@ -1243,80 +1317,124 @@ class PagesMixin(ConfluenceClient):
         try:
             limit = clamp_limit(limit, context="confluence.get_space_page_tree")
 
-            # Paginate using the raw API to access _links.next for reliable
-            # truncation detection. The higher-level get_all_pages_from_space()
-            # has a broken termination condition when limit > server-side cap.
-            page_size = 200
-            start = 0
-            all_pages: list[dict[str, Any]] = []
-            next_link: str | None = None
-
-            while len(all_pages) < limit:
-                fetch_limit = min(page_size, limit - len(all_pages))
-                response = self.confluence.get_all_pages_from_space_raw(
-                    space=space_key,
-                    start=start,
-                    limit=fetch_limit,
-                    expand="ancestors",
-                )
-                batch = response.get("results", [])
-                all_pages.extend(batch)
-
-                next_link = response.get("_links", {}).get("next")
-                if not batch or not next_link:
-                    break
-                start += len(batch)
-
-            has_more = len(all_pages) >= limit and bool(next_link)
-
-            if not all_pages:
-                return {
-                    "space_key": space_key,
-                    "total_pages": 0,
-                    "has_more": False,
-                    "pages": [],
-                }
-
-            # Build flat list with parent_id and depth
-            result_pages = []
-
-            for page in all_pages:
-                page_id = page.get("id")
-                title = page.get("title", "Untitled")
-
-                # Position is auto-included via extensions in the v1 API.
-                # Confluence DC/Server can return position as the string
-                # "none" (or other non-numeric strings) instead of int/null.
-                # Normalize to int | None so sorting never mixes types.
-                raw_position = page.get("extensions", {}).get("position")
-                if raw_position is None:
-                    position = None
-                elif isinstance(raw_position, int):
-                    position = raw_position
-                else:
-                    try:
-                        position = int(str(raw_position))
-                    except (TypeError, ValueError):
-                        position = None
-
-                # Determine parent and depth from ancestors
-                ancestors = page.get("ancestors", [])
-                if ancestors:
-                    parent_id = ancestors[-1].get("id")
-                    depth = len(ancestors)
-                else:
-                    parent_id = None
-                    depth = 0
-
-                result_pages.append(
-                    {
-                        "id": page_id,
-                        "title": title,
-                        "parent_id": parent_id,
-                        "position": position,
-                        "depth": depth,
+            all_pages: list[dict[str, Any]]
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                # Cloud OAuth: the v1 space page listing is gone from the
+                # gateway (410), so read the pages from v2 and derive depth by
+                # walking parent_id within the fetched set. A parent outside
+                # the set (a folder, or a page beyond the limit) ends the walk.
+                start = 0
+                tree = v2_adapter.get_space_pages_for_tree(space_key, limit)
+                all_pages = tree["pages"]
+                has_more = bool(tree["has_more"])
+                if not all_pages:
+                    return {
+                        "space_key": space_key,
+                        "total_pages": 0,
+                        "has_more": False,
+                        "pages": [],
                     }
-                )
+                pages_by_id = {page["id"]: page for page in all_pages}
+                result_pages = []
+                for page in all_pages:
+                    depth = 0
+                    seen: set[str] = set()
+                    parent_id = page["parent_id"]
+                    while parent_id in pages_by_id and parent_id not in seen:
+                        seen.add(parent_id)
+                        depth += 1
+                        parent_id = pages_by_id[parent_id]["parent_id"]
+                    position = page["position"]
+                    if position is not None and not isinstance(position, int):
+                        try:
+                            position = int(str(position))
+                        except (TypeError, ValueError):
+                            position = None
+                    result_pages.append(
+                        {
+                            "id": page["id"],
+                            "title": page["title"],
+                            "parent_id": page["parent_id"],
+                            "position": position,
+                            "depth": depth,
+                        }
+                    )
+            else:
+                # Paginate using the raw API to access _links.next for reliable
+                # truncation detection. The higher-level get_all_pages_from_space()
+                # has a broken termination condition when limit > server-side cap.
+                page_size = 200
+                start = 0
+                all_pages = []
+                next_link: str | None = None
+
+                while len(all_pages) < limit:
+                    fetch_limit = min(page_size, limit - len(all_pages))
+                    response = self.confluence.get_all_pages_from_space_raw(
+                        space=space_key,
+                        start=start,
+                        limit=fetch_limit,
+                        expand="ancestors",
+                    )
+                    batch = response.get("results", [])
+                    all_pages.extend(batch)
+
+                    next_link = response.get("_links", {}).get("next")
+                    if not batch or not next_link:
+                        break
+                    start += len(batch)
+
+                has_more = len(all_pages) >= limit and bool(next_link)
+
+                if not all_pages:
+                    return {
+                        "space_key": space_key,
+                        "total_pages": 0,
+                        "has_more": False,
+                        "pages": [],
+                    }
+
+                # Build flat list with parent_id and depth
+                result_pages = []
+
+                for page in all_pages:
+                    page_id = page.get("id")
+                    title = page.get("title", "Untitled")
+
+                    # Position is auto-included via extensions in the v1 API.
+                    # Confluence DC/Server can return position as the string
+                    # "none" (or other non-numeric strings) instead of int/null.
+                    # Normalize to int | None so sorting never mixes types.
+                    raw_position = page.get("extensions", {}).get("position")
+                    if raw_position is None:
+                        position = None
+                    elif isinstance(raw_position, int):
+                        position = raw_position
+                    else:
+                        try:
+                            position = int(str(raw_position))
+                        except (TypeError, ValueError):
+                            position = None
+
+                    # Determine parent and depth from ancestors
+                    ancestors = page.get("ancestors", [])
+                    if ancestors:
+                        parent_id = ancestors[-1].get("id")
+                        depth = len(ancestors)
+                    else:
+                        parent_id = None
+                        depth = 0
+
+                    result_pages.append(
+                        {
+                            "id": page_id,
+                            "title": title,
+                            "parent_id": parent_id,
+                            "position": position,
+                            "depth": depth,
+                        }
+                    )
 
             # Sort by depth first (breadth-first), then by position.
             # Position is now always int | None after normalization above.
@@ -1547,6 +1665,15 @@ class PagesMixin(ConfluenceClient):
                     target_id=target_parent_id,
                     position=position,
                 )
+                # movepage.action is a web-UI action: it can answer below 400
+                # when Confluence refuses the move (e.g. a cross-space move
+                # without "manage content"), so confirm the page actually moved.
+                self._verify_page_moved(
+                    page_id=page_id,
+                    expected_space_key=space_key,
+                    target_parent_id=target_parent_id,
+                    position=position,
+                )
 
             # Re-fetch the page to return updated state
             return self.get_page_content(page_id)
@@ -1557,6 +1684,48 @@ class PagesMixin(ConfluenceClient):
         except Exception as e:
             logger.error(f"Error moving page {page_id}: {str(e)}")
             raise Exception(f"Failed to move page {page_id}: {str(e)}") from e
+
+    def _verify_page_moved(
+        self,
+        page_id: str,
+        expected_space_key: str,
+        target_parent_id: str | None,
+        position: str,
+    ) -> None:
+        """Raise unless the page now sits where the move asked for."""
+        page = self.confluence.get_page_by_id(page_id, expand="space,ancestors")
+        actual_space_key = (page.get("space") or {}).get("key")
+        ancestors = page.get("ancestors") or []
+        actual_parent_id = str(ancestors[-1]["id"]) if ancestors else None
+
+        expected_parent_id: str | None = None
+        if target_parent_id:
+            if position == "append":
+                expected_parent_id = str(target_parent_id)
+            else:
+                target = self.confluence.get_page_by_id(
+                    target_parent_id, expand="ancestors"
+                )
+                target_ancestors = target.get("ancestors") or []
+                expected_parent_id = (
+                    str(target_ancestors[-1]["id"]) if target_ancestors else None
+                )
+
+        problems = []
+        if expected_space_key and actual_space_key != expected_space_key:
+            problems.append(
+                f"space is {actual_space_key!r}, expected {expected_space_key!r}"
+            )
+        if target_parent_id and actual_parent_id != expected_parent_id:
+            problems.append(
+                f"parent is {actual_parent_id!r}, expected {expected_parent_id!r}"
+            )
+        if problems:
+            raise ValueError(
+                f"Confluence did not move page {page_id}: "
+                + "; ".join(problems)
+                + ". The account may lack permission for this move."
+            )
 
     @handle_auth_errors("Confluence API")
     def get_page_version_diff(

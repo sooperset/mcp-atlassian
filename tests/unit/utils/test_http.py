@@ -2,6 +2,8 @@
 
 import threading
 import time
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,14 +13,17 @@ from urllib3.util.retry import Retry
 
 from mcp_atlassian.utils.http import (
     DEFAULT_RETRY_BACKOFF,
+    DEFAULT_RETRY_MAX_RETRY_AFTER,
     DEFAULT_RETRY_STATUSES,
     DEFAULT_RETRY_TOTAL,
     CircuitBreakerOpenError,
+    _BoundedRetry,
     _reset_circuit_breaker_for_tests,
     _reset_concurrency_semaphore_for_tests,
     _reset_rate_limit_bucket_for_tests,
     configure_circuit_breaker,
     configure_concurrency,
+    configure_default_timeout,
     configure_rate_limit,
     configure_retry,
     format_rate_limit_error,
@@ -43,20 +48,31 @@ def _new_session() -> Session:
     return s
 
 
-def test_configure_retry_disabled_by_default(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("ATLASSIAN_RETRY_TOTAL", raising=False)
+def test_configure_retry_bounded_reads_by_default(monkeypatch: pytest.MonkeyPatch):
+    for name in (
+        "ATLASSIAN_RETRY_TOTAL",
+        "ATLASSIAN_RETRY_BACKOFF",
+        "ATLASSIAN_RETRY_INCLUDE_WRITES",
+        "ATLASSIAN_RETRY_IGNORE_RETRY_AFTER",
+        "ATLASSIAN_RETRY_MAX_RETRY_AFTER",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
     session = _new_session()
-    before = {}
-    for prefix, adapter in session.adapters.items():
-        assert isinstance(adapter, HTTPAdapter)
-        before[prefix] = adapter.max_retries
-
     configure_retry(session, service="Test")
 
-    for prefix, adapter in session.adapters.items():
+    assert DEFAULT_RETRY_TOTAL == 3
+    for adapter in session.adapters.values():
         assert isinstance(adapter, HTTPAdapter)
-        assert adapter.max_retries is before[prefix]
+        retry = adapter.max_retries
+        assert isinstance(retry, Retry)
+        assert retry.total == 3
+        assert retry.backoff_factor == DEFAULT_RETRY_BACKOFF
+        assert isinstance(retry, _BoundedRetry)
+        assert retry.max_retry_after == DEFAULT_RETRY_MAX_RETRY_AFTER
+        assert retry.respect_retry_after_header is True
+        assert set(retry.allowed_methods or ()) == {"GET", "HEAD", "OPTIONS"}
+        assert 401 not in retry.status_forcelist
 
 
 def test_configure_retry_applies_to_all_adapters_when_enabled(
@@ -164,10 +180,13 @@ def test_configure_retry_invalid_env_falls_back_to_default(
 
     configure_retry(session, service="Test")
 
-    assert DEFAULT_RETRY_TOTAL == 0
     for prefix, adapter in session.adapters.items():
         assert isinstance(adapter, HTTPAdapter)
-        assert adapter.max_retries is before[prefix]
+        assert adapter.max_retries is not before[prefix]
+        retry = adapter.max_retries
+        assert isinstance(retry, Retry)
+        assert retry.total == DEFAULT_RETRY_TOTAL
+        assert retry.backoff_factor == DEFAULT_RETRY_BACKOFF
 
 
 def test_configure_retry_invalid_backoff_falls_back_when_enabled(
@@ -201,6 +220,225 @@ def test_configure_retry_patches_custom_adapter_in_place(
 
     assert session.adapters["https://example.com"] is custom
     assert isinstance(custom.max_retries, Retry)
+
+
+# --- Wire-level retry behaviour against a local server (no real sleeping) ---
+
+
+class _ScriptedServer:
+    """Local HTTP server that answers every request with one fixed response."""
+
+    def __init__(self, status: int, headers: dict[str, str]) -> None:
+        self.hits = 0
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self) -> None:
+                outer.hits += 1
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    self.rfile.read(length)
+                self.send_response(status)
+                for key, value in headers.items():
+                    self.send_header(key, value)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            do_GET = do_POST = do_HEAD = _reply  # noqa: N815
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}/rest/api/2/x"
+        self.thread = threading.Thread(
+            target=self.httpd.serve_forever, args=(0.05,), daemon=True
+        )
+        self.thread.start()
+
+    def close(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+@pytest.fixture
+def scripted_server() -> Iterator[object]:
+    servers: list[_ScriptedServer] = []
+
+    def make(status: int, headers: dict[str, str] | None = None) -> _ScriptedServer:
+        server = _ScriptedServer(status, headers or {})
+        servers.append(server)
+        return server
+
+    yield make
+    for server in servers:
+        server.close()
+
+
+@pytest.fixture
+def recorded_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Replace time.sleep (shared module object) so retries never really wait."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "mcp_atlassian.utils.http.time.sleep", lambda s: sleeps.append(s)
+    )
+    return sleeps
+
+
+def _clear_retry_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "ATLASSIAN_RETRY_TOTAL",
+        "ATLASSIAN_RETRY_BACKOFF",
+        "ATLASSIAN_RETRY_INCLUDE_WRITES",
+        "ATLASSIAN_RETRY_IGNORE_RETRY_AFTER",
+        "ATLASSIAN_RETRY_MAX_RETRY_AFTER",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _retrying_session() -> Session:
+    session = _new_session()
+    session.trust_env = False  # ignore any proxy env in the test runner
+    configure_retry(session, service="Test")
+    return session
+
+
+def test_default_retry_after_zero_is_bounded_and_backs_off(
+    monkeypatch: pytest.MonkeyPatch, scripted_server, recorded_sleeps
+) -> None:
+    """#1543: ``Retry-After: 0`` must not loop; 1 try + 3 retries, never 0s apart."""
+    _clear_retry_env(monkeypatch)
+    server = scripted_server(429, {"Retry-After": "0"})
+
+    response = _retrying_session().get(server.url, timeout=5)
+
+    assert response.status_code == 429
+    assert server.hits == DEFAULT_RETRY_TOTAL + 1
+    assert recorded_sleeps == [1.0, 2.0, 4.0]
+
+
+def test_default_large_retry_after_is_capped(
+    monkeypatch: pytest.MonkeyPatch, scripted_server, recorded_sleeps
+) -> None:
+    _clear_retry_env(monkeypatch)
+    server = scripted_server(503, {"Retry-After": "3600"})
+
+    _retrying_session().get(server.url, timeout=5)
+
+    assert server.hits == DEFAULT_RETRY_TOTAL + 1
+    assert recorded_sleeps == [float(DEFAULT_RETRY_MAX_RETRY_AFTER)] * 3
+
+
+def test_max_retry_after_env_override(
+    monkeypatch: pytest.MonkeyPatch, scripted_server, recorded_sleeps
+) -> None:
+    _clear_retry_env(monkeypatch)
+    monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "1")
+    monkeypatch.setenv("ATLASSIAN_RETRY_MAX_RETRY_AFTER", "5")
+    server = scripted_server(429, {"Retry-After": "120"})
+
+    _retrying_session().get(server.url, timeout=5)
+
+    assert server.hits == 2
+    assert recorded_sleeps == [5.0]
+
+
+def test_retry_after_within_cap_is_honoured(
+    monkeypatch: pytest.MonkeyPatch, scripted_server, recorded_sleeps
+) -> None:
+    _clear_retry_env(monkeypatch)
+    monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "1")
+    server = scripted_server(429, {"Retry-After": "7"})
+
+    _retrying_session().get(server.url, timeout=5)
+
+    assert recorded_sleeps == [7.0]
+
+
+def test_invalid_retry_after_falls_back_to_backoff(
+    monkeypatch: pytest.MonkeyPatch, scripted_server, recorded_sleeps
+) -> None:
+    _clear_retry_env(monkeypatch)
+    server = scripted_server(429, {"Retry-After": "soon"})
+
+    response = _retrying_session().get(server.url, timeout=5)
+
+    assert response.status_code == 429
+    assert server.hits == DEFAULT_RETRY_TOTAL + 1
+    # Plain urllib3 backoff: first retry immediate, then exponential.
+    assert recorded_sleeps == [2.0, 4.0]
+
+
+def test_ignore_retry_after_uses_backoff_only(
+    monkeypatch: pytest.MonkeyPatch, scripted_server, recorded_sleeps
+) -> None:
+    _clear_retry_env(monkeypatch)
+    monkeypatch.setenv("ATLASSIAN_RETRY_IGNORE_RETRY_AFTER", "true")
+    server = scripted_server(429, {"Retry-After": "3600"})
+
+    _retrying_session().get(server.url, timeout=5)
+
+    assert server.hits == DEFAULT_RETRY_TOTAL + 1
+    assert recorded_sleeps == [2.0, 4.0]
+
+
+def test_unauthorized_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch, scripted_server, recorded_sleeps
+) -> None:
+    """A 401 (the #1543 symptom) is returned at once, even with Retry-After."""
+    _clear_retry_env(monkeypatch)
+    server = scripted_server(401, {"Retry-After": "0"})
+
+    response = _retrying_session().get(server.url, timeout=5)
+
+    assert response.status_code == 401
+    assert server.hits == 1
+    assert recorded_sleeps == []
+
+
+def test_writes_not_retried_by_default(
+    monkeypatch: pytest.MonkeyPatch, scripted_server, recorded_sleeps
+) -> None:
+    _clear_retry_env(monkeypatch)
+    server = scripted_server(429, {"Retry-After": "1"})
+
+    response = _retrying_session().post(server.url, json={"a": 1}, timeout=5)
+
+    assert response.status_code == 429
+    assert server.hits == 1
+    assert recorded_sleeps == []
+
+
+def test_retry_total_zero_disables_retries_on_the_wire(
+    monkeypatch: pytest.MonkeyPatch, scripted_server, recorded_sleeps
+) -> None:
+    _clear_retry_env(monkeypatch)
+    monkeypatch.setenv("ATLASSIAN_RETRY_TOTAL", "0")
+    server = scripted_server(429, {"Retry-After": "0"})
+
+    response = _retrying_session().get(server.url, timeout=5)
+
+    assert response.status_code == 429
+    assert server.hits == 1
+    assert recorded_sleeps == []
+
+
+def test_circuit_breaker_counts_one_failure_per_retried_request(
+    monkeypatch: pytest.MonkeyPatch, scripted_server, recorded_sleeps
+) -> None:
+    """Retries run inside adapter.send, so the breaker sees one 429 per call."""
+    _clear_retry_env(monkeypatch)
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD", "2")
+    server = scripted_server(429, {"Retry-After": "0"})
+    session = _retrying_session()
+    configure_circuit_breaker(session, service="Test")
+
+    session.get(server.url, timeout=5)
+    assert server.hits == DEFAULT_RETRY_TOTAL + 1
+    session.get(server.url, timeout=5)
+    with pytest.raises(CircuitBreakerOpenError):
+        session.get(server.url, timeout=5)
+    assert server.hits == 2 * (DEFAULT_RETRY_TOTAL + 1)
 
 
 def test_format_rate_limit_error_includes_retry_after():
@@ -538,3 +776,42 @@ def test_circuit_breaker_allows_only_one_half_open_probe(
 
     assert results.count("sent") == 1
     assert results.count("blocked") == 3
+
+
+def test_configure_default_timeout_bounds_request_without_timeout():
+    """A direct ``session.get()`` without ``timeout=`` against a server that
+    accepts the connection but never answers must time out instead of blocking
+    forever (requests' default is no timeout)."""
+    import socket
+
+    import requests
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    port = server.getsockname()[1]
+    try:
+        session = _new_session()
+        configure_default_timeout(session, 0.5, service="Test")
+
+        started = time.monotonic()
+        with pytest.raises(requests.exceptions.ReadTimeout):
+            session.get(f"http://127.0.0.1:{port}/")
+        assert time.monotonic() - started < 5
+    finally:
+        server.close()
+
+
+def test_configure_default_timeout_keeps_explicit_timeout():
+    session = Session()
+    adapter = MagicMock(spec=HTTPAdapter)
+    original_send = adapter.send
+    session.mount("https://", adapter)
+    configure_default_timeout(session, 75, service="Test")
+
+    session.adapters["https://"].send(MagicMock(), timeout=3)
+    session.adapters["https://"].send(MagicMock(), timeout=None)
+    session.adapters["https://"].send(MagicMock())
+
+    timeouts = [c.kwargs["timeout"] for c in original_send.call_args_list]
+    assert timeouts == [3, 75, 75]
