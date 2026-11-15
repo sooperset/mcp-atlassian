@@ -59,6 +59,22 @@ Thank you for your interest in contributing to MCP Atlassian! This document prov
     }
     ```
 
+## Docs development setup
+
+The documentation website uses [mintlify](https://www.mintlify.com/docs). To
+serve a live preview of the documentation website:
+
+1. Install Node.js with your favorite package manager or the [online Node.js
+   installer](https://nodejs.org/en/download)
+
+2. Run the following command from the root of this repository:
+
+    ```
+    npx mint dev
+    ```
+
+3. View your preview at [http://localhost:3000](http://localhost:3000).
+
 ## Development Workflow
 
 1. Create a feature or fix branch:
