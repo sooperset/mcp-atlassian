@@ -365,3 +365,25 @@ def test_placeholder_shaped_text_in_page_is_not_replaced_by_code():
     assert markdown.startswith(f"start {literal_0} and {literal_1} end")
     for i in range(12):
         assert markdown.count(f"```python\nbody_{i}\n```") == 1
+
+
+def test_nested_macro_language_shaped_like_a_placeholder_is_not_expanded():
+    """A language name written back into the page cannot collide with a later placeholder."""
+    inner = (
+        '<ac:structured-macro ac:name="code">'
+        '<ac:parameter ac:name="language">'
+        "\x00MCPCODE<span>MACRO1</span>\x00"
+        "</ac:parameter>"
+        "<ac:plain-text-body><![CDATA[body]]></ac:plain-text-body>"
+        "</ac:structured-macro>"
+    )
+    outer = (
+        '<ac:structured-macro ac:name="code">'
+        "<ac:plain-text-body><![CDATA[outer]]></ac:plain-text-body>"
+        f"{inner}"
+        "</ac:structured-macro>"
+    )
+    preprocessor = BasePreprocessor(base_url="https://confluence.example.com")
+    _, markdown = preprocessor.process_html_content(outer)
+
+    assert markdown == "```\x00MCPCODEMACRO1\x00\nouter\n```"
