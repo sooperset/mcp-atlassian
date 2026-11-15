@@ -117,6 +117,8 @@ class SearchOperationsProto(Protocol):
         limit: int = 50,
         expand: str | None = None,
         projects_filter: str | None = None,
+        page_token: str | None = None,
+        include_total: bool = False,
     ) -> JiraSearchResult:
         """Search for issues using JQL."""
 

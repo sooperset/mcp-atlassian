@@ -117,6 +117,8 @@ JIRA_SCOPE_POLICY = ScopePolicy(
             "jql",
             "projects_filter",
             "page_token",
+            # The approximate count reuses the search JQL, allowlist included.
+            "include_total",
             # Global metadata, not stored in a project.
             "user_identifier",
             "username",
