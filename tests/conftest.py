@@ -330,6 +330,22 @@ def parametrized_auth_env(request):
 # ============================================================================
 
 
+@pytest.fixture(autouse=True)
+def _isolate_files_dir(tmp_path_factory, monkeypatch):
+    """Keep the remote-transport file root out of the real home directory.
+
+    CLI tests that start an HTTP transport would otherwise create
+    ``~/.mcp-atlassian/files`` and leave the module-level transport flag set
+    for later tests.
+    """
+    from mcp_atlassian.utils import io as io_mod
+
+    files_dir = tmp_path_factory.mktemp("mcp-files")
+    monkeypatch.setattr(io_mod, "default_files_dir", lambda: files_dir)
+    yield
+    io_mod.set_remote_transport(False)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def validate_test_environment():
     """

@@ -7,10 +7,35 @@ import warnings
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag
 from markdownify import markdownify as md
 
 logger = logging.getLogger("mcp-atlassian")
+
+# Every substring shaped like a code-macro placeholder. The lookahead keeps
+# matches that share a NUL boundary with their neighbour.
+_PLACEHOLDER_SHAPED = re.compile("(?=(\x00MCPCODEMACRO[0-9]+\x00))")
+
+_QUOTED_MACROS = frozenset({"panel", "info", "note", "warning", "tip"})
+_RESOURCE_ATTRS = (
+    ("ri:page", "ri:content-title"),
+    ("ri:attachment", "ri:filename"),
+    ("ri:url", "ri:value"),
+    ("ri:space", "ri:space-key"),
+)
+
+
+def _macro_placeholder(name: str, macro: Tag, params: dict[str, str]) -> str:
+    if name == "jira" and params.get("key"):
+        return f"[{params['key']}]"
+    for param_name in ("key", "jqlQuery", "jql", "url"):
+        if value := params.get(param_name):
+            return f"[{name}: {value}]"
+    for tag_name, attr_name in _RESOURCE_ATTRS:
+        ref = macro.find(tag_name)
+        if isinstance(ref, Tag) and (value := str(ref.get(attr_name, "")).strip()):
+            return f"[{name}: {value}]"
+    return f"[{name} macro]"
 
 
 def _extract_blocks(
@@ -61,6 +86,159 @@ def _restore_blocks(text: str, storage: list[str], prefix: str) -> str:
     for i in range(len(storage) - 1, -1, -1):
         text = text.replace(f"\x00{prefix}{i}\x00", storage[i])
     return text
+
+
+def _code_language_from_element(el: Tag) -> str:
+    """Extract a language-* class from a pre element or its code child."""
+    for candidate in (el, el.find("code")):
+        if candidate is None or isinstance(candidate, str):
+            continue
+        classes = candidate.get("class") or []
+        for cls in classes:
+            if cls.startswith("language-"):
+                return cls.removeprefix("language-")
+    return ""
+
+
+def _fenced_code_block(code_text: str, language: str) -> str:
+    """Wrap code text in a fence that cannot occur in the code body."""
+    longest_backtick_run = max(
+        (len(run) for run in re.findall(r"`+", code_text)),
+        default=0,
+    )
+    fence = "`" * max(3, longest_backtick_run + 1)
+    closing_newline = "" if code_text.endswith(("\n", "\r")) else "\n"
+    return f"{fence}{language}\n{code_text}{closing_newline}{fence}"
+
+
+def _prefix_code_block(code_block: str, prefix: str) -> str:
+    """Add a Markdown container prefix to every line in a code block."""
+    return re.sub(
+        r"\r\n|\r|\n",
+        lambda match: f"{match.group()}{prefix}",
+        code_block,
+    )
+
+
+def _restore_inline_code_macro(
+    text: str, start: int, placeholder: str, code_block: str
+) -> str | None:
+    """Restore a code macro that markdownify collapsed into an inline span.
+
+    Inside a table cell markdownify flattens the pre/code wrapper onto the
+    row's line as a backtick span, where a multi-line fence would split the
+    row. Mirror markdownify's own handling of pre/code in that position:
+    collapse the body onto one line inside a span wide enough for any
+    backtick run it contains.
+    """
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", start)
+    if line_end == -1:
+        line_end = len(text)
+
+    line_before = text[line_start:start]
+    line_after = text[start + len(placeholder) : line_end]
+    opening = re.search(r"`+[^`\r\n]*$", line_before)
+    closing = re.match(r"[ \t]*`+", line_after)
+    stored_opening = re.match(r"(?P<fence>`+)[^\r\n]*\n", code_block)
+    if not opening or not closing or not stored_opening:
+        return None
+
+    stored_fence = stored_opening.group("fence")
+    if not code_block.endswith(stored_fence):
+        return None
+
+    body = code_block[stored_opening.end() : -len(stored_fence)]
+    collapsed = body.strip("\n").replace("\n", " ")
+    longest_backtick_run = max(
+        (len(run) for run in re.findall(r"`+", collapsed)),
+        default=0,
+    )
+    delimiter = "`" * max(3, longest_backtick_run + 1)
+
+    span_start = line_start + opening.start()
+    span_end = start + len(placeholder) + closing.end()
+    return f"{text[:span_start]}{delimiter} {collapsed} {delimiter}{text[span_end:]}"
+
+
+def _restore_code_macro_block(
+    text: str, start: int, placeholder: str, code_block: str
+) -> str:
+    """Restore one code block using the fence context from markdownify."""
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", start)
+    if line_end == -1:
+        line_end = len(text)
+
+    line_before = text[line_start:start]
+    line_after = text[start + len(placeholder) : line_end]
+    if line_after.strip():
+        inline = _restore_inline_code_macro(text, start, placeholder, code_block)
+        if inline is not None:
+            return inline
+        return text.replace(placeholder, code_block, 1)
+
+    opening_line_end = line_start - 1
+    if opening_line_end < 0:
+        return text.replace(placeholder, code_block, 1)
+    opening_line_start = text.rfind("\n", 0, opening_line_end) + 1
+    opening_line = text[opening_line_start:opening_line_end]
+
+    closing_line_start = line_end + 1
+    if closing_line_start > len(text):
+        return text.replace(placeholder, code_block, 1)
+    closing_line_end = text.find("\n", closing_line_start)
+    if closing_line_end == -1:
+        closing_line_end = len(text)
+    closing_line = text[closing_line_start:closing_line_end]
+
+    opening_match = re.search(r"(?P<fence>`{3,})(?P<info>[^\r\n]*)$", opening_line)
+    closing_match = re.search(r"(?P<fence>`{3,})[ \t]*$", closing_line)
+    stored_opening = re.match(r"(?P<fence>`+)[^\r\n]*\n", code_block)
+    if not opening_match or not closing_match or not stored_opening:
+        return text.replace(placeholder, code_block, 1)
+
+    stored_fence = stored_opening.group("fence")
+    stored_opening_end = stored_opening.end()
+    if not code_block.endswith(stored_fence):
+        return text.replace(placeholder, code_block, 1)
+
+    body = code_block[stored_opening_end : -len(stored_fence)]
+    # The closing line contains only markdownify's continuation prefix and
+    # the fence, making it the reliable prefix for every restored body line.
+    # The placeholder line can also carry list or quote context, but unlike
+    # the closing line it may be adjacent to content in malformed HTML.
+    continuation_prefix = closing_line[: closing_match.start()]
+    container_prefix = opening_line[: opening_match.start()]
+    stored_opening_line = code_block[:stored_opening_end].rstrip("\n")
+    restored = (
+        f"{container_prefix}{stored_opening_line}\n"
+        f"{continuation_prefix}{_prefix_code_block(body, continuation_prefix)}"
+        f"{stored_fence}"
+    )
+
+    suffix_start = closing_line_end
+    return text[:opening_line_start] + restored + text[suffix_start:]
+
+
+def _restore_code_macro_blocks(markdown_text: str, code_blocks: dict[str, str]) -> str:
+    """Replace code-macro placeholders with fenced blocks in Markdown context."""
+    for placeholder, code_block in sorted(
+        code_blocks.items(),
+        key=lambda item: markdown_text.rfind(item[0]),
+        reverse=True,
+    ):
+        placeholder_start = markdown_text.rfind(placeholder)
+        if placeholder_start == -1:
+            continue
+        markdown_text = _restore_code_macro_block(
+            markdown_text,
+            placeholder_start,
+            placeholder,
+            code_block,
+        )
+
+    return markdown_text
 
 
 class ConfluenceClient(Protocol):
@@ -129,15 +307,146 @@ class BasePreprocessor:
             # Process Confluence image tags
             self._process_images_in_soup(soup, content_id, attachments)
 
-            # Convert to string and markdown
+            # Convert to string before the code-macro rewrite so the HTML
+            # output keeps the original storage-format macros intact
             processed_html = str(soup)
-            processed_markdown = md(processed_html)
+
+            # Convert code-block macros before markdownify strips them
+            # (markdown path only). Keep their contents out of markdownify so
+            # it cannot shorten their fences or strip boundary newlines, while
+            # the pre/code wrapper keeps nested Markdown containers intact.
+            code_macro_blocks = self._process_code_macros_in_soup(soup)
+            self._process_remaining_macros_in_soup(soup)
+            processed_markdown = md(
+                str(soup),
+                code_language_callback=_code_language_from_element,
+            )
+            if code_macro_blocks:
+                processed_markdown = _restore_code_macro_blocks(
+                    processed_markdown, code_macro_blocks
+                )
 
             return processed_html, processed_markdown
 
         except Exception as e:
             logger.error(f"Error in process_html_content: {str(e)}")
             raise
+
+    @staticmethod
+    def _process_code_macros_in_soup(soup: BeautifulSoup) -> dict[str, str]:
+        """Convert Confluence code/noformat macros to standard pre/code blocks.
+
+        markdownify does not know the ``ac:structured-macro`` element: it strips
+        the tags, leaks the parameter values (language, line numbers) into the
+        output as literal text, and collapses the whitespace of the code body.
+        Replacing the macro with a ``pre/code`` wrapper containing a placeholder
+        lets markdownify establish the surrounding list or blockquote structure
+        while the code body is preserved verbatim for restoration afterward.
+
+        Returns:
+            Mapping of markdownify-safe placeholders to fenced code blocks.
+        """
+        code_blocks: dict[str, str] = {}
+        # A placeholder has to avoid three things: placeholder-shaped text
+        # already in the document, the placeholders handed out so far, and the
+        # language names this loop writes back into the document. The document
+        # is scanned once for such text instead of being serialized again for
+        # every macro, which made pages with many code macros quadratic.
+        taken = set(_PLACEHOLDER_SHAPED.findall(str(soup)))
+        for macro in soup.find_all(
+            "ac:structured-macro", attrs={"ac:name": ["code", "noformat"]}
+        ):
+            body = macro.find("ac:plain-text-body")
+            if body is None:
+                # Without a plain-text body, the macro's child text consists
+                # of parameters rather than code. Leave it untouched so
+                # potentially meaningful content is not replaced by a bogus
+                # code block.
+                continue
+
+            # Empty and whitespace-only bodies still convert: leaving the
+            # macro in place would leak its parameter values as literal text
+            # once markdownify strips the unknown tags.
+            code_text = body.get_text()
+
+            language_param = macro.find("ac:parameter", attrs={"ac:name": "language"})
+            language = language_param.get_text(strip=True) if language_param else ""
+
+            placeholder = f"\x00MCPCODEMACRO{len(code_blocks)}\x00"
+            collision = 0
+            taken.update(_PLACEHOLDER_SHAPED.findall(language))
+            while placeholder in taken:
+                collision += 1
+                placeholder = f"\x00MCPCODEMACRO{len(code_blocks)}{collision}\x00"
+
+            taken.add(placeholder)
+            code_blocks[placeholder] = _fenced_code_block(code_text, language)
+
+            pre_tag = soup.new_tag("pre")
+            code_tag = soup.new_tag("code")
+            if language:
+                code_tag["class"] = f"language-{language}"
+            code_tag.string = placeholder
+            pre_tag.append(code_tag)
+            macro.replace_with(pre_tag)
+
+        return code_blocks
+
+    @staticmethod
+    def _process_remaining_macros_in_soup(soup: BeautifulSoup) -> None:
+        """Replace macros without a dedicated handler with their visible text.
+
+        Runs after the code-macro pass, so only macros nobody handled reach
+        here. Their ``ac:parameter`` values are configuration (colours, widths,
+        flags) and are dropped with the macro. Panels and their info/note/
+        warning/tip variants become a blockquote led by the bold ``title``, a
+        status becomes ``[title]``, other macros keep their title and body, and
+        a bodyless macro keeps its content parameter (such as a Jira issue
+        ``key`` or ``ri:*`` target) before falling back to ``[name macro]``.
+        Innermost macros go first so nested bodies are already flattened.
+        """
+        for macro in reversed(soup.find_all("ac:structured-macro")):
+            name = str(macro.get("ac:name", "")).lower()
+            params: dict[str, str] = {
+                str(param.get("ac:name", "")): param.get_text(strip=True)
+                for param in macro.find_all("ac:parameter", recursive=False)
+            }
+            title = params.get("title", "")
+
+            if name == "status":
+                macro.replace_with(f"[{title or 'status'}]")
+                continue
+
+            body = macro.find(
+                ["ac:rich-text-body", "ac:plain-text-body"], recursive=False
+            )
+            content: list[Any] = []
+            if body is not None and body.name == "ac:plain-text-body":
+                if text := body.get_text().strip():
+                    content.append(NavigableString(text))
+            elif body is not None:
+                content = list(body.contents)
+
+            if not title and not content:
+                macro.replace_with(_macro_placeholder(name, macro, params))
+                continue
+
+            if title:
+                heading = soup.new_tag("p")
+                strong = soup.new_tag("strong")
+                strong.string = title
+                heading.append(strong)
+                content.insert(0, heading)
+
+            if name in _QUOTED_MACROS:
+                quote = soup.new_tag("blockquote")
+                for node in content:
+                    quote.append(node)
+                macro.replace_with(quote)
+            else:
+                for node in content:
+                    macro.insert_before(node)
+                macro.decompose()
 
     @staticmethod
     def _process_date_elements_in_soup(soup: BeautifulSoup) -> None:

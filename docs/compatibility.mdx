@@ -136,7 +136,7 @@ GitHub Copilot's coding agent supports MCP servers via stdio transport. Key conf
   </Step>
 
   <Step title="Verify tool discovery">
-    If Copilot reports "Retrieved 0 tools", ensure you are using `mcp-atlassian >= 0.16.0` (which includes FastMCP updates for better protocol compliance). Current releases run on FastMCP v3 (`>=3.2.4,<4.0.0`) while exposing the standard MCP protocol over stdio and HTTP, so MCP clients do not need FastMCP installed. If an older client still cannot discover tools, update the client to a current MCP-compatible release.
+    If Copilot reports "Retrieved 0 tools", ensure you are using `mcp-atlassian >= 0.16.0` (which includes FastMCP updates for better protocol compliance). Current releases run on FastMCP v3 (`>=3.4.4,<4.0.0`) while exposing the standard MCP protocol over stdio and HTTP, so MCP clients do not need FastMCP installed. If an older client still cannot discover tools, update the client to a current MCP-compatible release.
   </Step>
 
   <Step title="Docker alternative">
@@ -197,12 +197,21 @@ MCP Atlassian supports both Atlassian Cloud and Server/Data Center deployments, 
 | Tool | Cloud | Server/DC | Notes |
 |------|-------|-----------|-------|
 | `jira_batch_get_changelogs` | Yes | No | Cloud-only changelog API |
+| `jira_move_issue` | Yes | No | Cloud-only bulk move API |
 | `jira_get_issue_proforma_forms` | Yes | No | Cloud-only (requires cloud_id for Forms API) |
 | `jira_get_service_desk_queues` | Yes | Yes | Requires Jira Service Management |
 | `confluence_get_page_views` | Yes | No | Cloud-only analytics API |
 | `confluence_check_content_permissions` | Yes | No | Cloud-only content permissions API |
 | `confluence_get_space_permissions` | Yes | No | Cloud-only space permissions API |
 | `confluence_search_user` | Yes (CQL) | Yes (group member fallback) | Server/DC uses group member API; specify `group_name` |
+
+`jira_batch_get_changelogs` and `jira_move_issue` are tagged Cloud-only. When the
+configured Jira URL (or the `X-Atlassian-Jira-Url` request header) is a
+Server/Data Center instance, these tools are hidden from `tools/list`, and a
+direct call by name is refused with the same `Unknown tool` error as a tool that
+does not exist. If the deployment type cannot be determined, they stay visible.
+The other Cloud-only tools in this table remain listed on Server/DC and return an
+error when called.
 
 ### Content Format Differences
 

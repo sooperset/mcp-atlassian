@@ -1,5 +1,6 @@
 """Tests for the Jira attachments module."""
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -7,6 +8,7 @@ import pytest
 
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.attachments import AttachmentsMixin
+from mcp_atlassian.utils.media import AttachmentTooLargeError
 
 # Test scenarios for AttachmentsMixin
 #
@@ -75,7 +77,9 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
@@ -97,6 +101,7 @@ class TestAttachmentsMixin:
             mock_file.assert_called_once_with(expected_path, "wb")
             mock_file().write.assert_called_once_with(b"test content")
             mock_makedirs.assert_called_once()
+            mock_response.close.assert_called_once()
 
     def test_download_attachment_relative_path(
         self, attachments_mixin: AttachmentsMixin
@@ -110,24 +115,18 @@ class TestAttachmentsMixin:
 
         # Mock file operations and os.path.abspath
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
-            patch("os.path.abspath") as mock_abspath,
-            patch("os.path.isabs") as mock_isabs,
             patch("os.getcwd", return_value="/absolute/path"),
             patch("mcp_atlassian.jira.attachments.validate_safe_path"),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 12
-            mock_isabs.return_value = False
             # Target a subdirectory (downloads may not land in the CWD root itself).
-            mock_abspath.side_effect = lambda p: (
-                "/absolute/path/downloads/test_file.txt"
-                if p == "downloads/test_file.txt"
-                else p
-            )
 
             # Call the method with a relative path
             result = attachments_mixin.download_attachment(
@@ -136,10 +135,8 @@ class TestAttachmentsMixin:
 
             # Assertions
             assert result is True
-            mock_isabs.assert_any_call("downloads/test_file.txt")
-            mock_abspath.assert_any_call("downloads/test_file.txt")
             mock_file.assert_called_once_with(
-                "/absolute/path/downloads/test_file.txt", "wb"
+                os.path.normpath("/absolute/path/downloads/test_file.txt"), "wb"
             )
 
     def test_download_attachment_no_url(self, attachments_mixin: AttachmentsMixin):
@@ -154,10 +151,15 @@ class TestAttachmentsMixin:
         mock_response.raise_for_status.side_effect = Exception("HTTP Error")
         attachments_mixin.jira._session.get.return_value = mock_response
 
-        result = attachments_mixin.download_attachment(
-            "https://test.url/attachment", "/tmp/test_file.txt"
-        )
+        with (
+            patch("os.getcwd", return_value="/tmp"),
+            patch("os.makedirs"),
+        ):
+            result = attachments_mixin.download_attachment(
+                "https://test.url/attachment", "/tmp/downloads/test_file.txt"
+            )
         assert result is False
+        mock_response.close.assert_called_once()
 
     def test_download_attachment_file_write_error(
         self, attachments_mixin: AttachmentsMixin
@@ -171,15 +173,19 @@ class TestAttachmentsMixin:
 
         # Mock file operations to raise an exception during write
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.makedirs") as mock_makedirs,
+            patch("os.getcwd", return_value="/tmp"),
         ):
             mock_file().write.side_effect = OSError("Write error")
 
             result = attachments_mixin.download_attachment(
-                "https://test.url/attachment", "/tmp/test_file.txt"
+                "https://test.url/attachment", "/tmp/downloads/test_file.txt"
             )
             assert result is False
+            mock_response.close.assert_called_once()
 
     def test_download_attachment_file_not_created(
         self, attachments_mixin: AttachmentsMixin
@@ -193,7 +199,9 @@ class TestAttachmentsMixin:
 
         # Mock file operations
         with (
-            patch("builtins.open", mock_open()) as mock_file,
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined", mock_open()
+            ) as mock_file,
             patch("os.path.exists") as mock_exists,
             patch("os.makedirs") as mock_makedirs,
         ):
@@ -297,22 +305,18 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 return_value=mock_attachment,
             ),
-            patch("os.path.isabs") as mock_isabs,
-            patch("os.path.abspath") as mock_abspath,
             patch("os.getcwd", return_value="/absolute/path"),
-            patch("mcp_atlassian.jira.attachments.validate_safe_path"),
+            patch("mcp_atlassian.jira.attachments.validate_safe_path") as mock_validate,
         ):
-            mock_isabs.return_value = False
-            mock_abspath.return_value = "/absolute/path/attachments"
-
             result = attachments_mixin.download_issue_attachments(
                 "TEST-123", "attachments"
             )
 
-            # Assertions
+            # Assertions: the relative dir resolves against the file root (cwd).
             assert result["success"] is True
-            mock_isabs.assert_called_once_with("attachments")
-            mock_abspath.assert_called_once_with("attachments")
+            mock_validate.assert_called_once_with(
+                os.path.normpath("/absolute/path/attachments")
+            )
 
     def test_download_issue_attachments_no_attachments(
         self, attachments_mixin: AttachmentsMixin
@@ -481,7 +485,9 @@ class TestAttachmentsMixin:
             "filename": "test_file.txt",
             "size": 100,
         }
-        attachments_mixin.jira.add_attachment.return_value = mock_attachment_response
+        attachments_mixin.jira.add_attachment_object.return_value = (
+            mock_attachment_response
+        )
 
         # Mock file operations
         with (
@@ -494,7 +500,10 @@ class TestAttachmentsMixin:
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.basename") as mock_basename,
-            patch("builtins.open", mock_open(read_data=b"test content")),
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
         ):
             mock_exists.return_value = True
             mock_getsize.return_value = 100
@@ -513,9 +522,9 @@ class TestAttachmentsMixin:
             assert result["filename"] == "test_file.txt"
             assert result["size"] == 100
             assert result["id"] == "12345"
-            attachments_mixin.jira.add_attachment.assert_called_once_with(
-                issue_key="TEST-123", filename="/absolute/path/test_file.txt"
-            )
+            attachments_mixin.jira.add_attachment_object.assert_called_once()
+            args = attachments_mixin.jira.add_attachment_object.call_args.args
+            assert args[0] == "TEST-123"
 
     def test_upload_attachment_relative_path(
         self, attachments_mixin: AttachmentsMixin, tmp_path: Path
@@ -526,7 +535,9 @@ class TestAttachmentsMixin:
             "filename": "test_file.txt",
             "size": 100,
         }
-        attachments_mixin.jira.add_attachment.return_value = mock_attachment_response
+        attachments_mixin.jira.add_attachment_object.return_value = (
+            mock_attachment_response
+        )
 
         (tmp_path / "test_file.txt").write_bytes(b"test content")
         resolved = str((tmp_path / "test_file.txt").resolve())
@@ -535,9 +546,12 @@ class TestAttachmentsMixin:
             result = attachments_mixin.upload_attachment("TEST-123", "test_file.txt")
 
         assert result["success"] is True
-        attachments_mixin.jira.add_attachment.assert_called_once_with(
-            issue_key="TEST-123", filename=resolved
+        attachments_mixin.jira.add_attachment_object.assert_called_once()
+        issue_key, file_obj = (
+            attachments_mixin.jira.add_attachment_object.call_args.args
         )
+        assert issue_key == "TEST-123"
+        assert file_obj.name == resolved
 
     def test_upload_attachment_no_issue_key(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no issue key."""
@@ -546,7 +560,7 @@ class TestAttachmentsMixin:
         # Assertions
         assert result["success"] is False
         assert "No issue key provided" in result["error"]
-        attachments_mixin.jira.add_attachment.assert_not_called()
+        attachments_mixin.jira.add_attachment_object.assert_not_called()
 
     def test_upload_attachment_no_file_path(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no file path."""
@@ -555,7 +569,7 @@ class TestAttachmentsMixin:
         # Assertions
         assert result["success"] is False
         assert "No file path provided" in result["error"]
-        attachments_mixin.jira.add_attachment.assert_not_called()
+        attachments_mixin.jira.add_attachment_object.assert_not_called()
 
     def test_upload_attachment_file_not_found(
         self, attachments_mixin: AttachmentsMixin
@@ -567,7 +581,10 @@ class TestAttachmentsMixin:
             patch("os.path.exists") as mock_exists,
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
-            patch("builtins.open", mock_open(read_data=b"test content")),
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
         ):
             mock_exists.return_value = False
             mock_isabs.return_value = True
@@ -580,12 +597,14 @@ class TestAttachmentsMixin:
             # Assertions
             assert result["success"] is False
             assert "File not found" in result["error"]
-            attachments_mixin.jira.add_attachment.assert_not_called()
+            attachments_mixin.jira.add_attachment_object.assert_not_called()
 
     def test_upload_attachment_api_error(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with an API error."""
         # Mock the Jira API to raise an exception
-        attachments_mixin.jira.add_attachment.side_effect = Exception("API Error")
+        attachments_mixin.jira.add_attachment_object.side_effect = Exception(
+            "API Error"
+        )
 
         # Mock file operations
         with (
@@ -594,7 +613,10 @@ class TestAttachmentsMixin:
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.basename") as mock_basename,
-            patch("builtins.open", mock_open(read_data=b"test content")),
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
         ):
             mock_exists.return_value = True
             mock_isabs.return_value = True
@@ -612,7 +634,7 @@ class TestAttachmentsMixin:
     def test_upload_attachment_no_response(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload when API returns no response."""
         # Mock the Jira API to return None
-        attachments_mixin.jira.add_attachment.return_value = None
+        attachments_mixin.jira.add_attachment_object.return_value = None
 
         # Mock file operations
         with (
@@ -621,7 +643,10 @@ class TestAttachmentsMixin:
             patch("os.path.isabs") as mock_isabs,
             patch("os.path.abspath") as mock_abspath,
             patch("os.path.basename") as mock_basename,
-            patch("builtins.open", mock_open(read_data=b"test content")),
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
         ):
             mock_exists.return_value = True
             mock_isabs.return_value = True
@@ -666,7 +691,7 @@ class TestAttachmentsMixin:
             headers={"X-Atlassian-Token": "no-check"},
             files={"file": ("test_file.txt", b"test content")},
         )
-        attachments_mixin.jira.add_attachment.assert_not_called()
+        attachments_mixin.jira.add_attachment_object.assert_not_called()
 
     def test_upload_attachment_from_content_dict_response(
         self, attachments_mixin: AttachmentsMixin
@@ -966,6 +991,79 @@ class TestAttachmentsMixin:
         attachments_mixin.jira._session.get.assert_called_once_with(
             "https://test.url/attachment", stream=True
         )
+        mock_response.close.assert_called_once()
+
+    def test_fetch_attachment_content_stops_past_size_limit(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body larger than the limit is refused without reading it to the end."""
+        monkeypatch.setattr("mcp_atlassian.jira.attachments.ATTACHMENT_MAX_BYTES", 25)
+        consumed: list[int] = []
+
+        def body():
+            for index in range(100):
+                consumed.append(index)
+                yield b"x" * 10
+
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = body()
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        with pytest.raises(AttachmentTooLargeError) as raised:
+            attachments_mixin.fetch_attachment_content("https://test.url/attachment")
+
+        assert raised.value.bytes_read == 30
+        assert len(consumed) == 3
+        mock_response.close.assert_called_once()
+
+    def test_fetch_attachment_content_accepts_body_exactly_at_limit(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body of exactly the limit is returned whole."""
+        monkeypatch.setattr("mcp_atlassian.jira.attachments.ATTACHMENT_MAX_BYTES", 20)
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = [b"x" * 10, b"y" * 10]
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        result = attachments_mixin.fetch_attachment_content(
+            "https://test.url/attachment"
+        )
+
+        assert result == b"x" * 10 + b"y" * 10
+
+    def test_oversized_body_is_reported_with_the_size_limit_message(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body larger than its metadata is reported as too large, not as a failed fetch."""
+        monkeypatch.setattr("mcp_atlassian.jira.attachments.ATTACHMENT_MAX_BYTES", 25)
+        attachments_mixin.jira.issue.return_value = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "big.bin",
+                        "content": "https://test.url/attachment",
+                        "size": 10,
+                    }
+                ]
+            }
+        }
+        attachment = MagicMock()
+        attachment.filename = "big.bin"
+        attachment.url = "https://test.url/attachment"
+        attachment.content_type = "application/octet-stream"
+        attachment.size = 10
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = [b"x" * 10] * 5
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        with patch(
+            "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+            return_value=attachment,
+        ):
+            result = attachments_mixin.get_issue_attachment_contents("TEST-1")
+
+        assert result["attachments"] == []
+        assert "larger than the 50 MB inline limit" in result["failed"][0]["error"]
 
     def test_fetch_attachment_content_no_url(self, attachments_mixin: AttachmentsMixin):
         """Test fetch with no URL returns None."""
@@ -984,6 +1082,7 @@ class TestAttachmentsMixin:
             "https://test.url/attachment"
         )
         assert result is None
+        mock_response.close.assert_called_once()
 
     # Tests for get_issue_attachment_contents method
 
@@ -1541,7 +1640,7 @@ class TestUploadPathTraversalRegression:
         with patch("os.getcwd", return_value=str(workspace)):
             attachments_mixin.upload_attachment("PROJ-1", malicious)
 
-        attachments_mixin.jira.add_attachment.assert_not_called()
+        attachments_mixin.jira.add_attachment_object.assert_not_called()
 
     @pytest.mark.security_regression
     def test_upload_attachments_list_does_not_read_outside_workspace(
@@ -1558,7 +1657,7 @@ class TestUploadPathTraversalRegression:
         with patch("os.getcwd", return_value=str(workspace)):
             attachments_mixin.upload_attachments("PROJ-1", [str(secret)])
 
-        attachments_mixin.jira.add_attachment.assert_not_called()
+        attachments_mixin.jira.add_attachment_object.assert_not_called()
 
     @pytest.mark.security_regression
     def test_download_into_cwd_module_is_rejected(
@@ -1573,7 +1672,7 @@ class TestUploadPathTraversalRegression:
         attachments_mixin.jira._session.get.return_value = mock_response
 
         with (
-            patch("builtins.open", mock_open()),
+            patch("mcp_atlassian.jira.attachments.open_confined", mock_open()),
             patch("os.path.exists", return_value=True),
             patch("os.path.getsize", return_value=27),
             patch("os.makedirs"),
@@ -1588,3 +1687,83 @@ class TestUploadPathTraversalRegression:
             "download targeting the CWD (where Python imports modules) must be "
             "confined to a dedicated directory, not allowed to overwrite source files"
         )
+
+
+# --- the opened file is the validated file -------------------------------------
+
+
+@pytest.mark.security_regression
+def test_download_refuses_directory_swapped_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp_atlassian.utils import io as io_mod
+
+    base = tmp_path / "base"
+    (base / "dl").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "f.bin").write_bytes(b"ORIGINAL")
+    monkeypatch.setenv(io_mod.FILES_DIR_ENV, str(base))
+    monkeypatch.chdir(tmp_path)
+
+    original = io_mod.validate_safe_path
+    calls = {"n": 0}
+
+    def validate_then_swap(*args, **kwargs):
+        result = original(*args, **kwargs)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            (base / "dl").rmdir()
+            (base / "dl").symlink_to(outside, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(
+        "mcp_atlassian.jira.attachments.validate_safe_path", validate_then_swap
+    )
+    fetcher = JiraFetcher.__new__(JiraFetcher)
+    fetcher.jira = MagicMock()
+    response = MagicMock()
+    response.iter_content.return_value = [b"ATTACKER"]
+    fetcher.jira._session.get.return_value = response
+
+    assert (
+        fetcher.download_attachment("https://x/att", str(base / "dl" / "f.bin"))
+        is False
+    )
+    assert (outside / "f.bin").read_bytes() == b"ORIGINAL"
+
+
+@pytest.mark.security_regression
+def test_upload_reads_only_the_validated_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp_atlassian.utils import io as io_mod
+
+    base = tmp_path / "base"
+    base.mkdir()
+    target = base / "up.txt"
+    target.write_bytes(b"fine")
+    outside = tmp_path / "secret.txt"
+    outside.write_bytes(b"SECRET")
+    monkeypatch.setenv(io_mod.FILES_DIR_ENV, str(base))
+
+    original = io_mod.validate_safe_path
+
+    def validate_then_swap(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if target.exists() and not target.is_symlink():
+            target.unlink()
+            target.symlink_to(outside)
+        return result
+
+    monkeypatch.setattr(
+        "mcp_atlassian.jira.attachments.validate_safe_path", validate_then_swap
+    )
+    fetcher = JiraFetcher.__new__(JiraFetcher)
+    fetcher.jira = MagicMock()
+
+    result = fetcher.upload_attachment("TEST-1", str(target))
+
+    assert result["success"] is False
+    fetcher.jira.add_attachment.assert_not_called()
+    fetcher.jira.add_attachment_object.assert_not_called()

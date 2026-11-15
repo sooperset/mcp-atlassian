@@ -85,6 +85,113 @@ The `--stateless` flag is only supported with `streamable-http` transport. Using
   </Tab>
 </Tabs>
 
+## TLS (HTTPS Listener)
+
+By default the HTTP transports listen in plaintext, and TLS is typically terminated
+by a reverse proxy or ingress in front of the server. For end-to-end TLS — for
+example when policy requires encryption all the way to the pod — the server can
+terminate TLS itself. Provide a certificate and private key (PEM) and the listener
+switches to HTTPS:
+
+```bash
+# Using flags
+MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE=false \
+  uvx mcp-atlassian --transport streamable-http --port 9000 \
+  --ssl-certfile /path/to/server-cert.pem \
+  --ssl-keyfile /path/to/server-key.pem
+
+# Or via environment variables (e.g. mounted from a Kubernetes Secret)
+MCP_SSL_CERTFILE=/certs/tls.crt MCP_SSL_KEYFILE=/certs/tls.key \
+  MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE=false \
+  uvx mcp-atlassian --transport streamable-http --port 9000
+```
+
+CLI flags override the environment variables, mirroring host/port precedence.
+
+<Warning>
+The HTTPS listener requires `MCP_ATLASSIAN_USE_SYSTEM_TRUSTSTORE=false`. The OS
+trust store injection (on by default) replaces Python's `ssl.SSLContext` with a
+client-side-only implementation that rejects every inbound TLS handshake, so
+startup aborts if both are enabled. Set it as a real environment variable or in
+the default `.env` file — `--env-file` is loaded too late to affect trust store
+injection.
+
+With the injection disabled, outbound SSL verification uses the bundled certifi
+CAs. If your Atlassian instance uses a private CA, point **both**
+`REQUESTS_CA_BUNDLE` (covers the Jira/Confluence REST clients and OAuth token
+exchange, via `requests`) **and** `SSL_CERT_FILE` (covers the OAuth proxy
+paths, via `httpx`) at your CA bundle; the bundle must also include public
+roots if you talk to Atlassian Cloud. Do **not** work around certificate errors
+with `JIRA_SSL_VERIFY=false` / `CONFLUENCE_SSL_VERIFY=false` — that disables
+verification on the channel carrying every user's credentials.
+</Warning>
+
+<Note>
+Remember to update client configuration to `https://` URLs once the listener
+serves TLS — the examples elsewhere on this page use `http://`.
+</Note>
+
+<Note>
+Certificate and key must be provided together — setting only one aborts startup.
+These options configure the server's *own* listener certificate; they are
+unrelated to the client-side `*_CLIENT_CERT` mTLS options used when connecting
+to Atlassian. The key must be unencrypted, and the certificate is loaded once at
+startup — rotation requires a restart. Under `stdio` there is no network
+listener, so the options are ignored with a warning.
+</Note>
+
+
+## Server-side file paths
+
+Some tools accept a path on the **server's** filesystem: `confluence_upload_attachment(s)`
+and `jira_update_issue` (`attachments`) read a file and upload it, and
+`confluence_create_page` / `confluence_update_page` read `content_file`. Over HTTP the
+caller is remote, so these paths are confined to one directory:
+
+- `MCP_ATLASSIAN_FILES_DIR` when set.
+- Otherwise `~/.mcp-atlassian/files` for the user running the server (created on start).
+  The process working directory is **not** used on `sse` / `streamable-http`, because it
+  depends on how the server was started (`/` for a systemd system unit, `$HOME` for a
+  user unit or a shell).
+
+The server refuses to start on a remote transport if `MCP_ATLASSIAN_FILES_DIR` is a
+filesystem root or a home directory. Put only files you intend callers to upload in this
+directory. In multi-user deployments every caller shares it, so prefer the base64
+`content` inputs and leave the directory empty when you can.
+
+On `stdio` (a local client) the boundary stays the working directory unless
+`MCP_ATLASSIAN_FILES_DIR` is set, so existing local setups keep working.
+
+### systemd
+
+Set both the working directory and the files directory explicitly. Without
+`WorkingDirectory=`, a system unit starts in `/` (see `systemd.exec(5)`).
+
+```ini
+[Service]
+User=mcp-atlassian
+WorkingDirectory=/srv/mcp-atlassian
+Environment=MCP_ATLASSIAN_FILES_DIR=/srv/mcp-atlassian/files
+EnvironmentFile=/etc/mcp-atlassian.env
+ExecStart=/usr/local/bin/uvx mcp-atlassian --transport streamable-http --port 9000
+```
+
+Keep secrets such as `.env` files outside both directories.
+
+### Docker
+
+The official image works from `/app`. To upload files from the host, mount a dedicated
+directory and point the variable at it:
+
+```bash
+docker run --rm -p 9000:9000 \
+  --env-file /path/to/your/.env \
+  -e MCP_ATLASSIAN_FILES_DIR=/data/files \
+  -v /srv/mcp-atlassian/files:/data/files \
+  ghcr.io/sooperset/mcp-atlassian:latest \
+  --transport streamable-http --port 9000
+```
+
 ## Multi-User Authentication
 
 Both transport types support per-request authentication where each user provides their own credentials.
@@ -141,6 +248,20 @@ Both transport types support per-request authentication where each user provides
     </Warning>
   </Tab>
 </Tabs>
+
+### Restrict Request-Supplied URLs
+
+Over HTTP, clients can name their own instance with the
+`X-Atlassian-Jira-Url` / `X-Atlassian-Confluence-Url` headers (header-based PAT).
+Set `MCP_ALLOWED_URL_DOMAINS` to the domains your users connect to:
+
+```bash
+MCP_ALLOWED_URL_DOMAINS=atlassian.net,jira.example.com
+```
+
+Without it, any public host is accepted and the server logs a warning at
+startup. The allowlist will be required for HTTP transports with header-based
+URLs in v0.25.
 
 ### Server Setup for Multi-User
 
