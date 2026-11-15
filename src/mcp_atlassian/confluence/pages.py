@@ -1317,80 +1317,124 @@ class PagesMixin(ConfluenceClient):
         try:
             limit = clamp_limit(limit, context="confluence.get_space_page_tree")
 
-            # Paginate using the raw API to access _links.next for reliable
-            # truncation detection. The higher-level get_all_pages_from_space()
-            # has a broken termination condition when limit > server-side cap.
-            page_size = 200
-            start = 0
-            all_pages: list[dict[str, Any]] = []
-            next_link: str | None = None
-
-            while len(all_pages) < limit:
-                fetch_limit = min(page_size, limit - len(all_pages))
-                response = self.confluence.get_all_pages_from_space_raw(
-                    space=space_key,
-                    start=start,
-                    limit=fetch_limit,
-                    expand="ancestors",
-                )
-                batch = response.get("results", [])
-                all_pages.extend(batch)
-
-                next_link = response.get("_links", {}).get("next")
-                if not batch or not next_link:
-                    break
-                start += len(batch)
-
-            has_more = len(all_pages) >= limit and bool(next_link)
-
-            if not all_pages:
-                return {
-                    "space_key": space_key,
-                    "total_pages": 0,
-                    "has_more": False,
-                    "pages": [],
-                }
-
-            # Build flat list with parent_id and depth
-            result_pages = []
-
-            for page in all_pages:
-                page_id = page.get("id")
-                title = page.get("title", "Untitled")
-
-                # Position is auto-included via extensions in the v1 API.
-                # Confluence DC/Server can return position as the string
-                # "none" (or other non-numeric strings) instead of int/null.
-                # Normalize to int | None so sorting never mixes types.
-                raw_position = page.get("extensions", {}).get("position")
-                if raw_position is None:
-                    position = None
-                elif isinstance(raw_position, int):
-                    position = raw_position
-                else:
-                    try:
-                        position = int(str(raw_position))
-                    except (TypeError, ValueError):
-                        position = None
-
-                # Determine parent and depth from ancestors
-                ancestors = page.get("ancestors", [])
-                if ancestors:
-                    parent_id = ancestors[-1].get("id")
-                    depth = len(ancestors)
-                else:
-                    parent_id = None
-                    depth = 0
-
-                result_pages.append(
-                    {
-                        "id": page_id,
-                        "title": title,
-                        "parent_id": parent_id,
-                        "position": position,
-                        "depth": depth,
+            all_pages: list[dict[str, Any]]
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                # Cloud OAuth: the v1 space page listing is gone from the
+                # gateway (410), so read the pages from v2 and derive depth by
+                # walking parent_id within the fetched set. A parent outside
+                # the set (a folder, or a page beyond the limit) ends the walk.
+                start = 0
+                tree = v2_adapter.get_space_pages_for_tree(space_key, limit)
+                all_pages = tree["pages"]
+                has_more = bool(tree["has_more"])
+                if not all_pages:
+                    return {
+                        "space_key": space_key,
+                        "total_pages": 0,
+                        "has_more": False,
+                        "pages": [],
                     }
-                )
+                pages_by_id = {page["id"]: page for page in all_pages}
+                result_pages = []
+                for page in all_pages:
+                    depth = 0
+                    seen: set[str] = set()
+                    parent_id = page["parent_id"]
+                    while parent_id in pages_by_id and parent_id not in seen:
+                        seen.add(parent_id)
+                        depth += 1
+                        parent_id = pages_by_id[parent_id]["parent_id"]
+                    position = page["position"]
+                    if position is not None and not isinstance(position, int):
+                        try:
+                            position = int(str(position))
+                        except (TypeError, ValueError):
+                            position = None
+                    result_pages.append(
+                        {
+                            "id": page["id"],
+                            "title": page["title"],
+                            "parent_id": page["parent_id"],
+                            "position": position,
+                            "depth": depth,
+                        }
+                    )
+            else:
+                # Paginate using the raw API to access _links.next for reliable
+                # truncation detection. The higher-level get_all_pages_from_space()
+                # has a broken termination condition when limit > server-side cap.
+                page_size = 200
+                start = 0
+                all_pages = []
+                next_link: str | None = None
+
+                while len(all_pages) < limit:
+                    fetch_limit = min(page_size, limit - len(all_pages))
+                    response = self.confluence.get_all_pages_from_space_raw(
+                        space=space_key,
+                        start=start,
+                        limit=fetch_limit,
+                        expand="ancestors",
+                    )
+                    batch = response.get("results", [])
+                    all_pages.extend(batch)
+
+                    next_link = response.get("_links", {}).get("next")
+                    if not batch or not next_link:
+                        break
+                    start += len(batch)
+
+                has_more = len(all_pages) >= limit and bool(next_link)
+
+                if not all_pages:
+                    return {
+                        "space_key": space_key,
+                        "total_pages": 0,
+                        "has_more": False,
+                        "pages": [],
+                    }
+
+                # Build flat list with parent_id and depth
+                result_pages = []
+
+                for page in all_pages:
+                    page_id = page.get("id")
+                    title = page.get("title", "Untitled")
+
+                    # Position is auto-included via extensions in the v1 API.
+                    # Confluence DC/Server can return position as the string
+                    # "none" (or other non-numeric strings) instead of int/null.
+                    # Normalize to int | None so sorting never mixes types.
+                    raw_position = page.get("extensions", {}).get("position")
+                    if raw_position is None:
+                        position = None
+                    elif isinstance(raw_position, int):
+                        position = raw_position
+                    else:
+                        try:
+                            position = int(str(raw_position))
+                        except (TypeError, ValueError):
+                            position = None
+
+                    # Determine parent and depth from ancestors
+                    ancestors = page.get("ancestors", [])
+                    if ancestors:
+                        parent_id = ancestors[-1].get("id")
+                        depth = len(ancestors)
+                    else:
+                        parent_id = None
+                        depth = 0
+
+                    result_pages.append(
+                        {
+                            "id": page_id,
+                            "title": title,
+                            "parent_id": parent_id,
+                            "position": position,
+                            "depth": depth,
+                        }
+                    )
 
             # Sort by depth first (breadth-first), then by position.
             # Position is now always int | None after normalization above.
