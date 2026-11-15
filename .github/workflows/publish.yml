@@ -30,7 +30,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
         with:
-          enable-cache: true
+          # A release build must not restore a cache that another run could have written.
+          enable-cache: false
 
       - name: Build package
         run: uv build
