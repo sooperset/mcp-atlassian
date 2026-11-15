@@ -922,30 +922,29 @@ async def get_issue(
     if "changelog" in include_sections:
         result.setdefault("changelogs", [])
 
-    # Enrichments that require separate API calls
-    if "remote_links" in include_sections:
+    # Enrichments that require separate API calls. Each runs in a worker thread
+    # and a failed one falls back to its empty default.
+    async def _fetch_extra(func: Any, default: Any) -> Any:
         try:
-            result["remote_links"] = jira.get_remote_issue_links(issue_key)
+            return await run_jira_fetcher_call(func, issue_key)
         except Exception:  # noqa: BLE001
-            result["remote_links"] = []
+            return default
 
-    if "transitions" in include_sections:
-        try:
-            result["transitions"] = jira.get_available_transitions(issue_key)
-        except Exception:  # noqa: BLE001
-            result["transitions"] = []
-
-    if "watchers" in include_sections:
-        try:
-            result["watchers"] = jira.get_issue_watchers(issue_key)
-        except Exception:  # noqa: BLE001
-            result["watchers"] = {}
-
-    if "worklogs" in include_sections:
-        try:
-            result["worklogs"] = jira.get_worklogs(issue_key)
-        except Exception:  # noqa: BLE001
-            result["worklogs"] = []
+    extras: list[tuple[str, Any, Any]] = [
+        (key, func, default)
+        for key, func, default in (
+            ("remote_links", jira.get_remote_issue_links, []),
+            ("transitions", jira.get_available_transitions, []),
+            ("watchers", jira.get_issue_watchers, {}),
+            ("worklogs", jira.get_worklogs, []),
+        )
+        if key in include_sections
+    ]
+    extra_values = await asyncio.gather(
+        *(_fetch_extra(func, default) for _, func, default in extras)
+    )
+    for (key, _, _), value in zip(extras, extra_values, strict=True):
+        result[key] = value
 
     if "epic_summary" in include_sections:
         # Gate on the already-fetched issue type: a non-Epic makes ZERO
