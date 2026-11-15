@@ -600,3 +600,50 @@ def test_is_auth_configured_cert_missing():
         auth_type="cert",
     )
     assert config.is_auth_configured() is False
+
+
+def test_from_env_content_format_defaults_to_markdown():
+    """content_format defaults to 'markdown' when JIRA_CONTENT_FORMAT is unset."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.content_format == "markdown"
+
+
+def test_from_env_content_format_wiki():
+    """JIRA_CONTENT_FORMAT=wiki is honored (case-insensitive)."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_CONTENT_FORMAT": "WIKI",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.content_format == "wiki"
+
+
+def test_from_env_content_format_invalid_falls_back_to_markdown():
+    """An invalid JIRA_CONTENT_FORMAT falls back to 'markdown'."""
+    with patch.dict(
+        os.environ,
+        {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test_username",
+            "JIRA_API_TOKEN": "test_token",
+            "JIRA_CONTENT_FORMAT": "html",
+        },
+        clear=True,
+    ):
+        config = JiraConfig.from_env()
+        assert config.content_format == "markdown"
