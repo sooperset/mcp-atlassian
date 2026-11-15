@@ -21,6 +21,7 @@ from mcp_atlassian.confluence.attachments import (
     validate_attachment_id,
 )
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.media import AttachmentTooLargeError
 from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
 
 # Test scenarios for AttachmentsMixin
@@ -900,6 +901,34 @@ class TestAttachmentsMixin:
         attachments_mixin.confluence._session.get.assert_called_once_with(
             "https://example.atlassian.net/download/att123", stream=True
         )
+        mock_response.close.assert_called_once()
+
+    def test_fetch_attachment_content_stops_past_size_limit(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body larger than the limit is refused without reading it to the end."""
+        monkeypatch.setattr(
+            "mcp_atlassian.confluence.attachments.ATTACHMENT_MAX_BYTES", 25
+        )
+        consumed: list[int] = []
+
+        def body():
+            for index in range(100):
+                consumed.append(index)
+                yield b"x" * 10
+
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_content.return_value = body()
+        attachments_mixin.confluence._session.get.return_value = mock_response
+
+        with pytest.raises(AttachmentTooLargeError) as raised:
+            attachments_mixin.fetch_attachment_content(
+                "https://example.atlassian.net/download/att123"
+            )
+
+        assert raised.value.bytes_read == 30
+        assert len(consumed) == 3
         mock_response.close.assert_called_once()
 
     def test_fetch_attachment_content_empty_url(

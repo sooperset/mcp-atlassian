@@ -15,7 +15,7 @@ from ..utils.http import (
     configure_rate_limit,
     configure_retry,
 )
-from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
+from ..utils.logging import get_masked_session_headers, log_config_param
 from ..utils.oauth import configure_oauth_session
 from ..utils.proxy import apply_proxy_configuration
 from ..utils.ssl import configure_ssl_verification
@@ -95,7 +95,7 @@ class ConfluenceClient:
             logger.debug(
                 f"Initializing Confluence client with Token (PAT) auth. "
                 f"URL: {self.config.url}, "
-                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
+                f"Token length: {len(str(self.config.personal_token))}"
             )
             self.confluence = Confluence(
                 url=self.config.url,

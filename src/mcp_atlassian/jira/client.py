@@ -21,7 +21,6 @@ from mcp_atlassian.utils.http import (
 from mcp_atlassian.utils.logging import (
     get_masked_session_headers,
     log_config_param,
-    mask_sensitive,
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.proxy import apply_proxy_configuration
@@ -113,7 +112,7 @@ class JiraClient:
             logger.debug(
                 f"Initializing Jira client with Token (PAT) auth. "
                 f"URL: {self.config.url}, "
-                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
+                f"Token length: {len(str(self.config.personal_token))}"
             )
             self.jira = Jira(
                 url=self.config.url,

@@ -34,7 +34,6 @@ from mcp_atlassian.utils.io import (
     configure_file_root_for_transport,
     is_read_only_mode,
 )
-from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.oauth import (
     CLOUD_AUTHORIZE_URL,
     CLOUD_TOKEN_URL,
@@ -858,8 +857,7 @@ class UserTokenMiddleware:
                 scope["state"]["user_atlassian_token"] = token
                 scope["state"]["user_atlassian_auth_type"] = "oauth"
                 logger.debug(
-                    "UserTokenMiddleware: Bearer token extracted (masked): "
-                    f"...{mask_sensitive(token, 8)}"
+                    f"UserTokenMiddleware: Bearer token extracted (length {len(token)})"
                 )
 
         elif auth_header.startswith("Token "):
@@ -872,8 +870,7 @@ class UserTokenMiddleware:
                 scope["state"]["user_atlassian_token"] = token
                 scope["state"]["user_atlassian_auth_type"] = "pat"
                 logger.debug(
-                    "UserTokenMiddleware: PAT token extracted (masked): "
-                    f"...{mask_sensitive(token, 8)}"
+                    f"UserTokenMiddleware: PAT token extracted (length {len(token)})"
                 )
 
         elif auth_header.startswith("Basic "):
