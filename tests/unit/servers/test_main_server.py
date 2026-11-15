@@ -412,6 +412,22 @@ class TestUserTokenMiddleware:
         assert "username=test" not in caplog.text
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize("scheme", ["Bearer", "Token"])
+    async def test_accepted_token_leaves_no_fragment_in_debug_log(
+        self, middleware, mock_scope, mock_receive, mock_send, caplog, scheme
+    ):
+        """An accepted token is logged by length only, with no characters of it."""
+        token = "abcdefgh-0123456789-middle-0123456789-stuvwxyz"
+        mock_scope["headers"] = [(b"authorization", f"{scheme} {token}".encode())]
+
+        with caplog.at_level(logging.DEBUG, logger="mcp-atlassian.server.main"):
+            await middleware(mock_scope, mock_receive, mock_send)
+
+        assert "token extracted" in caplog.text
+        assert token[:8] not in caplog.text
+        assert token[-8:] not in caplog.text
+
+    @pytest.mark.anyio
     async def test_raw_auth_token_is_redacted_in_warning(
         self, middleware, mock_scope, mock_receive, mock_send, caplog
     ):

@@ -6,6 +6,7 @@ import pytest
 
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
+    AttachmentTooLargeError,
     fetch_and_encode_attachment,
     is_image_attachment,
 )
@@ -125,6 +126,23 @@ class TestFetchAndEncodeAttachment:
         assert encoded is not None
         assert mime == "image/webp"
         assert size == len(raw)
+
+    def test_fetch_stopped_at_limit_reports_bytes_read(self) -> None:
+        """A fetch that stopped at the limit is reported as oversized, not failed."""
+
+        def stopped(_url: str) -> bytes:
+            raise AttachmentTooLargeError(
+                ATTACHMENT_MAX_BYTES + 1, ATTACHMENT_MAX_BYTES
+            )
+
+        encoded, mime, size = fetch_and_encode_attachment(
+            fetch_fn=stopped,
+            url="https://example.com/big.png",
+            filename="big.png",
+        )
+        assert encoded is None
+        assert mime is None
+        assert size == ATTACHMENT_MAX_BYTES + 1
 
     def test_fetched_size_exceeds_limit(self) -> None:
         """Return (None, None, actual_size) when oversized."""

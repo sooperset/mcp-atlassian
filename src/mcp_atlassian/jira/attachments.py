@@ -13,7 +13,11 @@ from ..utils.io import (
     open_confined,
     validate_safe_path,
 )
-from ..utils.media import ATTACHMENT_MAX_BYTES
+from ..utils.media import (
+    ATTACHMENT_MAX_BYTES,
+    AttachmentTooLargeError,
+    read_capped,
+)
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
 
@@ -104,6 +108,9 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
 
         Returns:
             The raw bytes of the attachment, or None on failure
+
+        Raises:
+            AttachmentTooLargeError: The body passed the inline size limit.
         """
         if not url:
             logger.error("No URL provided for attachment fetch")
@@ -115,11 +122,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             try:
                 response.raise_for_status()
 
-                chunks: list[bytes] = []
-                for chunk in response.iter_content(chunk_size=8192):
-                    chunks.append(chunk)
-
-                data = b"".join(chunks)
+                data = read_capped(response, ATTACHMENT_MAX_BYTES)
                 logger.info(
                     f"Successfully fetched attachment from {url} "
                     f"(size: {len(data)} bytes)"
@@ -128,6 +131,12 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             finally:
                 response.close()
 
+        except AttachmentTooLargeError:
+            logger.warning(
+                f"Attachment from {url} is larger than "
+                f"{ATTACHMENT_MAX_BYTES} bytes; stopped reading"
+            )
+            raise
         except Exception as e:
             logger.error(f"Error fetching attachment: {str(e)}")
             return None
@@ -249,7 +258,20 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 )
                 continue
 
-            data = self.fetch_attachment_content(attachment.url)
+            try:
+                data = self.fetch_attachment_content(attachment.url)
+            except AttachmentTooLargeError:
+                failed.append(
+                    {
+                        "filename": attachment.filename,
+                        "error": (
+                            f"Attachment '{attachment.filename}' is larger "
+                            "than the 50 MB inline limit. Retrieve it "
+                            "directly from Jira."
+                        ),
+                    }
+                )
+                continue
             if data is not None:
                 content_type = (
                     attachment.content_type
