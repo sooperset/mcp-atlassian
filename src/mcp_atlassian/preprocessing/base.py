@@ -12,6 +12,10 @@ from markdownify import markdownify as md
 
 logger = logging.getLogger("mcp-atlassian")
 
+# Every substring shaped like a code-macro placeholder. The lookahead keeps
+# matches that share a NUL boundary with their neighbour.
+_PLACEHOLDER_SHAPED = re.compile("(?=(\x00MCPCODEMACRO[0-9]+\x00))")
+
 _QUOTED_MACROS = frozenset({"panel", "info", "note", "warning", "tip"})
 _RESOURCE_ATTRS = (
     ("ri:page", "ri:content-title"),
@@ -343,6 +347,12 @@ class BasePreprocessor:
             Mapping of markdownify-safe placeholders to fenced code blocks.
         """
         code_blocks: dict[str, str] = {}
+        # A placeholder has to avoid three things: placeholder-shaped text
+        # already in the document, the placeholders handed out so far, and the
+        # language names this loop writes back into the document. The document
+        # is scanned once for such text instead of being serialized again for
+        # every macro, which made pages with many code macros quadratic.
+        taken = set(_PLACEHOLDER_SHAPED.findall(str(soup)))
         for macro in soup.find_all(
             "ac:structured-macro", attrs={"ac:name": ["code", "noformat"]}
         ):
@@ -364,10 +374,12 @@ class BasePreprocessor:
 
             placeholder = f"\x00MCPCODEMACRO{len(code_blocks)}\x00"
             collision = 0
-            while placeholder in str(soup):
+            taken.update(_PLACEHOLDER_SHAPED.findall(language))
+            while placeholder in taken:
                 collision += 1
                 placeholder = f"\x00MCPCODEMACRO{len(code_blocks)}{collision}\x00"
 
+            taken.add(placeholder)
             code_blocks[placeholder] = _fenced_code_block(code_text, language)
 
             pre_tag = soup.new_tag("pre")
