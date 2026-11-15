@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -4316,6 +4317,64 @@ async def test_get_issue_include_remote_links(jira_client, mock_jira_fetcher):
     assert "remote_links" in content
     assert len(content["remote_links"]) == 1
     mock_jira_fetcher.get_remote_issue_links.assert_called_once_with("TEST-123")
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_extras_run_off_event_loop(
+    jira_client, mock_jira_fetcher
+):
+    """Extra API calls for include sections must not block the event loop."""
+    call_threads: dict[str, int] = {}
+
+    def recorder(name, value):
+        def _call(*args, **kwargs):
+            call_threads[name] = threading.get_ident()
+            return value
+
+        return _call
+
+    mock_jira_fetcher.get_remote_issue_links.side_effect = recorder("links", [])
+    mock_jira_fetcher.get_available_transitions.side_effect = recorder(
+        "transitions", []
+    )
+    mock_jira_fetcher.get_issue_watchers.side_effect = recorder("watchers", {})
+    mock_jira_fetcher.get_worklogs.side_effect = recorder("worklogs", [])
+
+    await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "include": "remote_links,transitions,watchers,worklogs",
+        },
+    )
+
+    assert set(call_threads) == {"links", "transitions", "watchers", "worklogs"}
+    assert threading.get_ident() not in call_threads.values()
+
+
+@pytest.mark.anyio
+async def test_get_issue_include_failed_extra_falls_back_to_default(
+    jira_client, mock_jira_fetcher
+):
+    """One failing extra gets its empty default and the others are unaffected."""
+    mock_jira_fetcher.get_remote_issue_links.side_effect = RuntimeError("boom")
+    mock_jira_fetcher.get_issue_watchers.side_effect = RuntimeError("boom")
+    mock_jira_fetcher.get_available_transitions.return_value = [{"id": "11"}]
+    mock_jira_fetcher.get_worklogs.side_effect = RuntimeError("boom")
+
+    response = await jira_client.call_tool(
+        "jira_get_issue",
+        {
+            "issue_key": "TEST-123",
+            "include": "remote_links,transitions,watchers,worklogs",
+        },
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["remote_links"] == []
+    assert content["watchers"] == {}
+    assert content["worklogs"] == []
+    assert content["transitions"] == [{"id": "11"}]
 
 
 @pytest.mark.anyio
