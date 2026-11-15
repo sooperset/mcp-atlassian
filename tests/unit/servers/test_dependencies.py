@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -562,6 +563,27 @@ def _create_mock_fetcher(fetcher_class, validation_return=None, validation_error
     return mock_fetcher
 
 
+def _header_pat_state() -> Any:
+    """Request state for header-based PAT auth (no user token on the state)."""
+
+    class HeaderPatState:
+        def __init__(self) -> None:
+            self.jira_fetcher = None
+            self.user_atlassian_auth_type = "pat"
+            self.user_atlassian_email = None
+            self.atlassian_service_headers = {
+                "X-Atlassian-Jira-Url": "https://test.atlassian.net",
+                "X-Atlassian-Jira-Personal-Token": "test-pat-token",
+            }
+
+        def __getattr__(self, name: str) -> None:
+            if name == "user_atlassian_token":
+                raise AttributeError(name)
+            return None
+
+    return HeaderPatState()
+
+
 class TestGetJiraFetcher:
     """Tests for get_jira_fetcher function."""
 
@@ -887,6 +909,71 @@ class TestGetJiraFetcher:
         ):
             await get_jira_fetcher(mock_context)
         mock_fetcher.close.assert_called_once()
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_header_based_validation_runs_off_event_loop(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """Credential validation is a blocking call and must not run on the loop."""
+        mock_request.state = _header_pat_state()
+        mock_get_http_request.return_value = mock_request
+        _setup_mock_context(
+            mock_context,
+            config_factory.create_app_context(
+                jira_config=config_factory.create_jira_config()
+            ),
+        )
+
+        validation_threads: list[int] = []
+
+        def record_thread() -> str:
+            validation_threads.append(threading.get_ident())
+            return "test-account-id"
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_fetcher.get_current_user_account_id.side_effect = record_thread
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        await get_jira_fetcher(mock_context)
+
+        assert len(validation_threads) == 1
+        assert validation_threads[0] != threading.get_ident()
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_validation_failure_chains_original_error(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """The ValueError keeps the underlying error as its cause."""
+        mock_request.state = _header_pat_state()
+        mock_get_http_request.return_value = mock_request
+        _setup_mock_context(
+            mock_context,
+            config_factory.create_app_context(
+                jira_config=config_factory.create_jira_config()
+            ),
+        )
+
+        original = Exception("Invalid token")
+        mock_jira_fetcher_class.return_value = _create_mock_fetcher(
+            JiraFetcher, validation_error=original
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            await get_jira_fetcher(mock_context)
+
+        assert exc_info.value.__cause__ is original
 
     @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
