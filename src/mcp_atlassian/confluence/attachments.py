@@ -15,7 +15,11 @@ from ..utils.io import (
     open_confined,
     validate_safe_path,
 )
-from ..utils.media import ATTACHMENT_MAX_BYTES, read_capped
+from ..utils.media import (
+    ATTACHMENT_MAX_BYTES,
+    AttachmentTooLargeError,
+    read_capped,
+)
 from ..utils.urls import resolve_relative_url
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
@@ -406,6 +410,9 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
 
         Returns:
             The raw bytes of the attachment, or None on failure.
+
+        Raises:
+            AttachmentTooLargeError: The body passed the inline size limit.
         """
         if not url:
             logger.error("No URL provided for attachment fetch")
@@ -419,12 +426,6 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 response.raise_for_status()
 
                 data = read_capped(response, ATTACHMENT_MAX_BYTES)
-                if data is None:
-                    logger.warning(
-                        f"Attachment from {url} is larger than "
-                        f"{ATTACHMENT_MAX_BYTES} bytes; stopped reading"
-                    )
-                    return None
                 logger.info(
                     f"Successfully fetched attachment from {url} "
                     f"(size: {len(data)} bytes)"
@@ -433,6 +434,12 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             finally:
                 response.close()
 
+        except AttachmentTooLargeError:
+            logger.warning(
+                f"Attachment from {url} is larger than "
+                f"{ATTACHMENT_MAX_BYTES} bytes; stopped reading"
+            )
+            raise
         except Exception as e:
             logger.error(f"Error fetching attachment: {str(e)}")
             return None

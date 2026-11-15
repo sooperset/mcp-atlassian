@@ -29,6 +29,7 @@ from mcp_atlassian.utils.decorators import (
 from mcp_atlassian.utils.io import open_confined, validate_safe_path
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
+    AttachmentTooLargeError,
     fetch_and_encode_attachment,
     is_image_attachment,
 )
@@ -2276,7 +2277,26 @@ async def download_attachment(
                 ),
             )
 
-        data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
+        try:
+            data_bytes = confluence_fetcher.fetch_attachment_content(download_url)
+        except AttachmentTooLargeError as exc:
+            return TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "success": False,
+                        "attachment_id": attachment_id,
+                        "filename": filename,
+                        "file_size": exc.bytes_read,
+                        "error": (
+                            f"Attachment '{filename}' is larger than the 50 MB "
+                            "inline limit. Retrieve it directly from Confluence."
+                        ),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
         if data_bytes is None:
             return TextContent(
                 type="text",

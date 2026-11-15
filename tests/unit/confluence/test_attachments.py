@@ -21,6 +21,7 @@ from mcp_atlassian.confluence.attachments import (
     validate_attachment_id,
 )
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.media import AttachmentTooLargeError
 from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
 
 # Test scenarios for AttachmentsMixin
@@ -921,11 +922,12 @@ class TestAttachmentsMixin:
         mock_response.iter_content.return_value = body()
         attachments_mixin.confluence._session.get.return_value = mock_response
 
-        result = attachments_mixin.fetch_attachment_content(
-            "https://example.atlassian.net/download/att123"
-        )
+        with pytest.raises(AttachmentTooLargeError) as raised:
+            attachments_mixin.fetch_attachment_content(
+                "https://example.atlassian.net/download/att123"
+            )
 
-        assert result is None
+        assert raised.value.bytes_read == 30
         assert len(consumed) == 3
         mock_response.close.assert_called_once()
 

@@ -67,22 +67,34 @@ def is_image_attachment(
     return False, media_type or "application/octet-stream"
 
 
-def read_capped(response: Any, max_bytes: int) -> bytes | None:
+class AttachmentTooLargeError(Exception):
+    """A streamed attachment body passed the size limit before it ended."""
+
+    def __init__(self, bytes_read: int, max_bytes: int) -> None:
+        super().__init__(
+            f"Attachment body passed the {max_bytes} byte limit "
+            f"after {bytes_read} bytes; stopped reading"
+        )
+        self.bytes_read = bytes_read
+        self.max_bytes = max_bytes
+
+
+def read_capped(response: Any, max_bytes: int) -> bytes:
     """Read a streamed response body, giving up once it passes ``max_bytes``.
 
     Attachment metadata is checked before a download, but the body can be
     larger than the metadata says. Stopping here bounds memory use by the
     limit instead of by what the upstream sends.
 
-    Returns:
-        The body, or None when it is larger than ``max_bytes``.
+    Raises:
+        AttachmentTooLargeError: The body is larger than ``max_bytes``.
     """
     chunks: list[bytes] = []
     total = 0
     for chunk in response.iter_content(chunk_size=8192):
         total += len(chunk)
         if total > max_bytes:
-            return None
+            raise AttachmentTooLargeError(total, max_bytes)
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -124,6 +136,13 @@ def fetch_and_encode_attachment(
     """
     try:
         data_bytes = fetch_fn(url)
+    except AttachmentTooLargeError as exc:
+        logger.warning(
+            "Attachment '%s' passed the %d byte limit while downloading",
+            filename,
+            exc.max_bytes,
+        )
+        return None, None, exc.bytes_read
     except Exception:
         logger.warning(
             "Failed to fetch attachment '%s' from %s",

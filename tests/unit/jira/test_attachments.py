@@ -8,6 +8,7 @@ import pytest
 
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.attachments import AttachmentsMixin
+from mcp_atlassian.utils.media import AttachmentTooLargeError
 
 # Test scenarios for AttachmentsMixin
 #
@@ -1008,13 +1009,61 @@ class TestAttachmentsMixin:
         mock_response.iter_content.return_value = body()
         attachments_mixin.jira._session.get.return_value = mock_response
 
+        with pytest.raises(AttachmentTooLargeError) as raised:
+            attachments_mixin.fetch_attachment_content("https://test.url/attachment")
+
+        assert raised.value.bytes_read == 30
+        assert len(consumed) == 3
+        mock_response.close.assert_called_once()
+
+    def test_fetch_attachment_content_accepts_body_exactly_at_limit(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body of exactly the limit is returned whole."""
+        monkeypatch.setattr("mcp_atlassian.jira.attachments.ATTACHMENT_MAX_BYTES", 20)
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = [b"x" * 10, b"y" * 10]
+        attachments_mixin.jira._session.get.return_value = mock_response
+
         result = attachments_mixin.fetch_attachment_content(
             "https://test.url/attachment"
         )
 
-        assert result is None
-        assert len(consumed) == 3
-        mock_response.close.assert_called_once()
+        assert result == b"x" * 10 + b"y" * 10
+
+    def test_oversized_body_is_reported_with_the_size_limit_message(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body larger than its metadata is reported as too large, not as a failed fetch."""
+        monkeypatch.setattr("mcp_atlassian.jira.attachments.ATTACHMENT_MAX_BYTES", 25)
+        attachments_mixin.jira.issue.return_value = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "big.bin",
+                        "content": "https://test.url/attachment",
+                        "size": 10,
+                    }
+                ]
+            }
+        }
+        attachment = MagicMock()
+        attachment.filename = "big.bin"
+        attachment.url = "https://test.url/attachment"
+        attachment.content_type = "application/octet-stream"
+        attachment.size = 10
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = [b"x" * 10] * 5
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        with patch(
+            "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+            return_value=attachment,
+        ):
+            result = attachments_mixin.get_issue_attachment_contents("TEST-1")
+
+        assert result["attachments"] == []
+        assert "larger than the 50 MB inline limit" in result["failed"][0]["error"]
 
     def test_fetch_attachment_content_no_url(self, attachments_mixin: AttachmentsMixin):
         """Test fetch with no URL returns None."""
