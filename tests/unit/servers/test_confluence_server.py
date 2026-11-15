@@ -1404,6 +1404,72 @@ async def test_upload_attachment_failure_message(client, mock_confluence_fetcher
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "fetcher_result,expected_message",
+    [
+        pytest.param(
+            {
+                "success": True,
+                "content_id": "123456",
+                "total": 2,
+                "uploaded": [
+                    {"filename": "a.txt", "id": "att1"},
+                    {"filename": "b.txt", "id": "att2"},
+                ],
+                "failed": [],
+            },
+            "Uploaded 2 attachment(s) successfully",
+            id="all-uploaded",
+        ),
+        pytest.param(
+            {
+                "success": True,
+                "content_id": "123456",
+                "total": 2,
+                "uploaded": [{"filename": "a.txt", "id": "att1"}],
+                "failed": [{"filename": "b.txt", "error": "400 Client Error"}],
+            },
+            "Uploaded 1 of 2 attachment(s); 1 failed",
+            id="one-failed",
+        ),
+        pytest.param(
+            {
+                "success": False,
+                "content_id": "123456",
+                "total": 2,
+                "uploaded": [],
+                "failed": [
+                    {"filename": "a.txt", "error": "403 Client Error"},
+                    {"filename": "b.txt", "error": "403 Client Error"},
+                ],
+            },
+            "Uploaded 0 of 2 attachment(s); 2 failed",
+            id="all-failed",
+        ),
+        pytest.param(
+            {"success": False, "error": "No content ID provided"},
+            "Attachment upload failed",
+            id="rejected",
+        ),
+    ],
+)
+async def test_upload_attachments_message_counts_files(
+    client, mock_confluence_fetcher, fetcher_result, expected_message
+):
+    """The summary counts uploaded and failed files, not result keys."""
+    mock_confluence_fetcher.upload_attachments.return_value = fetcher_result
+
+    response = await client.call_tool(
+        "confluence_upload_attachments",
+        {"content_id": "123456", "file_paths": "a.txt,b.txt"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == expected_message
+    assert result_data["attachments"] == fetcher_result
+
+
+@pytest.mark.anyio
 async def test_upload_attachment_base64_allows_empty_content(
     client, mock_confluence_fetcher
 ):

@@ -2066,9 +2066,19 @@ async def upload_attachments(
         minor_edit=minor_edit,
     )
 
+    uploaded = len(results.get("uploaded", []))
+    failed = len(results.get("failed", []))
+    if failed:
+        message = (
+            f"Uploaded {uploaded} of {uploaded + failed} attachment(s); {failed} failed"
+        )
+    elif results.get("success"):
+        message = f"Uploaded {uploaded} attachment(s) successfully"
+    else:
+        message = "Attachment upload failed"
     return json.dumps(
         {
-            "message": f"Uploaded {len(results)} attachment(s) successfully",
+            "message": message,
             "attachments": results,
         },
         indent=2,
