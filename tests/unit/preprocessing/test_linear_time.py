@@ -188,6 +188,27 @@ def test_jira_to_markdown_keeps_conversions(
     assert jira.jira_to_markdown(text) == expected
 
 
+JIRA_TO_MARKDOWN_INPUTS = {
+    f"unclosed_{name}_openers": f" {delimiter}x" * 20000
+    for name, delimiter in [
+        ("bold", "*"),
+        ("italic", "_"),
+        ("inserted", "+"),
+        ("superscript", "^"),
+        ("subscript", "~"),
+    ]
+} | {"openers_before_spaces": "+a " * 20000, "delimiter_run": "*_+^~" * 12000}
+
+
+@pytest.mark.parametrize(
+    "text",
+    list(JIRA_TO_MARKDOWN_INPUTS.values()),
+    ids=list(JIRA_TO_MARKDOWN_INPUTS),
+)
+def test_jira_to_markdown_finishes_in_budget(jira: JiraPreprocessor, text: str) -> None:
+    _finishes_in_budget(lambda: jira.jira_to_markdown(text))
+
+
 # --- Markdown -> Jira wiki markup (markdown_to_jira) ----------------------
 
 MARKDOWN_TO_JIRA_INPUTS = {

@@ -643,16 +643,57 @@ class _DelimiterOccurrences:
         return best
 
 
-def _phrase_pattern(delimiter: str) -> str:
-    """Build a regex for a Jira phrase span (`*bold*`, `+ins+`, ...).
+_PHRASE_CLOSERS = {
+    "_": r"(?<=[^\s\\_])_(?!\w)",
+    **{d: rf"(?<=[^\s\\]){re.escape(d)}(?![^\W_])" for d in "*+^~"},
+}
 
-    Mirrors Jira's renderer: the span stays on one line, its content neither
-    starts nor ends with whitespace, the delimiters touch no letter or digit
+
+def _touches_word(char: str, delimiter: str) -> bool:
+    """Whether ``char`` beside a delimiter keeps it from opening or closing."""
+    return char.isalnum() or (delimiter == "_" and char == "_")
+
+
+def _sub_phrases(text: str, delimiters: str, render: Callable[[str, str], str]) -> str:
+    """Convert Jira phrase spans (``*bold*``, ``+ins+``, ...) in linear time.
+
+    Like Jira's renderer, a span stays on one line, its content neither
+    starts nor ends with whitespace, its delimiters touch no letter or digit
     on their outer side, and a backslash-escaped delimiter never opens or
-    closes it. Group 1 captures the content.
+    closes it. ``_`` also counts ``_`` as a word character, so ``__init__``
+    stays literal. Each opener takes the first valid closer after it, as a
+    lazy regex would, and ``render(delimiter, content)`` gives the output.
     """
-    d = re.escape(delimiter)
-    return rf"(?<![^\W_])(?<!\\){d}(\S|\S.*?[^\s\\]){d}(?![^\W_])"
+    opener = re.compile(f"[{re.escape(delimiters)}]")
+    closers = {d: _NextIndex(text, _PHRASE_CLOSERS[d]) for d in delimiters}
+    newline = _NextIndex(text, r"\n")
+    size = len(text)
+    parts: list[str] = []
+    copied = pos = 0
+    while (match := opener.search(text, pos, size - 2)) is not None:
+        start = match.start()
+        delimiter = text[start]
+        before = text[start - 1] if start else " "
+        first = text[start + 1]
+        pos = start + 1
+        if (
+            before == "\\"
+            or _touches_word(before, delimiter)
+            or first.isspace()
+            or (delimiter == "_" and first == "_")
+        ):
+            continue
+        end = start + 2
+        after = text[end + 1] if end + 1 < size else " "
+        if text[end] != delimiter or _touches_word(after, delimiter):
+            end = closers[delimiter](start + 3)
+            if end == size or newline(start) < end:
+                continue
+        parts.append(text[copied:start])
+        parts.append(render(delimiter, text[start + 1 : end]))
+        copied = pos = end + 1
+    parts.append(text[copied:])
+    return "".join(parts)
 
 
 class JiraPreprocessor(BasePreprocessor):
@@ -897,16 +938,9 @@ class JiraPreprocessor(BasePreprocessor):
             flags=re.MULTILINE,
         )
 
-        # Text formatting (bold, italic). Italic also counts `_` as a word
-        # character, so a doubled `__` (`__init__`) stays literal.
-        output = re.sub(
-            _phrase_pattern("*") + r"|(?<!\w)(?<!\\)_(?!_)(\S|\S.*?[^\s\\_])_(?!\w)",
-            lambda match: (
-                f"**{match.group(1)}**"
-                if match.group(1) is not None
-                else f"*{match.group(2)}*"
-            ),
-            output,
+        # Text formatting (bold, italic)
+        output = _sub_phrases(
+            output, "*_", lambda d, text: f"**{text}**" if d == "*" else f"*{text}*"
         )
 
         # Headers
@@ -925,13 +959,13 @@ class JiraPreprocessor(BasePreprocessor):
         )
 
         # Inserted text
-        output = re.sub(_phrase_pattern("+"), r"<ins>\1</ins>", output)
+        output = _sub_phrases(output, "+", lambda _, t: f"<ins>{t}</ins>")
 
         # Superscript
-        output = re.sub(_phrase_pattern("^"), r"<sup>\1</sup>", output)
+        output = _sub_phrases(output, "^", lambda _, t: f"<sup>{t}</sup>")
 
         # Subscript
-        output = re.sub(_phrase_pattern("~"), r"<sub>\1</sub>", output)
+        output = _sub_phrases(output, "~", lambda _, t: f"<sub>{t}</sub>")
 
         # Strikethrough
         output = re.sub(r"-([^-]*)-", r"-\1-", output)
