@@ -110,6 +110,7 @@ async def test_tool_registration_issue_dates_name():
         "jira_create_sprint",
         "jira_create_version",
         "jira_batch_create_versions",
+        "jira_create_project_component",
     ],
 )
 async def test_additive_write_tools_are_non_destructive(tool_name: str) -> None:
