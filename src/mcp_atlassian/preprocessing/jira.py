@@ -888,9 +888,11 @@ class JiraPreprocessor(BasePreprocessor):
         # Text formatting (bold, italic). Delimiters preceded by a backslash
         # are wiki escapes (e.g. the intraword `\_` this module's
         # markdown_to_jira writes), not markup, so they must neither open nor
-        # close a span.
+        # close a span. The body must be non-empty: adjacent delimiters such
+        # as the `__` in env keys (`Ppc__Enabled`) are literal text, not an
+        # empty italic span.
         output = re.sub(
-            r"(?<!\\)([*_])(.*?)(?<!\\)\1",
+            r"(?<!\\)([*_])(.+?)(?<!\\)\1",
             lambda match: (
                 ("**" if match.group(1) == "*" else "*")
                 + match.group(2)
@@ -914,8 +916,11 @@ class JiraPreprocessor(BasePreprocessor):
             output,
         )
 
-        # Inserted text
-        output = re.sub(r"\+([^+]*)\+", r"<ins>\1</ins>", output)
+        # Inserted text. Jira inline markup does not span lines: without the
+        # newline guard, two unrelated '+' characters on different lines (e.g.
+        # UTC offsets "+00:00" and "+0300") pair up and both delimiters are
+        # consumed. The body must be non-empty, so a lone "++" survives.
+        output = re.sub(r"\+([^+\n]+)\+", r"<ins>\1</ins>", output)
 
         # Superscript
         output = re.sub(r"\^([^^]*)\^", r"<sup>\1</sup>", output)
