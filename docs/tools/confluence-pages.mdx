@@ -211,7 +211,7 @@ Move a Confluence page to a new parent or space.
 | `page_id` | `string` | Yes | ID of the page to move |
 | `target_parent_id` | `string` | No | Target parent page ID. If omitted with target_space_key, moves to space root. |
 | `target_space_key` | `string` | No | Target space key for cross-space moves |
-| `position` | `string` | No | Position: 'append' (default, move as child of target), 'above' (move before target as sibling), or 'below' (move after target as sibling) |
+| `position` | `string` | No | Position: 'append' (default, move as child of target), 'above' or 'before' (move before target as sibling), or 'below' or 'after' (move after target as sibling) |
 **Example:**
 
 ```json

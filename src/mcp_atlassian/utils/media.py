@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 # Used by both Jira and Confluence server tools to gate in-memory transfers.
 ATTACHMENT_MAX_BYTES: int = 50 * 1024 * 1024
 
+# Total attachment bytes one tool call may hold in memory across all the
+# attachments it returns inline (see AttachmentBudget).
+ATTACHMENT_CALL_MAX_BYTES: int = ATTACHMENT_MAX_BYTES
+
 _IMAGE_MIME_TYPES = frozenset(
     {
         "image/png",
@@ -77,6 +81,34 @@ class AttachmentTooLargeError(Exception):
         )
         self.bytes_read = bytes_read
         self.max_bytes = max_bytes
+
+
+class AttachmentBudget:
+    """The attachment bytes one tool call may still hold in memory.
+
+    A tool that returns several attachments inline creates one budget, checks
+    each attachment with :meth:`refusal` before and after fetching it, and
+    :meth:`spend` s the bytes it keeps. Attachments past the budget are
+    reported instead of fetched, so one call holds at most
+    ``ATTACHMENT_CALL_MAX_BYTES`` however many attachments there are.
+    """
+
+    def __init__(self) -> None:
+        self.total = ATTACHMENT_CALL_MAX_BYTES
+        self.remaining = self.total
+
+    def refusal(self, size: int | None) -> str | None:
+        """Return why *size* bytes cannot be kept, or None if they can."""
+        if size is None or size <= self.remaining:
+            return None
+        limit = f"the {self.total // (1024 * 1024)} MB inline limit"
+        if self.remaining < self.total:
+            limit = f"the {self.remaining} bytes left of {limit} for one call"
+        return f"{size} bytes which exceeds {limit}."
+
+    def spend(self, size: int) -> None:
+        """Record that *size* bytes are kept."""
+        self.remaining -= size
 
 
 def read_capped(response: Any, max_bytes: int) -> bytes:

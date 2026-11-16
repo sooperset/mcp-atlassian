@@ -25,9 +25,9 @@ import os
 import socket
 from collections.abc import Iterable
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlsplit
 
-from requests import Session
+from requests import PreparedRequest, Request, Session
 from requests.adapters import HTTPAdapter
 from urllib3.connection import HTTPConnection, HTTPSConnection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
@@ -73,16 +73,6 @@ def _configured_service_urls() -> list[str]:
     ]
 
 
-def _configured_service_hosts() -> list[str]:
-    """Exact service hosts the operator configured via environment."""
-    hosts = []
-    for raw in _configured_service_urls():
-        hostname = urlparse(raw).hostname
-        if hostname:
-            hosts.append(hostname.lower())
-    return hosts
-
-
 def _configured_service_origins() -> set[Origin]:
     """Exact service origins the operator configured via environment."""
     return {
@@ -109,9 +99,54 @@ def is_operator_trusted_url(url: object, extra_origins: Iterable[Origin] = ()) -
     return _hostname_matches_allowlist(origin[1], _get_domain_allowlist() or [])
 
 
-def _is_configured_service_host(host: str) -> bool:
-    """Return True when ``host`` is exactly a configured service host."""
-    return host.lower() in _configured_service_hosts()
+def _is_configured_service_endpoint(host: str, port: int) -> bool:
+    """Return True for exactly the host and port of a configured service URL."""
+    host = host.lower()
+    return any(
+        o_host == host and o_port == port
+        for _scheme, o_host, o_port in _configured_service_origins()
+    )
+
+
+def loggable_url(url: str) -> str:
+    """Return ``scheme://host:port/path`` of ``url`` for logs and messages.
+
+    User info, query and fragment are left out: they can carry credentials
+    or signed tokens.
+    """
+    origin = url_origin(url)
+    if origin is None:
+        return "<unparseable URL>"
+    return f"{origin[0]}://{origin[1]}:{origin[2]}{urlparse(url.strip()).path}"
+
+
+def ensure_attachment_origin(url: str, own_urls: Iterable[object]) -> None:
+    """Refuse an attachment URL that is not on the service's own origin.
+
+    Allowed: the exact origin (scheme, host, port) of one of ``own_urls`` (the
+    fetcher's configured URL and its client's base URL), or a host under
+    ``MCP_ALLOWED_URL_DOMAINS``. The operator's JIRA_URL/CONFLUENCE_URL is not
+    trusted here, so a fetcher for a request-supplied host cannot be sent to
+    the operator's instance.
+
+    Args:
+        url: The absolute URL about to be fetched.
+        own_urls: URLs of the service the fetcher talks to.
+
+    Raises:
+        ValueError: If ``url`` is on another origin. The message names only
+            the origin, never the path, query or user info.
+    """
+    allowed = {url_origin(u) for u in own_urls} - {None}
+    origin = url_origin(url)
+    if origin is not None and (
+        origin in allowed
+        or _hostname_matches_allowlist(origin[1], _get_domain_allowlist() or [])
+    ):
+        return
+    shown = f"{origin[0]}://{origin[1]}:{origin[2]}" if origin else "<unparseable URL>"
+    msg = f"Refusing to fetch attachment from a different host: {shown}"
+    raise ValueError(msg)
 
 
 def _pinned_create_connection(
@@ -127,7 +162,7 @@ def _pinned_create_connection(
     connection.
     """
     host, port = address
-    host_trusted = _is_configured_service_host(host)
+    host_trusted = _is_configured_service_endpoint(host, port)
     host_allowlisted = _hostname_matches_allowlist(host, _get_domain_allowlist() or [])
     err: Exception | None = None
     for af, socktype, proto, _canonname, sa in socket.getaddrinfo(
@@ -248,6 +283,16 @@ class SsrfPinningAdapter(HTTPAdapter):
             cert = None
         if proxies and not is_operator_trusted_url(url, self._trusted_origins):
             proxies = {}
+        if verify is False and url_origin(url) not in self._credential_origins:
+            # *_SSL_VERIFY=false is for this session's own service origin
+            # (exact scheme, host and port). Other service URLs, other hosts
+            # under MCP_ALLOWED_URL_DOMAINS, redirect hops and absolute links
+            # are verified.
+            verify = (
+                os.environ.get("REQUESTS_CA_BUNDLE")
+                or os.environ.get("CURL_CA_BUNDLE")
+                or True
+            )
         return super().send(
             request,
             stream=stream,
@@ -270,16 +315,83 @@ class SsrfPinningAdapter(HTTPAdapter):
         }
 
 
+def _has_dot_segment(url: str) -> bool:
+    """Return whether the path of ``url`` contains a ``.`` or ``..`` segment.
+
+    The check sees the path the way a client, proxy or server may come to
+    read it: percent-encoding is decoded until the path stops changing (so
+    ``%252e`` is read as ``.``), a backslash counts as a separator, and a
+    ``;parameter`` suffix on a segment is ignored. Every decoding stage is
+    checked. A path still changing after ``_MAX_PATH_DECODES`` decodings is
+    treated as having a dot segment. The query string is not checked.
+
+    Args:
+        url: The request URL as the caller built it, before normalization.
+
+    Returns:
+        ``True`` if any path segment is ``.`` or ``..`` at any decoding stage,
+        or if the path does not settle within ``_MAX_PATH_DECODES`` decodings.
+    """
+    path = urlsplit(url).path
+    for _ in range(_MAX_PATH_DECODES):
+        if _has_dot_segment_in(path):
+            return True
+        decoded = unquote(path)
+        if decoded == path:
+            return False
+        path = decoded
+    return True
+
+
+# No Atlassian path is percent-encoded this many times over.
+_MAX_PATH_DECODES = 8
+
+
+def _has_dot_segment_in(path: str) -> bool:
+    segments = path.replace("\\", "/").split("/")
+    return any(segment.split(";", 1)[0] in (".", "..") for segment in segments)
+
+
+def _refuse_dot_segments(session: Session) -> None:
+    """Make ``session`` refuse a request whose path has a ``.`` or ``..`` segment.
+
+    Request paths are built from tool arguments. ``requests`` resolves dot
+    segments while it prepares a request, so a value such as
+    ``../../OTHER-1/comment/5`` would address a different resource than the one
+    the caller was checked for. No Jira or Confluence endpoint needs such a
+    path, so the request is refused before it is prepared. A request sent
+    through ``Session.request`` passes here with its path still as written;
+    a ``PreparedRequest`` handed straight to ``Session.send`` does not.
+
+    Args:
+        session: Requests session to protect.
+    """
+    prepare = session.prepare_request
+    if getattr(prepare, "refuses_dot_segments", False):
+        return
+
+    def prepare_request(request: Request) -> PreparedRequest:
+        if _has_dot_segment(str(request.url)):
+            msg = "Refusing a request whose path contains a '.' or '..' segment"
+            raise ValueError(msg)
+        return prepare(request)
+
+    prepare_request.refuses_dot_segments = True  # type: ignore[attr-defined]
+    session.prepare_request = prepare_request  # type: ignore[method-assign]
+
+
 def mount_ssrf_pinning(session: Session, *trusted_urls: str) -> None:
     """Mount the SSRF DNS-pinning adapter for http/https on ``session``.
 
     Preserves the retry policy of any adapter already mounted (e.g. the one the
     Atlassian client configures), so pinning does not silently drop retries.
+    The session also refuses request paths with ``.`` or ``..`` segments.
 
     Args:
         session: Requests session to protect.
         trusted_urls: Operator-controlled transport URLs that may use proxies.
     """
+    _refuse_dot_segments(session)
     for scheme in ("https://", "http://"):
         existing = session.adapters.get(scheme)
         retries = getattr(existing, "max_retries", None)

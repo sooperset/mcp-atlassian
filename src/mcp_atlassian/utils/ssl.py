@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from requests import PreparedRequest, Response
+from requests.adapters import HTTPAdapter
 from requests.sessions import Session
 from requests.utils import should_bypass_proxies
 from urllib3.poolmanager import PoolManager
@@ -196,6 +197,29 @@ class SSLIgnoreAdapter(NoProxyAdapter):
         )
 
 
+def _mount_for_origin(session: Session, url: str, adapter: HTTPAdapter) -> None:
+    """Mount ``adapter`` for exactly the host and port of ``url``, both schemes.
+
+    Each prefix ends in "/", so "https://host" cannot also match
+    "https://host.other.example" or "https://host:8443". The default port is
+    mounted with and without its number, so "https://host/" and
+    "https://host:443/" (the same origin) get the same adapter.
+    """
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if not host:
+        return
+    if ":" in host:  # IPv6 literal
+        host = f"[{host}]"
+    port = parsed.port
+    for scheme, default in (("https", 443), ("http", 80)):
+        if port is None or port == default:
+            session.mount(f"{scheme}://{host}/", adapter)
+            session.mount(f"{scheme}://{host}:{default}/", adapter)
+        else:
+            session.mount(f"{scheme}://{host}:{port}/", adapter)
+
+
 def configure_proxy_bypass(
     service_name: str,
     url: str,
@@ -221,13 +245,8 @@ def configure_proxy_bypass(
         logger.debug(
             f"{service_name}: Configuring proxy bypass adapter for NO_PROXY={no_proxy}"
         )
-        # Get the domain from the configured URL
-        domain = urlparse(url).netloc
-
-        # Mount the adapter to handle requests to this domain
-        adapter = NoProxyAdapter(no_proxy=no_proxy)
-        session.mount(f"https://{domain}", adapter)
-        session.mount(f"http://{domain}", adapter)
+        # Mount the adapter to handle requests to this host and port
+        _mount_for_origin(session, url, NoProxyAdapter(no_proxy=no_proxy))
 
 
 def configure_ssl_verification(
@@ -342,20 +361,16 @@ def configure_ssl_verification(
             "should only be used in testing environments."
         )
 
-        # Mount the SSL ignore adapter which also handles NO_PROXY
-        domain = urlparse(url).netloc
-        adapter = SSLIgnoreAdapter(no_proxy=no_proxy)
-        session.mount(f"https://{domain}", adapter)
-        session.mount(f"http://{domain}", adapter)
+        # Mount the SSL ignore adapter (which also handles NO_PROXY) for this
+        # exact origin only. Every other destination goes through the SSRF
+        # pinning adapter, which verifies certificates off this origin.
+        _mount_for_origin(session, url, SSLIgnoreAdapter(no_proxy=no_proxy))
     else:
         # Even with SSL verification enabled, we may need to handle NO_PROXY
         if no_proxy:
             logger.debug(
                 f"{service_name}: Mounting proxy bypass adapter for NO_PROXY={no_proxy}"
             )
-            domain = urlparse(url).netloc
-            adapter = NoProxyAdapter(no_proxy=no_proxy)
-            session.mount(f"https://{domain}", adapter)
-            session.mount(f"http://{domain}", adapter)
+            _mount_for_origin(session, url, NoProxyAdapter(no_proxy=no_proxy))
 
     return effective_verify

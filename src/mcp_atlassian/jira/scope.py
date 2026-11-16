@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from urllib.parse import quote
 
 from ..exceptions import ScopeViolationError
+from ..models.jira.issue import changelog_field_kinds
+from ..utils.urls import path_segment
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -56,10 +57,6 @@ def _issue_reference(value: object) -> object:
 _REFERENCE_VERBS = ("set", "add", "edit")
 
 
-def _path_segment(value: object) -> str:
-    return quote(str(value).strip(), safe="")
-
-
 _BOARD_PROJECT_PAGES = 20
 
 
@@ -76,7 +73,7 @@ def board_project_keys(jira: Any, board_id: object) -> frozenset[str] | None:
         jira: The Atlassian client (``self.jira``).
         board_id: The board ID.
     """
-    path = f"rest/agile/1.0/board/{_path_segment(board_id)}/project"
+    path = f"rest/agile/1.0/board/{path_segment(board_id)}/project"
     keys: set[str] = set()
     start = 0
     try:
@@ -120,6 +117,33 @@ def board_in_scope(jira: Any, board: dict[str, Any], allowed: frozenset[str]) ->
     return keys is not None and keys <= allowed
 
 
+def output_scope_kwargs(fetcher: Any) -> dict[str, Any]:
+    """Return the model keyword arguments that apply the allowlist to output.
+
+    ``changelog_field_kinds`` reads the field metadata only when a model has
+    changelogs to filter, and returns None when the metadata cannot be read.
+
+    Args:
+        fetcher: A Jira fetcher (``config`` and, when available, ``get_fields``).
+    """
+
+    def field_kinds() -> dict[str, Any] | None:
+        # None means the metadata could not be read; the filter then drops
+        # custom-field changes it cannot classify.
+        get_fields = getattr(fetcher, "get_fields", None)
+        if not callable(get_fields):
+            return None
+        try:
+            return changelog_field_kinds(get_fields(raise_errors=True))
+        except Exception:  # noqa: BLE001 - any failure means "unknown"
+            return None
+
+    return {
+        "allowed_projects": allowed_project_keys(fetcher.config),
+        "changelog_field_kinds": field_kinds,
+    }
+
+
 class ScopeMixin(JiraClient):
     """Project-allowlist checks shared by every Jira tool."""
 
@@ -149,7 +173,7 @@ class ScopeMixin(JiraClient):
         if self.allowed_projects() is None:
             return
         try:
-            project = self._get_json(f"rest/api/2/project/{_path_segment(project_id)}")
+            project = self._get_json(f"rest/api/2/project/{path_segment(project_id)}")
             key = project.get("key")
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Jira project {project_id!r}: {e}")
@@ -244,6 +268,9 @@ class ScopeMixin(JiraClient):
             items = list(issue_keys)
         else:
             raise _denied("issue", issue_keys)
+        if not items:
+            # Downstream code would call Jira with no key to check.
+            raise _denied("issue", issue_keys)
         for item in items:
             self.ensure_issue_allowed(item.strip() if isinstance(item, str) else item)
 
@@ -258,7 +285,7 @@ class ScopeMixin(JiraClient):
         if allowed is None:
             return
         try:
-            board = self._get_json(f"rest/agile/1.0/board/{_path_segment(board_id)}")
+            board = self._get_json(f"rest/agile/1.0/board/{path_segment(board_id)}")
             project_key = (board.get("location") or {}).get("projectKey")
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Jira board {board_id!r}: {e}")
@@ -275,7 +302,7 @@ class ScopeMixin(JiraClient):
         if self.allowed_projects() is None:
             return
         try:
-            sprint = self._get_json(f"rest/agile/1.0/sprint/{_path_segment(sprint_id)}")
+            sprint = self._get_json(f"rest/agile/1.0/sprint/{path_segment(sprint_id)}")
             board_id = sprint.get("originBoardId")
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Jira sprint {sprint_id!r}: {e}")
@@ -289,7 +316,7 @@ class ScopeMixin(JiraClient):
         if self.allowed_projects() is None:
             return
         try:
-            version = self._get_json(f"rest/api/2/version/{_path_segment(version_id)}")
+            version = self._get_json(f"rest/api/2/version/{path_segment(version_id)}")
             project_id = version.get("projectId")
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Jira version {version_id!r}: {e}")
@@ -303,7 +330,7 @@ class ScopeMixin(JiraClient):
         if self.allowed_projects() is None:
             return
         try:
-            link = self._get_json(f"rest/api/2/issueLink/{_path_segment(link_id)}")
+            link = self._get_json(f"rest/api/2/issueLink/{path_segment(link_id)}")
             keys = [
                 (link.get(side) or {}).get("key")
                 for side in ("inwardIssue", "outwardIssue")
@@ -320,7 +347,7 @@ class ScopeMixin(JiraClient):
             return
         try:
             desk = self._get_json(
-                f"rest/servicedeskapi/servicedesk/{_path_segment(service_desk_id)}"
+                f"rest/servicedeskapi/servicedesk/{path_segment(service_desk_id)}"
             )
             project_key = desk.get("projectKey")
         except Exception as e:  # noqa: BLE001 - any failure denies

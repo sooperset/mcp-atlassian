@@ -67,6 +67,7 @@ class JiraSearchResult(ApiModel):
                             base_url=base_url,
                             requested_fields=requested_fields,
                             allowed_projects=kwargs.get("allowed_projects"),
+                            changelog_field_kinds=kwargs.get("changelog_field_kinds"),
                         )
                     )
 

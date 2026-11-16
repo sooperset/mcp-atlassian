@@ -384,6 +384,10 @@ class TestTransitionsMixin:
         """A comment on an unlisted project transitions normally even with
         the guard configured for another project."""
         transitions_mixin.config.internal_only_projects = frozenset({"CC"})
+        transitions_mixin.jira.issue.side_effect = lambda key, fields=None: {
+            "key": key,
+            "fields": {"project": {"key": key.split("-")[0]}},
+        }
 
         transitions_mixin.transition_issue("TEST-123", "10", comment="Test comment")
 
