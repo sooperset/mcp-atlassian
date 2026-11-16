@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import ScopeViolationError
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
@@ -615,3 +616,215 @@ def test_transition_refuses_references_outside_allowlist(
 
     fetcher.jira.set_issue_status.assert_not_called()
     fetcher.jira.post.assert_not_called()
+
+
+# --- changelog references -------------------------------------------------------
+
+
+def _history_items() -> list[dict[str, Any]]:
+    return [
+        {"field": "Link", "to": "SECRET-2", "toString": "This issue blocks SECRET-2"},
+        {"field": "Link", "to": "OTHER-6", "toString": "This issue blocks OTHER-6"},
+        {"field": "IssueParentAssociation", "from": "70", "fromString": "SECRET-3"},
+        {"field": "Epic Link", "from": "71", "fromString": "SECRET-4"},
+        {"field": "Parent", "from": "72"},
+        {"field": "Key", "fromString": "SECRET-8", "toString": "ALLOWED-1"},
+        {"field": "Key", "fromString": "OTHER-9", "toString": "ALLOWED-1"},
+        {"field": "project", "from": "10", "fromString": "SECRETPROJECTNAME"},
+        {"field": "Sprint", "to": "5", "toString": "SECRET team sprint 4"},
+        {"field": "status", "fromString": "Open", "toString": "Done"},
+    ]
+
+
+def _history() -> dict[str, Any]:
+    return {
+        "id": "100",
+        "author": {"displayName": "a"},
+        "created": "2024-01-01T00:00:00.000+0000",
+        "items": _history_items(),
+    }
+
+
+def _changed_fields(changelogs: list[dict[str, Any]]) -> list[tuple[str, Any]]:
+    return [
+        (item["field"], item.get("to_string") or item.get("from_string"))
+        for changelog in changelogs
+        for item in changelog.get("items", [])
+    ]
+
+
+_KEPT_CHANGELOG = [
+    ("Link", "This issue blocks OTHER-6"),
+    ("Key", "ALLOWED-1"),
+    ("status", "Done"),
+]
+
+
+def test_get_issue_drops_changelog_references_outside_allowlist() -> None:
+    fetcher = _fetcher()
+    raw = _raw_issue_with_references()
+    raw["changelog"] = {"histories": [_history()]}
+    fetcher.jira.get_issue.return_value = raw
+    fetcher.jira.issue.return_value = raw
+
+    result = fetcher.get_issue(
+        "ALLOWED-1", fields="*all", expand="changelog"
+    ).to_simplified_dict()
+
+    assert "SECRET" not in repr(result)
+    assert _changed_fields(result["changelogs"]) == _KEPT_CHANGELOG
+
+
+def test_changelog_references_kept_without_allowlist() -> None:
+    fetcher = _fetcher(None)
+    raw = _raw_issue_with_references()
+    raw["changelog"] = {"histories": [_history()]}
+    fetcher.jira.get_issue.return_value = raw
+
+    result = fetcher.get_issue(
+        "ALLOWED-1", fields="*all", expand="changelog"
+    ).to_simplified_dict()
+
+    assert len(_changed_fields(result["changelogs"])) == len(_history_items())
+
+
+@pytest.mark.anyio
+async def test_batch_get_changelogs_tool_drops_references_outside_allowlist() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    from fastmcp import Client
+    from fastmcp.client import FastMCPTransport
+
+    from mcp_atlassian.servers.jira import jira_mcp
+
+    fetcher = _fetcher()
+    fetcher.jira.issue.return_value = _issue("ALLOWED")
+    fetcher.get_paged = MagicMock(  # type: ignore[method-assign]
+        return_value=[
+            {"issueChangeLogs": [{"issueId": "1", "changeHistories": [_history()]}]}
+        ]
+    )
+    with patch(
+        "mcp_atlassian.servers.jira.get_jira_fetcher",
+        AsyncMock(return_value=fetcher),
+    ):
+        async with Client(transport=FastMCPTransport(jira_mcp)) as client:
+            result = await client.call_tool(
+                "batch_get_changelogs", {"issue_ids_or_keys": "ALLOWED-1"}
+            )
+
+    text = result.content[0].text
+    assert "SECRET" not in text
+    import json
+
+    payload = json.loads(text)
+    assert _changed_fields(payload[0]["changelogs"]) == _KEPT_CHANGELOG
+
+
+_FIELD_METADATA = [
+    {
+        "id": "customfield_10014",
+        "name": "Feature Link",
+        "custom": True,
+        "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+    },
+    {
+        "id": "customfield_10020",
+        "name": "Iteration",
+        "custom": True,
+        "schema": {"custom": "com.pyxis.greenhopper.jira:gh-sprint"},
+    },
+    {
+        "id": "customfield_10030",
+        "name": "Notes",
+        "custom": True,
+        "schema": {
+            "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea"
+        },
+    },
+]
+
+
+def _metadata_history_items() -> list[dict[str, Any]]:
+    return [
+        # Renamed Epic Link, Cloud (fieldId) and Server/DC (name only).
+        {
+            "field": "Feature Link",
+            "fieldId": "customfield_10014",
+            "fromString": "SECRET-4",
+        },
+        {"field": "Feature Link", "fieldtype": "custom", "toString": "SECRET-5"},
+        {
+            "field": "Feature Link",
+            "fieldId": "customfield_10014",
+            "toString": "OTHER-1",
+        },
+        # Renamed sprint field.
+        {
+            "field": "Iteration",
+            "fieldId": "customfield_10020",
+            "toString": "SECRET sprint",
+        },
+        # Parent: the old value is only a numeric ID, the new one is allowed.
+        {"field": "Parent", "fieldId": "parent", "from": "72", "toString": "ALLOWED-2"},
+        {"field": "Notes", "fieldId": "customfield_10030", "toString": "see SECRET-1"},
+    ]
+
+
+def test_changelog_reference_fields_found_by_field_id_and_metadata() -> None:
+    fetcher = _fetcher()
+    fetcher.jira.get_all_fields.return_value = _FIELD_METADATA
+    raw = _raw_issue_with_references()
+    history = _history()
+    history["items"] = _metadata_history_items()
+    raw["changelog"] = {"histories": [history]}
+    fetcher.jira.get_issue.return_value = raw
+
+    result = fetcher.get_issue(
+        "ALLOWED-1", fields="*all", expand="changelog"
+    ).to_simplified_dict()
+
+    assert _changed_fields(result["changelogs"]) == [
+        ("Feature Link", "OTHER-1"),
+        ("Notes", "see SECRET-1"),
+    ]
+
+
+def test_changelog_filter_fails_closed_when_field_metadata_fails() -> None:
+    fetcher = _fetcher()
+    fetcher.jira.get_all_fields.side_effect = HTTPError("metadata unavailable")
+    raw = _raw_issue_with_references()
+    history = _history()
+    history["items"] = _metadata_history_items() + [
+        {"field": "status", "fromString": "Open", "toString": "Done"},
+        {"field": "Link", "to": "OTHER-6", "toString": "This issue blocks OTHER-6"},
+    ]
+    raw["changelog"] = {"histories": [history]}
+    fetcher.jira.get_issue.return_value = raw
+
+    result = fetcher.get_issue(
+        "ALLOWED-1", fields="*all", expand="changelog"
+    ).to_simplified_dict()
+
+    # Custom fields cannot be classified, so their changes are dropped;
+    # system fields are still checked by name.
+    assert _changed_fields(result["changelogs"]) == [
+        ("status", "Done"),
+        ("Link", "This issue blocks OTHER-6"),
+    ]
+
+
+def test_changelog_unfiltered_without_allowlist_when_metadata_fails() -> None:
+    fetcher = _fetcher(None)
+    fetcher.jira.get_all_fields.side_effect = HTTPError("metadata unavailable")
+    raw = _raw_issue_with_references()
+    history = _history()
+    history["items"] = _metadata_history_items()
+    raw["changelog"] = {"histories": [history]}
+    fetcher.jira.get_issue.return_value = raw
+
+    result = fetcher.get_issue(
+        "ALLOWED-1", fields="*all", expand="changelog"
+    ).to_simplified_dict()
+
+    assert len(_changed_fields(result["changelogs"])) == len(_metadata_history_items())

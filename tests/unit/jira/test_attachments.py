@@ -8,6 +8,7 @@ import pytest
 
 from mcp_atlassian.jira import JiraFetcher
 from mcp_atlassian.jira.attachments import AttachmentsMixin
+from mcp_atlassian.utils.media import AttachmentTooLargeError
 
 # Test scenarios for AttachmentsMixin
 #
@@ -58,6 +59,8 @@ class TestAttachmentsMixin:
         attachments_mixin = jira_fetcher
         attachments_mixin.jira = MagicMock()
         attachments_mixin.jira._session = MagicMock()
+        # Attachment URLs in these tests live on the client's origin.
+        attachments_mixin.jira.url = "https://test.url"
         return attachments_mixin
 
     def test_download_attachment_success(self, attachments_mixin: AttachmentsMixin):
@@ -992,6 +995,78 @@ class TestAttachmentsMixin:
         )
         mock_response.close.assert_called_once()
 
+    def test_fetch_attachment_content_stops_past_size_limit(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body larger than the limit is refused without reading it to the end."""
+        monkeypatch.setattr("mcp_atlassian.jira.attachments.ATTACHMENT_MAX_BYTES", 25)
+        consumed: list[int] = []
+
+        def body():
+            for index in range(100):
+                consumed.append(index)
+                yield b"x" * 10
+
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = body()
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        with pytest.raises(AttachmentTooLargeError) as raised:
+            attachments_mixin.fetch_attachment_content("https://test.url/attachment")
+
+        assert raised.value.bytes_read == 30
+        assert len(consumed) == 3
+        mock_response.close.assert_called_once()
+
+    def test_fetch_attachment_content_accepts_body_exactly_at_limit(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body of exactly the limit is returned whole."""
+        monkeypatch.setattr("mcp_atlassian.jira.attachments.ATTACHMENT_MAX_BYTES", 20)
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = [b"x" * 10, b"y" * 10]
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        result = attachments_mixin.fetch_attachment_content(
+            "https://test.url/attachment"
+        )
+
+        assert result == b"x" * 10 + b"y" * 10
+
+    def test_oversized_body_is_reported_with_the_size_limit_message(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body larger than its metadata is reported as too large, not as a failed fetch."""
+        monkeypatch.setattr("mcp_atlassian.jira.attachments.ATTACHMENT_MAX_BYTES", 25)
+        attachments_mixin.jira.issue.return_value = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "big.bin",
+                        "content": "https://test.url/attachment",
+                        "size": 10,
+                    }
+                ]
+            }
+        }
+        attachment = MagicMock()
+        attachment.filename = "big.bin"
+        attachment.url = "https://test.url/attachment"
+        attachment.content_type = "application/octet-stream"
+        attachment.size = 10
+        mock_response = MagicMock()
+        mock_response.iter_content.return_value = [b"x" * 10] * 5
+        attachments_mixin.jira._session.get.return_value = mock_response
+
+        with patch(
+            "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+            return_value=attachment,
+        ):
+            result = attachments_mixin.get_issue_attachment_contents("TEST-1")
+
+        assert result["attachments"] == []
+        assert "larger than the 50 MB inline limit" in result["failed"][0]["error"]
+
     def test_fetch_attachment_content_no_url(self, attachments_mixin: AttachmentsMixin):
         """Test fetch with no URL returns None."""
         result = attachments_mixin.fetch_attachment_content("")
@@ -1694,3 +1769,127 @@ def test_upload_reads_only_the_validated_file(
     assert result["success"] is False
     fetcher.jira.add_attachment.assert_not_called()
     fetcher.jira.add_attachment_object.assert_not_called()
+
+
+@pytest.mark.security_regression
+class TestAttachmentOrigin:
+    """Attachment URLs are fetched only from the fetcher's own Jira origin."""
+
+    @staticmethod
+    def _fetcher(monkeypatch: pytest.MonkeyPatch) -> JiraFetcher:
+        from mcp_atlassian.jira import JiraConfig
+
+        monkeypatch.setenv("JIRA_URL", "http://127.0.0.1:8080")
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        fetcher = JiraFetcher(
+            config=JiraConfig(
+                url="https://fake-jira.example.com",
+                auth_type="pat",
+                personal_token="dummy-pat-token",
+            )
+        )
+        fetcher.jira = MagicMock()
+        fetcher.jira.url = "https://fake-jira.example.com"
+        return fetcher
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1:9000/internal",
+            "http://127.0.0.1:8080/secure/attachment/1/x.txt",
+            "https://fake-jira.example.com:8443/secure/attachment/1/x.txt",
+            "http://fake-jira.example.com/secure/attachment/1/x.txt",
+        ],
+    )
+    def test_other_origins_are_refused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, url: str
+    ) -> None:
+        fetcher = self._fetcher(monkeypatch)
+        monkeypatch.setattr(
+            "mcp_atlassian.jira.attachments.get_file_root", lambda: str(tmp_path)
+        )
+
+        assert fetcher.fetch_attachment_content(url) is None
+        assert fetcher.download_attachment(url, str(tmp_path / "d" / "x.txt")) is False
+        fetcher.jira._session.get.assert_not_called()
+
+    def test_own_origin_is_fetched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fetcher = self._fetcher(monkeypatch)
+        response = MagicMock()
+        response.headers = {}
+        response.iter_content.return_value = [b"ok"]
+        fetcher.jira._session.get.return_value = response
+
+        with patch("mcp_atlassian.jira.attachments.read_capped", return_value=b"ok"):
+            data = fetcher.fetch_attachment_content(
+                "https://fake-jira.example.com/secure/attachment/1/x.txt"
+            )
+        assert data == b"ok"
+
+
+def test_attachment_logs_leave_out_query_and_user_info(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from mcp_atlassian.jira import JiraConfig
+
+    fetcher = JiraFetcher(
+        config=JiraConfig(
+            url="https://jira.example.test", auth_type="pat", personal_token="d"
+        )
+    )
+    fetcher.jira = MagicMock()
+    fetcher.jira.url = "https://jira.example.test"
+    monkeypatch.setattr(
+        "mcp_atlassian.jira.attachments.get_file_root", lambda: str(tmp_path)
+    )
+    url = "https://user:pw@jira.example.test/secure/attachment/1/x.txt?sig=s3cr3t"
+
+    with caplog.at_level(logging.DEBUG, logger="mcp-jira"):
+        fetcher.download_attachment(url, str(tmp_path / "d" / "x.txt"))
+        fetcher.fetch_attachment_content(url)
+
+    logged = caplog.text
+    assert "https://jira.example.test:443/secure/attachment/1/x.txt" in logged
+    for secret in ("user:pw", "pw@", "sig=", "s3cr3t"):
+        assert secret not in logged
+
+
+def test_attachment_contents_stop_at_the_per_call_byte_limit(
+    jira_fetcher: JiraFetcher, monkeypatch: pytest.MonkeyPatch
+):
+    """One call holds at most the per-call limit of attachment bytes; the
+    attachments past it are reported as failed instead of fetched."""
+    monkeypatch.setattr(
+        "mcp_atlassian.utils.media.ATTACHMENT_CALL_MAX_BYTES", 1000, raising=False
+    )
+    jira_fetcher.jira = MagicMock()
+    jira_fetcher.jira.issue.return_value = {
+        "fields": {
+            "attachment": [
+                {
+                    "id": str(i),
+                    "filename": f"a{i}.bin",
+                    "content": f"https://test.url/attachment/{i}",
+                    "size": 400,
+                    "mimeType": "application/octet-stream",
+                }
+                for i in range(3)
+            ]
+        }
+    }
+    fetched: list[str] = []
+
+    def fetch(url: str, *args: object, **kwargs: object) -> bytes:
+        fetched.append(url)
+        return b"x" * 400
+
+    monkeypatch.setattr(jira_fetcher, "fetch_attachment_content", fetch)
+
+    result = jira_fetcher.get_issue_attachment_contents("TEST-1")
+
+    assert [a["filename"] for a in result["attachments"]] == ["a0.bin", "a1.bin"]
+    assert [f["filename"] for f in result["failed"]] == ["a2.bin"]
+    assert "for one call" in result["failed"][0]["error"]
+    assert len(fetched) == 2

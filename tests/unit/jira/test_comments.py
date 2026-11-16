@@ -8,6 +8,11 @@ from requests.exceptions import HTTPError
 from mcp_atlassian.jira.comments import CommentsMixin
 
 
+def _issue_in_own_project(issue_key: str, fields: str | None = None) -> dict:
+    """Answer the internal-only project lookup with the key's own project."""
+    return {"key": issue_key, "fields": {"project": {"key": issue_key.split("-")[0]}}}
+
+
 class TestCommentsMixin:
     """Tests for the CommentsMixin class."""
 
@@ -856,6 +861,7 @@ class TestInternalOnlyProjectsGuard:
         config = jira_config_factory(internal_only_projects=frozenset({"CC"}))
         mixin = CommentsMixin(config=config)
         mixin.jira = Mock()
+        mixin.jira.issue.side_effect = _issue_in_own_project
         mixin.jira.default_headers = {}
         mixin.preprocessor = Mock()
         mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
@@ -1062,6 +1068,7 @@ class TestInternalOnlyNonRequestIssues:
         config = jira_config_factory(internal_only_projects=frozenset({"CC"}))
         mixin = CommentsMixin(config=config)
         mixin.jira = Mock()
+        mixin.jira.issue.side_effect = _issue_in_own_project
         mixin.jira.default_headers = {}
         mixin.preprocessor = Mock()
         mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
@@ -1510,3 +1517,88 @@ def _node_types_with_marks(adf: dict) -> list[list[str]]:
 
     walk(adf)
     return out
+
+
+class TestInternalOnlyKeyAlias:
+    """An old or moved key resolves to the guarded project's current issue."""
+
+    @pytest.fixture
+    def mixin(self, jira_config_factory):
+        config = jira_config_factory(internal_only_projects=frozenset({"CC"}))
+        mixin = CommentsMixin(config=config)
+        mixin.jira = Mock()
+        mixin.jira.default_headers = {}
+        mixin.jira.issue.return_value = {
+            "key": "CC-5",
+            "fields": {"project": {"key": "CC"}},
+        }
+        mixin.preprocessor = Mock()
+        mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
+        mixin._clean_text = Mock(side_effect=lambda x: x)
+        return mixin
+
+    @pytest.mark.parametrize("public", [None, True])
+    def test_add_comment_on_alias_is_refused(self, mixin, public) -> None:
+        with pytest.raises(ValueError, match="internal-only"):
+            mixin.add_comment("OLD-12", "note", public=public)
+        mixin.jira.issue.assert_called_with("OLD-12", fields="project")
+        assert not mixin.jira.post.called
+        assert not mixin.jira.issue_add_comment.called
+
+    def test_alias_internal_note_posts_to_current_request(self, mixin) -> None:
+        """public=False on an alias probes and writes the current key's request."""
+        mixin.jira.get.return_value = {"issueKey": "CC-5"}
+        mixin.jira.post.return_value = {
+            "id": "77",
+            "body": "note",
+            "public": False,
+            "author": {"displayName": "Agent"},
+        }
+
+        result = mixin.add_comment("OLD-12", "note", public=False)
+
+        probe_path = mixin.jira.get.call_args.args[0]
+        assert probe_path == "rest/servicedeskapi/request/CC-5"
+        mixin.jira.post.assert_called_once()
+        assert (
+            mixin.jira.post.call_args.args[0]
+            == "rest/servicedeskapi/request/CC-5/comment"
+        )
+        assert mixin.jira.post.call_args.kwargs["data"]["public"] is False
+        assert result["id"] == "77"
+        assert result["public"] is False
+        mixin.jira.issue_add_comment.assert_not_called()
+
+    def test_alias_non_request_posts_ordinary_comment_on_current_key(
+        self, mixin
+    ) -> None:
+        """A 404 probe for the current key posts an ordinary comment on it."""
+        mixin.jira.get.side_effect = HTTPError(response=Mock(status_code=404))
+        # Cloud posts ordinary comments through the v3 API.
+        mixin._post_api3 = Mock(
+            return_value={
+                "id": "78",
+                "body": "note",
+                "created": "2024-01-01T10:00:00.000+0000",
+                "author": {"displayName": "Agent"},
+            }
+        )
+
+        result = mixin.add_comment("OLD-12", "note", public=False)
+
+        assert mixin.jira.get.call_args.args[0] == "rest/servicedeskapi/request/CC-5"
+        mixin._post_api3.assert_called_once()
+        assert mixin._post_api3.call_args.args[0] == "issue/CC-5/comment"
+        mixin.jira.post.assert_not_called()
+        assert result["id"] == "78"
+
+    def test_unresolvable_key_fails_closed(self, mixin) -> None:
+        mixin.jira.issue.side_effect = HTTPError(response=Mock(status_code=500))
+        assert mixin._is_internal_only_project("OLD-12") is True
+
+    def test_unlisted_project_still_unguarded(self, mixin) -> None:
+        mixin.jira.issue.return_value = {
+            "key": "PROJ-1",
+            "fields": {"project": {"key": "PROJ"}},
+        }
+        assert mixin._is_internal_only_project("PROJ-1") is False

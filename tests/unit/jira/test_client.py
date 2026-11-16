@@ -436,7 +436,7 @@ def test_init_configures_no_proxy_adapter_from_config(monkeypatch):
     assert os.environ["NO_PROXY"] == "test.atlassian.net"
     assert mock_jira._session.proxies["http"] == "http://proxy:8080"
     assert isinstance(
-        mock_jira._session.get_adapter("https://test.atlassian.net"),
+        mock_jira._session.get_adapter("https://test.atlassian.net/"),
         NoProxyAdapter,
     )
 
@@ -732,3 +732,112 @@ def test_update_version_rejects_non_dict_response() -> None:
 
         with pytest.raises(ValueError, match="Unexpected response from Jira API"):
             client.update_version("10001", released=True)
+
+
+def test_session_applies_config_timeout_to_direct_session_calls():
+    """Direct ``self.jira._session`` calls (attachments, dev-status, users)
+    bypass atlassian-python-api's timeout; the session adapters must apply
+    JiraConfig.timeout so they cannot block forever."""
+    import requests
+
+    with (
+        patch("mcp_atlassian.jira.client.Jira") as mock_jira,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        mock_jira.return_value._session = requests.Session()
+        client = JiraClient(
+            config=JiraConfig(
+                url="https://test.atlassian.net",
+                auth_type="basic",
+                username="u",
+                api_token="t",
+                timeout=12,
+            )
+        )
+
+    adapter = client.jira._session.get_adapter("https://test.atlassian.net")
+    assert getattr(adapter, "_mcp_atlassian_default_timeout", False)
+
+
+def test_get_paged_stops_on_repeated_or_endless_token():
+    """A token that repeats, or never ends, stops pagination."""
+    with (
+        patch("mcp_atlassian.jira.client.Jira.get") as mock_get,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        client = JiraClient(
+            config=JiraConfig(
+                url="https://test.atlassian.net",
+                auth_type="basic",
+                username="test_username",
+                api_token="test_token",
+            )
+        )
+        calls = 0
+
+        def repeated(**kwargs):
+            nonlocal calls
+            calls += 1
+            if calls > 1000:
+                raise AssertionError("unbounded read")
+            return {"data": calls, "nextPageToken": "same"}
+
+        mock_get.side_effect = repeated
+        from mcp_atlassian.utils.truncation import is_truncated, more_certainly_exist
+
+        stopped = client.get_paged("get", "/test/url", {})
+        assert len(stopped) == 2
+        assert is_truncated(stopped) and not more_certainly_exist(stopped)
+
+        mock_get.side_effect = [{"data": 1, "nextPageToken": "a"}, {"data": 2}]
+        assert not is_truncated(client.get_paged("get", "/test/url", {}))
+
+        calls = 0
+
+        def endless(**kwargs):
+            nonlocal calls
+            calls += 1
+            if calls > 1000:
+                raise AssertionError("unbounded read")
+            return {"data": calls, "nextPageToken": f"t{calls}"}
+
+        mock_get.side_effect = endless
+        assert len(client.get_paged("get", "/test/url", {})) <= 100
+
+
+def test_batch_get_changelogs_marks_page_limit():
+    """Changelogs read up to the get_paged page limit come back marked."""
+    from mcp_atlassian.jira import JiraFetcher
+    from mcp_atlassian.utils.truncation import is_truncated
+
+    with (
+        patch("mcp_atlassian.jira.client.Jira.post") as mock_post,
+        patch("mcp_atlassian.jira.client.configure_ssl_verification"),
+    ):
+        fetcher = JiraFetcher(
+            config=JiraConfig(
+                url="https://test.atlassian.net",
+                auth_type="basic",
+                username="test_username",
+                api_token="test_token",
+            )
+        )
+        calls = 0
+
+        def endless(**kwargs):
+            nonlocal calls
+            calls += 1
+            if calls > 1000:
+                raise AssertionError("unbounded read")
+            return {
+                "issueChangeLogs": [{"issueId": str(calls), "changeHistories": []}],
+                "nextPageToken": f"t{calls}",
+            }
+
+        mock_post.side_effect = endless
+        assert is_truncated(fetcher.batch_get_changelogs(["PROJ-1"]))
+
+        mock_post.side_effect = [
+            {"issueChangeLogs": [{"issueId": "1", "changeHistories": []}]}
+        ]
+        assert not is_truncated(fetcher.batch_get_changelogs(["PROJ-1"]))

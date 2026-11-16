@@ -13,6 +13,7 @@ from fastmcp.client import FastMCPTransport
 from fastmcp.exceptions import ToolError
 from starlette.requests import Request
 
+from mcp_atlassian.utils.media import AttachmentTooLargeError
 from src.mcp_atlassian.confluence import ConfluenceFetcher
 from src.mcp_atlassian.confluence.config import ConfluenceConfig
 from src.mcp_atlassian.models.confluence.page import ConfluencePage
@@ -246,11 +247,14 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_diff,
+        get_page_history,
         get_page_images,
         get_page_template,
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
+        move_page,
         search,
         search_user,
         update_page,
@@ -279,6 +283,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_page_diff)
+    confluence_sub_mcp.add_tool(get_page_history)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
     confluence_sub_mcp.add_tool(get_inline_comments)
@@ -289,6 +295,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(move_page)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
@@ -329,11 +336,14 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_diff,
+        get_page_history,
         get_page_images,
         get_page_template,
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
+        move_page,
         search,
         search_user,
         update_page,
@@ -364,6 +374,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_page_diff)
+    confluence_sub_mcp.add_tool(get_page_history)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
     confluence_sub_mcp.add_tool(get_inline_comments)
@@ -374,6 +386,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(move_page)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
@@ -525,6 +538,22 @@ async def test_search_returns_error_details(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_move_page_failure_is_a_tool_error(client, mock_confluence_fetcher):
+    """A refused move must reach the client as an error, not as a JSON body."""
+    mock_confluence_fetcher.move_page.side_effect = Exception(
+        "Failed to move page 111: Confluence did not move page 111"
+    )
+
+    with pytest.raises(ToolError) as excinfo:
+        await client.call_tool(
+            "confluence_move_page",
+            {"page_id": "111", "target_space_key": "NEWSPACE"},
+        )
+
+    assert "Confluence did not move page 111" in str(excinfo.value)
+
+
+@pytest.mark.anyio
 async def test_get_page(client, mock_confluence_fetcher):
     """Test the get_page tool with default parameters."""
     response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
@@ -617,6 +646,26 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     assert result_data["metadata"]["title"] == "Test Page HTML"
     assert result_data["metadata"]["content"] == "<p>HTML Content</p>"
     assert result_data["metadata"]["content_format"] == "storage"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("tool", ["confluence_get_page", "confluence_get_page_history"])
+async def test_raw_storage_survives_mcp_serialization(
+    client, mock_confluence_fetcher, tool
+):
+    storage = '<ac:link><ri:user ri:userkey="alice" /></ac:link>'
+    page = ConfluencePage(
+        id="123456", title="Owners", content=storage, content_format="storage"
+    )
+    mock_confluence_fetcher.get_page_content.return_value = page
+    mock_confluence_fetcher.get_page_history.return_value = page
+    arguments = {"page_id": "123456", "convert_to_markdown": False}
+    if tool.endswith("history"):
+        arguments["version"] = 3
+    response = await client.call_tool(tool, arguments)
+    result = json.loads(response.content[0].text)
+    returned = result.get("metadata", result)
+    assert returned["content"] == {"value": storage, "format": "storage"}
 
 
 @pytest.mark.anyio
@@ -1383,6 +1432,72 @@ async def test_upload_attachment_failure_message(client, mock_confluence_fetcher
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "fetcher_result,expected_message",
+    [
+        pytest.param(
+            {
+                "success": True,
+                "content_id": "123456",
+                "total": 2,
+                "uploaded": [
+                    {"filename": "a.txt", "id": "att1"},
+                    {"filename": "b.txt", "id": "att2"},
+                ],
+                "failed": [],
+            },
+            "Uploaded 2 attachment(s) successfully",
+            id="all-uploaded",
+        ),
+        pytest.param(
+            {
+                "success": True,
+                "content_id": "123456",
+                "total": 2,
+                "uploaded": [{"filename": "a.txt", "id": "att1"}],
+                "failed": [{"filename": "b.txt", "error": "400 Client Error"}],
+            },
+            "Uploaded 1 of 2 attachment(s); 1 failed",
+            id="one-failed",
+        ),
+        pytest.param(
+            {
+                "success": False,
+                "content_id": "123456",
+                "total": 2,
+                "uploaded": [],
+                "failed": [
+                    {"filename": "a.txt", "error": "403 Client Error"},
+                    {"filename": "b.txt", "error": "403 Client Error"},
+                ],
+            },
+            "Uploaded 0 of 2 attachment(s); 2 failed",
+            id="all-failed",
+        ),
+        pytest.param(
+            {"success": False, "error": "No content ID provided"},
+            "Attachment upload failed",
+            id="rejected",
+        ),
+    ],
+)
+async def test_upload_attachments_message_counts_files(
+    client, mock_confluence_fetcher, fetcher_result, expected_message
+):
+    """The summary counts uploaded and failed files, not result keys."""
+    mock_confluence_fetcher.upload_attachments.return_value = fetcher_result
+
+    response = await client.call_tool(
+        "confluence_upload_attachments",
+        {"content_id": "123456", "file_paths": "a.txt,b.txt"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == expected_message
+    assert result_data["attachments"] == fetcher_result
+
+
+@pytest.mark.anyio
 async def test_upload_attachment_base64_allows_empty_content(
     client, mock_confluence_fetcher
 ):
@@ -1722,6 +1837,35 @@ async def test_get_page_images_size_limit(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_download_attachment_stopped_at_limit_reports_bytes_read(
+    client, mock_confluence_fetcher
+):
+    """A download stopped at the limit is reported as too large, without a total size."""
+    mock_confluence_fetcher._v2_adapter = MagicMock()
+    mock_confluence_fetcher._v2_adapter.get_attachment_by_id.return_value = {
+        "title": "big.bin",
+        "extensions": {"mediaType": "application/octet-stream", "fileSize": 10},
+        "_links": {"download": "/download/attachments/123/big.bin"},
+    }
+    mock_confluence_fetcher._resolve_attachment_download_url.return_value = (
+        "https://example.atlassian.net/wiki/download/attachments/123/big.bin"
+    )
+    mock_confluence_fetcher.fetch_attachment_content.side_effect = (
+        AttachmentTooLargeError(30, 25)
+    )
+
+    response = await client.call_tool(
+        "confluence_download_attachment", {"attachment_id": "att123456789"}
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["success"] is False
+    assert result["bytes_read"] == 30
+    assert "file_size" not in result
+    assert "larger than the 50 MB inline limit" in result["error"]
+
+
+@pytest.mark.anyio
 async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     """Test graceful handling when fetch_attachment_content returns None."""
     mock_confluence_fetcher.get_content_attachments.return_value = {
@@ -1750,3 +1894,61 @@ async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     summary = json.loads(response.content[0].text)
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
+
+
+def _three_small_attachments(media_type: str, suffix: str) -> dict:
+    return {
+        "success": True,
+        "content_id": "123",
+        "attachments": [
+            {
+                "id": f"att{i}",
+                "title": f"f{i}.{suffix}",
+                "type": "attachment",
+                "metadata": {"mediaType": media_type},
+                "extensions": {"mediaType": media_type, "fileSize": 400},
+                "_links": {"download": f"/download/attachments/123/f{i}.{suffix}"},
+            }
+            for i in range(3)
+        ],
+        "total": 3,
+        "start": 0,
+        "limit": 50,
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    ("tool", "media_type", "suffix"),
+    [
+        ("confluence_get_page_images", "image/png", "png"),
+        ("confluence_download_content_attachments", "application/pdf", "pdf"),
+    ],
+)
+async def test_multi_attachment_tools_stop_at_the_per_call_byte_limit(
+    client, mock_confluence_fetcher, monkeypatch, tool, media_type, suffix
+):
+    """Attachments past the per-call byte limit are reported, not downloaded."""
+    import sys
+
+    from src.mcp_atlassian.servers import confluence as confluence_server
+
+    media = sys.modules[confluence_server.fetch_and_encode_attachment.__module__]
+    monkeypatch.setattr(media, "ATTACHMENT_CALL_MAX_BYTES", 1000, raising=False)
+    mock_confluence_fetcher.get_content_attachments.return_value = (
+        _three_small_attachments(media_type, suffix)
+    )
+    mock_confluence_fetcher._resolve_attachment_download_url.side_effect = (
+        lambda url, **kwargs: url
+    )
+    mock_confluence_fetcher.fetch_attachment_content.return_value = b"x" * 400
+
+    response = await client.call_tool(tool, {"content_id": "123"})
+
+    summary = json.loads(response.content[0].text)
+    assert summary["downloaded"] == 2
+    assert [f["filename"] for f in summary["failed"]] == [f"f2.{suffix}"]
+    assert "for one call" in summary["failed"][0]["error"]
+    assert len(response.content) == 3
+    assert mock_confluence_fetcher.fetch_attachment_content.call_count == 2
