@@ -2,6 +2,7 @@
 
 import difflib
 import logging
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -68,6 +69,28 @@ def _is_section_boundary(
     for descendant in node.find_all(heading_tags):
         if int(descendant.name[1]) <= section_level:
             return True
+    return False
+
+
+_READ_BACK_ATTEMPTS = 3
+_READ_BACK_DELAY_SECONDS = 1.0
+
+
+def _is_not_found(error: BaseException) -> bool:
+    """Whether an error, or one of the errors behind it, is an HTTP 404.
+
+    The HTTP error can be the cause, the context, or the ``reason`` of an
+    ``ApiError``, depending on which client raised it.
+    """
+    current: BaseException | None = error
+    for _ in range(10):
+        if current is None:
+            return False
+        for candidate in (current, getattr(current, "reason", None)):
+            response = getattr(candidate, "response", None)
+            if isinstance(candidate, HTTPError) and response is not None:
+                return response.status_code == 404
+        current = current.__cause__ or current.__context__
     return False
 
 
@@ -867,7 +890,7 @@ class PagesMixin(ConfluenceClient):
                     )
                     raise RuntimeError(error_message)
 
-            return self.get_page_content(page_id)
+            return self._read_back_created_page(page_id)
         except Exception as e:
             logger.error(
                 f"Error creating page '{title}' in space {space_key}: {str(e)}"
@@ -875,6 +898,28 @@ class PagesMixin(ConfluenceClient):
             raise Exception(
                 f"Failed to create page '{title}' in space {space_key}: {str(e)}"
             ) from e
+
+    def _read_back_created_page(self, page_id: str) -> ConfluencePage:
+        """Read a page that was just created.
+
+        Confluence Cloud can answer 404 for a page ID for a moment after
+        the create call returned it. That read is tried again a few times.
+        Any other error is raised at once.
+        """
+        for attempt in range(1, _READ_BACK_ATTEMPTS + 1):
+            try:
+                return self.get_page_content(page_id)
+            except Exception as e:
+                if not _is_not_found(e):
+                    raise
+                if attempt == _READ_BACK_ATTEMPTS:
+                    msg = (
+                        f"Page was created (ID {page_id}), but reading it back "
+                        f"failed: {e}"
+                    )
+                    raise RuntimeError(msg) from e
+                time.sleep(_READ_BACK_DELAY_SECONDS)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def update_page(
         self,
