@@ -305,8 +305,8 @@ class TestSharedSSLProxyConfiguration:
                 confluence_domain = confluence_config.url.split("://")[1].split("/")[0]
 
                 # Both should have SSL ignore adapters
-                assert f"https://{jira_domain}" in jira_session.adapters
-                assert f"https://{confluence_domain}" in confluence_session.adapters
+                assert f"https://{jira_domain}/" in jira_session.adapters
+                assert f"https://{confluence_domain}/" in confluence_session.adapters
 
     def test_proxy_configuration_shared(self):
         """Test that proxy configuration is shared between services."""

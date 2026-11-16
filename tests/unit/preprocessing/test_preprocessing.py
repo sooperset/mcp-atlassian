@@ -1,8 +1,14 @@
 import re
+import threading
+from unittest.mock import MagicMock
 
 import pytest
+from md2conf.converter import markdown_to_html as md2conf_markdown_to_html
 
 from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+from mcp_atlassian.preprocessing.confluence import (
+    markdown_to_html as confluence_markdown_to_html,
+)
 from mcp_atlassian.preprocessing.jira import JiraPreprocessor
 from tests.fixtures.confluence_mocks import MOCK_COMMENTS_RESPONSE, MOCK_PAGE_RESPONSE
 from tests.fixtures.jira_mocks import MOCK_JIRA_ISSUE_RESPONSE
@@ -1788,3 +1794,323 @@ class TestHtmlConversionCodeProtection:
         """Direct test of _convert_html_to_markdown with markdown code spans."""
         result = preprocessor._convert_html_to_markdown(md_input)
         assert expected_substr in result, f"Expected '{expected_substr}' in: {result!r}"
+
+
+class TestConfluenceMacroParameterLeak:
+    """Macro parameter values must not leak into Markdown output."""
+
+    @staticmethod
+    def _markdown(html: str) -> str:
+        from mcp_atlassian.preprocessing.base import BasePreprocessor
+
+        _, markdown = BasePreprocessor(
+            base_url="https://confluence.example.com"
+        ).process_html_content(html)
+        return markdown
+
+    def test_panel_drops_params_keeps_title(self):
+        html = (
+            '<ac:structured-macro ac:name="panel" ac:schema-version="1">'
+            '<ac:parameter ac:name="borderColor">#deebff</ac:parameter>'
+            '<ac:parameter ac:name="bgColor">#f4f5f7</ac:parameter>'
+            '<ac:parameter ac:name="borderWidth">1</ac:parameter>'
+            '<ac:parameter ac:name="title">Title</ac:parameter>'
+            "<ac:rich-text-body><p>Panel body</p></ac:rich-text-body>"
+            "</ac:structured-macro>"
+        )
+        markdown = self._markdown(html)
+
+        assert markdown == "> **Title**\n>\n> Panel body"
+
+    def test_info_no_title_blockquote(self):
+        html = (
+            '<ac:structured-macro ac:name="info">'
+            '<ac:parameter ac:name="icon">true</ac:parameter>'
+            "<ac:rich-text-body><p>Heads up</p></ac:rich-text-body>"
+            "</ac:structured-macro>"
+        )
+
+        assert self._markdown(html) == "> Heads up"
+
+    def test_status_keeps_label(self):
+        html = (
+            "<p>State: "
+            '<ac:structured-macro ac:name="status" ac:schema-version="1">'
+            '<ac:parameter ac:name="colour">Blue</ac:parameter>'
+            '<ac:parameter ac:name="title">IN PROGRESS</ac:parameter>'
+            "</ac:structured-macro> since Monday</p>"
+        )
+        markdown = self._markdown(html)
+
+        assert markdown == "State: [IN PROGRESS] since Monday"
+
+    def test_nested_panel_titles(self):
+        html = (
+            '<ac:structured-macro ac:name="panel">'
+            '<ac:parameter ac:name="title">Outer</ac:parameter>'
+            "<ac:rich-text-body>"
+            '<ac:structured-macro ac:name="panel">'
+            '<ac:parameter ac:name="bgColor">#fff</ac:parameter>'
+            '<ac:parameter ac:name="title">Inner</ac:parameter>'
+            "<ac:rich-text-body><p>Deep</p></ac:rich-text-body>"
+            "</ac:structured-macro>"
+            "</ac:rich-text-body>"
+            "</ac:structured-macro>"
+        )
+        assert self._markdown(html) == ("> **Outer**\n>\n> > **Inner**\n> >\n> > Deep")
+
+    def test_code_in_panel_fenced(self):
+        html = (
+            '<ac:structured-macro ac:name="panel">'
+            '<ac:parameter ac:name="bgColor">#f4f5f7</ac:parameter>'
+            "<ac:rich-text-body>"
+            '<ac:structured-macro ac:name="code">'
+            '<ac:parameter ac:name="language">text</ac:parameter>'
+            "<ac:plain-text-body><![CDATA[print(1)]]></ac:plain-text-body>"
+            "</ac:structured-macro>"
+            "</ac:rich-text-body>"
+            "</ac:structured-macro>"
+        )
+        markdown = self._markdown(html)
+
+        assert markdown == "> ```text\n> print(1)\n> ```"
+        assert "#f4f5f7" not in markdown
+
+    def test_bodyless_macro_placeholder(self):
+        html = (
+            "<p>Before</p>"
+            '<ac:structured-macro ac:name="toc">'
+            '<ac:parameter ac:name="maxLevel">3</ac:parameter>'
+            "</ac:structured-macro>"
+        )
+        markdown = self._markdown(html)
+
+        assert markdown == "Before\n\n[toc macro]"
+
+    def test_plain_body_kept(self):
+        html = (
+            '<ac:structured-macro ac:name="html">'
+            '<ac:parameter ac:name="atlassian-macro-output-type">BLOCK</ac:parameter>'
+            "<ac:plain-text-body><![CDATA[raw text here]]></ac:plain-text-body>"
+            "</ac:structured-macro>"
+        )
+
+        assert self._markdown(html) == "raw text here"
+
+    def test_expand_keeps_body(self):
+        html = (
+            '<ac:structured-macro ac:name="expand">'
+            '<ac:parameter ac:name="title">More</ac:parameter>'
+            "<ac:rich-text-body><p>Hidden text</p></ac:rich-text-body>"
+            "</ac:structured-macro>"
+        )
+        assert self._markdown(html) == "**More**\n\nHidden text"
+
+    def test_jira_macro_keeps_key(self):
+        html = (
+            "<p>See "
+            '<ac:structured-macro ac:name="jira">'
+            '<ac:parameter ac:name="server">System JIRA</ac:parameter>'
+            '<ac:parameter ac:name="key">KAN-12</ac:parameter>'
+            "</ac:structured-macro> for details.</p>"
+        )
+        assert self._markdown(html) == "See [KAN-12] for details."
+
+    def test_jira_jql_keeps_query(self):
+        html = (
+            '<ac:structured-macro ac:name="jira">'
+            '<ac:parameter ac:name="server">System JIRA</ac:parameter>'
+            '<ac:parameter ac:name="columns">key,summary</ac:parameter>'
+            '<ac:parameter ac:name="jqlQuery">project = KAN</ac:parameter>'
+            "</ac:structured-macro>"
+        )
+        assert self._markdown(html) == "[jira: project = KAN]"
+
+    def test_resource_ref_kept(self):
+        include_html = (
+            '<ac:structured-macro ac:name="include">'
+            '<ac:parameter ac:name="">'
+            '<ac:link><ri:page ri:content-title="Runbook"/></ac:link>'
+            "</ac:parameter>"
+            "</ac:structured-macro>"
+        )
+        file_html = (
+            '<ac:structured-macro ac:name="view-file">'
+            '<ac:parameter ac:name="height">250</ac:parameter>'
+            '<ac:parameter ac:name="name">'
+            '<ri:attachment ri:filename="spec.pdf"/>'
+            "</ac:parameter>"
+            "</ac:structured-macro>"
+        )
+        assert self._markdown(include_html) == "[include: Runbook]"
+        assert self._markdown(file_html) == "[view-file: spec.pdf]"
+
+
+def _counting_user_client() -> MagicMock:
+    client = MagicMock()
+    client.get_user_details_by_accountid.side_effect = lambda ident: {
+        "displayName": f"Name {ident}"
+    }
+    client.get_user_details_by_userkey.side_effect = lambda ident: {
+        "displayName": f"Key {ident}"
+    }
+    client.get_user_details_by_username.side_effect = lambda ident: {
+        "displayName": f"User {ident}"
+    }
+    return client
+
+
+def test_repeated_user_mentions_are_looked_up_once():
+    """Many mentions and profile macros of one user cost one lookup per kind."""
+    mention = '<ac:link><ri:user ri:account-id="acct-1" /></ac:link>'
+    macro = (
+        '<ac:structured-macro ac:name="profile"><ac:parameter ac:name="user">'
+        '<ri:user ri:account-id="acct-1" /></ac:parameter></ac:structured-macro>'
+    )
+    userkey = '<ac:link><ri:user ri:userkey="key-1" /></ac:link>'
+    html = "<p>" + mention * 10 + macro * 10 + userkey * 10 + "</p>"
+    client = _counting_user_client()
+
+    _, markdown = ConfluencePreprocessor(
+        base_url="https://wiki.example.test"
+    ).process_html_content(html, confluence_client=client)
+
+    assert client.get_user_details_by_accountid.call_count == 1
+    assert client.get_user_details_by_userkey.call_count == 1
+    assert markdown.count("@Name acct-1") == 20
+    assert markdown.count("@Key key-1") == 10
+
+
+def test_distinct_user_lookups_per_document_are_capped():
+    """Past the cap, mentions keep their stored identifier and cost nothing."""
+    from mcp_atlassian.preprocessing.base import MAX_USER_LOOKUPS_PER_DOCUMENT
+
+    count = MAX_USER_LOOKUPS_PER_DOCUMENT + 25
+    html = (
+        "<p>"
+        + "".join(
+            f'<ac:link><ri:user ri:account-id="acct-{i}" /></ac:link> '
+            for i in range(count)
+        )
+        + "</p>"
+    )
+    client = _counting_user_client()
+
+    _, markdown = ConfluencePreprocessor(
+        base_url="https://wiki.example.test"
+    ).process_html_content(html, confluence_client=client)
+
+    assert client.get_user_details_by_accountid.call_count == (
+        MAX_USER_LOOKUPS_PER_DOCUMENT
+    )
+    assert "@Name acct-0" in markdown
+    assert f"@user\\_acct-{count - 1}" in markdown
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize("language", ["plantuml", "mermaid"])
+def test_diagram_blocks_never_start_a_renderer(monkeypatch, tmp_path, language):
+    """A fenced diagram block becomes a code macro even when a renderer is
+    available on the host; no external program is started."""
+    import subprocess
+
+    started: list[object] = []
+
+    class NoPopen:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            started.append(args)
+            raise AssertionError("an external program was started")
+
+    monkeypatch.setenv("PLANTUML_CMD", str(tmp_path / "plantuml"))
+    monkeypatch.setattr(subprocess, "Popen", NoPopen)
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+    markdown = f"# Title\n\n```{language}\n@startuml\nA -> B\n@enduml\n```\n"
+
+    storage = preprocessor.markdown_to_confluence_storage(markdown)
+
+    assert started == []
+    assert 'ac:name="code"' in storage
+    assert "A -> B" in storage
+    assert "<h1>Title</h1>" in storage
+
+
+# --- One Markdown converter per Confluence conversion ----------------------
+
+_CONVERSION_DOCUMENTS = {
+    "paragraphs": lambda i: "\n\n".join(
+        f"Paragraph {i}.{n} with *text*." for n in range(150)
+    ),
+    "list_and_table": lambda i: (
+        "\n".join(f"- item {i}.{n}" for n in range(80))
+        + "\n\n| a | b |\n|---|---|\n"
+        + "".join(f"| {i} | {n} |\n" for n in range(80))
+    ),
+    "footnotes": lambda i: (
+        f"Claim {i}[^a] and more[^b].\n\n[^a]: note a{i}\n[^b]: note b{i}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("threads", [2, 8])
+def test_concurrent_markdown_conversions_match_sequential(threads: int) -> None:
+    preprocessor = ConfluencePreprocessor(base_url="https://example.invalid/wiki")
+    kinds = list(_CONVERSION_DOCUMENTS.values())
+    # Each thread converts every kind of document, each with its own text.
+    documents = [
+        [kind(thread * len(kinds) + n) for n, kind in enumerate(kinds)]
+        for thread in range(threads)
+    ]
+    expected = [
+        [preprocessor.markdown_to_confluence_storage(d) for d in docs]
+        for docs in documents
+    ]
+    barrier = threading.Barrier(threads, timeout=60)
+    mismatches: list[str] = []
+
+    def convert(thread: int) -> None:
+        for round_ in range(20):
+            for n, document in enumerate(documents[thread]):
+                barrier.wait()
+                try:
+                    result = preprocessor.markdown_to_confluence_storage(document)
+                except Exception as error:  # noqa: BLE001 - reported below
+                    mismatches.append(f"thread {thread} round {round_}: {error!r}")
+                    continue
+                if result != expected[thread][n]:
+                    mismatches.append(f"thread {thread} round {round_}: differs")
+
+    workers = [threading.Thread(target=convert, args=(i,)) for i in range(threads)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    assert mismatches == []
+
+
+def test_markdown_conversion_after_a_failed_conversion_is_unchanged() -> None:
+    preprocessor = ConfluencePreprocessor(base_url="https://example.invalid/wiki")
+    document = "See [doc](https://x.example).\n\n- a\n- b\n"
+    expected = preprocessor.markdown_to_confluence_storage(document)
+    try:
+        # Deep enough for Python-Markdown to fail with RecursionError.
+        preprocessor.markdown_to_confluence_storage("- " * 600 + "a")
+    except RecursionError:
+        pass
+    assert preprocessor.markdown_to_confluence_storage(document) == expected
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    [
+        "*a* _a_ **a** ***a*** a_b_c **a*b*c** __a__ *a **b** c*",
+        "Paragraph with `code`, [link](https://x.example) and ![img](a.png).",
+        "# Title\n\n- a\n- b\n  - c\n\n1. one\n2. two\n",
+        "| a | b |\n|---|---|\n| *x* | `y` |\n",
+        "Claim[^1].\n\n[^1]: note\n",
+        "- [ ] task\n- [x] done\n\n> quote\n\n---\n",
+        "```py\nprint(1)\n```\n\n~~del~~ ==mark== ^^ins^^ H~2~O x^2^ :smile:",
+        "<div>raw <b>html</b></div>\n\n$x^2$ and https://x.example/auto",
+    ],
+)
+def test_markdown_to_html_matches_md2conf(markdown: str) -> None:
+    assert confluence_markdown_to_html(markdown) == md2conf_markdown_to_html(markdown)

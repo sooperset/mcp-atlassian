@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from urllib.parse import quote
 
 from ..exceptions import ScopeViolationError
+from ..models.jira.issue import changelog_field_kinds
+from ..utils.urls import path_segment
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -36,8 +37,24 @@ def _denied(kind: str, value: object) -> ScopeViolationError:
     )
 
 
-def _path_segment(value: object) -> str:
-    return quote(str(value).strip(), safe="")
+def _issue_reference(value: object) -> object:
+    """Return the issue key or ID a parent/epic value points at.
+
+    ``None`` and ``""`` clear a reference and are returned as None. A dict
+    yields its ``key`` or ``id``; any other dict is returned unchanged so the
+    check denies it.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, dict):
+        ref = value.get("key") or value.get("id")
+        return ref if ref is not None else value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return value
+
+
+_REFERENCE_VERBS = ("set", "add", "edit")
 
 
 _BOARD_PROJECT_PAGES = 20
@@ -56,7 +73,7 @@ def board_project_keys(jira: Any, board_id: object) -> frozenset[str] | None:
         jira: The Atlassian client (``self.jira``).
         board_id: The board ID.
     """
-    path = f"rest/agile/1.0/board/{_path_segment(board_id)}/project"
+    path = f"rest/agile/1.0/board/{path_segment(board_id)}/project"
     keys: set[str] = set()
     start = 0
     try:
@@ -100,6 +117,33 @@ def board_in_scope(jira: Any, board: dict[str, Any], allowed: frozenset[str]) ->
     return keys is not None and keys <= allowed
 
 
+def output_scope_kwargs(fetcher: Any) -> dict[str, Any]:
+    """Return the model keyword arguments that apply the allowlist to output.
+
+    ``changelog_field_kinds`` reads the field metadata only when a model has
+    changelogs to filter, and returns None when the metadata cannot be read.
+
+    Args:
+        fetcher: A Jira fetcher (``config`` and, when available, ``get_fields``).
+    """
+
+    def field_kinds() -> dict[str, Any] | None:
+        # None means the metadata could not be read; the filter then drops
+        # custom-field changes it cannot classify.
+        get_fields = getattr(fetcher, "get_fields", None)
+        if not callable(get_fields):
+            return None
+        try:
+            return changelog_field_kinds(get_fields(raise_errors=True))
+        except Exception:  # noqa: BLE001 - any failure means "unknown"
+            return None
+
+    return {
+        "allowed_projects": allowed_project_keys(fetcher.config),
+        "changelog_field_kinds": field_kinds,
+    }
+
+
 class ScopeMixin(JiraClient):
     """Project-allowlist checks shared by every Jira tool."""
 
@@ -129,7 +173,7 @@ class ScopeMixin(JiraClient):
         if self.allowed_projects() is None:
             return
         try:
-            project = self._get_json(f"rest/api/2/project/{_path_segment(project_id)}")
+            project = self._get_json(f"rest/api/2/project/{path_segment(project_id)}")
             key = project.get("key")
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Jira project {project_id!r}: {e}")
@@ -155,6 +199,65 @@ class ScopeMixin(JiraClient):
         if not isinstance(project_key, str) or project_key.upper() not in allowed:
             raise _denied("issue", issue_key)
 
+    def _epic_link_field_id(self) -> str | None:
+        try:
+            field_ids = self.get_field_ids_to_epic()  # type: ignore[attr-defined]
+        except Exception as e:  # noqa: BLE001 - no epic link field known
+            logger.debug(f"Could not discover the Epic Link field: {e}")
+            return None
+        field_id = field_ids.get("epic_link") if isinstance(field_ids, dict) else None
+        return field_id if isinstance(field_id, str) and field_id else None
+
+    def ensure_issue_relations_allowed(
+        self,
+        fields: dict[str, Any] | None,
+        update: dict[str, Any] | None = None,
+    ) -> None:
+        """Check the issues a create, update or transition payload points at.
+
+        ``fields.parent``, the Epic Link custom field, and the ``parent``,
+        Epic Link and ``issuelinks`` operations of an ``update`` payload each
+        name another issue. Writing them would attach the issue to an issue
+        outside the allowlist, so every named issue must be allowed. Clearing
+        a parent or epic link (``None``) is allowed.
+
+        Args:
+            fields: The ``fields`` payload sent to Jira.
+            update: The ``update`` payload sent to Jira, if any.
+        """
+        if self.allowed_projects() is None:
+            return
+        fields = fields or {}
+        update = update or {}
+        epic_link = None
+        if any(k.startswith("customfield_") for k in (*fields, *update)):
+            epic_link = self._epic_link_field_id()
+
+        refs: list[object] = []
+        for name in ("parent", epic_link):
+            if name and name in fields:
+                refs.append(_issue_reference(fields[name]))
+        for name, operations in update.items():
+            ops = operations if isinstance(operations, list) else [operations]
+            for op in ops:
+                if not isinstance(op, dict):
+                    continue
+                for verb in _REFERENCE_VERBS:
+                    if verb not in op:
+                        continue
+                    value = op[verb]
+                    if name in ("parent", epic_link):
+                        refs.append(_issue_reference(value))
+                    elif name == "issuelinks" and isinstance(value, dict):
+                        refs.extend(
+                            _issue_reference(value.get(side))
+                            for side in ("inwardIssue", "outwardIssue")
+                            if side in value
+                        )
+        for ref in refs:
+            if ref is not None:
+                self.ensure_issue_allowed(ref)
+
     def ensure_issues_allowed(self, issue_keys: object) -> None:
         """Check every issue in a list or comma-separated string."""
         if self.allowed_projects() is None:
@@ -164,6 +267,9 @@ class ScopeMixin(JiraClient):
         elif isinstance(issue_keys, list | tuple | set):
             items = list(issue_keys)
         else:
+            raise _denied("issue", issue_keys)
+        if not items:
+            # Downstream code would call Jira with no key to check.
             raise _denied("issue", issue_keys)
         for item in items:
             self.ensure_issue_allowed(item.strip() if isinstance(item, str) else item)
@@ -179,7 +285,7 @@ class ScopeMixin(JiraClient):
         if allowed is None:
             return
         try:
-            board = self._get_json(f"rest/agile/1.0/board/{_path_segment(board_id)}")
+            board = self._get_json(f"rest/agile/1.0/board/{path_segment(board_id)}")
             project_key = (board.get("location") or {}).get("projectKey")
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Jira board {board_id!r}: {e}")
@@ -196,7 +302,7 @@ class ScopeMixin(JiraClient):
         if self.allowed_projects() is None:
             return
         try:
-            sprint = self._get_json(f"rest/agile/1.0/sprint/{_path_segment(sprint_id)}")
+            sprint = self._get_json(f"rest/agile/1.0/sprint/{path_segment(sprint_id)}")
             board_id = sprint.get("originBoardId")
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Jira sprint {sprint_id!r}: {e}")
@@ -210,7 +316,7 @@ class ScopeMixin(JiraClient):
         if self.allowed_projects() is None:
             return
         try:
-            version = self._get_json(f"rest/api/2/version/{_path_segment(version_id)}")
+            version = self._get_json(f"rest/api/2/version/{path_segment(version_id)}")
             project_id = version.get("projectId")
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Jira version {version_id!r}: {e}")
@@ -224,7 +330,7 @@ class ScopeMixin(JiraClient):
         if self.allowed_projects() is None:
             return
         try:
-            link = self._get_json(f"rest/api/2/issueLink/{_path_segment(link_id)}")
+            link = self._get_json(f"rest/api/2/issueLink/{path_segment(link_id)}")
             keys = [
                 (link.get(side) or {}).get("key")
                 for side in ("inwardIssue", "outwardIssue")
@@ -241,7 +347,7 @@ class ScopeMixin(JiraClient):
             return
         try:
             desk = self._get_json(
-                f"rest/servicedeskapi/servicedesk/{_path_segment(service_desk_id)}"
+                f"rest/servicedeskapi/servicedesk/{path_segment(service_desk_id)}"
             )
             project_key = desk.get("projectKey")
         except Exception as e:  # noqa: BLE001 - any failure denies

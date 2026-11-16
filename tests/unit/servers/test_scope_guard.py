@@ -23,7 +23,7 @@ from mcp_atlassian.exceptions import ScopeViolationError
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
 from mcp_atlassian.servers.confluence import confluence_mcp
 from mcp_atlassian.servers.context import MainAppContext
-from mcp_atlassian.servers.jira import jira_mcp
+from mcp_atlassian.servers.jira import NUMERIC_ID_PATTERN, jira_mcp
 from mcp_atlassian.servers.scope_guard import (
     CONFLUENCE_SCOPE_POLICY,
     JIRA_SCOPE_POLICY,
@@ -129,7 +129,9 @@ def _jira_fetcher() -> JiraFetcher:
             projects_filter="ALLOWED",
         )
     )
-    backend = MagicMock()
+    # Only the scope lookups exist: a tool body that runs fails at once
+    # instead of looping over MagicMock pagination.
+    backend = MagicMock(spec_set=["issue", "get"])
     backend.issue.return_value = {
         "key": f"{FORBIDDEN}-1",
         "fields": {"project": {"key": FORBIDDEN}},
@@ -168,7 +170,7 @@ def _confluence_fetcher() -> ConfluenceFetcher:
             spaces_filter="ALLOWED",
         )
     )
-    backend = MagicMock()
+    backend = MagicMock(spec_set=["url", "_session"])
     backend.url = "https://example.atlassian.net/wiki"
 
     def session_get(url: str, *args: Any, **kwargs: Any) -> Any:
@@ -228,6 +230,8 @@ def _schema_type(schema: dict[str, Any]) -> str | None:
 
 
 def _dummy(schema: dict[str, Any]) -> Any:
+    if schema.get("pattern") == NUMERIC_ID_PATTERN:
+        return "1"
     return {
         "string": "x",
         "integer": 1,
@@ -399,3 +403,100 @@ async def test_guard_refuses_fetcher_with_different_filter() -> None:
     )
     with pytest.raises(ScopeViolationError):
         await guard("get_issue", {"ctx": _ctx(app), "issue_key": f"{FORBIDDEN}-1"})
+
+
+# Refused by the scope guard, by the argument schema, or by the tool's own
+# input parsing before any backend call.
+_EMPTY_REFUSED = "outside the configured|String should match pattern|Invalid JSON"
+
+
+def _empty_values(values: dict[str, Any]) -> dict[str, Any]:
+    return {name: "" for name in values}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("tool_name", _scoped_tool_ids(jira_mcp, JIRA_SCOPE_POLICY))
+async def test_every_jira_tool_rejects_empty_scoped_argument(tool_name: str) -> None:
+    fetcher = _jira_fetcher()
+    tool = await jira_mcp.get_tool(tool_name)
+    with patch(
+        "mcp_atlassian.servers.jira.get_jira_fetcher",
+        AsyncMock(return_value=fetcher),
+    ):
+        async with Client(transport=FastMCPTransport(jira_mcp)) as client:
+            with pytest.raises(ToolError, match=_EMPTY_REFUSED):
+                await client.call_tool(
+                    tool_name, _arguments(tool, _empty_values(_JIRA_VALUES))
+                )
+    called = {call[0] for call in fetcher.jira.method_calls}
+    assert called <= {"issue", "get"}, called
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "tool_name", _scoped_tool_ids(confluence_mcp, CONFLUENCE_SCOPE_POLICY)
+)
+async def test_every_confluence_tool_rejects_empty_scoped_argument(
+    tool_name: str,
+) -> None:
+    fetcher = _confluence_fetcher()
+    tool = await confluence_mcp.get_tool(tool_name)
+    with patch(
+        "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+        AsyncMock(return_value=fetcher),
+    ):
+        async with Client(transport=FastMCPTransport(confluence_mcp)) as client:
+            with pytest.raises(ToolError, match=_EMPTY_REFUSED):
+                await client.call_tool(
+                    tool_name, _arguments(tool, _empty_values(_CONFLUENCE_VALUES))
+                )
+    called = {call[0] for call in fetcher.confluence.method_calls}
+    assert called <= {"_session.get"}, called
+
+
+@pytest.mark.anyio
+async def test_guard_checks_share_the_site_worker_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scope checks go through the per-site worker slots like tool calls."""
+    import dataclasses
+    import threading
+
+    import anyio
+
+    from mcp_atlassian.servers.async_utils import FETCHER_MAX_WORKERS_ENV
+
+    monkeypatch.setenv(FETCHER_MAX_WORKERS_ENV, "1")
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+    second_entered = threading.Event()
+    entered = 0
+
+    def check(fetcher: Any, value: str) -> None:
+        nonlocal active, max_active, entered
+        with lock:
+            active += 1
+            entered += 1
+            max_active = max(max_active, active)
+            if entered == 2:
+                second_entered.set()
+        if entered == 1:
+            # With the limit honoured the second check cannot start yet.
+            second_entered.wait(1.0)
+        with lock:
+            active -= 1
+
+    policy = dataclasses.replace(
+        JIRA_SCOPE_POLICY,
+        checks={**JIRA_SCOPE_POLICY.checks, "issue_key": check},
+    )
+    fetcher = _jira_fetcher()
+    guard = ToolScopeGuard(policy, AsyncMock(return_value=fetcher))
+
+    async with anyio.create_task_group() as tg:
+        for key in ("ALLOWED-1", "ALLOWED-2"):
+            tg.start_soon(guard, "get_issue", {"ctx": _ctx(None), "issue_key": key})
+
+    assert entered == 2
+    assert max_active == 1

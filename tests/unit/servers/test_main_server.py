@@ -412,6 +412,22 @@ class TestUserTokenMiddleware:
         assert "username=test" not in caplog.text
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize("scheme", ["Bearer", "Token"])
+    async def test_accepted_token_leaves_no_fragment_in_debug_log(
+        self, middleware, mock_scope, mock_receive, mock_send, caplog, scheme
+    ):
+        """An accepted token is logged by length only, with no characters of it."""
+        token = "abcdefgh-0123456789-middle-0123456789-stuvwxyz"
+        mock_scope["headers"] = [(b"authorization", f"{scheme} {token}".encode())]
+
+        with caplog.at_level(logging.DEBUG, logger="mcp-atlassian.server.main"):
+            await middleware(mock_scope, mock_receive, mock_send)
+
+        assert "token extracted" in caplog.text
+        assert token[:8] not in caplog.text
+        assert token[-8:] not in caplog.text
+
+    @pytest.mark.anyio
     async def test_raw_auth_token_is_redacted_in_warning(
         self, middleware, mock_scope, mock_receive, mock_send, caplog
     ):
@@ -1199,3 +1215,102 @@ def test_route_path_matches_starlette_router(scope):
     from mcp_atlassian.servers.main import _route_path
 
     assert _route_path(scope) == get_route_path(scope)
+
+
+class TestUserTokenMiddlewareUrlHeaderDns:
+    """URL-header DNS checks never run on the event loop.
+
+    ``socket.getaddrinfo`` is replaced by a stub that blocks until a sibling
+    coroutine releases it; a lookup on the loop thread would starve the
+    sibling and the stub would report that it timed out.
+    """
+
+    @pytest.fixture
+    def middleware(self):
+        mock_app = AsyncMock()
+        mock_mcp_server = MagicMock()
+        mock_mcp_server.auth = None
+        mock_mcp_server.get_streamable_http_path.return_value = "/mcp"
+        return UserTokenMiddleware(mock_app, mcp_server_ref=mock_mcp_server)
+
+    @staticmethod
+    def _scope(headers):
+        return {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": headers,
+            "state": {},
+        }
+
+    @pytest.mark.anyio
+    async def test_url_header_lookup_runs_off_the_event_loop(
+        self, middleware, monkeypatch
+    ):
+        import threading
+
+        import anyio
+
+        from mcp_atlassian.utils import urls
+
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        entered, release = threading.Event(), threading.Event()
+        record: dict[str, object] = {}
+
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            record["thread"] = threading.get_ident()
+            entered.set()
+            record["released"] = release.wait(5.0)
+            return [(2, 1, 6, "", ("93.184.216.34", 0))]
+
+        monkeypatch.setattr(urls.socket, "getaddrinfo", fake_getaddrinfo)
+
+        async def sibling():
+            while not entered.is_set():
+                await anyio.sleep(0.001)
+            release.set()
+
+        scope = self._scope(
+            [
+                (b"authorization", b"Token jira-pat"),
+                (b"x-atlassian-jira-personal-token", b"jira-pat"),
+                (b"x-atlassian-jira-url", b"https://jira.example.test"),
+            ]
+        )
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(sibling)
+            await middleware(scope, AsyncMock(), AsyncMock())
+            tg.cancel_scope.cancel()
+
+        assert entered.is_set()
+        assert record["thread"] != threading.get_ident()
+        assert record["released"] is True
+
+    @pytest.mark.anyio
+    async def test_url_headers_without_credentials_trigger_no_lookup(
+        self, middleware, monkeypatch
+    ):
+        from mcp_atlassian.utils import urls
+
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        monkeypatch.delenv("ALLOW_GLOBAL_CRED_FALLBACK", raising=False)
+        lookups: list[str] = []
+
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            lookups.append(host)
+            return [(2, 1, 6, "", ("93.184.216.34", 0))]
+
+        monkeypatch.setattr(urls.socket, "getaddrinfo", fake_getaddrinfo)
+        send = AsyncMock()
+        scope = self._scope(
+            [
+                (b"x-atlassian-jira-url", b"https://jira.example.test"),
+                (b"x-atlassian-confluence-url", b"https://wiki.example.test"),
+            ]
+        )
+
+        await middleware(scope, AsyncMock(), send)
+
+        assert lookups == []
+        start = send.call_args_list[0].args[0]
+        assert start["status"] == 401

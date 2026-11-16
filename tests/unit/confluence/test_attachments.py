@@ -4,7 +4,14 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
+from unittest.mock import (
+    AsyncMock,
+    MagicMock,
+    Mock,
+    PropertyMock,
+    mock_open,
+    patch,
+)
 
 import pytest
 from mcp.types import EmbeddedResource, TextContent
@@ -14,6 +21,7 @@ from mcp_atlassian.confluence.attachments import (
     validate_attachment_id,
 )
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.media import AttachmentTooLargeError
 from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
 
 # Test scenarios for AttachmentsMixin
@@ -414,6 +422,69 @@ class TestAttachmentsMixin:
         ][0]
         assert "/child/attachment/att12345/data" in second_call_url
 
+    def test_upload_attachment_versioning_fallback_uses_v2_under_oauth(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Cloud OAuth looks the attachment id up through v2, not the v1 list.
+
+        Atlassian removed the v1 ``child/attachment`` read endpoint from the
+        OAuth gateway (410 Gone), so the v1 GET made re-uploading an existing
+        filename impossible.
+        """
+        filename = "report.pdf"
+        updated_attachment = {"id": "att999", "title": filename}
+
+        conflict_response = Mock()
+        conflict_response.status_code = 400
+        conflict_response.text = (
+            f"Attachment with same file name already exists: {filename}"
+        )
+        update_response = Mock()
+        update_response.status_code = 200
+        update_response.raise_for_status.return_value = None
+        update_response.json.return_value = updated_attachment
+
+        attachments_mixin.confluence._session.post.side_effect = [
+            conflict_response,
+            update_response,
+        ]
+        v2_adapter = Mock()
+        v2_adapter.get_page_attachments.return_value = {
+            "results": [{"id": "att999", "title": filename}]
+        }
+
+        with (
+            patch.object(
+                type(attachments_mixin),
+                "_v2_adapter",
+                new_callable=PropertyMock,
+                return_value=v2_adapter,
+            ),
+            patch("os.getcwd", return_value="/absolute/path"),
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getsize", return_value=200),
+            patch("os.path.isabs", return_value=True),
+            patch("os.path.abspath", return_value=f"/absolute/path/{filename}"),
+            patch("os.path.basename", return_value=filename),
+            patch(
+                "mcp_atlassian.confluence.attachments.open_confined",
+                mock_open(read_data=b"updated content"),
+            ),
+        ):
+            result = attachments_mixin.upload_attachment(
+                "123456", f"/absolute/path/{filename}"
+            )
+
+        assert result["success"] is True
+        v2_adapter.get_page_attachments.assert_called_once_with(
+            "123456", filename=filename
+        )
+        attachments_mixin.confluence._session.get.assert_not_called()
+        second_call_url = attachments_mixin.confluence._session.post.call_args_list[1][
+            0
+        ][0]
+        assert "/child/attachment/att999/data" in second_call_url
+
     # Tests for upload_attachments method
 
     def test_upload_attachments_success(self, attachments_mixin: AttachmentsMixin):
@@ -508,6 +579,19 @@ class TestAttachmentsMixin:
             assert result["failed"][0]["filename"] == "file2.pdf"
             assert "File not found" in result["failed"][0]["error"]
 
+    def test_upload_attachments_all_failed(self, attachments_mixin: AttachmentsMixin):
+        """A batch in which no file was uploaded does not report success."""
+        with patch.object(
+            attachments_mixin,
+            "upload_attachment",
+            return_value={"success": False, "error": "403 Client Error"},
+        ):
+            result = attachments_mixin.upload_attachments("123456", ["a.txt", "b.txt"])
+
+        assert result["success"] is False
+        assert result["uploaded"] == []
+        assert [f["filename"] for f in result["failed"]] == ["a.txt", "b.txt"]
+
     def test_upload_attachments_empty_list(self, attachments_mixin: AttachmentsMixin):
         """Test upload with an empty list of file paths."""
         result = attachments_mixin.upload_attachments("123456", [])
@@ -560,6 +644,156 @@ class TestAttachmentsMixin:
             b"test content",
             "text/plain",
         )
+
+    # Attachment comments that contain a comma. Confluence Cloud reads the
+    # create endpoint's comment field as a comma-separated list, one entry per
+    # file, and answers HTTP 400 when the counts differ.
+
+    def test_cloud_comma_comment_is_stored_unchanged(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """On Cloud a comment with a comma is set after the create, text intact."""
+        attachments_mixin.config.url = "https://test.atlassian.net/wiki"
+        self._mock_rest_api_upload(attachments_mixin)
+        session = attachments_mixin.confluence._session
+        session.put.return_value = Mock(status_code=200, text="{}")
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456",
+            "a.txt",
+            b"x",
+            comment="redrawn (chain, broker)",
+            minor_edit=False,
+        )
+
+        assert result["success"] is True
+        assert "warning" not in result
+        session.post.assert_called_once()
+        assert "comment" not in session.post.call_args[1]["files"]
+        session.put.assert_called_once()
+        assert session.put.call_args[0][0] == (
+            "https://test.atlassian.net/wiki"
+            "/rest/api/content/123456/child/attachment/att12345"
+        )
+        assert session.put.call_args[1]["json"] == {
+            "id": "att12345",
+            "type": "attachment",
+            "version": {"number": 1, "minorEdit": False},
+            "metadata": {"comment": "redrawn (chain, broker)"},
+        }
+
+    def test_cloud_comma_comment_failure_is_a_warning(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """The upload still succeeds when only the comment could not be set."""
+        from requests.exceptions import HTTPError
+
+        attachments_mixin.config.url = "https://test.atlassian.net/wiki"
+        self._mock_rest_api_upload(attachments_mixin)
+        refused = Mock(status_code=403, text="Forbidden")
+        refused.raise_for_status.side_effect = HTTPError("403 Client Error")
+        attachments_mixin.confluence._session.put.return_value = refused
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456", "a.txt", b"x", comment="alpha, beta"
+        )
+
+        assert result["success"] is True
+        assert result["id"] == "att12345"
+        assert "comment was not set" in result["warning"]
+        assert "403" in result["warning"]
+
+    def test_cloud_comma_comment_goes_with_a_new_version(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """A new version of an existing attachment carries the comment itself."""
+        attachments_mixin.config.url = "https://test.atlassian.net/wiki"
+        conflict = Mock(status_code=400)
+        conflict.text = "Cannot add a new attachment with same file name: a.txt"
+        updated = Mock(status_code=200)
+        updated.raise_for_status.return_value = None
+        updated.json.return_value = {"id": "att12345", "version": {"number": 2}}
+        found = Mock(status_code=200)
+        found.raise_for_status.return_value = None
+        found.json.return_value = {"results": [{"id": "att12345"}]}
+        session = attachments_mixin.confluence._session
+        session.post.side_effect = [conflict, updated]
+        session.get.return_value = found
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456", "a.txt", b"x", comment="alpha, beta"
+        )
+
+        assert result["success"] is True
+        assert "warning" not in result
+        create_call, version_call = session.post.call_args_list
+        assert "comment" not in create_call[1]["files"]
+        assert version_call[0][0].endswith("/child/attachment/att12345/data")
+        assert version_call[1]["files"]["comment"][1] == "alpha, beta"
+        session.put.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "url,comment",
+        [
+            pytest.param(
+                "https://test.atlassian.net/wiki", "no comma here", id="cloud-plain"
+            ),
+            pytest.param(
+                "https://confluence.example.com", "alpha, beta", id="server-comma"
+            ),
+        ],
+    )
+    def test_comment_is_sent_with_the_upload(
+        self, attachments_mixin: AttachmentsMixin, url: str, comment: str
+    ):
+        """Every other comment travels in the create request, unchanged."""
+        attachments_mixin.config.url = url
+        self._mock_rest_api_upload(attachments_mixin)
+        session = attachments_mixin.confluence._session
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456", "a.txt", b"x", comment=comment
+        )
+
+        assert result["success"] is True
+        assert session.post.call_args[1]["files"]["comment"][1] == comment
+        session.put.assert_not_called()
+
+    def test_upload_error_carries_the_response_body(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Confluence's reason for refusing an upload reaches the caller."""
+        from requests.exceptions import HTTPError
+
+        response = Mock(status_code=400)
+        response.text = "Must be same number of attachment files and comments."
+        response.raise_for_status.side_effect = HTTPError("400 Client Error")
+        attachments_mixin.confluence._session.post.return_value = response
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456", "a.txt", b"x"
+        )
+
+        assert result["success"] is False
+        assert "400 Client Error" in result["error"]
+        assert "Must be same number" in result["error"]
+
+    def test_upload_error_body_is_capped(self, attachments_mixin: AttachmentsMixin):
+        """A long error page does not flood the tool result."""
+        from requests.exceptions import HTTPError
+
+        response = Mock(status_code=502)
+        response.text = "<html>" + "x" * 20_000
+        response.raise_for_status.side_effect = HTTPError("502 Server Error")
+        attachments_mixin.confluence._session.post.return_value = response
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "123456", "a.txt", b"x"
+        )
+
+        assert result["success"] is False
+        assert "502 Server Error: <html>xxx" in result["error"]
+        assert len(result["error"]) < 600
 
     def test_upload_attachment_from_content_no_content_id(
         self, attachments_mixin: AttachmentsMixin
@@ -700,6 +934,7 @@ class TestAttachmentsMixin:
             mock_file.assert_called_once_with(test_path, "wb")
             mock_file().write.assert_called_once_with(b"test content")
             mock_makedirs.assert_called_once()
+            mock_response.close.assert_called_once()
 
     def test_download_attachment_relative_path(
         self, attachments_mixin: AttachmentsMixin
@@ -756,6 +991,7 @@ class TestAttachmentsMixin:
                 "https://example.atlassian.net/attachment", "/tmp/test_file.txt"
             )
         assert result is False
+        mock_response.close.assert_called_once()
 
     def test_download_attachment_file_write_error(
         self, attachments_mixin: AttachmentsMixin
@@ -781,6 +1017,7 @@ class TestAttachmentsMixin:
                 "https://example.atlassian.net/attachment", "/tmp/test_file.txt"
             )
             assert result is False
+            mock_response.close.assert_called_once()
 
     def test_download_attachment_file_not_created(
         self, attachments_mixin: AttachmentsMixin
@@ -827,6 +1064,35 @@ class TestAttachmentsMixin:
         attachments_mixin.confluence._session.get.assert_called_once_with(
             "https://example.atlassian.net/download/att123", stream=True
         )
+        mock_response.close.assert_called_once()
+
+    def test_fetch_attachment_content_stops_past_size_limit(
+        self, attachments_mixin: AttachmentsMixin, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A body larger than the limit is refused without reading it to the end."""
+        monkeypatch.setattr(
+            "mcp_atlassian.confluence.attachments.ATTACHMENT_MAX_BYTES", 25
+        )
+        consumed: list[int] = []
+
+        def body():
+            for index in range(100):
+                consumed.append(index)
+                yield b"x" * 10
+
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_content.return_value = body()
+        attachments_mixin.confluence._session.get.return_value = mock_response
+
+        with pytest.raises(AttachmentTooLargeError) as raised:
+            attachments_mixin.fetch_attachment_content(
+                "https://example.atlassian.net/download/att123"
+            )
+
+        assert raised.value.bytes_read == 30
+        assert len(consumed) == 3
+        mock_response.close.assert_called_once()
 
     def test_fetch_attachment_content_empty_url(
         self, attachments_mixin: AttachmentsMixin
@@ -847,6 +1113,7 @@ class TestAttachmentsMixin:
             "https://example.atlassian.net/download/att123"
         )
         assert result is None
+        mock_response.close.assert_called_once()
 
     def test_fetch_attachment_content_network_exception(
         self, attachments_mixin: AttachmentsMixin

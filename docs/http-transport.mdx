@@ -141,6 +141,28 @@ listener, so the options are ignored with a warning.
 </Note>
 
 
+## Host and Origin checks
+
+When header-less requests are served with the operator's global credentials
+(`ALLOW_GLOBAL_CRED_FALLBACK=true` or `IGNORE_HEADER_AUTH=true`), the server
+checks two headers. A request with an `Origin` header gets `403` unless the
+origin is on this machine (`localhost`, `127.0.0.1`, `[::1]`) or listed in
+`FASTMCP_HTTP_ALLOWED_ORIGINS`, whatever address it arrives on. Requests
+without `Origin`, such as MCP clients and proxies, pass. A request that
+arrives on a loopback address also gets `421` unless its `Host` is local.
+This stops a web page in a browser from acting with the credentials the
+listener holds. Other deployments keep FastMCP's default, which does not
+check these headers.
+
+| Variable | Effect |
+| --- | --- |
+| `FASTMCP_HTTP_HOST_ORIGIN_PROTECTION` | Setting it replaces the default above with FastMCP's own behaviour. `true` checks `Host` and `Origin` on every address. `auto` checks loopback requests. `false` turns the checks off. |
+| `FASTMCP_HTTP_ALLOWED_HOSTS` | JSON list of extra hostnames to accept, for example `["mcp.example.com"]`. While the check is on, setting it also checks requests on non-loopback addresses. |
+| `FASTMCP_HTTP_ALLOWED_ORIGINS` | JSON list of extra browser origins, for example `["https://mcp.example.com"]`. A browser client served from the proxy's hostname needs it. |
+
+A reverse proxy on the same host that forwards to `127.0.0.1` and passes the
+public hostname in `Host` needs that hostname in `FASTMCP_HTTP_ALLOWED_HOSTS`.
+
 ## Server-side file paths
 
 Some tools accept a path on the **server's** filesystem: `confluence_upload_attachment(s)`

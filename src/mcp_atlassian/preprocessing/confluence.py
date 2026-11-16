@@ -1,5 +1,6 @@
 """Confluence-specific text preprocessing module."""
 
+import importlib.util
 import logging
 import re
 import tempfile
@@ -15,13 +16,30 @@ from md2conf.converter import (
     attachment_name,
     elements_from_strings,
     elements_to_string,
-    markdown_to_html,
 )
 from md2conf.metadata import ConfluenceSiteMetadata
 
 from .base import BasePreprocessor
 
 logger = logging.getLogger("mcp-atlassian")
+
+
+def markdown_to_html(content: str) -> str:
+    """Convert Markdown like ``md2conf.converter.markdown_to_html``.
+
+    md2conf keeps one module-level Markdown converter that every call resets
+    and reuses: calls from two worker threads at once mixed their documents,
+    and a conversion that failed inside it left state behind that broke
+    every later one. Each call here runs a private copy of the
+    ``md2conf.markdown`` module, so it gets a converter of its own, built
+    with the settings of whichever md2conf version is installed.
+    """
+    spec = importlib.util.find_spec("md2conf.markdown")
+    if spec is None or spec.loader is None:
+        raise RuntimeError("md2conf.markdown is not importable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return str(module.markdown_to_html(content))
 
 
 class ConfluencePreprocessor(BasePreprocessor):
@@ -104,11 +122,13 @@ class ConfluencePreprocessor(BasePreprocessor):
                 if not base_path.endswith("/"):
                     base_path += "/"
 
-                # Create converter options
+                # Diagram extensions are off: they start external renderers
+                # on caller-supplied source, and their images and source
+                # attachments are never uploaded. Diagram blocks stay code.
                 options = ConverterOptions(
                     force_valid_url=False,
                     heading_anchors=enable_heading_anchors,
-                    render_mermaid=False,
+                    extensions=[],
                 )
 
                 # Create a converter
