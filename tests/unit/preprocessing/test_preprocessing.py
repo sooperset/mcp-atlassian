@@ -1,9 +1,14 @@
 import re
+import threading
 from unittest.mock import MagicMock
 
 import pytest
+from md2conf.converter import markdown_to_html as md2conf_markdown_to_html
 
 from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+from mcp_atlassian.preprocessing.confluence import (
+    markdown_to_html as confluence_markdown_to_html,
+)
 from mcp_atlassian.preprocessing.jira import JiraPreprocessor
 from tests.fixtures.confluence_mocks import MOCK_COMMENTS_RESPONSE, MOCK_PAGE_RESPONSE
 from tests.fixtures.jira_mocks import MOCK_JIRA_ISSUE_RESPONSE
@@ -2027,3 +2032,85 @@ def test_diagram_blocks_never_start_a_renderer(monkeypatch, tmp_path, language):
     assert 'ac:name="code"' in storage
     assert "A -> B" in storage
     assert "<h1>Title</h1>" in storage
+
+
+# --- One Markdown converter per Confluence conversion ----------------------
+
+_CONVERSION_DOCUMENTS = {
+    "paragraphs": lambda i: "\n\n".join(
+        f"Paragraph {i}.{n} with *text*." for n in range(150)
+    ),
+    "list_and_table": lambda i: (
+        "\n".join(f"- item {i}.{n}" for n in range(80))
+        + "\n\n| a | b |\n|---|---|\n"
+        + "".join(f"| {i} | {n} |\n" for n in range(80))
+    ),
+    "footnotes": lambda i: (
+        f"Claim {i}[^a] and more[^b].\n\n[^a]: note a{i}\n[^b]: note b{i}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("threads", [2, 8])
+def test_concurrent_markdown_conversions_match_sequential(threads: int) -> None:
+    preprocessor = ConfluencePreprocessor(base_url="https://example.invalid/wiki")
+    kinds = list(_CONVERSION_DOCUMENTS.values())
+    # Each thread converts every kind of document, each with its own text.
+    documents = [
+        [kind(thread * len(kinds) + n) for n, kind in enumerate(kinds)]
+        for thread in range(threads)
+    ]
+    expected = [
+        [preprocessor.markdown_to_confluence_storage(d) for d in docs]
+        for docs in documents
+    ]
+    barrier = threading.Barrier(threads, timeout=60)
+    mismatches: list[str] = []
+
+    def convert(thread: int) -> None:
+        for round_ in range(20):
+            for n, document in enumerate(documents[thread]):
+                barrier.wait()
+                try:
+                    result = preprocessor.markdown_to_confluence_storage(document)
+                except Exception as error:  # noqa: BLE001 - reported below
+                    mismatches.append(f"thread {thread} round {round_}: {error!r}")
+                    continue
+                if result != expected[thread][n]:
+                    mismatches.append(f"thread {thread} round {round_}: differs")
+
+    workers = [threading.Thread(target=convert, args=(i,)) for i in range(threads)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    assert mismatches == []
+
+
+def test_markdown_conversion_after_a_failed_conversion_is_unchanged() -> None:
+    preprocessor = ConfluencePreprocessor(base_url="https://example.invalid/wiki")
+    document = "See [doc](https://x.example).\n\n- a\n- b\n"
+    expected = preprocessor.markdown_to_confluence_storage(document)
+    try:
+        # Deep enough for Python-Markdown to fail with RecursionError.
+        preprocessor.markdown_to_confluence_storage("- " * 600 + "a")
+    except RecursionError:
+        pass
+    assert preprocessor.markdown_to_confluence_storage(document) == expected
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    [
+        "*a* _a_ **a** ***a*** a_b_c **a*b*c** __a__ *a **b** c*",
+        "Paragraph with `code`, [link](https://x.example) and ![img](a.png).",
+        "# Title\n\n- a\n- b\n  - c\n\n1. one\n2. two\n",
+        "| a | b |\n|---|---|\n| *x* | `y` |\n",
+        "Claim[^1].\n\n[^1]: note\n",
+        "- [ ] task\n- [x] done\n\n> quote\n\n---\n",
+        "```py\nprint(1)\n```\n\n~~del~~ ==mark== ^^ins^^ H~2~O x^2^ :smile:",
+        "<div>raw <b>html</b></div>\n\n$x^2$ and https://x.example/auto",
+    ],
+)
+def test_markdown_to_html_matches_md2conf(markdown: str) -> None:
+    assert confluence_markdown_to_html(markdown) == md2conf_markdown_to_html(markdown)
