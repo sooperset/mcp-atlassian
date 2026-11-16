@@ -2003,6 +2003,64 @@ class TestPagesOAuthMixin:
                 assert result.id == "oauth_wiki_123"
                 assert result.title == title
 
+    @staticmethod
+    def _read_back_error(status_code):
+        """Build the error get_page_content raises for a failed v2 read."""
+        response = MagicMock()
+        response.status_code = status_code
+        try:
+            try:
+                try:
+                    raise HTTPError(f"{status_code} Client Error", response=response)
+                except HTTPError as e:
+                    raise ValueError(f"Failed to get page '555': {e}") from e
+            except ValueError as e:
+                raise Exception(f"Error retrieving page content: {e}") from e
+        except Exception as e:  # noqa: BLE001
+            return e
+
+    def _create_with_read_back(self, mixin, read_back):
+        with (
+            patch(
+                "mcp_atlassian.confluence.pages.ConfluenceV2Adapter"
+            ) as adapter_class,
+            patch("time.sleep"),
+            patch.object(mixin, "get_page_content", side_effect=read_back) as read,
+        ):
+            adapter_class.return_value.create_page.return_value = {"id": "555"}
+            try:
+                return mixin.create_page(
+                    "PROJ", "T", "<p>x</p>", is_markdown=False
+                ), read
+            except Exception as e:  # noqa: BLE001
+                return e, read
+
+    def test_create_page_read_back_retries_a_404(self, oauth_pages_mixin):
+        page = ConfluencePage(id="555", title="T", content="x")
+        result, read = self._create_with_read_back(
+            oauth_pages_mixin, [self._read_back_error(404), page]
+        )
+        assert result is page
+        assert read.call_count == 2
+
+    def test_create_page_read_back_failure_says_page_was_created(
+        self, oauth_pages_mixin
+    ):
+        result, read = self._create_with_read_back(
+            oauth_pages_mixin, self._read_back_error(404)
+        )
+        assert isinstance(result, Exception)
+        assert "was created" in str(result)
+        assert "555" in str(result)
+        assert 1 < read.call_count <= 5
+
+    def test_create_page_read_back_does_not_retry_other_errors(self, oauth_pages_mixin):
+        result, read = self._create_with_read_back(
+            oauth_pages_mixin, [self._read_back_error(500)]
+        )
+        assert isinstance(result, Exception)
+        assert read.call_count == 1
+
     def test_update_page_oauth_uses_v2_api(self, oauth_pages_mixin):
         """Test that OAuth authentication uses v2 API for updating pages."""
         # Arrange
