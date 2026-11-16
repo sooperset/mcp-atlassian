@@ -20,6 +20,19 @@ _JIRA_ISSUE_KEY_RE = re.compile(
 _VALID_STATUS_COLORS = frozenset(
     {"neutral", "purple", "blue", "red", "yellow", "green"}
 )
+# A line matching any of these starts a markdown block of its own, so a flat
+# list loop (#1695) must not swallow it as a lazy continuation of the
+# previous item's text: another list marker (bullet or ordered, so a
+# different list type immediately after one item ends the current list
+# rather than merging into it), a heading, a blockquote, a fenced code
+# block, or a table row.
+_LIST_CONTINUATION_STOP_RE = re.compile(r"^(?:[-*]\s+|\d+\.\s+|#{1,6}\s+|>\s|```|\|)")
+
+
+def _is_new_block_start(line: str) -> bool:
+    """True when `line` starts a markdown block of its own (see
+    `_LIST_CONTINUATION_STOP_RE`)."""
+    return bool(_LIST_CONTINUATION_STOP_RE.match(line))
 
 
 def _append_text_nodes(
@@ -395,22 +408,41 @@ def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, An
                 continue
 
         # --- Unordered list ---
+        # A blank line only continues the list if another bullet item follows
+        # it (otherwise it ends the list, e.g. before a trailing paragraph); a
+        # bare non-marker line is a lazy continuation of the previous item's
+        # text unless it starts a block of its own (#1695).
         if re.match(r"^[-*]\s+", line):
-            items: list[dict[str, Any]] = []
-            while i < len(lines) and re.match(r"^[-*]\s+", lines[i]):
-                item_text = re.sub(r"^[-*]\s+", "", lines[i])
-                items.append(_make_list_item(item_text, jira_base_url))
-                i += 1
+            item_texts: list[str] = []
+            while i < len(lines):
+                if re.match(r"^[-*]\s+", lines[i]):
+                    item_texts.append(re.sub(r"^[-*]\s+", "", lines[i]))
+                    i += 1
+                elif (
+                    not lines[i].strip()
+                    and i + 1 < len(lines)
+                    and re.match(r"^[-*]\s+", lines[i + 1])
+                ):
+                    i += 1
+                elif (
+                    item_texts
+                    and lines[i].strip()
+                    and not _is_new_block_start(lines[i])
+                ):
+                    item_texts[-1] += " " + lines[i].strip()
+                    i += 1
+                else:
+                    break
+            items = [_make_list_item(text, jira_base_url) for text in item_texts]
             doc["content"].append({"type": "bulletList", "content": items})
             continue
 
-        # --- Ordered list ---
+        # --- Ordered list --- (same blank-line/continuation handling as above)
         if re.match(r"^\d+\.\s+", line):
-            items_ol: list[dict[str, Any]] = []
+            item_texts_ol: list[str] = []
             while i < len(lines):
                 if re.match(r"^\d+\.\s+", lines[i]):
-                    item_text = re.sub(r"^\d+\.\s+", "", lines[i])
-                    items_ol.append(_make_list_item(item_text, jira_base_url))
+                    item_texts_ol.append(re.sub(r"^\d+\.\s+", "", lines[i]))
                     i += 1
                 elif (
                     not lines[i].strip()
@@ -418,8 +450,16 @@ def markdown_to_adf(markdown_text: str, jira_base_url: str = "") -> dict[str, An
                     and re.match(r"^\d+\.\s+", lines[i + 1])
                 ):
                     i += 1
+                elif (
+                    item_texts_ol
+                    and lines[i].strip()
+                    and not _is_new_block_start(lines[i])
+                ):
+                    item_texts_ol[-1] += " " + lines[i].strip()
+                    i += 1
                 else:
                     break
+            items_ol = [_make_list_item(text, jira_base_url) for text in item_texts_ol]
             doc["content"].append({"type": "orderedList", "content": items_ol})
             continue
 
