@@ -167,6 +167,46 @@ class TestConfluenceDCAttachments:
         if "version" in matching[0]:
             assert matching[0]["version"]["number"] >= 2
 
+    def test_upload_keeps_a_comma_in_the_comment(
+        self,
+        confluence_fetcher: ConfluenceFetcher,
+        dc_instance: DCInstanceInfo,
+        resource_tracker: DCResourceTracker,
+    ) -> None:
+        """A comment with a comma is stored as written, on create and re-upload."""
+        uid = uuid.uuid4().hex[:8]
+        page = confluence_fetcher.create_page(
+            space_key=dc_instance.space_key,
+            title=f"E2E Attachment Comment {uid}",
+            body="<p>For attachment comment testing.</p>",
+        )
+        resource_tracker.add_confluence_page(page.id)
+        filename = f"comma-{uid}.txt"
+
+        for version, (content, comment) in enumerate(
+            (
+                (b"first", "redrawn diagram (chain registry, broker)"),
+                (b"second", "second pass, with more, commas"),
+            ),
+            start=1,
+        ):
+            result = confluence_fetcher.upload_attachment_from_content(
+                content_id=page.id,
+                filename=filename,
+                content=content,
+                comment=comment,
+            )
+            assert result["success"] is True, result
+            assert "warning" not in result
+
+            stored = confluence_fetcher.confluence.get_attachments_from_content(
+                page.id, filename=filename, expand="version,metadata"
+            )["results"]
+            assert len(stored) == 1
+            assert stored[0]["metadata"]["comment"] == comment
+            # Setting the comment must not add an attachment version.
+            assert stored[0]["version"]["number"] == version
+
 
 class TestConfluenceDCPageHierarchy:
     """Page hierarchy (parent/child pages)."""

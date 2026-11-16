@@ -1641,7 +1641,8 @@ async def get_page_history(
         bool,
         Field(
             description=(
-                "Whether to convert page to markdown (true) or keep it in raw HTML format (false). "
+                "Convert page to markdown (true) or return unchanged Confluence "
+                "storage XHTML for editing (false). "
                 "Raw HTML can reveal macros (like dates) not visible in markdown, but CAUTION: "
                 "using HTML significantly increases token usage in AI responses."
             ),
@@ -1655,7 +1656,8 @@ async def get_page_history(
         ctx: The FastMCP context.
         page_id: Confluence page ID.
         version: The version number to retrieve.
-        convert_to_markdown: Convert content to markdown (true) or keep raw HTML (false).
+        convert_to_markdown: Convert to markdown (true) or return unchanged
+            Confluence storage XHTML (false).
 
     Returns:
         JSON string representing the page content at the specified version.
@@ -2066,9 +2068,19 @@ async def upload_attachments(
         minor_edit=minor_edit,
     )
 
+    uploaded = len(results.get("uploaded", []))
+    failed = len(results.get("failed", []))
+    if failed:
+        message = (
+            f"Uploaded {uploaded} of {uploaded + failed} attachment(s); {failed} failed"
+        )
+    elif results.get("success"):
+        message = f"Uploaded {uploaded} attachment(s) successfully"
+    else:
+        message = "Attachment upload failed"
     return json.dumps(
         {
-            "message": f"Uploaded {len(results)} attachment(s) successfully",
+            "message": message,
             "attachments": results,
         },
         indent=2,
