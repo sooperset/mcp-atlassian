@@ -7,6 +7,7 @@ conversions that the rewritten patterns must keep unchanged.
 
 import re
 import signal
+import sys
 import threading
 import tracemalloc
 from collections.abc import Callable, Iterator
@@ -25,6 +26,25 @@ from mcp_atlassian.preprocessing.base import (
 from mcp_atlassian.preprocessing.jira import JiraPreprocessor
 
 BUDGET_SECONDS = 1.5
+
+#: A coverage tracer slows pure-Python scans several times over, and CI runs
+#: the suite under one. The inputs here took far longer than this before the
+#: fix, so the wider budget still catches a return to the old behavior.
+TRACED_BUDGET_FACTOR = 20
+
+
+def _budget_seconds() -> float:
+    """Return the wall-clock budget for one call in this test run."""
+    try:
+        import coverage
+
+        traced = coverage.Coverage.current() is not None
+    except ImportError:
+        traced = False
+    if traced or sys.gettrace() is not None:
+        return BUDGET_SECONDS * TRACED_BUDGET_FACTOR
+    return BUDGET_SECONDS
+
 
 _CODE_MACRO = (
     '<ac:structured-macro ac:name="code"><ac:plain-text-body>'
@@ -59,7 +79,7 @@ def _time_budget(seconds: float) -> Iterator[None]:
 
 
 def _finishes_in_budget(call: Callable[[], object]) -> None:
-    with _time_budget(BUDGET_SECONDS):
+    with _time_budget(_budget_seconds()):
         call()
 
 
