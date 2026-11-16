@@ -30,6 +30,7 @@ from requests.exceptions import HTTPError
 
 from ..models.jira.adf import adf_to_text, merge_adf_with_preserved_media
 from ..utils import parse_date
+from ..utils.urls import path_segment
 from .client import JiraClient
 from .config import normalize_project_key
 
@@ -298,7 +299,10 @@ class CommentsMixin(JiraClient):
                 cannot be verified is refused rather than allowed through.
         """
         try:
-            url = f"rest/servicedeskapi/request/{issue_key}/comment/{comment_id}"
+            url = (
+                "rest/servicedeskapi/request/"
+                f"{path_segment(issue_key)}/comment/{path_segment(comment_id)}"
+            )
             headers = {
                 **self.jira.default_headers,
                 "X-ExperimentalApi": "opt-in",
@@ -340,9 +344,10 @@ class CommentsMixin(JiraClient):
             ValueError: If the project is internal-only and the target
                 comment is currently public
         """
-        if not self._is_internal_only_project(issue_key):
+        guarded_key = self._internal_only_issue_key(issue_key)
+        if guarded_key is None:
             return
-        if self._fetch_servicedesk_comment_is_public(issue_key, comment_id):
+        if self._fetch_servicedesk_comment_is_public(guarded_key, comment_id):
             raise ValueError(
                 f"Comment {comment_id} on issue {issue_key} is PUBLIC "
                 f"(customer-visible). {issue_key}'s project is configured "
@@ -409,9 +414,10 @@ class CommentsMixin(JiraClient):
         # matcher accounts for URL normalization before classifying the key);
         # elsewhere a non-canonical key simply skips the probe and keeps the
         # existing ServiceDesk routing.
-        guarded = self._is_internal_only_project(issue_key)
-        if guarded:
-            issue_key = self._require_canonical_guarded_issue_key(issue_key)
+        guarded_key = self._internal_only_issue_key(issue_key)
+        guarded = guarded_key is not None
+        if guarded_key is not None:
+            issue_key = self._require_canonical_guarded_issue_key(guarded_key)
         if (
             (guarded or public is not None)
             and self._is_canonical_issue_key(issue_key)
@@ -451,7 +457,9 @@ class CommentsMixin(JiraClient):
                 data: dict[str, Any] = {"body": jira_formatted_comment}
                 if visibility:
                     data["visibility"] = visibility
-                result = self._post_api3(f"issue/{issue_key}/comment", data)
+                result = self._post_api3(
+                    f"issue/{path_segment(issue_key)}/comment", data
+                )
             else:
                 result = self.jira.issue_add_comment(
                     issue_key, jira_formatted_comment, visibility
@@ -584,7 +592,8 @@ class CommentsMixin(JiraClient):
         """
         try:
             current = self.jira.get(
-                f"rest/api/3/issue/{issue_key}/comment/{comment_id}"
+                f"rest/api/3/issue/{path_segment(issue_key)}"
+                f"/comment/{path_segment(comment_id)}"
             )
             if not isinstance(current, dict):
                 return comment_adf
@@ -649,10 +658,17 @@ class CommentsMixin(JiraClient):
                 }
                 if visibility:
                     data["visibility"] = visibility
-                result = self._put_api3(f"issue/{issue_key}/comment/{comment_id}", data)
+                result = self._put_api3(
+                    f"issue/{path_segment(issue_key)}"
+                    f"/comment/{path_segment(comment_id)}",
+                    data,
+                )
             else:
                 result = self.jira.issue_edit_comment(
-                    issue_key, comment_id, jira_formatted_comment, visibility
+                    path_segment(issue_key),
+                    path_segment(comment_id),
+                    jira_formatted_comment,
+                    visibility,
                 )
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.issue_edit_comment`: {type(result)}"

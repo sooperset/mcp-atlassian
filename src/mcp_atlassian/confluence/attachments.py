@@ -23,6 +23,7 @@ from ..utils.media import (
     AttachmentTooLargeError,
     read_capped,
 )
+from ..utils.ssrf_adapter import ensure_attachment_origin
 from ..utils.urls import resolve_relative_url
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
@@ -36,8 +37,6 @@ logger = logging.getLogger("mcp-confluence")
 #: authenticated REST URL and could reach endpoints the tool never intends.
 ATTACHMENT_ID_PATTERN = r"^(att)?\d+$"
 _ATTACHMENT_ID_RE = re.compile(ATTACHMENT_ID_PATTERN)
-
-_DEFAULT_PORTS = {"http": 80, "https": 443}
 
 #: How much of an error response body is kept in an upload error message.
 _ERROR_BODY_LIMIT = 500
@@ -101,13 +100,6 @@ def validate_attachment_id(attachment_id: str) -> str:
     return attachment_id
 
 
-def _origin(url: str) -> tuple[str, str, int | None]:
-    parts = urllib.parse.urlsplit(url)
-    scheme = parts.scheme.lower()
-    port = parts.port if parts.port is not None else _DEFAULT_PORTS.get(scheme)
-    return scheme, (parts.hostname or "").lower(), port
-
-
 class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
     """Mixin for Confluence attachment operations."""
 
@@ -146,15 +138,12 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             url: The absolute URL about to be fetched.
 
         Raises:
-            ValueError: If *url* is not on the configured Confluence origin.
+            ValueError: If *url* is not on the Confluence origin or under
+                MCP_ALLOWED_URL_DOMAINS.
         """
-        allowed = {_origin(self.config.url)}
-        client_url = getattr(self.confluence, "url", None)
-        if isinstance(client_url, str) and client_url:
-            allowed.add(_origin(client_url))
-        if _origin(url) not in allowed:
-            msg = f"Refusing to fetch attachment from a different host: {url}"
-            raise ValueError(msg)
+        ensure_attachment_origin(
+            url, (self.config.url, getattr(self.confluence, "url", None))
+        )
 
     def _resolve_attachment_download_url(
         self,

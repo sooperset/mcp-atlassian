@@ -8,7 +8,8 @@ resolution to rebind.
 """
 
 import socket
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -148,7 +149,7 @@ class _FakeConnectSock:
     "env",
     [
         {"JIRA_URL": "http://jira.internal:8080"},
-        {"CONFLUENCE_URL": "https://jira.internal/wiki"},
+        {"CONFLUENCE_URL": "https://jira.internal:8080/wiki"},
         {"MCP_ALLOWED_URL_DOMAINS": "jira.internal"},
     ],
 )
@@ -457,3 +458,253 @@ def test_proxy_trust_is_exact_service_origin(target, monkeypatch):
         adapter.send(request, proxies=proxies)
 
     assert send.call_args.kwargs["proxies"] == {}
+
+
+# A request path is built from tool arguments. ``requests`` resolves "." and
+# ".." segments before sending, so a value such as "../../OTHER-1/comment/5"
+# would address a different resource than the one the caller was checked for.
+
+_BASE = "https://example.atlassian.net/rest/api/2/issue/ALLOWED-1/comment/"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("../../OTHER-1/comment/5", id="dot-dot"),
+        pytest.param("./5", id="single-dot"),
+        pytest.param("%2e%2e/%2E%2E/OTHER-1/comment/5", id="percent-encoded"),
+        pytest.param("..%2F..%2FOTHER-1%2Fcomment%2F5", id="encoded-slash"),
+        pytest.param("..;x=1/..;/OTHER-1/comment/5", id="path-parameter"),
+        pytest.param("..\\..\\OTHER-1\\comment\\5", id="backslash"),
+        pytest.param("5/..", id="trailing"),
+        pytest.param("%252e%252e%252fOTHER-1", id="double-encoded"),
+        pytest.param("%25252e%25252e/OTHER-1", id="triple-encoded"),
+        pytest.param("..%252F..%252FOTHER-1", id="double-encoded-slash"),
+        pytest.param("%2525252e%2525252e/OTHER-1", id="quadruple-encoded"),
+        pytest.param(("%" + "25" * 40 + "2e") * 2 + "/OTHER-1", id="deeply-encoded"),
+    ],
+)
+def test_request_with_dot_segment_is_refused_before_sending(path):
+    session = requests.Session()
+    mount_ssrf_pinning(session)
+
+    with patch.object(SsrfPinningAdapter, "send") as send:
+        with pytest.raises(ValueError, match="path"):
+            session.get(_BASE + path)
+
+    send.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param(_BASE + "5", id="plain"),
+        pytest.param(_BASE + "5?expand=a..b&path=../x", id="dots-in-query"),
+        pytest.param(
+            "https://example.atlassian.net/download/attachments/1/notes..v2.txt",
+            id="dots-inside-a-name",
+        ),
+        pytest.param(
+            "https://example.atlassian.net/wiki/spaces/A/pages/1/...", id="three-dots"
+        ),
+        pytest.param(_BASE + "5?path=%252e%252e%252f", id="encoded-dots-in-query"),
+        pytest.param(
+            "https://example.atlassian.net/download/attachments/1/100%25.txt",
+            id="encoded-percent-in-a-name",
+        ),
+        pytest.param(
+            "https://example.atlassian.net/download/attachments/1/100%.txt",
+            id="bare-percent-in-a-name",
+        ),
+        pytest.param(_BASE + "%25", id="encoded-percent"),
+        pytest.param(_BASE + "%2525", id="double-encoded-percent"),
+        pytest.param(
+            "https://example.atlassian.net/download/attachments/1/notes%252etxt",
+            id="double-encoded-dot-inside-a-name",
+        ),
+    ],
+)
+def test_request_without_dot_segment_is_sent(url):
+    session = requests.Session()
+    mount_ssrf_pinning(session)
+    response = requests.Response()
+    response.status_code = 200
+
+    with patch.object(SsrfPinningAdapter, "send", return_value=response) as send:
+        assert session.get(url).status_code == 200
+
+    send.assert_called_once()
+
+
+def test_mounting_twice_checks_the_path_once():
+    session = requests.Session()
+    mount_ssrf_pinning(session)
+    first = session.prepare_request
+    mount_ssrf_pinning(session)
+
+    assert session.prepare_request is first
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"JIRA_URL": "http://jira.internal:8080"},
+        {"CONFLUENCE_URL": "https://jira.internal/wiki"},
+    ],
+)
+def test_other_port_of_configured_host_is_not_trusted(env, monkeypatch):
+    """Only the configured host AND port waive the private-address check."""
+    for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+    with patch(
+        "mcp_atlassian.utils.ssrf_adapter.socket.getaddrinfo",
+        side_effect=_gai_returning("10.0.0.5"),
+    ):
+        with pytest.raises(OSError, match="non-global"):
+            _pinned_create_connection(("jira.internal", 9000))
+
+
+def _transport_kwargs(session: Any, url: str, **send_kwargs: Any) -> dict[str, Any]:
+    """Send ``url`` through the session's adapter; return what reaches HTTPAdapter."""
+    import requests
+    from requests.adapters import HTTPAdapter
+
+    request = requests.Request("GET", url).prepare()
+    seen: dict[str, Any] = {}
+
+    def fake_send(self: Any, req: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        seen["adapter"] = self
+        return MagicMock(status_code=200)
+
+    with patch.object(HTTPAdapter, "send", fake_send):
+        session.get_adapter(url).send(request, **send_kwargs)
+    return seen
+
+
+@pytest.mark.security_regression
+class TestSslVerifyOffStaysOnOperatorOrigin:
+    """JIRA_SSL_VERIFY=false applies only to the session's own exact origin."""
+
+    @staticmethod
+    def _session(monkeypatch: pytest.MonkeyPatch, **config: Any) -> Any:
+        from mcp_atlassian.jira import JiraConfig, JiraFetcher
+
+        for name in ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NO_PROXY", "no_proxy"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("JIRA_URL", "https://jira.operator.example")
+        monkeypatch.setenv("CONFLUENCE_URL", "https://wiki.operator.example")
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "cdn.example")
+        fetcher = JiraFetcher(
+            config=JiraConfig(
+                url="https://jira.operator.example",
+                auth_type="pat",
+                personal_token="dummy",
+                ssl_verify=False,
+                **config,
+            )
+        )
+        return fetcher.jira._session
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://cdn.other.example/file",
+            "https://jira.operator.example.attacker.example/file",
+            "https://jira.operator.example:8443/file",
+            # Other operator-trusted origins are still verified.
+            "https://wiki.operator.example/rest/api/content",
+            "https://files.cdn.example/file",
+        ],
+    )
+    def test_other_origin_is_verified(
+        self, monkeypatch: pytest.MonkeyPatch, url: str
+    ) -> None:
+        from mcp_atlassian.utils.ssl import SSLIgnoreAdapter
+
+        seen = _transport_kwargs(self._session(monkeypatch), url, verify=False)
+
+        assert seen["verify"] is True
+        assert not isinstance(seen["adapter"], SSLIgnoreAdapter)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://jira.operator.example/rest/api/2/myself",
+            "https://jira.operator.example:443/rest/api/2/myself",
+            "https://JIRA.operator.example/rest/api/2/myself",
+        ],
+    )
+    def test_own_origin_keeps_verification_off(
+        self, monkeypatch: pytest.MonkeyPatch, url: str
+    ) -> None:
+        seen = _transport_kwargs(self._session(monkeypatch), url, verify=False)
+
+        assert seen["verify"] is False
+
+    def test_default_port_spelling_gets_the_same_proxy_policy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = self._session(monkeypatch, no_proxy="jira.operator.example")
+        proxies = {"https": "http://proxy.example:3128"}
+
+        plain = _transport_kwargs(
+            session, "https://jira.operator.example/x", verify=False, proxies=proxies
+        )
+        explicit = _transport_kwargs(
+            session,
+            "https://jira.operator.example:443/x",
+            verify=False,
+            proxies=proxies,
+        )
+
+        assert plain["adapter"] is explicit["adapter"]
+        # NO_PROXY bypass: no proxy is passed on for either spelling.
+        assert not plain["proxies"]
+        assert plain["proxies"] == explicit["proxies"]
+
+
+@pytest.mark.security_regression
+class TestAttachmentOriginRule:
+    """Jira and Confluence attachment fetches share one origin rule."""
+
+    @staticmethod
+    def _fetchers() -> list[Any]:
+        from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
+        from mcp_atlassian.jira import JiraConfig, JiraFetcher
+
+        jira = JiraFetcher(
+            config=JiraConfig(
+                url="https://jira.example.test", auth_type="pat", personal_token="d"
+            )
+        )
+        confluence = ConfluenceFetcher(
+            config=ConfluenceConfig(
+                url="https://wiki.example.test", auth_type="pat", personal_token="d"
+            )
+        )
+        return [jira, confluence]
+
+    def test_allowlisted_host_is_accepted_by_both(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "files.example.test")
+        for fetcher in self._fetchers():
+            fetcher._ensure_same_origin("https://cdn.files.example.test/a.bin")
+
+    def test_refusal_message_has_only_the_origin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        url = "https://user:pw@evil.example:8443/a.bin?sig=s3cr3t#frag"
+        for fetcher in self._fetchers():
+            with pytest.raises(ValueError) as excinfo:
+                fetcher._ensure_same_origin(url)
+            message = str(excinfo.value)
+            assert "https://evil.example:8443" in message
+            for secret in ("user", "pw", "sig", "s3cr3t", "a.bin", "frag"):
+                assert secret not in message

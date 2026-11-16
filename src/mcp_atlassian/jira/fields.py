@@ -22,12 +22,16 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
 
     _field_name_to_id_map: dict[str, str] | None = None  # Cache for name -> id mapping
 
-    def get_fields(self, refresh: bool = False) -> list[dict[str, Any]]:
+    def get_fields(
+        self, refresh: bool = False, *, raise_errors: bool = False
+    ) -> list[dict[str, Any]]:
         """
         Get all available fields from Jira.
 
         Args:
             refresh: When True, forces a refresh from the server instead of using cache
+            raise_errors: When True, a failed lookup raises instead of returning
+                an empty list, so callers can tell "no fields" from "unknown".
 
         Returns:
             List of field definitions
@@ -62,6 +66,8 @@ class FieldsMixin(JiraClient, EpicOperationsProto, UsersOperationsProto):
 
         except Exception as e:
             logger.error(f"Error getting Jira fields: {str(e)}")
+            if raise_errors:
+                raise
             return []
 
     def _generate_field_map(self, force_regenerate: bool = False) -> dict[str, str]:

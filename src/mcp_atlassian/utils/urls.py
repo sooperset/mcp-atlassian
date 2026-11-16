@@ -6,7 +6,23 @@ import re
 import socket
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
+
+
+def path_segment(value: object) -> str:
+    """Return ``value`` as one percent-encoded URL path segment.
+
+    Every character outside the unreserved set is encoded, ``/``, ``?`` and
+    ``#`` included, so a caller-supplied ID can only name one segment of the
+    path it is placed in.
+
+    Args:
+        value: The ID or key to place in a REST path.
+
+    Returns:
+        The stripped, percent-encoded segment.
+    """
+    return quote(str(value).strip(), safe="")
 
 
 def make_ssrf_redirect_hook() -> Callable[..., Any]:
@@ -315,3 +331,40 @@ def _check_dns_resolution(hostname: str, *, allow_private: bool = False) -> str 
             continue
 
     return None
+
+
+_OAUTH_GATEWAY_HOST = "api.atlassian.com"
+
+
+def upstream_key(url: str | None) -> str:
+    """Return the upstream site a URL talks to, for keying per-upstream state.
+
+    The key is ``scheme://host:port``. Cloud OAuth traffic goes through the
+    shared ``api.atlassian.com`` gateway, so there the ``/ex/<service>/<cloud
+    id>`` prefix is kept as well: each Cloud site is its own upstream.
+
+    Args:
+        url: Any absolute URL, or None.
+
+    Returns:
+        The upstream key, or an empty string when the URL has no host.
+    """
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return ""
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return ""
+    scheme = (parsed.scheme or "https").lower()
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    key = f"{scheme}://{host}:{port}"
+    if host == _OAUTH_GATEWAY_HOST:
+        segments = [s for s in parsed.path.split("/") if s]
+        if len(segments) >= 3 and segments[0] == "ex":
+            key += "/ex/" + "/".join(segment.lower() for segment in segments[1:3])
+    return key

@@ -6,6 +6,7 @@ from typing import Any
 from ..models import JiraProject
 from ..models.jira.search import JiraSearchResult
 from ..models.jira.version import JiraVersion
+from ..utils.urls import path_segment
 from .client import JiraClient
 from .protocols import SearchOperationsProto
 
@@ -397,8 +398,8 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
 
             while True:
                 meta = self.jira.issue_createmeta_fieldtypes(
-                    project=project_key,
-                    issue_type_id=issue_type_id,
+                    project=path_segment(project_key),
+                    issue_type_id=path_segment(issue_type_id),
                     start=start_at,
                     limit=page_size,
                 )

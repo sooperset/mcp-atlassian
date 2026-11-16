@@ -15,9 +15,11 @@ from ..utils.io import (
 )
 from ..utils.media import (
     ATTACHMENT_MAX_BYTES,
+    AttachmentBudget,
     AttachmentTooLargeError,
     read_capped,
 )
+from ..utils.ssrf_adapter import ensure_attachment_origin, loggable_url
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
 
@@ -27,6 +29,24 @@ logger = logging.getLogger("mcp-jira")
 
 class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
     """Mixin for Jira attachment operations."""
+
+    def _ensure_same_origin(self, url: str) -> None:
+        """Reject an attachment URL that is not on this fetcher's Jira origin.
+
+        Attachment URLs come from the Jira response. Only the fetcher's own
+        URL is trusted (not the operator's JIRA_URL or CONFLUENCE_URL), so a
+        fetcher for a request-supplied host cannot be sent elsewhere. Hosts
+        under MCP_ALLOWED_URL_DOMAINS are also accepted.
+
+        Args:
+            url: The absolute URL about to be fetched.
+
+        Raises:
+            ValueError: If *url* is on another origin.
+        """
+        ensure_attachment_origin(
+            url, (self.config.url, getattr(self.jira, "url", None))
+        )
 
     def download_attachment(self, url: str, target_path: str) -> bool:
         """
@@ -65,11 +85,14 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 )
                 return False
 
-            logger.info(f"Downloading attachment from {url} to {target_path}")
+            logger.info(
+                f"Downloading attachment from {loggable_url(url)} to {target_path}"
+            )
 
             # Create the directory if it doesn't exist
             os.makedirs(os.path.dirname(target_path), exist_ok=True)
 
+            self._ensure_same_origin(url)
             # Use the Jira session to download the file
             response = self.jira._session.get(url, stream=True)
             try:
@@ -117,14 +140,15 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             return None
 
         try:
-            logger.info(f"Fetching attachment from {url}")
+            self._ensure_same_origin(url)
+            logger.info(f"Fetching attachment from {loggable_url(url)}")
             response = self.jira._session.get(url, stream=True)
             try:
                 response.raise_for_status()
 
                 data = read_capped(response, ATTACHMENT_MAX_BYTES)
                 logger.info(
-                    f"Successfully fetched attachment from {url} "
+                    f"Successfully fetched attachment from {loggable_url(url)} "
                     f"(size: {len(data)} bytes)"
                 )
                 return data
@@ -133,7 +157,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
 
         except AttachmentTooLargeError:
             logger.warning(
-                f"Attachment from {url} is larger than "
+                f"Attachment from {loggable_url(url)} is larger than "
                 f"{ATTACHMENT_MAX_BYTES} bytes; stopped reading"
             )
             raise
@@ -231,6 +255,23 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
 
         fetched: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
+        budget = AttachmentBudget()
+
+        def too_large(attachment: JiraAttachment, size: int) -> bool:
+            refusal = budget.refusal(size)
+            if refusal is None:
+                return False
+            logger.warning(f"Skipping attachment {attachment.filename}: {refusal}")
+            failed.append(
+                {
+                    "filename": attachment.filename,
+                    "error": (
+                        f"Attachment '{attachment.filename}' is {refusal} "
+                        "Retrieve it directly from Jira."
+                    ),
+                }
+            )
+            return True
 
         for attachment in attachments:
             if not attachment.url:
@@ -240,22 +281,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 )
                 continue
 
-            if attachment.size > ATTACHMENT_MAX_BYTES:
-                logger.warning(
-                    f"Skipping attachment {attachment.filename}: "
-                    f"{attachment.size} bytes exceeds 50 MB limit"
-                )
-                failed.append(
-                    {
-                        "filename": attachment.filename,
-                        "error": (
-                            f"Attachment '{attachment.filename}' is "
-                            f"{attachment.size} bytes which exceeds "
-                            "the 50 MB inline limit. Retrieve it "
-                            "directly from Jira."
-                        ),
-                    }
-                )
+            if too_large(attachment, attachment.size):
                 continue
 
             try:
@@ -272,7 +298,10 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                     }
                 )
                 continue
+            if data is not None and too_large(attachment, len(data)):
+                continue
             if data is not None:
+                budget.spend(len(data))
                 content_type = (
                     attachment.content_type
                     or mimetypes.guess_type(attachment.filename)[0]

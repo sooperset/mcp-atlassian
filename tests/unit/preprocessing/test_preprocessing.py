@@ -1,4 +1,5 @@
 import re
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -1938,3 +1939,91 @@ class TestConfluenceMacroParameterLeak:
         )
         assert self._markdown(include_html) == "[include: Runbook]"
         assert self._markdown(file_html) == "[view-file: spec.pdf]"
+
+
+def _counting_user_client() -> MagicMock:
+    client = MagicMock()
+    client.get_user_details_by_accountid.side_effect = lambda ident: {
+        "displayName": f"Name {ident}"
+    }
+    client.get_user_details_by_userkey.side_effect = lambda ident: {
+        "displayName": f"Key {ident}"
+    }
+    client.get_user_details_by_username.side_effect = lambda ident: {
+        "displayName": f"User {ident}"
+    }
+    return client
+
+
+def test_repeated_user_mentions_are_looked_up_once():
+    """Many mentions and profile macros of one user cost one lookup per kind."""
+    mention = '<ac:link><ri:user ri:account-id="acct-1" /></ac:link>'
+    macro = (
+        '<ac:structured-macro ac:name="profile"><ac:parameter ac:name="user">'
+        '<ri:user ri:account-id="acct-1" /></ac:parameter></ac:structured-macro>'
+    )
+    userkey = '<ac:link><ri:user ri:userkey="key-1" /></ac:link>'
+    html = "<p>" + mention * 10 + macro * 10 + userkey * 10 + "</p>"
+    client = _counting_user_client()
+
+    _, markdown = ConfluencePreprocessor(
+        base_url="https://wiki.example.test"
+    ).process_html_content(html, confluence_client=client)
+
+    assert client.get_user_details_by_accountid.call_count == 1
+    assert client.get_user_details_by_userkey.call_count == 1
+    assert markdown.count("@Name acct-1") == 20
+    assert markdown.count("@Key key-1") == 10
+
+
+def test_distinct_user_lookups_per_document_are_capped():
+    """Past the cap, mentions keep their stored identifier and cost nothing."""
+    from mcp_atlassian.preprocessing.base import MAX_USER_LOOKUPS_PER_DOCUMENT
+
+    count = MAX_USER_LOOKUPS_PER_DOCUMENT + 25
+    html = (
+        "<p>"
+        + "".join(
+            f'<ac:link><ri:user ri:account-id="acct-{i}" /></ac:link> '
+            for i in range(count)
+        )
+        + "</p>"
+    )
+    client = _counting_user_client()
+
+    _, markdown = ConfluencePreprocessor(
+        base_url="https://wiki.example.test"
+    ).process_html_content(html, confluence_client=client)
+
+    assert client.get_user_details_by_accountid.call_count == (
+        MAX_USER_LOOKUPS_PER_DOCUMENT
+    )
+    assert "@Name acct-0" in markdown
+    assert f"@user\\_acct-{count - 1}" in markdown
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize("language", ["plantuml", "mermaid"])
+def test_diagram_blocks_never_start_a_renderer(monkeypatch, tmp_path, language):
+    """A fenced diagram block becomes a code macro even when a renderer is
+    available on the host; no external program is started."""
+    import subprocess
+
+    started: list[object] = []
+
+    class NoPopen:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            started.append(args)
+            raise AssertionError("an external program was started")
+
+    monkeypatch.setenv("PLANTUML_CMD", str(tmp_path / "plantuml"))
+    monkeypatch.setattr(subprocess, "Popen", NoPopen)
+    preprocessor = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+    markdown = f"# Title\n\n```{language}\n@startuml\nA -> B\n@enduml\n```\n"
+
+    storage = preprocessor.markdown_to_confluence_storage(markdown)
+
+    assert started == []
+    assert 'ac:name="code"' in storage
+    assert "A -> B" in storage
+    assert "<h1>Title</h1>" in storage

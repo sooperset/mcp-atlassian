@@ -5,15 +5,71 @@ corresponding v1 endpoints are deprecated or unavailable.
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import requests
 from requests.exceptions import HTTPError
 
+from ..utils.truncation import mark_truncated
+from ..utils.urls import path_segment
 from .utils import emoji_to_hex_id, extract_emoji_from_property
 
 logger = logging.getLogger("mcp-atlassian")
+
+# The tool names sibling moves "above"/"below" (movepage.action's words); the
+# REST move endpoint calls them "before"/"after".
+_MOVE_POSITIONS = {
+    "append": "append",
+    "above": "before",
+    "below": "after",
+    "before": "before",
+    "after": "after",
+}
+
+
+# One comment read (a page's footer and inline threads with their replies)
+# returns at most this many comments and sends at most this many requests.
+MAX_COMMENTS_PER_READ = 200
+MAX_COMMENT_REQUESTS_PER_READ = 100
+# Any other cursor collection stops after this many pages.
+MAX_CURSOR_PAGES = 50
+
+
+@dataclass
+class ReadBudget:
+    """Remaining items and requests for one bounded collection read."""
+
+    items: int = MAX_COMMENTS_PER_READ
+    requests: int = MAX_COMMENT_REQUESTS_PER_READ
+    # An item was seen and left out: more certainly exist.
+    truncated: bool = False
+    # The read stopped before it could tell whether more exist.
+    unverified: bool = False
+
+    @property
+    def exhausted(self) -> bool:
+        return self.items <= 0 or self.requests <= 0
+
+    def mark(self, items: list[Any]) -> list[Any]:
+        """Return ``items``, marked when this read stopped early."""
+        if self.truncated or self.unverified:
+            return mark_truncated(items, certain=self.truncated)
+        return items
+
+    def take_request(self) -> bool:
+        if self.requests <= 0:
+            return False
+        self.requests -= 1
+        return True
+
+    def take_item(self) -> bool:
+        if self.items <= 0:
+            self.truncated = True
+            return False
+        self.items -= 1
+        return True
 
 
 class ConfluenceV2Adapter:
@@ -49,6 +105,8 @@ class ConfluenceV2Adapter:
             ValueError: If space not found or API error
         """
         try:
+            if not space_key or not space_key.strip():
+                raise ValueError("Space key is empty")
             # Use v2 spaces endpoint to get space ID
             url = f"{self.base_url}/api/v2/spaces"
             params = {"keys": space_key}
@@ -59,10 +117,20 @@ class ConfluenceV2Adapter:
             data = response.json()
             results = data.get("results", [])
 
-            if not results:
+            # Take only the space whose key was asked for: the filter may be
+            # ignored and other spaces returned.
+            match = next(
+                (
+                    r
+                    for r in results
+                    if isinstance(r, dict) and r.get("key") == space_key
+                ),
+                None,
+            )
+            if match is None:
                 raise ValueError(f"Space with key '{space_key}' not found")
 
-            space_id = results[0].get("id")
+            space_id = match.get("id")
             if not space_id:
                 raise ValueError(f"No ID found for space '{space_key}'")
 
@@ -395,7 +463,13 @@ class ConfluenceV2Adapter:
             seen_cursors: set[str] = set()
             has_more = False
 
+            pages_read = 0
             while len(spaces) < wanted:
+                if pages_read >= MAX_CURSOR_PAGES:
+                    logger.warning("Stopping space pagination at the read limit")
+                    has_more = True
+                    break
+                pages_read += 1
                 params: dict[str, Any] = {"limit": min(250, wanted - len(spaces))}
                 if cursor is not None:
                     params["cursor"] = cursor
@@ -424,9 +498,17 @@ class ConfluenceV2Adapter:
                 "size": len(results),
                 "_links": {},
             }
-            if has_more or len(spaces) > wanted:
+            if (has_more or len(spaces) > wanted) and results:
                 result["_links"]["next"] = (
                     f"/rest/api/space?start={start + len(results)}&limit={limit}"
+                )
+            elif has_more:
+                # A next link here would repeat the same start; say why the
+                # listing stopped instead.
+                result["truncated"] = True
+                result["hint"] = (
+                    "The space listing stopped at its read limit without "
+                    "returning spaces for this start; it may have more spaces."
                 )
             logger.debug(f"Retrieved {len(results)} spaces (start={start})")
             return result
@@ -487,9 +569,19 @@ class ConfluenceV2Adapter:
             url = f"{self.base_url}/api/v2/spaces/{space_id}/pages"
             pages: list[dict[str, Any]] = []
             cursor: str | None = None
+            seen_cursors: set[str] = set()
             has_more = False
+            pages_read = 0
 
             while True:
+                if pages_read >= MAX_CURSOR_PAGES:
+                    logger.warning(
+                        "Stopping page-tree pagination for '%s' at the read limit",
+                        space_key,
+                    )
+                    has_more = True
+                    break
+                pages_read += 1
                 params: dict[str, Any] = {
                     "status": "current",
                     "limit": max(1, min(250, limit - len(pages))),
@@ -520,6 +612,11 @@ class ConfluenceV2Adapter:
                 if len(pages) >= limit:
                     has_more = True
                     break
+                if cursor in seen_cursors:
+                    logger.warning("Stopping pagination after repeated cursor")
+                    has_more = True
+                    break
+                seen_cursors.add(cursor)
 
             logger.debug(f"Retrieved {len(pages)} pages for space '{space_key}' tree")
             return {"pages": pages[:limit], "has_more": has_more}
@@ -827,12 +924,16 @@ class ConfluenceV2Adapter:
         self,
         page_id: str,
         status: str | None = None,
+        *,
+        budget: ReadBudget | None = None,
     ) -> list[dict[str, Any]]:
-        """Get all inline comment threads for a page using the v2 API.
+        """Get the inline comment threads for a page using the v2 API.
 
         Args:
             page_id: The ID of the page to get inline comments from
             status: Optional filter - "open" or "resolved"
+            budget: Item and request limit for this read (default limits
+                when omitted); shared when several reads make up one call
 
         Returns:
             Root comments and replies in a flat, v1-compatible list
@@ -846,7 +947,11 @@ class ConfluenceV2Adapter:
             if status:
                 params["status"] = status
 
-            root_comments = self._get_all_comment_results(url, params=params)
+            if budget is None:
+                budget = ReadBudget()
+            root_comments = self._get_all_comment_results(
+                url, params=params, budget=budget
+            )
             comments: list[dict[str, Any]] = []
             pending_parent_ids: list[str] = []
             seen_comment_ids: set[str] = set()
@@ -864,6 +969,10 @@ class ConfluenceV2Adapter:
 
             parent_index = 0
             while parent_index < len(pending_parent_ids):
+                if budget.exhausted:
+                    # Replies of the remaining comments were not checked.
+                    budget.unverified = True
+                    break
                 parent_id = pending_parent_ids[parent_index]
                 parent_index += 1
                 children_url = (
@@ -872,6 +981,7 @@ class ConfluenceV2Adapter:
                 children = self._get_all_comment_results(
                     children_url,
                     params={"body-format": "storage"},
+                    budget=budget,
                 )
 
                 for raw_child in children:
@@ -886,10 +996,11 @@ class ConfluenceV2Adapter:
                         pending_parent_ids.append(child_id)
                     comments.append(child)
 
-            return [
+            converted = [
                 self._convert_v2_inline_comment_to_v1_format(comment)
                 for comment in comments
             ]
+            return budget.mark(converted)
 
         except HTTPError as e:
             if e.response is not None:
@@ -911,8 +1022,10 @@ class ConfluenceV2Adapter:
             msg = f"Failed to get inline comments for page '{page_id}': {e}"
             raise ValueError(msg) from e
 
-    def get_footer_comments(self, page_id: str) -> list[dict[str, Any]]:
-        """Get all footer comment threads for a page using the v2 API.
+    def get_footer_comments(
+        self, page_id: str, *, budget: ReadBudget | None = None
+    ) -> list[dict[str, Any]]:
+        """Get the footer comment threads for a page using the v2 API.
 
         Confluence Cloud has removed ``GET /rest/api/content/{id}/child/comment``
         from the OAuth gateway (410 Gone), so footer comments are read from
@@ -920,6 +1033,8 @@ class ConfluenceV2Adapter:
 
         Args:
             page_id: The ID of the page to get footer comments from
+            budget: Item and request limit for this read (default limits
+                when omitted); shared when several reads make up one call
 
         Returns:
             Root comments and replies in a flat, v1-compatible list
@@ -931,7 +1046,11 @@ class ConfluenceV2Adapter:
             url = f"{self.base_url}/api/v2/pages/{page_id}/footer-comments"
             params: dict[str, Any] = {"body-format": "storage"}
 
-            root_comments = self._get_all_comment_results(url, params=params)
+            if budget is None:
+                budget = ReadBudget()
+            root_comments = self._get_all_comment_results(
+                url, params=params, budget=budget
+            )
             comments: list[dict[str, Any]] = []
             pending_parent_ids: list[str] = []
             seen_comment_ids: set[str] = set()
@@ -949,6 +1068,10 @@ class ConfluenceV2Adapter:
 
             parent_index = 0
             while parent_index < len(pending_parent_ids):
+                if budget.exhausted:
+                    # Replies of the remaining comments were not checked.
+                    budget.unverified = True
+                    break
                 parent_id = pending_parent_ids[parent_index]
                 parent_index += 1
                 children_url = (
@@ -957,6 +1080,7 @@ class ConfluenceV2Adapter:
                 children = self._get_all_comment_results(
                     children_url,
                     params={"body-format": "storage"},
+                    budget=budget,
                 )
 
                 for raw_child in children:
@@ -971,7 +1095,8 @@ class ConfluenceV2Adapter:
                         pending_parent_ids.append(child_id)
                     comments.append(child)
 
-            return [self._convert_v2_comment_to_v1_format(c) for c in comments]
+            converted = [self._convert_v2_comment_to_v1_format(c) for c in comments]
+            return budget.mark(converted)
 
         except HTTPError as e:
             if e.response is not None:
@@ -1022,23 +1147,38 @@ class ConfluenceV2Adapter:
         url: str,
         *,
         params: dict[str, Any],
+        budget: ReadBudget | None = None,
     ) -> list[dict[str, Any]]:
-        """Read every cursor page from a v2 comment collection endpoint."""
-        return self._get_all_cursor_results(url, params=params)
+        """Read the cursor pages of a v2 comment collection, within ``budget``."""
+        return self._get_all_cursor_results(url, params=params, budget=budget)
 
     def _get_all_cursor_results(
         self,
         url: str,
         *,
         params: dict[str, Any],
+        budget: ReadBudget | None = None,
+        max_pages: int = MAX_CURSOR_PAGES,
     ) -> list[dict[str, Any]]:
-        """Read every cursor page from a v2 collection endpoint."""
+        """Read cursor pages from a v2 collection endpoint.
+
+        Stops at the end of the collection, on a repeated cursor, after
+        ``max_pages`` pages, or when ``budget`` runs out of items or requests.
+        """
         results: list[dict[str, Any]] = []
         cursor: str | None = None
         seen_cursors: set[str | None] = set()
+        pages = 0
 
-        while cursor not in seen_cursors:
+        while True:
+            if cursor in seen_cursors:
+                logger.warning("Stopping pagination after repeated cursor '%s'", cursor)
+                return self._stopped_early(results, budget)
+            if pages >= max_pages or (budget is not None and not budget.take_request()):
+                logger.warning("Stopping pagination of %s at the read limit", url)
+                return self._stopped_early(results, budget)
             seen_cursors.add(cursor)
+            pages += 1
             request_params = dict(params)
             if cursor is not None:
                 request_params["cursor"] = cursor
@@ -1048,16 +1188,26 @@ class ConfluenceV2Adapter:
             data = response.json()
             page_results = data.get("results", [])
             if not isinstance(page_results, list):
-                break
-            results.extend(item for item in page_results if isinstance(item, dict))
+                return results
+            for item in page_results:
+                if not isinstance(item, dict):
+                    continue
+                if budget is not None and not budget.take_item():
+                    return mark_truncated(results, certain=True)
+                results.append(item)
 
             cursor = self._comment_next_cursor(response, data)
             if not cursor:
-                break
-        else:
-            logger.warning("Stopping pagination after repeated cursor '%s'", cursor)
+                return results
 
-        return results
+    @staticmethod
+    def _stopped_early(
+        results: list[dict[str, Any]], budget: ReadBudget | None
+    ) -> list[dict[str, Any]]:
+        """Mark a read that stopped before it could tell whether more exist."""
+        if budget is not None:
+            budget.unverified = True
+        return mark_truncated(results, certain=False)
 
     def get_page_labels(self, page_id: str) -> dict[str, Any]:
         """Get a page's labels using the v2 API.
@@ -1190,6 +1340,12 @@ class ConfluenceV2Adapter:
                     "value": body_value,
                     "representation": "view",
                 },
+                # v2 returns storage only; keep it under its own name so
+                # callers that must not use rendered views can pick it.
+                "storage": {
+                    "value": body_value,
+                    "representation": "storage",
+                },
             },
             "version": v2_response.get("version", {}),
             "_links": v2_response.get("_links", {}),
@@ -1238,6 +1394,12 @@ class ConfluenceV2Adapter:
                     "value": body_value,
                     "representation": "view",
                 },
+                # v2 returns storage only; keep it under its own name so
+                # callers that must not use rendered views can pick it.
+                "storage": {
+                    "value": body_value,
+                    "representation": "storage",
+                },
             },
             "version": v2_response.get("version", {}),
             "_links": v2_response.get("_links", {}),
@@ -1273,25 +1435,25 @@ class ConfluenceV2Adapter:
             page_id: The ID of the page to move.
             position: Position relative to target. Valid values:
                 - "append": Move as child of target (default).
-                - "before": Move before target as sibling.
-                - "after": Move after target as sibling.
+                - "above" or "before": Move before target as sibling.
+                - "below" or "after": Move after target as sibling.
             target_id: Target page ID. Required for "append", "before",
                 and "after" positions.
 
         Raises:
-            ValueError: If move fails.
+            ValueError: If the position is unknown or the move fails.
             HTTPError: If the API request fails (propagates 401/403).
         """
+        api_position = _MOVE_POSITIONS.get(position)
+        if api_position is None:
+            raise ValueError(f"Invalid move position: {position!r}")
+        url = (
+            f"{self.base_url}/rest/api/content/{path_segment(page_id)}"
+            f"/move/{api_position}"
+        )
+        if target_id:
+            url = f"{url}/{path_segment(target_id)}"
         try:
-            if target_id:
-                url = (
-                    f"{self.base_url}/rest/api/content/{page_id}"
-                    f"/move/{position}/{target_id}"
-                )
-            else:
-                # Move to space root (no target ID)
-                url = f"{self.base_url}/rest/api/content/{page_id}/move/{position}"
-
             response = self.session.put(url)
             response.raise_for_status()
 

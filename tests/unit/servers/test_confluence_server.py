@@ -1894,3 +1894,61 @@ async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     summary = json.loads(response.content[0].text)
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
+
+
+def _three_small_attachments(media_type: str, suffix: str) -> dict:
+    return {
+        "success": True,
+        "content_id": "123",
+        "attachments": [
+            {
+                "id": f"att{i}",
+                "title": f"f{i}.{suffix}",
+                "type": "attachment",
+                "metadata": {"mediaType": media_type},
+                "extensions": {"mediaType": media_type, "fileSize": 400},
+                "_links": {"download": f"/download/attachments/123/f{i}.{suffix}"},
+            }
+            for i in range(3)
+        ],
+        "total": 3,
+        "start": 0,
+        "limit": 50,
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    ("tool", "media_type", "suffix"),
+    [
+        ("confluence_get_page_images", "image/png", "png"),
+        ("confluence_download_content_attachments", "application/pdf", "pdf"),
+    ],
+)
+async def test_multi_attachment_tools_stop_at_the_per_call_byte_limit(
+    client, mock_confluence_fetcher, monkeypatch, tool, media_type, suffix
+):
+    """Attachments past the per-call byte limit are reported, not downloaded."""
+    import sys
+
+    from src.mcp_atlassian.servers import confluence as confluence_server
+
+    media = sys.modules[confluence_server.fetch_and_encode_attachment.__module__]
+    monkeypatch.setattr(media, "ATTACHMENT_CALL_MAX_BYTES", 1000, raising=False)
+    mock_confluence_fetcher.get_content_attachments.return_value = (
+        _three_small_attachments(media_type, suffix)
+    )
+    mock_confluence_fetcher._resolve_attachment_download_url.side_effect = (
+        lambda url, **kwargs: url
+    )
+    mock_confluence_fetcher.fetch_attachment_content.return_value = b"x" * 400
+
+    response = await client.call_tool(tool, {"content_id": "123"})
+
+    summary = json.loads(response.content[0].text)
+    assert summary["downloaded"] == 2
+    assert [f["filename"] for f in summary["failed"]] == [f"f2.{suffix}"]
+    assert "for one call" in summary["failed"][0]["error"]
+    assert len(response.content) == 3
+    assert mock_confluence_fetcher.fetch_attachment_content.call_count == 2

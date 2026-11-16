@@ -14,7 +14,6 @@ import logging
 import os
 import uuid
 from typing import Any
-from urllib.parse import quote
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -22,18 +21,13 @@ from requests.exceptions import HTTPError
 
 from ..models.jira import ProFormaForm
 from ..utils.ssrf_adapter import bind_credentials_to_host, mount_ssrf_pinning
-from ..utils.urls import make_ssrf_redirect_hook
+from ..utils.urls import make_ssrf_redirect_hook, path_segment
 from .client import JiraClient
 from .forms_common import handle_forms_http_error
 
 logger = logging.getLogger("mcp-jira")
 
 FORMS_API_BASE_URL = "https://api.atlassian.com/jira/forms/cloud"
-
-
-def _issue_segment(issue_key: str) -> str:
-    """Percent-encode an issue key as one URL path segment."""
-    return quote(str(issue_key).strip(), safe="")
 
 
 def _form_segment(form_id: str) -> str:
@@ -54,7 +48,7 @@ def _form_segment(form_id: str) -> str:
 
 def _form_path(issue_key: str, form_id: str | None = None) -> str:
     """Build ``/issue/{issueKey}/form[/{formId}]`` from encoded segments."""
-    path = f"/issue/{_issue_segment(issue_key)}/form"
+    path = f"/issue/{path_segment(issue_key)}/form"
     if form_id is not None:
         path = f"{path}/{_form_segment(form_id)}"
     return path

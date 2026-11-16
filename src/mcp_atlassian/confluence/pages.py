@@ -20,6 +20,16 @@ from .v2_adapter import ConfluenceV2Adapter
 
 logger = logging.getLogger("mcp-atlassian")
 
+# Move positions in movepage.action's words. "before"/"after" are the REST
+# move endpoint's names for the same sibling moves; the v2 adapter maps back.
+_MOVE_POSITIONS = {
+    "append": "append",
+    "above": "above",
+    "before": "above",
+    "below": "below",
+    "after": "below",
+}
+
 _HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 _STRUCTURAL_MACRO_NAMES = frozenset({"excerpt", "expand", "layout"})
 _STRUCTURAL_WRAPPER_TAGS = frozenset(
@@ -1668,8 +1678,8 @@ class PagesMixin(ConfluenceClient):
             target_parent_id: Target parent page ID. If omitted with
                 target_space_key, moves page to root of target space.
             target_space_key: Target space key for cross-space moves.
-            position: Position relative to target ("append", "above",
-                or "below").
+            position: Position relative to target: "append", "above" (or
+                "before") or "below" (or "after").
 
         Returns:
             Updated ConfluencePage after move.
@@ -1682,6 +1692,11 @@ class PagesMixin(ConfluenceClient):
         if not target_parent_id and not target_space_key:
             raise ValueError(
                 "At least one of target_parent_id or target_space_key must be provided."
+            )
+        position = _MOVE_POSITIONS.get(position, "")
+        if not position:
+            raise ValueError(
+                "position must be 'append', 'above', 'below', 'before' or 'after'."
             )
 
         try:

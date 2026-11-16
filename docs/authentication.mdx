@@ -67,6 +67,7 @@ configuration; each request's `Authorization: Token ...` value replaces them.
 <Note>
 Enterprise CA certificates in the OS trust store (Windows Certificate Store, macOS Keychain, Linux system CAs) are trusted automatically.
 For self-signed certificates not in the OS trust store, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
+For header-based PAT requests (`X-Atlassian-*-Url`), this setting applies only to the `JIRA_URL`/`CONFLUENCE_URL` origin and to hosts under `MCP_ALLOWED_URL_DOMAINS`; other request URLs keep certificate verification on.
 </Note>
 
 ## Client Certificate (mTLS) (Server/Data Center)
@@ -85,6 +86,8 @@ CONFLUENCE_CLIENT_CERT=/etc/mcp-atlassian/confluence-client-combined.pem
 ```
 
 In the example, Jira uses separate certificate and key files, while Confluence uses a combined PEM. For a combined PEM, omit `*_CLIENT_KEY`. The matching `JIRA_*` and `CONFLUENCE_*` variables configure each service independently.
+
+In a multi-user deployment, the configured client certificate is attached to every user's request and is sent only to the configured `JIRA_URL` or `CONFLUENCE_URL`. Use it to protect the connection (mTLS), and do not let the upstream server or proxy map the certificate to a specific Atlassian account.
 
 <Warning>
 **Encrypted private keys are not supported.** If your key is passphrase-protected, decrypt it first:

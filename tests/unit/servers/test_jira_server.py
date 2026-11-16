@@ -5402,3 +5402,40 @@ async def test_jira_analysis_tools_return_structured_errors(
 
     assert content["success"] is False
     assert content["error"] == "service unavailable"
+
+
+@pytest.mark.anyio
+@pytest.mark.security_regression
+async def test_get_issue_images_stop_at_the_per_call_byte_limit(
+    jira_client, mock_jira_fetcher, monkeypatch
+):
+    """Images past the per-call byte limit are reported, not downloaded."""
+    import sys
+
+    from src.mcp_atlassian.models.jira import JiraAttachment
+    from src.mcp_atlassian.servers import jira as jira_server
+
+    media = sys.modules[jira_server.fetch_and_encode_attachment.__module__]
+    monkeypatch.setattr(media, "ATTACHMENT_CALL_MAX_BYTES", 1000, raising=False)
+    mock_jira_fetcher.get_issue_attachments.return_value = [
+        JiraAttachment(
+            id=str(i),
+            filename=f"p{i}.png",
+            size=400,
+            content_type="image/png",
+            url=f"https://jira.example.com/att/{i}",
+        )
+        for i in range(3)
+    ]
+    mock_jira_fetcher.fetch_attachment_content.return_value = b"x" * 400
+
+    response = await jira_client.call_tool(
+        "jira_get_issue_images", {"issue_key": "TEST-123"}
+    )
+
+    summary = json.loads(response.content[0].text)
+    assert summary["downloaded"] == 2
+    assert [f["filename"] for f in summary["failed"]] == ["p2.png"]
+    assert "for one call" in summary["failed"][0]["error"]
+    assert len(response.content) == 3
+    assert mock_jira_fetcher.fetch_attachment_content.call_count == 2
