@@ -77,15 +77,20 @@ _READ_BACK_DELAY_SECONDS = 1.0
 
 
 def _is_not_found(error: BaseException) -> bool:
-    """Whether an error, or one of the errors it was raised from, is an HTTP 404."""
+    """Whether an error, or one of the errors behind it, is an HTTP 404.
+
+    The HTTP error can be the cause, the context, or the ``reason`` of an
+    ``ApiError``, depending on which client raised it.
+    """
     current: BaseException | None = error
     for _ in range(10):
         if current is None:
             return False
-        response = getattr(current, "response", None)
-        if isinstance(current, HTTPError) and response is not None:
-            return response.status_code == 404
-        current = current.__cause__
+        for candidate in (current, getattr(current, "reason", None)):
+            response = getattr(candidate, "response", None)
+            if isinstance(candidate, HTTPError) and response is not None:
+                return response.status_code == 404
+        current = current.__cause__ or current.__context__
     return False
 
 

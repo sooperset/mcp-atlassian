@@ -2019,6 +2019,26 @@ class TestPagesOAuthMixin:
         except Exception as e:  # noqa: BLE001
             return e
 
+    @staticmethod
+    def _v1_read_back_error(status_code):
+        """Build the error get_page_content raises for a failed v1 read.
+
+        atlassian-python-api raises ApiError inside its ``except HTTPError``
+        block without ``from``, so the HTTP error is the context, not the cause.
+        """
+        response = MagicMock()
+        response.status_code = status_code
+        try:
+            try:
+                try:
+                    raise HTTPError("Not Found", response=response)
+                except HTTPError as e:
+                    raise ApiError("There is no content with the given id", reason=e)
+            except ApiError as e:
+                raise Exception(f"Error retrieving page content: {e}") from e
+        except Exception as e:  # noqa: BLE001
+            return e
+
     def _create_with_read_back(self, mixin, read_back):
         with (
             patch(
@@ -2039,6 +2059,14 @@ class TestPagesOAuthMixin:
         page = ConfluencePage(id="555", title="T", content="x")
         result, read = self._create_with_read_back(
             oauth_pages_mixin, [self._read_back_error(404), page]
+        )
+        assert result is page
+        assert read.call_count == 2
+
+    def test_create_page_read_back_retries_a_v1_404(self, oauth_pages_mixin):
+        page = ConfluencePage(id="555", title="T", content="x")
+        result, read = self._create_with_read_back(
+            oauth_pages_mixin, [self._v1_read_back_error(404), page]
         )
         assert result is page
         assert read.call_count == 2
