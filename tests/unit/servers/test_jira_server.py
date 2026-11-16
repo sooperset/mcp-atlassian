@@ -19,6 +19,11 @@ from src.mcp_atlassian.jira import JiraFetcher
 from src.mcp_atlassian.jira.config import JiraConfig
 from src.mcp_atlassian.models.jira import (
     JiraCustomerRequest,
+    JiraCustomerRequestDetails,
+    JiraPendingApproval,
+    JiraPendingApprovalsResult,
+    JiraRequestApproval,
+    JiraRequestApprovalsResult,
     JiraRequestType,
     JiraRequestTypeField,
     JiraRequestTypeFieldsResult,
@@ -469,6 +474,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         add_comment,
         add_issues_to_sprint,
         add_worklog,
+        answer_approval,
         assign_issue,
         batch_create_issues,
         batch_create_versions,
@@ -486,6 +492,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_board_issues,
         get_create_fields,
         get_cross_project_dependencies,
+        get_customer_request,
         get_field_options,
         get_issue,
         get_issue_dates,
@@ -495,6 +502,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_issue_sla,
         get_issues_development_info,
         get_link_types,
+        get_my_pending_approvals,
         get_proforma_form_details,
         get_project_components,
         get_project_epic_hierarchy,
@@ -503,6 +511,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
         get_project_issues,
         get_project_versions,
         get_queue_issues,
+        get_request_approvals,
         get_request_type_fields,
         get_request_types,
         get_service_desk_for_project,
@@ -549,6 +558,9 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(get_queue_issues)
     jira_sub_mcp.add_tool(get_request_types)
     jira_sub_mcp.add_tool(get_request_type_fields)
+    jira_sub_mcp.add_tool(get_customer_request)
+    jira_sub_mcp.add_tool(get_request_approvals)
+    jira_sub_mcp.add_tool(get_my_pending_approvals)
     jira_sub_mcp.add_tool(get_transitions)
     jira_sub_mcp.add_tool(get_worklog)
     jira_sub_mcp.add_tool(download_attachments)
@@ -566,6 +578,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
     jira_sub_mcp.add_tool(search_assignable_users)
     jira_sub_mcp.add_tool(create_issue)
     jira_sub_mcp.add_tool(create_customer_request)
+    jira_sub_mcp.add_tool(answer_approval)
     jira_sub_mcp.add_tool(batch_create_issues)
     jira_sub_mcp.add_tool(batch_get_changelogs)
     jira_sub_mcp.add_tool(update_issue)
@@ -910,6 +923,173 @@ async def test_get_request_type_fields(jira_client, mock_jira_fetcher):
         service_desk_id="4",
         request_type_id="23",
     )
+
+
+@pytest.mark.anyio
+async def test_get_customer_request(jira_client, mock_jira_fetcher):
+    """Test customer request read through the portal API."""
+    mock_jira_fetcher.get_customer_request.return_value = JiraCustomerRequestDetails(
+        issue_id="10001",
+        issue_key="PROJ-123",
+        request_type={"id": "23", "name": "Document approval"},
+        status="Waiting for approval",
+        fields=[{"field_id": "summary", "label": "Summary", "value": "Contract"}],
+    )
+
+    response = await jira_client.call_tool(
+        "jira_get_customer_request", {"issue_key": "PROJ-123"}
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["issue_key"] == "PROJ-123"
+    assert content["status"] == "Waiting for approval"
+    assert content["fields"][0]["value"] == "Contract"
+    mock_jira_fetcher.get_customer_request.assert_called_once_with(
+        issue_key="PROJ-123",
+        expand="participant,status,requestType",
+    )
+
+
+@pytest.mark.anyio
+async def test_get_request_approvals(jira_client, mock_jira_fetcher):
+    """Test request approvals listing."""
+    mock_jira_fetcher.get_request_approvals.return_value = JiraRequestApprovalsResult(
+        issue_key="PROJ-123",
+        size=1,
+        approvals=[
+            JiraRequestApproval(
+                id="42",
+                name="Manager approval",
+                final_decision="pending",
+                can_answer_approval=True,
+            )
+        ],
+    )
+
+    response = await jira_client.call_tool(
+        "jira_get_request_approvals",
+        {"issue_key": "PROJ-123", "start_at": 0, "limit": 10},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["issue_key"] == "PROJ-123"
+    assert content["approvals"][0]["id"] == "42"
+    assert content["approvals"][0]["can_answer_approval"] is True
+    mock_jira_fetcher.get_request_approvals.assert_called_once_with(
+        issue_key="PROJ-123",
+        start_at=0,
+        limit=10,
+    )
+
+
+@pytest.mark.anyio
+async def test_get_my_pending_approvals(jira_client, mock_jira_fetcher):
+    """Test pending approvals listing with continuation offset."""
+    mock_jira_fetcher.get_my_pending_approvals.return_value = (
+        JiraPendingApprovalsResult(
+            start=0,
+            limit=20,
+            next_start=20,
+            is_last_page=False,
+            requests=[
+                JiraPendingApproval(
+                    request=JiraCustomerRequestDetails(issue_key="PROJ-123"),
+                    approvals=[JiraRequestApproval(id="42", name="Manager approval")],
+                )
+            ],
+        )
+    )
+
+    response = await jira_client.call_tool("jira_get_my_pending_approvals", {})
+    content = json.loads(response.content[0].text)
+
+    assert content["size"] == 1
+    assert content["next_start"] == 20
+    assert content["requests"][0]["issue_key"] == "PROJ-123"
+    assert content["requests"][0]["approvals"] == [
+        {"id": "42", "name": "Manager approval"}
+    ]
+    mock_jira_fetcher.get_my_pending_approvals.assert_called_once_with(
+        start_at=0,
+        limit=20,
+    )
+
+
+@pytest.mark.anyio
+async def test_answer_approval(jira_client, mock_jira_fetcher):
+    """Test answering an approval forwards the decision."""
+    mock_jira_fetcher.answer_approval.return_value = JiraRequestApproval(
+        id="42",
+        name="Manager approval",
+        final_decision="approved",
+    )
+
+    response = await jira_client.call_tool(
+        "jira_answer_approval",
+        {"issue_key": "PROJ-123", "approval_id": "42", "decision": "approve"},
+    )
+    content = json.loads(response.content[0].text)
+
+    assert content["final_decision"] == "approved"
+    mock_jira_fetcher.answer_approval.assert_called_once_with(
+        issue_key="PROJ-123",
+        approval_id="42",
+        decision="approve",
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("decision", ["yes", "approved", ""])
+async def test_answer_approval_rejects_invalid_decision(
+    jira_client, mock_jira_fetcher, decision
+):
+    """The decision schema only accepts approve or decline."""
+    with pytest.raises(ToolError):
+        await jira_client.call_tool(
+            "jira_answer_approval",
+            {"issue_key": "PROJ-123", "approval_id": "42", "decision": decision},
+        )
+
+    mock_jira_fetcher.answer_approval.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_answer_approval_blocked_in_read_only_mode(
+    mock_jira_fetcher, mock_base_jira_config
+):
+    """Answering an approval must be refused in read-only mode."""
+
+    @asynccontextmanager
+    async def read_only_lifespan(
+        app: FastMCP,
+    ) -> AsyncGenerator[dict[str, MainAppContext], None]:
+        yield {
+            "app_lifespan_context": MainAppContext(
+                full_jira_config=mock_base_jira_config, read_only=True
+            )
+        }
+
+    from src.mcp_atlassian.servers.jira import answer_approval
+
+    read_only_mcp = FastMCP("ReadOnlyJira", lifespan=read_only_lifespan)
+    read_only_mcp.add_tool(answer_approval)
+
+    with patch(
+        "src.mcp_atlassian.servers.jira.get_jira_fetcher",
+        AsyncMock(return_value=mock_jira_fetcher),
+    ):
+        async with Client(transport=FastMCPTransport(read_only_mcp)) as client:
+            with pytest.raises(ToolError, match="read-only mode"):
+                await client.call_tool(
+                    "answer_approval",
+                    {
+                        "issue_key": "PROJ-123",
+                        "approval_id": "42",
+                        "decision": "approve",
+                    },
+                )
+
+    mock_jira_fetcher.answer_approval.assert_not_called()
 
 
 @pytest.mark.anyio
