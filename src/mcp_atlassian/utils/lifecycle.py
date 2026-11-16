@@ -1,5 +1,6 @@
 """Lifecycle management utilities for graceful shutdown and signal handling."""
 
+import asyncio
 import logging
 import signal
 import sys
@@ -30,6 +31,12 @@ def setup_signal_handlers() -> None:
     Note:
         SIGPIPE handling is CRITICAL on Unix/Linux. Without it, the server process
         terminates when writing to a closed pipe (e.g., when an MCP client disconnects).
+        SIGPIPE therefore does not request shutdown: a broken pipe on one
+        response must not take the server down.
+
+    Setting the event only records the request. The run path must also wait on
+    it (``wait_for_shutdown_request``) and stop the server, or a handler
+    registered here swallows the signal and the process never exits.
     """
 
     def signal_handler(signum: int, frame: Any) -> None:
@@ -41,6 +48,9 @@ def setup_signal_handlers() -> None:
         # Only safe operations in signal handlers - set the shutdown event
         _shutdown_event.set()
 
+    def sigpipe_handler(signum: int, frame: Any) -> None:
+        """Swallow SIGPIPE so a closed pipe cannot kill the process."""
+
     # Register signal handlers
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
@@ -48,11 +58,40 @@ def setup_signal_handlers() -> None:
     # Handle SIGPIPE which occurs when parent process closes the pipe
     # SIGPIPE is not available on Windows, so we check for it first
     if hasattr(signal, "SIGPIPE"):
-        signal.signal(signal.SIGPIPE, signal_handler)
+        signal.signal(signal.SIGPIPE, sigpipe_handler)
         logger.debug("SIGPIPE handler registered")
     else:
         # SIGPIPE may not be available on all platforms (e.g., Windows)
         logger.debug("SIGPIPE not available on this platform")
+
+
+def is_shutdown_requested() -> bool:
+    """Whether a SIGTERM or SIGINT has been received."""
+    return _shutdown_event.is_set()
+
+
+def reset_shutdown_request() -> None:
+    """Clear the recorded shutdown request (tests and restarts)."""
+    _shutdown_event.clear()
+
+
+async def wait_for_shutdown_request(
+    stop_event: threading.Event, poll_interval: float = 0.25
+) -> None:
+    """Return once SIGTERM or SIGINT has been received.
+
+    Polls from a worker thread instead of using ``loop.add_signal_handler``,
+    which is not available on Windows. ``stop_event`` ends the poll when the
+    server stops for another reason, so the thread does not outlive the run.
+    """
+    loop = asyncio.get_running_loop()
+
+    def _poll() -> None:
+        while not stop_event.wait(poll_interval):
+            if _shutdown_event.is_set():
+                return
+
+    await loop.run_in_executor(None, _poll)
 
 
 def ensure_clean_exit() -> None:

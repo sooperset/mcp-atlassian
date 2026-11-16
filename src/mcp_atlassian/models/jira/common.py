@@ -463,6 +463,7 @@ class JiraChangelogItem(ApiModel):
     """
 
     field: str = EMPTY_STRING
+    field_id: str | None = None
     fieldtype: str = EMPTY_STRING
     from_string: str | None = None
     to_string: str | None = None
@@ -485,6 +486,7 @@ class JiraChangelogItem(ApiModel):
 
         return cls(
             field=str(data.get("field", EMPTY_STRING)),
+            field_id=data.get("fieldId"),
             fieldtype=str(data.get("fieldtype", EMPTY_STRING)),
             from_string=data.get("fromString"),
             to_string=data.get("toString"),

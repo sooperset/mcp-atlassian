@@ -104,11 +104,13 @@ class ConfluencePreprocessor(BasePreprocessor):
                 if not base_path.endswith("/"):
                     base_path += "/"
 
-                # Create converter options
+                # Diagram extensions are off: they start external renderers
+                # on caller-supplied source, and their images and source
+                # attachments are never uploaded. Diagram blocks stay code.
                 options = ConverterOptions(
                     force_valid_url=False,
                     heading_anchors=enable_heading_anchors,
-                    render_mermaid=False,
+                    extensions=[],
                 )
 
                 # Create a converter

@@ -132,6 +132,10 @@ class TestLinksMixin:
         """A link comment between two unlisted projects passes through even
         with the guard configured for another project."""
         links_mixin.config.internal_only_projects = frozenset({"CC"})
+        links_mixin.jira.issue.side_effect = lambda key, fields=None: {
+            "key": key,
+            "fields": {"project": {"key": key.split("-")[0]}},
+        }
         data = {
             "type": {"name": "Blocks"},
             "inwardIssue": {"key": "PROJ-123"},

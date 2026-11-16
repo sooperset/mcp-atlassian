@@ -6,7 +6,7 @@ This module provides Pydantic models for Jira issues.
 
 import logging
 import re
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any, Literal
 
 from pydantic import Field
@@ -48,6 +48,138 @@ EPIC_LINK_PATTERNS = [
     r"parent\s*link",
     r"epiclink",
 ]
+
+
+# How a changelog item is checked against the allowlist. "issue": its old and
+# new values name issues, each of which must be in the allowlist. "drop": it
+# names a project or sprint that cannot be matched to the allowlist.
+ChangelogFieldKinds = Mapping[str, Literal["issue", "drop"]]
+
+# System fields, by fieldId and by the field name Jira writes (Server/DC
+# changelog items carry only the name).
+_CHANGELOG_SYSTEM_FIELDS: dict[str, Literal["issue", "drop"]] = {
+    "issuelinks": "issue",
+    "link": "issue",
+    "parent": "issue",
+    "issueparentassociation": "issue",
+    "issuekey": "issue",
+    "key": "issue",
+    "epic link": "issue",
+    "parent link": "issue",
+    "epic child": "issue",
+    "project": "drop",
+    "sprint": "drop",
+}
+# Custom field types that reference issues or sprints.
+_CHANGELOG_CUSTOM_TYPES: dict[str, Literal["issue", "drop"]] = {
+    "com.pyxis.greenhopper.jira:gh-epic-link": "issue",
+    "com.atlassian.jpo:jpo-custom-field-parent": "issue",
+    "com.pyxis.greenhopper.jira:gh-sprint": "drop",
+}
+_ISSUE_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9_]+)-\d+\b")
+
+
+def changelog_field_kinds(fields: Iterable[Any]) -> dict[str, Literal["issue", "drop"]]:
+    """Map custom field ids and names to their changelog check, from field metadata.
+
+    Args:
+        fields: Field definitions from ``GET /rest/api/2/field``.
+
+    Returns:
+        Lower-cased field id and name to "issue" or "drop", for reference fields.
+    """
+    kinds: dict[str, Literal["issue", "drop"]] = {}
+    for field in fields:
+        if not isinstance(field, dict):
+            continue
+        schema = field.get("schema") or {}
+        kind = _CHANGELOG_CUSTOM_TYPES.get(str(schema.get("custom") or ""))
+        if kind is None and schema.get("type") == "issuelinks":
+            kind = "issue"
+        if kind is None:
+            continue
+        for key in (field.get("id"), field.get("name")):
+            if isinstance(key, str) and key.strip():
+                kinds[key.strip().lower()] = kind
+    return kinds
+
+
+def _changelog_item_kind(item: Any, kinds: ChangelogFieldKinds) -> str | None:
+    for key in (item.field_id, item.field):
+        key = (key or "").strip().lower()
+        if key and key in kinds:
+            return kinds[key]
+    for key in (item.field_id, item.field):
+        key = (key or "").strip().lower()
+        if key in _CHANGELOG_SYSTEM_FIELDS:
+            return _CHANGELOG_SYSTEM_FIELDS[key]
+    return None
+
+
+def _changelog_side_allowed(values: tuple[Any, ...], allowed: set[str]) -> bool:
+    """One side (old or new) of an item: every value must name allowed issues."""
+    present = [str(v) for v in values if v]
+    if not present:
+        return True
+    projects = {m.group(1) for v in present for m in _ISSUE_KEY_RE.finditer(v)}
+    # A side that names no issue key (a bare numeric ID) cannot be verified.
+    return bool(projects) and projects <= allowed
+
+
+def _is_custom_field_item(item: Any) -> bool:
+    field_id = (item.field_id or "").strip().lower()
+    return field_id.startswith("customfield_") or item.fieldtype == "custom"
+
+
+def _changelog_item_allowed(
+    item: Any, allowed: set[str], kinds: ChangelogFieldKinds | None
+) -> bool:
+    """Return True if a changelog item names nothing outside ``allowed``.
+
+    ``kinds`` is None when the field metadata could not be read: a custom
+    field change then cannot be classified and is dropped.
+    """
+    kind = _changelog_item_kind(item, kinds or {})
+    if kind == "drop":
+        return False
+    if kind is None:
+        return kinds is not None or not _is_custom_field_item(item)
+    old = (item.from_string, item.from_id)
+    new = (item.to_string, item.to_id)
+    if not any(old) and not any(new):
+        return False
+    return _changelog_side_allowed(old, allowed) and _changelog_side_allowed(
+        new, allowed
+    )
+
+
+def restrict_changelogs(
+    changelogs: list[JiraChangelog],
+    allowed_projects: Collection[str],
+    field_kinds: ChangelogFieldKinds | None = None,
+) -> None:
+    """Drop changelog items that name issues, projects or sprints out of scope.
+
+    Reference fields are found by fieldId, by name, and through custom field
+    metadata (``field_kinds``), so a renamed Epic Link or Sprint field is still
+    recognised. For issue references the old and the new value are checked
+    separately, and an item with a value that names no issue key is dropped.
+    Other items (status, summary, ...) describe the issue itself.
+
+    Args:
+        changelogs: Changelogs to filter in place.
+        allowed_projects: Upper-cased project keys (JIRA_PROJECTS_FILTER).
+        field_kinds: Custom reference fields from :func:`changelog_field_kinds`,
+            or None when the field metadata could not be read (custom field
+            changes are then dropped).
+    """
+    allowed = {str(k).strip().upper() for k in allowed_projects}
+    for changelog in changelogs:
+        changelog.items = [
+            item
+            for item in changelog.items
+            if _changelog_item_allowed(item, allowed, field_kinds)
+        ]
 
 
 def _reference_project(ref: Any) -> str | None:
@@ -114,6 +246,7 @@ class JiraIssue(ApiModel, TimestampMixin):
     worklog: dict | None = None
     changelogs: list[JiraChangelog] = Field(default_factory=list)
     issuelinks: list[JiraIssueLink] = Field(default_factory=list)
+    rendered_fields: dict[str, Any] = Field(default_factory=dict)
 
     def __getattribute__(self, name: str) -> Any:
         """
@@ -539,13 +672,20 @@ class JiraIssue(ApiModel, TimestampMixin):
             requested_fields=requested_fields_param,
             changelogs=changelogs,
             issuelinks=cls._extract_issue_links(fields),
+            rendered_fields=cls._extract_rendered_fields(data.get("renderedFields")),
         )
         allowed_projects = kwargs.get("allowed_projects")
         if allowed_projects:
-            issue.restrict_references(allowed_projects)
+            issue.restrict_references(
+                allowed_projects, kwargs.get("changelog_field_kinds")
+            )
         return issue
 
-    def restrict_references(self, allowed_projects: Collection[str]) -> None:
+    def restrict_references(
+        self,
+        allowed_projects: Collection[str],
+        changelog_field_kinds: Callable[[], ChangelogFieldKinds | None] | None = None,
+    ) -> None:
         """Drop references to issues outside ``allowed_projects``.
 
         An issue inside the project allowlist can point at issues outside it
@@ -556,6 +696,8 @@ class JiraIssue(ApiModel, TimestampMixin):
 
         Args:
             allowed_projects: Upper-cased project keys (JIRA_PROJECTS_FILTER).
+            changelog_field_kinds: Returns the custom reference fields for the
+                changelog filter; called only when there are changelogs.
         """
         allowed = {str(k).strip().upper() for k in allowed_projects}
 
@@ -575,6 +717,9 @@ class JiraIssue(ApiModel, TimestampMixin):
             and (link.inward_issue is not None or link.outward_issue is not None)
         ]
         self._restrict_epic_references(ok)
+        if self.changelogs:
+            kinds = changelog_field_kinds() if changelog_field_kinds else None
+            restrict_changelogs(self.changelogs, allowed, kinds)
 
     def _restrict_epic_references(self, ok: Any) -> None:
         """Drop the epic link, and the epic name copied with it, when out of scope.
@@ -768,6 +913,12 @@ class JiraIssue(ApiModel, TimestampMixin):
             result["issuelinks"] = [
                 link.to_simplified_dict() for link in self.issuelinks
             ]
+
+        # Rendered HTML is only present when expand=renderedFields was requested
+        if self.rendered_fields:
+            rendered = self._simplify_rendered_fields(should_include_field)
+            if rendered:
+                result["rendered_fields"] = rendered
 
         # Process custom fields
         if self.custom_fields:
@@ -1074,6 +1225,70 @@ class JiraIssue(ApiModel, TimestampMixin):
                     return field_value.get("key") or field_value.get("value")
                 return str(field_value)
         return None
+
+    @staticmethod
+    def _extract_rendered_fields(rendered_data: Any) -> dict[str, Any]:
+        """
+        Extract non-empty rendered values from ``renderedFields``.
+
+        Jira returns ``renderedFields`` beside ``fields`` when the request
+        expands it, with an HTML value (or ``None``) for each returned field.
+        Rendered comments are reduced to their id and HTML body.
+
+        Args:
+            rendered_data: The ``renderedFields`` object from the Jira API
+
+        Returns:
+            Rendered values keyed by Jira field id
+        """
+        if not isinstance(rendered_data, dict):
+            return {}
+
+        rendered_fields: dict[str, Any] = {}
+        for field_id, value in rendered_data.items():
+            if field_id == "comment":
+                comments_data = (
+                    value.get("comments") if isinstance(value, dict) else None
+                )
+                value = (
+                    [
+                        {"id": str(comment.get("id")), "body": comment["body"]}
+                        for comment in comments_data
+                        if isinstance(comment, dict) and comment.get("body")
+                    ]
+                    if isinstance(comments_data, list)
+                    else None
+                )
+            if value:
+                rendered_fields[field_id] = value
+        return rendered_fields
+
+    def _simplify_rendered_fields(
+        self, should_include_field: Callable[[str], bool]
+    ) -> dict[str, Any]:
+        """
+        Select the rendered values to emit in ``to_simplified_dict``.
+
+        Only requested fields are kept. Rendered comments are limited to the
+        comments present on the issue, so ``comment_limit`` still applies.
+
+        Args:
+            should_include_field: Predicate deciding whether a field is requested
+
+        Returns:
+            Rendered values keyed by Jira field id
+        """
+        rendered: dict[str, Any] = {}
+        for field_id, value in self.rendered_fields.items():
+            if not should_include_field(field_id):
+                continue
+            if field_id == "comment":
+                comment_ids = {comment.id for comment in self.comments}
+                value = [c for c in value if c["id"] in comment_ids]
+                if not value:
+                    continue
+            rendered[field_id] = value
+        return rendered
 
     @staticmethod
     def _extract_issue_links(fields: dict[str, Any]) -> list[JiraIssueLink]:

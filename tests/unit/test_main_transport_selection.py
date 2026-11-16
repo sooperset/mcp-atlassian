@@ -174,6 +174,82 @@ class TestMainTransportSelection:
 
         assert server_cancelled.is_set()
 
+    @pytest.mark.asyncio
+    async def test_stdio_guard_cancels_server_on_shutdown_signal(self):
+        """SIGTERM stops a stdio server instead of orphaning the process."""
+        server_started = asyncio.Event()
+        server_cancelled = asyncio.Event()
+
+        async def fake_run_async(**kwargs):
+            del kwargs
+            server_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                server_cancelled.set()
+                raise
+
+        async def never_fires(_stop_event) -> None:
+            await asyncio.Event().wait()
+
+        async def fake_shutdown_request(_stop_event, *args, **kwargs) -> None:
+            await server_started.wait()
+
+        with (
+            patch(
+                "mcp_atlassian.servers.main_mcp.run_async", side_effect=fake_run_async
+            ),
+            patch("mcp_atlassian._watch_parent_exit", side_effect=never_fires),
+            patch(
+                "mcp_atlassian.wait_for_shutdown_request",
+                side_effect=fake_shutdown_request,
+            ),
+        ):
+            await _run_stdio_with_stdin_guard({"transport": "stdio"})
+
+        assert server_cancelled.is_set()
+
+    @pytest.mark.asyncio
+    async def test_stdio_guard_exits_when_server_ignores_cancellation(self):
+        """A stdin read that swallows the cancellation does not hang shutdown."""
+        server_started = asyncio.Event()
+
+        async def slow_to_stop_run_async(**kwargs):
+            del kwargs
+            server_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                # The real stdio server is parked in a blocking stdin read, so
+                # the cancellation does not land until that read returns.
+                await asyncio.shield(asyncio.sleep(0.3))
+                raise
+
+        async def never_fires(_stop_event) -> None:
+            await asyncio.Event().wait()
+
+        async def fake_shutdown_request(_stop_event, *args, **kwargs) -> None:
+            await server_started.wait()
+
+        with (
+            patch(
+                "mcp_atlassian.servers.main_mcp.run_async",
+                side_effect=slow_to_stop_run_async,
+            ),
+            patch("mcp_atlassian._watch_parent_exit", side_effect=never_fires),
+            patch(
+                "mcp_atlassian.wait_for_shutdown_request",
+                side_effect=fake_shutdown_request,
+            ),
+            patch("mcp_atlassian._STDIO_SHUTDOWN_GRACE_SECONDS", 0.05),
+            patch("mcp_atlassian.ensure_clean_exit") as mock_clean_exit,
+            patch("os._exit") as mock_exit,
+        ):
+            await _run_stdio_with_stdin_guard({"transport": "stdio"})
+
+        mock_clean_exit.assert_called_once()
+        mock_exit.assert_called_once_with(0)
+
     def test_signal_handlers_always_setup(self, mock_server):
         """Test that signal handlers are set up regardless of transport."""
         with patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=mock_server):

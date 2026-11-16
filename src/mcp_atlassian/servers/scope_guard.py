@@ -20,12 +20,10 @@ import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from functools import partial
 from typing import Any
 
-import anyio
-
 from mcp_atlassian.exceptions import ScopeViolationError
+from mcp_atlassian.servers.async_utils import run_fetcher_call
 
 logger = logging.getLogger("mcp-atlassian.scope")
 
@@ -291,7 +289,9 @@ CONFLUENCE_SCOPE_POLICY = ScopePolicy(
 
 
 def _is_empty(value: Any) -> bool:
-    return value is None or (isinstance(value, str | list | tuple) and not value)
+    # An empty string is a selector value, not an omitted argument: downstream
+    # code reads it as "no filter", so it must reach the check, which denies it.
+    return value is None or (isinstance(value, list | tuple) and not value)
 
 
 def _filter_keys(value: Any) -> frozenset[str]:
@@ -402,6 +402,4 @@ class ToolScopeGuard:
             )
 
         for name, value in targets:
-            await anyio.to_thread.run_sync(
-                partial(self.policy.checks[name], fetcher, value)
-            )
+            await run_fetcher_call(self.policy.checks[name], fetcher, value)

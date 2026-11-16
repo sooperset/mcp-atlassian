@@ -386,3 +386,57 @@ class TestOpenConfined:
         )
         with pytest.raises(PermissionError):
             io_mod.open_confined(base / "sub" / "in.txt", "rb", base_dir=base)
+
+    @pytest.mark.security_regression
+    @pytest.mark.skipif(
+        os.open not in os.supports_dir_fd, reason="needs dir_fd support"
+    )
+    @pytest.mark.parametrize("mode", ["rb", "wb"])
+    def test_parent_swapped_back_during_the_check_is_refused(
+        self, boundary, monkeypatch, mode
+    ):
+        """A parent that is a symlink when opened and a directory when checked
+        does not let the open reach the symlink's target."""
+        base, outside = boundary
+        from mcp_atlassian.utils import io as io_mod
+
+        sub, saved = base / "sub", base / "sub-saved"
+
+        def to_link():
+            sub.rename(saved)
+            sub.symlink_to(outside, target_is_directory=True)
+
+        def to_dir():
+            sub.unlink()
+            saved.rename(sub)
+
+        real_realpath = os.path.realpath
+        armed = {"on": False}
+
+        def swapping_realpath(path, *args, **kwargs):
+            if not armed["on"]:
+                return real_realpath(path, *args, **kwargs)
+            armed["on"] = False
+            to_dir()
+            try:
+                return real_realpath(path, *args, **kwargs)
+            finally:
+                to_link()
+
+        def arm():
+            to_link()
+            armed["on"] = True
+
+        _swap_after_validation(monkeypatch, arm)
+        monkeypatch.setattr(io_mod.os.path, "realpath", swapping_realpath)
+        try:
+            with pytest.raises(ValueError):
+                with io_mod.open_confined(sub / "in.txt", mode, base_dir=base) as f:
+                    if mode == "rb":
+                        f.read()
+                    else:
+                        f.write(b"overwritten")
+        finally:
+            if sub.is_symlink():
+                to_dir()
+        assert (outside / "in.txt").read_text() == "SECRET"
