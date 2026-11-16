@@ -1,6 +1,5 @@
 """Jira FastMCP server instance and tool definitions."""
 
-import asyncio
 import base64
 import binascii
 import json
@@ -17,17 +16,20 @@ from mcp_atlassian.jira.constants import DEFAULT_READ_JIRA_FIELDS
 from mcp_atlassian.jira.forms_common import convert_datetime_to_timestamp
 from mcp_atlassian.models.jira import JiraAttachment
 from mcp_atlassian.models.jira.common import JiraUser
-from mcp_atlassian.servers.async_utils import run_jira_fetcher_call
+from mcp_atlassian.servers.async_utils import run_fetcher_call
 from mcp_atlassian.servers.dependencies import get_jira_fetcher
 from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.servers.helpers import resolve_transition
+from mcp_atlassian.servers.scope_guard import JIRA_SCOPE_POLICY, ToolScopeGuard
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.env import get_regex_env
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
+    AttachmentBudget,
     fetch_and_encode_attachment,
     is_image_attachment,
 )
+from mcp_atlassian.utils.truncation import is_truncated
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +49,21 @@ ISSUE_KEY_PATTERN = get_regex_env(
     "JIRA_ISSUE_KEY_PATTERN", r"^[A-Z][A-Z0-9_]+-\d+(?:-\d+)*$"
 )
 PROJECT_KEY_PATTERN = get_regex_env("JIRA_PROJECT_KEY_PATTERN", r"^[A-Z][A-Z0-9_]+$")
+# Sub-object IDs are placed in REST paths after the parent the scope guard
+# checked, so each must stay one segment of the expected shape.
+NUMERIC_ID_PATTERN = r"^\d+$"
+FIELD_ID_PATTERN = r"^[A-Za-z0-9_]+$"
+
+
+async def _scope_fetcher(ctx: Context) -> Any:
+    # Looked up at call time so the guard uses the same dependency as the tools.
+    return await get_jira_fetcher(ctx)
+
 
 jira_mcp = ErrorPreservingFastMCP(
     name="Jira MCP Service",
     instructions="Provides tools for interacting with Atlassian Jira.",
+    tool_guard=ToolScopeGuard(JIRA_SCOPE_POLICY, _scope_fetcher),
 )
 
 _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
@@ -61,6 +74,7 @@ _GET_ISSUE_INCLUDE_SECTIONS = frozenset(
         "changelog",
         "comments",
         "worklogs",
+        "epic_summary",
     }
 )
 _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
@@ -70,6 +84,7 @@ _GET_ISSUE_INCLUDE_OUTPUT_KEYS: dict[str, str] = {
     "changelog": "changelogs",
     "comments": "comments",
     "worklogs": "worklogs",
+    "epic_summary": "epic_summary",
 }
 _GET_ISSUE_INCLUDE_ALIASES = {
     "comment": "comments",
@@ -157,6 +172,59 @@ def _parse_visibility(
             f"{field_name} must be a valid JSON object, e.g. "
             f'{{"type":"group","value":"jira-users"}}; got error: {e}'
         ) from e
+
+
+def _merge_named_create_fields(
+    params: dict[str, Any],
+    components: list[str] | None,
+    extra_fields: dict[str, Any],
+) -> list[str | dict[str, Any]] | None:
+    """Take create_issue's named parameters out of additional_fields.
+
+    The tool passes these parameters by name and spreads additional_fields
+    after them, so a repeated key raised ``TypeError: got multiple values for
+    keyword argument``. An unset parameter takes the value from
+    additional_fields, an equal value is dropped, and a different value is
+    rejected. Components from both places are combined.
+
+    Args:
+        params: Named parameters other than components. Updated in place.
+        components: Component names from the components parameter.
+        extra_fields: Parsed additional_fields. Updated in place.
+
+    Returns:
+        The components to pass to create_issue, or None if there are none.
+
+    Raises:
+        ValueError: If a parameter and additional_fields disagree, or if
+            additional_fields has components that are not a list or string.
+    """
+    for name, current in params.items():
+        if name not in extra_fields:
+            continue
+        value = extra_fields.pop(name)
+        if current is None or current == "":
+            params[name] = value
+        elif value != current:
+            raise ValueError(
+                f"'{name}' is set both as a parameter and in additional_fields "
+                "with different values. Set it in one place."
+            )
+
+    if "components" not in extra_fields:
+        return list(components) if components else None
+    extra_components = extra_fields.pop("components")
+    if isinstance(extra_components, str):
+        extra_components = [
+            comp.strip() for comp in extra_components.split(",") if comp.strip()
+        ]
+    if not isinstance(extra_components, list):
+        raise ValueError(
+            "components in additional_fields must be a list or a "
+            "comma-separated string."
+        )
+    merged: list[str | dict[str, Any]] = [*(components or []), *extra_components]
+    return merged or None
 
 
 def _parse_additional_fields(
@@ -338,6 +406,11 @@ def _parse_base64_attachments(
     return decoded
 
 
+WORKLOGS_TRUNCATED_MESSAGE = (
+    "Worklogs truncated at the worklog read limit; the issue has more worklogs."
+)
+
+
 @jira_mcp.tool(
     tags={"jira", "read", "toolset:jira_users"},
     annotations={"title": "Get User Profile", "readOnlyHint": True},
@@ -350,13 +423,29 @@ async def get_user_profile(
             description="Identifier for the user (e.g., email address 'user@example.com', username 'johndoe', account ID 'accountid:...', or key for Server/DC)."
         ),
     ],
+    expand: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional comma-separated sections to include when "
+                "user_identifier is 'me', e.g. 'groups' or "
+                "'groups,applicationRoles'."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """
-    Retrieve profile information for a specific Jira user.
+    Retrieve profile information for a Jira user.
+
+    Use ``user_identifier="me"`` to return the account authenticated for the
+    current request directly from Jira's ``/myself`` endpoint. This path does
+    not require Browse Users permission.
 
     Args:
         ctx: The FastMCP context.
         user_identifier: User identifier (email, username, key, or account ID).
+        expand: Optional sections to include for the ``me`` lookup.
 
     Returns:
         JSON string representing the Jira user profile object, or an error object if not found.
@@ -366,8 +455,15 @@ async def get_user_profile(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        user: JiraUser = jira.get_user_profile_by_identifier(user_identifier)
-        result = user.to_simplified_dict()
+        if user_identifier.lower() == "me":
+            result = await run_fetcher_call(
+                jira.get_current_user_profile, expand=expand
+            )
+        else:
+            user: JiraUser = await run_fetcher_call(
+                jira.get_user_profile_by_identifier, user_identifier
+            )
+            result = user.to_simplified_dict()
         response_data = {"success": True, "user": result}
     except Exception as e:
         error_message = ""
@@ -484,7 +580,8 @@ async def search_assignable_users(
             ensure_ascii=False,
         )
     try:
-        users = jira.search_assignable_users(
+        users = await run_fetcher_call(
+            jira.search_assignable_users,
             query=query,
             project_key=project_key,
             issue_key=issue_key,
@@ -546,7 +643,7 @@ async def get_issue_watchers(
         ValueError: If the Jira client is not configured or available.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.get_issue_watchers(issue_key)
+    result = await run_fetcher_call(jira.get_issue_watchers, issue_key)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -591,7 +688,7 @@ async def add_watcher(
         ValueError: If the Jira client is not configured or available.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.add_watcher(issue_key, user_identifier)
+    result = await run_fetcher_call(jira.add_watcher, issue_key, user_identifier)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -642,7 +739,9 @@ async def remove_watcher(
         ValueError: If the Jira client is not configured or available.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.remove_watcher(issue_key, username=username, account_id=account_id)
+    result = await run_fetcher_call(
+        jira.remove_watcher, issue_key, username=username, account_id=account_id
+    )
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -712,11 +811,46 @@ async def get_issue(
                 "(Optional) Comma-separated sections to inline "
                 "in the response, avoiding extra tool calls. "
                 "Supported: all, remote_links, transitions, "
-                "watchers, changelog, comments, worklogs"
+                "watchers, changelog, comments, worklogs, epic_summary. "
+                "'epic_summary' only applies when the issue is an Epic: "
+                "it adds child-issue aggregations (counts by status, "
+                "assignee, and type, plus a completion percentage). By "
+                "default the summary is aggregate-only; set "
+                "'epic_summary_children=true' to also inline a compact "
+                "child list. "
+                "Note: transitions inlined via include are "
+                "lightweight (no required_fields). Use "
+                "jira_get_transitions with expand_fields=true "
+                "for full field metadata."
             ),
             default=None,
         ),
     ] = None,
+    epic_summary_children: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true and 'epic_summary' is included on an Epic, also "
+                "inline a compact list of child issues (key, status, "
+                "assignee) alongside the aggregates. Ignored unless "
+                "'epic_summary' is requested and the issue is an Epic."
+            ),
+            default=False,
+        ),
+    ] = False,
+    max_epic_children: Annotated[
+        int,
+        Field(
+            description=(
+                "Maximum number of child issues to aggregate for "
+                "'epic_summary' (1-500). If the cap is reached the summary "
+                "sets 'truncated': true."
+            ),
+            default=100,
+            ge=1,
+            le=500,
+        ),
+    ] = 100,
     use_display_names: Annotated[
         bool,
         Field(
@@ -734,8 +868,12 @@ async def get_issue(
 
     Includes Epic links and relationship information. Use the
     ``include`` parameter to inline enrichments (remote_links,
-    transitions, watchers, changelog, comments, worklogs) so that
-    separate tool calls are not needed.
+    transitions, watchers, changelog, comments, worklogs, epic_summary)
+    so that separate tool calls are not needed. The ``epic_summary``
+    section only applies when the issue is an Epic and adds child-issue
+    aggregations (counts by status, assignee, and type, plus a
+    completion percentage); it is aggregate-only unless
+    ``epic_summary_children`` is set.
 
     Args:
         ctx: The FastMCP context.
@@ -746,6 +884,9 @@ async def get_issue(
         properties: Issue properties to return.
         update_history: Whether to update issue view history.
         include: Comma-separated enrichment sections to inline.
+        epic_summary_children: Inline a compact child list with
+            ``epic_summary`` (aggregate-only by default).
+        max_epic_children: Cap on children aggregated for ``epic_summary``.
         use_display_names: Opt into human-readable custom field keys.
 
     Returns:
@@ -774,7 +915,7 @@ async def get_issue(
     expand = _merge_expand(expand, expand_additions)
 
     # Fetch the issue (with augmented expand) without blocking the event loop.
-    issue = await run_jira_fetcher_call(
+    issue = await run_fetcher_call(
         jira.get_issue,
         issue_key=issue_key,
         fields=fields_list,
@@ -801,27 +942,56 @@ async def get_issue(
     # Enrichments that require separate API calls
     if "remote_links" in include_sections:
         try:
-            result["remote_links"] = jira.get_remote_issue_links(issue_key)
+            result["remote_links"] = await run_fetcher_call(
+                jira.get_remote_issue_links, issue_key
+            )
         except Exception:  # noqa: BLE001
             result["remote_links"] = []
 
     if "transitions" in include_sections:
         try:
-            result["transitions"] = jira.get_available_transitions(issue_key)
+            result["transitions"] = await run_fetcher_call(
+                jira.get_available_transitions, issue_key
+            )
         except Exception:  # noqa: BLE001
             result["transitions"] = []
 
     if "watchers" in include_sections:
         try:
-            result["watchers"] = jira.get_issue_watchers(issue_key)
+            result["watchers"] = await run_fetcher_call(
+                jira.get_issue_watchers, issue_key
+            )
         except Exception:  # noqa: BLE001
             result["watchers"] = {}
 
     if "worklogs" in include_sections:
         try:
-            result["worklogs"] = jira.get_worklogs(issue_key)
+            result["worklogs"] = await run_fetcher_call(jira.get_worklogs, issue_key)
         except Exception:  # noqa: BLE001
             result["worklogs"] = []
+        if is_truncated(result["worklogs"]):
+            result["truncated"] = True
+            result["hint"] = WORKLOGS_TRUNCATED_MESSAGE
+
+    if "epic_summary" in include_sections:
+        # Gate on the already-fetched issue type: a non-Epic makes ZERO
+        # child calls and is reported as not-applicable rather than
+        # silently dropping the requested section.
+        issue_type_name = issue.issue_type.name if issue.issue_type else ""
+        if not await run_fetcher_call(jira._is_epic_issue_type, issue_type_name):
+            result["epic_summary"] = {
+                "applicable": False,
+                "reason": "not_epic",
+            }
+        else:
+            summary = await run_fetcher_call(
+                jira.get_epic_summary,
+                epic_key=issue_key,
+                max_children=max_epic_children,
+                include_children=epic_summary_children,
+            )
+            summary["applicable"] = True
+            result["epic_summary"] = summary
 
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -931,7 +1101,7 @@ async def search(
     if use_display_names:
         expand = _merge_expand(expand, ["names"])
 
-    search_result = await run_jira_fetcher_call(
+    search_result = await run_fetcher_call(
         jira.search_issues,
         jql=jql,
         fields=fields_list,
@@ -981,7 +1151,9 @@ async def search_fields(
         JSON string representing a list of matching field definitions.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.search_fields(keyword, limit=limit, refresh=refresh)
+    result = await run_fetcher_call(
+        jira.search_fields, keyword, limit=limit, refresh=refresh
+    )
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -1073,7 +1245,8 @@ async def get_field_options(
         str,
         Field(
             description="Custom field ID (e.g., 'customfield_10001'). "
-            "Use jira_search_fields to find field IDs."
+            "Use jira_search_fields to find field IDs.",
+            pattern=FIELD_ID_PATTERN,
         ),
     ],
     context_id: Annotated[
@@ -1082,6 +1255,7 @@ async def get_field_options(
             description="Field context ID (Cloud only). "
             "If omitted, auto-resolves to the global context.",
             default=None,
+            pattern=NUMERIC_ID_PATTERN,
         ),
     ] = None,
     project_key: Annotated[
@@ -1149,7 +1323,8 @@ async def get_field_options(
         JSON string with the list of available options.
     """
     jira = await get_jira_fetcher(ctx)
-    options = jira.get_field_options(
+    options = await run_fetcher_call(
+        jira.get_field_options,
         field_id=field_id,
         context_id=context_id,
         project_key=project_key,
@@ -1200,8 +1375,8 @@ async def get_project_issues(
         JSON string representing the search results including pagination info.
     """
     jira = await get_jira_fetcher(ctx)
-    search_result = jira.get_project_issues(
-        project_key=project_key, start=start_at, limit=limit
+    search_result = await run_fetcher_call(
+        jira.get_project_issues, project_key=project_key, start=start_at, limit=limit
     )
     result = search_result.to_simplified_dict()
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -1220,19 +1395,31 @@ async def get_transitions(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
+    expand_fields: Annotated[
+        bool,
+        Field(
+            description=(
+                "Whether to expand transition field metadata. When true, "
+                "requests required field details (allowed values, schema) "
+                "for each transition. Defaults to false (lightweight)."
+            ),
+        ),
+    ] = False,
 ) -> str:
     """Get available status transitions for a Jira issue.
 
     Args:
         ctx: The FastMCP context.
         issue_key: Jira issue key.
+        expand_fields: Whether to include required field metadata.
 
     Returns:
         JSON string representing a list of available transitions.
     """
     jira = await get_jira_fetcher(ctx)
-    # Underlying method returns list[dict] in the desired format
-    transitions = jira.get_available_transitions(issue_key)
+    transitions = await run_fetcher_call(
+        jira.get_available_transitions, issue_key, expand_fields=expand_fields
+    )
     return json.dumps(transitions, indent=2, ensure_ascii=False)
 
 
@@ -1260,8 +1447,11 @@ async def get_worklog(
         JSON string representing the worklog entries.
     """
     jira = await get_jira_fetcher(ctx)
-    worklogs = jira.get_worklogs(issue_key)
-    result = {"worklogs": worklogs}
+    worklogs = await run_fetcher_call(jira.get_worklogs, issue_key)
+    result: dict[str, Any] = {"worklogs": worklogs}
+    if is_truncated(worklogs):
+        result["truncated"] = True
+        result["hint"] = WORKLOGS_TRUNCATED_MESSAGE
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -1299,7 +1489,9 @@ async def download_attachments(
         per downloaded non-image attachment.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.get_issue_attachment_contents(issue_key=issue_key)
+    result = await run_fetcher_call(
+        jira.get_issue_attachment_contents, issue_key=issue_key
+    )
 
     contents: list[TextContent | EmbeddedResource] = []
 
@@ -1317,7 +1509,8 @@ async def download_attachments(
     downloaded = 0
 
     for attachment in attachments:
-        data_bytes: bytes = attachment["data"]
+        # Taken out of the result so each raw body is freed once encoded.
+        data_bytes: bytes = attachment.pop("data")
         filename = attachment["filename"]
 
         if len(data_bytes) > ATTACHMENT_MAX_BYTES:
@@ -1437,7 +1630,7 @@ async def get_issue_images(
     jira = await get_jira_fetcher(ctx)
     contents: list[TextContent | ImageContent] = []
 
-    attachments = jira.get_issue_attachments(issue_key)
+    attachments = await run_fetcher_call(jira.get_issue_attachments, issue_key)
 
     # Filter to image attachments
     image_attachments: list[tuple[JiraAttachment, str]] = []
@@ -1468,43 +1661,36 @@ async def get_issue_images(
 
     fetched: list[dict[str, object]] = []
     failed: list[dict[str, object]] = []
+    budget = AttachmentBudget()
 
     for att, resolved_mime in image_attachments:
         filename = att.filename or "unknown"
 
-        if att.size > ATTACHMENT_MAX_BYTES:
-            failed.append(
-                {
-                    "filename": filename,
-                    "error": (
-                        f"Image is {att.size} bytes "
-                        "which exceeds the 50 MB inline limit."
-                    ),
-                }
-            )
+        if refusal := budget.refusal(att.size):
+            failed.append({"filename": filename, "error": f"Image is {refusal}"})
             continue
 
         if not att.url:
             failed.append({"filename": filename, "error": "No download URL"})
             continue
 
-        encoded, _, fetched_bytes = fetch_and_encode_attachment(
+        encoded, _, fetched_bytes = await run_fetcher_call(
+            fetch_and_encode_attachment,
             fetch_fn=jira.fetch_attachment_content,
             url=att.url,
             filename=filename,
             mime_type=resolved_mime,
+            max_bytes=budget.remaining,
         )
         if encoded is None:
             if fetched_bytes > 0:
-                error_msg = (
-                    f"Downloaded size {fetched_bytes} bytes "
-                    "exceeds the 50 MB inline limit."
-                )
+                error_msg = f"Downloaded size is {budget.refusal(fetched_bytes)}"
             else:
                 error_msg = "Fetch failed"
             failed.append({"filename": filename, "error": error_msg})
             continue
 
+        budget.spend(fetched_bytes)
         fetched.append({"filename": filename, "size": fetched_bytes})
         contents.append(
             ImageContent(
@@ -1577,7 +1763,8 @@ async def get_agile_boards(
         JSON string representing a list of board objects.
     """
     jira = await get_jira_fetcher(ctx)
-    boards = jira.get_all_agile_boards_model(
+    boards = await run_fetcher_call(
+        jira.get_all_agile_boards_model,
         board_name=board_name,
         project_key=project_key,
         board_type=board_type,
@@ -1656,7 +1843,8 @@ async def get_board_issues(
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
 
-    search_result = jira.get_board_issues(
+    search_result = await run_fetcher_call(
+        jira.get_board_issues,
         board_id=board_id,
         jql=jql,
         fields=fields_list,
@@ -1701,8 +1889,12 @@ async def get_sprints_from_board(
         JSON string representing a list of sprint objects.
     """
     jira = await get_jira_fetcher(ctx)
-    sprints = jira.get_all_sprints_from_board_model(
-        board_id=board_id, state=state, start=start_at, limit=limit
+    sprints = await run_fetcher_call(
+        jira.get_all_sprints_from_board_model,
+        board_id=board_id,
+        state=state,
+        start=start_at,
+        limit=limit,
     )
     result = [sprint.to_simplified_dict() for sprint in sprints]
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -1752,8 +1944,12 @@ async def get_sprint_issues(
     if fields and fields != "*all":
         fields_list = [f.strip() for f in fields.split(",")]
 
-    search_result = jira.get_sprint_issues(
-        sprint_id=sprint_id, fields=fields_list, start=start_at, limit=limit
+    search_result = await run_fetcher_call(
+        jira.get_sprint_issues,
+        sprint_id=sprint_id,
+        fields=fields_list,
+        start=start_at,
+        limit=limit,
     )
     result = search_result.to_simplified_dict()
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -1782,7 +1978,7 @@ async def get_link_types(
         JSON string representing a list of issue link type objects.
     """
     jira = await get_jira_fetcher(ctx)
-    link_types = jira.get_issue_link_types()
+    link_types = await run_fetcher_call(jira.get_issue_link_types)
     formatted_link_types = [link_type.to_simplified_dict() for link_type in link_types]
     if name_filter:
         name_lower = name_filter.lower()
@@ -1891,16 +2087,20 @@ async def create_issue(
             comp.strip() for comp in components.split(",") if comp.strip()
         ]
 
-    extra_fields = _parse_additional_fields(additional_fields)
+    extra_fields = dict(_parse_additional_fields(additional_fields))
+    params: dict[str, Any] = {
+        "project_key": project_key,
+        "summary": summary,
+        "issue_type": issue_type,
+        "description": description,
+        "assignee": assignee,
+    }
+    merged_components = _merge_named_create_fields(
+        params, components_list, extra_fields
+    )
 
-    issue = jira.create_issue(
-        project_key=project_key,
-        summary=summary,
-        issue_type=issue_type,
-        description=description,
-        assignee=assignee,
-        components=components_list,
-        **extra_fields,
+    issue = await run_fetcher_call(
+        jira.create_issue, **params, components=merged_components, **extra_fields
     )
     result = issue.to_simplified_dict()
     return json.dumps(
@@ -1968,7 +2168,9 @@ async def batch_create_issues(
         raise ValueError(f"Invalid input for issues: {e}") from e
 
     # Create issues in batch
-    created_issues = jira.batch_create_issues(issues_list, validate_only=validate_only)
+    created_issues = await run_fetcher_call(
+        jira.batch_create_issues, issues_list, validate_only=validate_only
+    )
 
     message = (
         "Issues validated successfully"
@@ -2043,8 +2245,8 @@ async def batch_get_changelogs(
         fields_list = [f.strip() for f in fields.split(",") if f.strip()]
 
     # Call the underlying method
-    issues_with_changelogs = jira.batch_get_changelogs(
-        issue_ids_or_keys=keys_list, fields=fields_list
+    issues_with_changelogs = await run_fetcher_call(
+        jira.batch_get_changelogs, issue_ids_or_keys=keys_list, fields=fields_list
     )
 
     # Format the response
@@ -2058,6 +2260,16 @@ async def batch_get_changelogs(
                     changelog.to_simplified_dict()
                     for changelog in issue.changelogs[:limit_val]
                 ],
+            }
+        )
+    if is_truncated(issues_with_changelogs):
+        results.append(
+            {
+                "truncated": True,
+                "message": (
+                    "Stopped at the changelog read limit; some changelogs may "
+                    "be missing. Request fewer issues per call to see them all."
+                ),
             }
         )
     return json.dumps(results, indent=2, ensure_ascii=False)
@@ -2298,8 +2510,11 @@ async def update_issue(
 
     if all_updates:
         try:
-            issue = jira.update_issue(
-                issue_key=issue_key, return_fields=return_fields_list, **all_updates
+            issue = await run_fetcher_call(
+                jira.update_issue,
+                issue_key=issue_key,
+                return_fields=return_fields_list,
+                **all_updates,
             )
             if any(
                 key not in ("attachments", "attachments_base64") for key in all_updates
@@ -2327,9 +2542,12 @@ async def update_issue(
 
     if transition:
         try:
-            available_transitions = jira.get_available_transitions(issue_key)
+            available_transitions = await run_fetcher_call(
+                jira.get_available_transitions, issue_key
+            )
             transition_id = resolve_transition(available_transitions, transition)
-            issue = jira.transition_issue(
+            issue = await run_fetcher_call(
+                jira.transition_issue,
                 issue_key=issue_key,
                 transition_id=transition_id,
                 comment=None,
@@ -2344,7 +2562,7 @@ async def update_issue(
 
     if comment:
         try:
-            jira.add_comment(issue_key, comment, visibility)
+            await run_fetcher_call(jira.add_comment, issue_key, comment, visibility)
             operations_performed.append("comment_added")
         except Exception as e:  # noqa: BLE001 - preserve later operations
             logger.error(
@@ -2355,7 +2573,8 @@ async def update_issue(
 
     if worklog:
         try:
-            jira.add_worklog(
+            await run_fetcher_call(
+                jira.add_worklog,
                 issue_key=issue_key,
                 time_spent=worklog,
                 started=worklog_started,
@@ -2369,7 +2588,9 @@ async def update_issue(
             operations_failed.append(f"worklog: {e}")
 
     try:
-        issue = jira.get_issue(issue_key, fields=return_fields_list)
+        issue = await run_fetcher_call(
+            jira.get_issue, issue_key, fields=return_fields_list
+        )
     except Exception as e:  # noqa: BLE001 - preserve the latest issue result
         logger.error(f"Error re-fetching issue {issue_key}: {str(e)}", exc_info=True)
         operations_failed.append(f"refetch: {e}")
@@ -2461,7 +2682,9 @@ async def assign_issue(
             if not isinstance(parsed_assignee, dict):
                 raise ValueError("assignee JSON must be an object.")
 
-        issue = jira.assign_issue(issue_key=issue_key, assignee=parsed_assignee)
+        issue = await run_fetcher_call(
+            jira.assign_issue, issue_key=issue_key, assignee=parsed_assignee
+        )
         result = issue.to_simplified_dict()
         return json.dumps(
             {"message": f"Issue {issue_key} assigned successfully", "issue": result},
@@ -2501,7 +2724,7 @@ async def delete_issue(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    deleted = jira.delete_issue(issue_key)
+    deleted = await run_fetcher_call(jira.delete_issue, issue_key)
     result = {"message": f"Issue {issue_key} has been deleted successfully."}
     # The underlying method raises on failure, so if we reach here, it's success.
     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -2557,7 +2780,7 @@ async def move_issue(
     jira = await get_jira_fetcher(ctx)
 
     try:
-        result = await asyncio.to_thread(jira.move_issue, issue_key, target_project_key)
+        result = await run_fetcher_call(jira.move_issue, issue_key, target_project_key)
         return json.dumps(
             {
                 "message": (
@@ -2614,7 +2837,7 @@ async def add_comment(
         bool | None,
         Field(
             description=(
-                "(Optional) For JSM/Service Desk issues only. "
+                "(Optional) For JSM customer requests. "
                 "Set to true for customer-visible comment, "
                 "false for internal agent-only comment. Posted "
                 "via the ServiceDesk API as a raw string; Jira "
@@ -2622,14 +2845,13 @@ async def add_comment(
                 "(markdown observed to render on Cloud, without "
                 "the client-side markdown-to-ADF guarantees of "
                 "the regular comment path). Cannot be combined "
-                "with visibility. If the issue's project is "
-                "listed in JIRA_INTERNAL_ONLY_PROJECTS, only "
-                "public=false is accepted — public=true or "
-                "omitting this field is rejected. Issues in such "
-                "a project that are not JSM customer requests "
-                "(e.g. an agent-created Task) have no portal "
-                "audience and are exempt: they post through the "
-                "ordinary comment path and ignore this field."
+                "with visibility on a request. On an issue that "
+                "is not a JSM customer request (e.g. a plain "
+                "Jira Task) this field is ignored and an "
+                "ordinary comment is posted. If the issue's "
+                "project is listed in JIRA_INTERNAL_ONLY_PROJECTS, "
+                "only public=false is accepted on a request — "
+                "public=true or omitting this field is rejected."
             )
         ),
     ] = None,
@@ -2641,8 +2863,9 @@ async def add_comment(
         issue_key: Jira issue key.
         body: Comment text in Markdown.
         visibility: (Optional) Comment visibility as JSON string.
-        public: (Optional) For JSM issues. True = customer-visible,
-            False = internal/agent-only. Uses ServiceDesk API.
+        public: (Optional) For JSM requests. True = customer-visible,
+            False = internal/agent-only. Uses ServiceDesk API; ignored
+            on an issue that is not a JSM customer request.
 
     Returns:
         JSON string representing the added comment object.
@@ -2654,18 +2877,24 @@ async def add_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    # A bare false is ambiguous here in a way it is not in the client API: some
-    # MCP clients auto-fill an omitted optional boolean as false. Honor it only
-    # for a project the operator declared internal-only, where it can only mean
-    # "internal" — that is the case the guard exists for, and dropping it there
-    # is what blocked internal comments entirely. Anywhere else, keep treating it
-    # as omitted, so those clients don't start routing ordinary Jira comments
-    # through the ServiceDesk API (which answers 403 for non-JSM issues) or
-    # tripping the public/visibility conflict on a restricted comment.
+    # Preserve the tri-state ``public`` value at the MCP boundary (#1726).
+    #
+    # Rewriting every bare ``public=False`` to ``None`` for projects outside
+    # ``JIRA_INTERNAL_ONLY_PROJECTS`` made an explicit internal JSM comment
+    # land as customer-visible. Keep ``False`` so ServiceDesk routing can
+    # honor it.
+    #
+    # One compatibility carve-out remains: some MCP clients auto-fill omitted
+    # optional booleans as false. When the caller also supplied a real
+    # ``visibility`` restriction, that false cannot be intentional (the two
+    # are mutually exclusive on the ServiceDesk path) — drop it so restricted
+    # ordinary comments keep working.
     public_value = public
-    if public is False and not jira._is_internal_only_project(issue_key):
+    if public is False and visibility_dict is not None:
         public_value = None
-    result = jira.add_comment(issue_key, body, visibility_dict, public=public_value)
+    result = await run_fetcher_call(
+        jira.add_comment, issue_key, body, visibility_dict, public=public_value
+    )
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -2683,7 +2912,10 @@ async def edit_comment(
             pattern=ISSUE_KEY_PATTERN,
         ),
     ],
-    comment_id: Annotated[str, Field(description="The ID of the comment to edit")],
+    comment_id: Annotated[
+        str,
+        Field(description="The ID of the comment to edit", pattern=NUMERIC_ID_PATTERN),
+    ],
     body: Annotated[str, Field(description="Updated comment text in Markdown format")],
     visibility: Annotated[
         str | None,
@@ -2712,7 +2944,9 @@ async def edit_comment(
     """
     jira = await get_jira_fetcher(ctx)
     visibility_dict = _parse_visibility(visibility)
-    result = jira.edit_comment(issue_key, comment_id, body, visibility_dict)
+    result = await run_fetcher_call(
+        jira.edit_comment, issue_key, comment_id, body, visibility_dict
+    )
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -2780,7 +3014,8 @@ async def add_worklog(
     """
     jira = await get_jira_fetcher(ctx)
     # add_worklog returns dict
-    worklog_result = jira.add_worklog(
+    worklog_result = await run_fetcher_call(
+        jira.add_worklog,
         issue_key=issue_key,
         time_spent=time_spent,
         comment=comment,
@@ -2828,7 +3063,7 @@ async def link_to_epic(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    issue = jira.link_issue_to_epic(issue_key, epic_key)
+    issue = await run_fetcher_call(jira.link_issue_to_epic, issue_key, epic_key)
     result = {
         "message": f"Issue {issue_key} has been linked to epic {epic_key}.",
         "issue": issue.to_simplified_dict(),
@@ -2928,7 +3163,7 @@ async def create_issue_link(
                 logger.warning("Invalid comment_visibility dictionary structure.")
         link_data["comment"] = comment_obj
 
-    result = jira.create_issue_link(link_data)
+    result = await run_fetcher_call(jira.create_issue_link, link_data)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -3016,7 +3251,7 @@ async def create_remote_issue_link(
     if relationship:
         link_data["relationship"] = relationship
 
-    result = jira.create_remote_issue_link(issue_key, link_data)
+    result = await run_fetcher_call(jira.create_remote_issue_link, issue_key, link_data)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -3027,7 +3262,9 @@ async def create_remote_issue_link(
 @check_write_access
 async def remove_issue_link(
     ctx: Context,
-    link_id: Annotated[str, Field(description="The ID of the link to remove")],
+    link_id: Annotated[
+        str, Field(description="The ID of the link to remove", pattern=r"^\d+$")
+    ],
 ) -> str:
     """Remove a link between two Jira issues.
 
@@ -3045,7 +3282,9 @@ async def remove_issue_link(
     if not link_id:
         raise ValueError("link_id is required")
 
-    result = jira.remove_issue_link(link_id)  # Returns dict on success
+    result = await run_fetcher_call(
+        jira.remove_issue_link, link_id
+    )  # Returns dict on success
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -3100,6 +3339,19 @@ async def transition_issue(
             ),
         ),
     ] = None,
+    update_data: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) JSON string of Jira update operations to include "
+                "in the transition. Use this for worklogs and other "
+                "transition-time operations. On Jira Cloud, text in "
+                "comment bodies and worklog comments is treated as "
+                "Markdown and converted to ADF. Example: "
+                '\'{"worklog": [{"add": {"timeSpent": "1h"}}]}\''
+            ),
+        ),
+    ] = None,
 ) -> str:
     """Transition a Jira issue to a new status.
 
@@ -3109,6 +3361,8 @@ async def transition_issue(
         transition_id: ID or name of the transition.
         fields: Optional JSON string of fields to update during transition.
         comment: Optional comment for the transition in Markdown format.
+        update_data: Optional JSON string of Jira update operations
+            (e.g., worklog) for the transition.
 
     Returns:
         JSON string representing the updated issue object.
@@ -3124,15 +3378,25 @@ async def transition_issue(
 
     # Parse fields from JSON string
     update_fields = _parse_additional_fields(fields, param_name="fields")
+    # Parse update_data from JSON string
+    update_ops = (
+        _parse_additional_fields(update_data, param_name="update_data")
+        if update_data
+        else None
+    )
 
-    available_transitions = jira.get_available_transitions(issue_key)
+    available_transitions = await run_fetcher_call(
+        jira.get_available_transitions, issue_key
+    )
     resolved_transition_id = resolve_transition(available_transitions, transition_id)
 
-    issue = jira.transition_issue(
+    issue = await run_fetcher_call(
+        jira.transition_issue,
         issue_key=issue_key,
         transition_id=resolved_transition_id,
         fields=update_fields,
         comment=comment,
+        update_data=update_ops,
     )
 
     result = {
@@ -3178,7 +3442,8 @@ async def create_sprint(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    sprint = jira.create_sprint(
+    sprint = await run_fetcher_call(
+        jira.create_sprint,
         board_id=board_id,
         sprint_name=name,
         start_date=start_date,
@@ -3231,7 +3496,8 @@ async def update_sprint(
         ValueError: If in read-only mode or Jira client unavailable.
     """
     jira = await get_jira_fetcher(ctx)
-    sprint = jira.update_sprint(
+    sprint = await run_fetcher_call(
+        jira.update_sprint,
         sprint_id=sprint_id,
         sprint_name=name,
         state=state,
@@ -3277,7 +3543,7 @@ async def add_issues_to_sprint(
     """
     jira = await get_jira_fetcher(ctx)
     keys_list = [k.strip() for k in issue_keys.split(",") if k.strip()]
-    jira.add_issues_to_sprint(sprint_id, keys_list)
+    await run_fetcher_call(jira.add_issues_to_sprint, sprint_id, keys_list)
     result = {
         "message": f"Successfully added {len(keys_list)} issue(s) to sprint",
         "sprint_id": sprint_id,
@@ -3312,7 +3578,7 @@ async def move_issues_to_backlog(
     """
     jira = await get_jira_fetcher(ctx)
     keys_list = [k.strip() for k in issue_keys.split(",") if k.strip()]
-    jira.move_issues_to_backlog(keys_list)
+    await run_fetcher_call(jira.move_issues_to_backlog, keys_list)
     result = {
         "message": f"Successfully moved {len(keys_list)} issue(s) to backlog",
         "issue_keys": keys_list,
@@ -3349,7 +3615,7 @@ async def get_project_issue_types(
     """
     jira = await get_jira_fetcher(ctx)
     issue_types = []
-    for issue_type in jira.get_project_issue_types(project_key):
+    for issue_type in await run_fetcher_call(jira.get_project_issue_types, project_key):
         issue_type_id = issue_type.get("id")
         compact_type = {
             "id": str(issue_type_id) if issue_type_id is not None else "",
@@ -3383,7 +3649,8 @@ async def get_create_fields(
             description=(
                 "The issue type ID (from get_project_issue_types). "
                 "Example: '10002' for Task."
-            )
+            ),
+            pattern=NUMERIC_ID_PATTERN,
         ),
     ],
 ) -> str:
@@ -3404,7 +3671,9 @@ async def get_create_fields(
     """
     jira = await get_jira_fetcher(ctx)
     fields = []
-    for field in jira.get_create_fields(project_key, issue_type_id):
+    for field in await run_fetcher_call(
+        jira.get_create_fields, project_key, issue_type_id
+    ):
         field_id = field.get("fieldId") or field.get("key")
         fields.append(
             {
@@ -3433,7 +3702,7 @@ async def get_project_versions(
 ) -> str:
     """Get all fix versions for a specific Jira project."""
     jira = await get_jira_fetcher(ctx)
-    versions = jira.get_project_versions(project_key)
+    versions = await run_fetcher_call(jira.get_project_versions, project_key)
     return json.dumps(versions, indent=2, ensure_ascii=False)
 
 
@@ -3453,7 +3722,7 @@ async def get_project_components(
 ) -> str:
     """Get all components for a specific Jira project."""
     jira = await get_jira_fetcher(ctx)
-    components = jira.get_project_components(project_key)
+    components = await run_fetcher_call(jira.get_project_components, project_key)
     return json.dumps(components, indent=2, ensure_ascii=False)
 
 
@@ -3487,7 +3756,9 @@ async def get_all_projects(
     """
     try:
         jira = await get_jira_fetcher(ctx)
-        projects = jira.get_all_projects(include_archived=include_archived)
+        projects = await run_fetcher_call(
+            jira.get_all_projects, include_archived=include_archived
+        )
     except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
         error_message = ""
         log_level = logging.ERROR
@@ -3580,7 +3851,8 @@ async def search_projects(
                 pid.strip() for pid in current_project_ids.split(",") if pid.strip()
             ]
 
-        projects = jira.search_projects(
+        projects = await run_fetcher_call(
+            jira.search_projects,
             query=query,
             max_results=max_results,
             current_project_ids=parsed_ids,
@@ -3638,7 +3910,7 @@ async def get_project_fields(
     """
     try:
         jira = await get_jira_fetcher(ctx)
-        fields = jira.get_project_fields(project_key)
+        fields = await run_fetcher_call(jira.get_project_fields, project_key)
     except (MCPAtlassianAuthenticationError, HTTPError, OSError, ValueError) as e:
         error_message = ""
         log_level = logging.ERROR
@@ -3692,7 +3964,9 @@ async def get_service_desk_for_project(
         NotImplementedError: If connected to Jira Cloud (Server/DC only).
     """
     jira = await get_jira_fetcher(ctx)
-    service_desk = jira.get_service_desk_for_project(project_key=project_key)
+    service_desk = await run_fetcher_call(
+        jira.get_service_desk_for_project, project_key=project_key
+    )
     result = {
         "project_key": project_key.upper(),
         "service_desk": service_desk.to_simplified_dict() if service_desk else None,
@@ -3737,7 +4011,8 @@ async def get_service_desk_queues(
         NotImplementedError: If connected to Jira Cloud (Server/DC only).
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.get_service_desk_queues(
+    result = await run_fetcher_call(
+        jira.get_service_desk_queues,
         service_desk_id=service_desk_id,
         start_at=start_at,
         limit=limit,
@@ -3758,7 +4033,7 @@ async def get_queue_issues(
     ],
     queue_id: Annotated[
         str,
-        Field(description="Queue ID (e.g., '47')"),
+        Field(description="Queue ID (e.g., '47')", pattern=NUMERIC_ID_PATTERN),
     ],
     start_at: Annotated[
         int,
@@ -3788,7 +4063,8 @@ async def get_queue_issues(
         NotImplementedError: If connected to Jira Cloud (Server/DC only).
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.get_queue_issues(
+    result = await run_fetcher_call(
+        jira.get_queue_issues,
         service_desk_id=service_desk_id,
         queue_id=queue_id,
         start_at=start_at,
@@ -3828,7 +4104,8 @@ async def get_request_types(
         JSON string with request types and pagination metadata.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.get_request_types(
+    result = await run_fetcher_call(
+        jira.get_request_types,
         service_desk_id=service_desk_id,
         start_at=start_at,
         limit=limit,
@@ -3848,7 +4125,7 @@ async def get_request_type_fields(
     ],
     request_type_id: Annotated[
         str,
-        Field(description="Request type ID (e.g., '23')"),
+        Field(description="Request type ID (e.g., '23')", pattern=NUMERIC_ID_PATTERN),
     ],
 ) -> str:
     """Get field definitions for a Jira Service Management request type.
@@ -3862,7 +4139,8 @@ async def get_request_type_fields(
         JSON string with request type field definitions.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.get_request_type_fields(
+    result = await run_fetcher_call(
+        jira.get_request_type_fields,
         service_desk_id=service_desk_id,
         request_type_id=request_type_id,
     )
@@ -3882,7 +4160,7 @@ async def create_customer_request(
     ],
     request_type_id: Annotated[
         str,
-        Field(description="Request type ID (e.g., '23')"),
+        Field(description="Request type ID (e.g., '23')", pattern=NUMERIC_ID_PATTERN),
     ],
     request_field_values: Annotated[
         str,
@@ -3956,7 +4234,8 @@ async def create_customer_request(
     parsed_request_participants = _parse_request_participants(request_participants)
     parsed_attachments = _parse_attachments(attachments)
 
-    result = jira.create_customer_request(
+    result = await run_fetcher_call(
+        jira.create_customer_request,
         service_desk_id=service_desk_id,
         request_type_id=request_type_id,
         request_field_values=parsed_field_values,
@@ -4008,7 +4287,8 @@ async def create_version(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        version = jira.create_project_version(
+        version = await run_fetcher_call(
+            jira.create_project_version,
             project_key=project_key,
             name=name,
             start_date=start_date,
@@ -4092,7 +4372,8 @@ async def batch_create_versions(
             )
             continue
         try:
-            version = jira.create_project_version(
+            version = await run_fetcher_call(
+                jira.create_project_version,
                 project_key=project_key,
                 name=v["name"],
                 start_date=v.get("startDate"),
@@ -4118,7 +4399,10 @@ async def update_version(
     ctx: Context,
     version_id: Annotated[
         str,
-        Field(description="Numeric ID of the version to update (e.g. '10001')"),
+        Field(
+            description="Numeric ID of the version to update (e.g. '10001')",
+            pattern=NUMERIC_ID_PATTERN,
+        ),
     ],
     name: Annotated[
         str | None, Field(description="New name for the version", default=None)
@@ -4165,7 +4449,8 @@ async def update_version(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        version = jira.update_project_version(
+        version = await run_fetcher_call(
+            jira.update_project_version,
             version_id=version_id,
             name=name,
             description=description,
@@ -4204,7 +4489,7 @@ async def get_issue_proforma_forms(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        forms = jira.get_issue_forms(issue_key)
+        forms = await run_fetcher_call(jira.get_issue_forms, issue_key)
         forms_data = [form.to_simplified_dict() for form in forms]
         response_data = {"success": True, "forms": forms_data, "count": len(forms)}
     except Exception as e:
@@ -4266,7 +4551,7 @@ async def get_proforma_form_details(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        form = jira.get_form_details(issue_key, form_id)
+        form = await run_fetcher_call(jira.get_form_details, issue_key, form_id)
         if form is None:
             response_data = {
                 "success": False,
@@ -4397,7 +4682,9 @@ async def update_proforma_form_answers(
                 )
             processed_answers.append(processed_answer)
 
-        result = jira.update_form_answers(issue_key, form_id, processed_answers)
+        result = await run_fetcher_call(
+            jira.update_form_answers, issue_key, form_id, processed_answers
+        )
         response_data = {
             "success": True,
             "message": f"Successfully updated form {form_id} for issue {issue_key}",
@@ -4478,7 +4765,8 @@ async def get_issue_dates(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        result = jira.get_issue_dates(
+        result = await run_fetcher_call(
+            jira.get_issue_dates,
             issue_key=issue_key,
             include_created=True,
             include_updated=True,
@@ -4562,7 +4850,8 @@ async def get_issue_sla(
         if metrics:
             metrics_list = [m.strip() for m in metrics.split(",") if m.strip()]
 
-        result = jira.get_issue_sla(
+        result = await run_fetcher_call(
+            jira.get_issue_sla,
             issue_key=issue_key,
             metrics=metrics_list,
             working_hours_only=working_hours_only,
@@ -4625,7 +4914,8 @@ async def get_issue_development_info(
     """
     jira = await get_jira_fetcher(ctx)
     try:
-        result = jira.get_issue_development_info(
+        result = await run_fetcher_call(
+            jira.get_issue_development_info,
             issue_key=issue_key,
             application_type=application_type,
             data_type=data_type,
@@ -4689,7 +4979,8 @@ async def get_issues_development_info(
     # Parse CSV string into list
     keys_list = [k.strip() for k in issue_keys.split(",") if k.strip()]
     try:
-        results = jira.get_issues_development_info(
+        results = await run_fetcher_call(
+            jira.get_issues_development_info,
             issue_keys=keys_list,
             application_type=application_type,
             data_type=data_type,
@@ -4743,9 +5034,8 @@ async def get_project_epic_hierarchy(
         JSON string with grouped epic hierarchy.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.get_project_epic_hierarchy(
-        project_key=project_key,
-        max_epics=max_epics,
+    result = await run_fetcher_call(
+        jira.get_project_epic_hierarchy, project_key=project_key, max_epics=max_epics
     )
     return json.dumps(result, indent=2, ensure_ascii=False)
 
@@ -4791,7 +5081,8 @@ async def get_cross_project_dependencies(
         JSON string with cross-project dependency map.
     """
     jira = await get_jira_fetcher(ctx)
-    result = jira.get_cross_project_dependencies(
+    result = await run_fetcher_call(
+        jira.get_cross_project_dependencies,
         project_key=project_key,
         max_issues=max_issues,
     )

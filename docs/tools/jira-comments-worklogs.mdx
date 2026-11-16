@@ -16,7 +16,7 @@ Add a comment to a Jira issue.
 | `issue_key` | `string` | Yes | Jira issue key (e.g., 'PROJ-123', 'ACV2-642') |
 | `body` | `string` | Yes | Comment text in Markdown format |
 | `visibility` | `string` | No | (Optional) Comment visibility as JSON string (e.g. '`{"type":"group","value":"jira-users"}`') |
-| `public` | `boolean` | No | (Optional) For JSM/Service Desk issues only. Set to true for customer-visible comment, false for internal agent-only comment. Posted via the ServiceDesk API as a raw string; Jira Cloud renders it server-side and stores ADF (markdown observed to render on Cloud, without the client-side markdown-to-ADF guarantees of the regular comment path). Cannot be combined with visibility. If the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS, only public=false is accepted — public=true or omitting this field is rejected. Issues in such a project that are not JSM customer requests (e.g. an agent-created Task) have no portal audience and are exempt: they post through the ordinary comment path and ignore this field. |
+| `public` | `boolean` | No | (Optional) For JSM customer requests. Set to true for customer-visible comment, false for internal agent-only comment. Posted via the ServiceDesk API as a raw string; Jira Cloud renders it server-side and stores ADF (markdown observed to render on Cloud, without the client-side markdown-to-ADF guarantees of the regular comment path). Cannot be combined with visibility on a request. On an issue that is not a JSM customer request (e.g. a plain Jira Task) this field is ignored and an ordinary comment is posted. If the issue's project is listed in JIRA_INTERNAL_ONLY_PROJECTS, only public=false is accepted on a request — public=true or omitting this field is rejected. |
 **Example:**
 
 ```json
@@ -24,7 +24,9 @@ Add a comment to a Jira issue.
 ```
 
 <Tip>
-Supports Markdown formatting. On Jira Cloud, mention users with `[~accountid:ACCOUNT_ID]` or `@[Display Name](accountid:ACCOUNT_ID)`. Use `visibility` parameter for restricted comments (e.g., service desk internal notes). The generated schema lists `body`, but callers may use `comment` as an equivalent input alias for the same comment text.
+Supports Markdown formatting. On Jira Cloud, mention users with `[~accountid:ACCOUNT_ID]` or `@[Display Name](accountid:ACCOUNT_ID)`. Use `visibility` to restrict a comment to a Jira group or project role. The generated schema lists `body`, but callers may use `comment` as an equivalent input alias for the same comment text.
+
+For an ordinary comment, omit `public`. On a Jira Service Management customer request, setting `public` sends the comment through the ServiceDesk API: `public: false` posts an internal (agent-only) note and `public: true` a customer-visible reply. There is no fallback to the regular comment API if that call fails. On an issue that is not a JSM customer request, `public` is ignored and an ordinary comment is posted (any `visibility` restriction applies to it). `public` cannot be combined with `visibility` on a request. In a project listed in `JIRA_INTERNAL_ONLY_PROJECTS`, only `public: false` is accepted on a request.
 </Tip>
 
 ---
@@ -106,13 +108,14 @@ Only available on Jira Cloud.
 
 ### Get User Profile
 
-Retrieve profile information for a specific Jira user.
+Retrieve profile information for a Jira user.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `user_identifier` | `string` | Yes | Identifier for the user (e.g., email address 'user@example.com', username 'johndoe', account ID 'accountid:...', or key for Server/DC). |
+| `expand` | `string` | No | Optional comma-separated sections to include when user_identifier is 'me', e.g. 'groups' or 'groups,applicationRoles'. |
 
 ---
 

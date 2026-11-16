@@ -149,6 +149,44 @@ class TestIssuesMixin:
             "Newest comment",
         ]
 
+    def test_get_issue_with_rendered_fields_expand(
+        self, issues_mixin: IssuesMixin, make_issue_data: Any
+    ) -> None:
+        """Test that expand=renderedFields surfaces rendered HTML in the output."""
+        comments_data = {
+            "comments": [
+                {"id": "1", "body": "Old", "author": {"displayName": "A"}},
+                {"id": "2", "body": "*New*", "author": {"displayName": "B"}},
+            ]
+        }
+        issue_data = make_issue_data(
+            description="*Bold*", comment={"comments": comments_data["comments"]}
+        )
+        issue_data["renderedFields"] = {
+            "description": "<p><b>Bold</b></p>",
+            "summary": None,
+            "comment": {
+                "comments": [
+                    {"id": "1", "body": "<p>Old</p>"},
+                    {"id": "2", "body": "<p><b>New</b></p>"},
+                ]
+            },
+        }
+
+        issues_mixin.jira.get_issue.return_value = issue_data
+        issues_mixin.jira.issue_get_comments.return_value = comments_data
+
+        issue = issues_mixin.get_issue(
+            "TEST-123", expand="renderedFields", comment_limit=1
+        )
+
+        fields_param = issues_mixin.jira.get_issue.call_args.kwargs["fields"]
+        assert "rendered" in fields_param.split(",")
+        assert issue.to_simplified_dict()["rendered_fields"] == {
+            "description": "<p><b>Bold</b></p>",
+            "comment": [{"id": "2", "body": "<p><b>New</b></p>"}],
+        }
+
     def test_get_issue_includes_comment_field_when_comment_limit_positive(
         self, issues_mixin: IssuesMixin
     ):
@@ -439,6 +477,28 @@ class TestIssuesMixin:
         # Verify the components field was passed correctly
         assert issues_mixin.jira.create_issue.call_args[1]["fields"]["components"] == [
             {"name": "UI"}
+        ]
+
+    def test_create_issue_components_by_id_and_name(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Components can be names or {"id"} / {"name"} objects (#1796)."""
+        issues_mixin.jira.create_issue.return_value = {"id": "1", "key": "TEST-1"}
+        issues_mixin.jira.get_issue.return_value = make_issue_data()
+        issues_mixin.jira.issue_get_comments.return_value = {"comments": []}
+
+        issues_mixin.create_issue(
+            project_key="TEST",
+            summary="Test Issue",
+            issue_type="Bug",
+            components=["UI", {"id": "10688"}, {"name": "API"}, " ", {"x": 1}],
+        )
+
+        fields = issues_mixin.jira.create_issue.call_args[1]["fields"]
+        assert fields["components"] == [
+            {"name": "UI"},
+            {"id": "10688"},
+            {"name": "API"},
         ]
 
     def test_create_issue_multiple_components(

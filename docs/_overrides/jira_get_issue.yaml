@@ -4,5 +4,7 @@ tips: |
   Use `fields: "*all"` to get all fields including custom ones. Use `expand: "renderedFields"` for rendered HTML content. Use `include: "all"` to inline common enrichments that otherwise require separate tool calls. The response includes `browse_url`, a direct link to the issue in the Jira web UI.
 
   Set `use_display_names: true` to get human-readable keys for custom fields instead of opaque IDs like `customfield_XXXXX`. If a display name conflicts with another output key, that custom field keeps its raw ID so no value is lost.
+
+  The `environment` system field is returned (as plain text; Cloud ADF is converted) when you request it via `fields`, for example `fields: "summary,environment"` or `fields: "*all"`. It is not part of the default field set and is omitted when empty.
 platform_notes: |
   Custom field IDs differ between Cloud and Server/DC. Use `jira_search_fields` to discover field IDs.

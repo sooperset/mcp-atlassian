@@ -301,6 +301,83 @@ class TestJiraIssue:
         assert issue.environment == "Cloud ADF"
         assert issue.to_simplified_dict()["environment"] == "Cloud ADF"
 
+    @pytest.mark.parametrize(
+        "requested_fields", [None, "summary,description,rendered", "*all"]
+    )
+    def test_rendered_fields_surface_when_expanded(self, requested_fields):
+        """Test that ``renderedFields`` from expand=renderedFields reach the output."""
+        local_issue_data = {
+            "id": "1",
+            "key": "X-1",
+            "fields": {"summary": "s", "description": "*b*"},
+            "renderedFields": {"description": "<p><b>b</b></p>", "summary": None},
+        }
+        issue = JiraIssue.from_api_response(
+            local_issue_data, requested_fields=requested_fields
+        )
+
+        result = issue.to_simplified_dict()
+        assert result["description"] == "*b*"
+        assert result["rendered_fields"] == {"description": "<p><b>b</b></p>"}
+
+    def test_rendered_fields_respect_requested_fields(self):
+        """Test that rendered values are limited to the requested fields."""
+        local_issue_data = {
+            "id": "1",
+            "key": "X-1",
+            "fields": {"summary": "s", "environment": "prod"},
+            "renderedFields": {
+                "description": "<p>d</p>",
+                "environment": "<p>prod</p>",
+            },
+        }
+        issue = JiraIssue.from_api_response(
+            local_issue_data, requested_fields="summary,environment"
+        )
+
+        assert issue.to_simplified_dict()["rendered_fields"] == {
+            "environment": "<p>prod</p>"
+        }
+
+    def test_rendered_comments_match_issue_comments(self):
+        """Test that rendered comments keep id and HTML body for kept comments."""
+        author = {"displayName": "A", "accountId": "1"}
+        local_issue_data = {
+            "id": "1",
+            "key": "X-1",
+            "fields": {
+                "summary": "s",
+                "comment": {
+                    "comments": [
+                        {"id": "20", "body": "*new*", "author": author},
+                    ]
+                },
+            },
+            "renderedFields": {
+                "comment": {
+                    "comments": [
+                        {"id": "10", "body": "<p>old</p>", "author": author},
+                        {"id": "20", "body": "<p><b>new</b></p>", "author": author},
+                    ],
+                    "total": 2,
+                },
+            },
+        }
+        issue = JiraIssue.from_api_response(
+            local_issue_data, requested_fields="summary,comment"
+        )
+
+        assert issue.to_simplified_dict()["rendered_fields"] == {
+            "comment": [{"id": "20", "body": "<p><b>new</b></p>"}]
+        }
+
+    def test_rendered_fields_absent_without_expand(self, jira_issue_data):
+        """Test that the output is unchanged when renderedFields is not returned."""
+        issue = JiraIssue.from_api_response(jira_issue_data)
+
+        assert issue.rendered_fields == {}
+        assert "rendered_fields" not in issue.to_simplified_dict()
+
     def test_from_api_response_builds_browse_url(self, jira_issue_data):
         """Test creating a browser URL from the configured Jira base URL."""
         issue = JiraIssue.from_api_response(

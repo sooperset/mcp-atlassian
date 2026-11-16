@@ -1,15 +1,34 @@
 """Module for Confluence label operations."""
 
 import logging
+from typing import Any
 
 from ..models.confluence import ConfluenceLabel
 from .client import ConfluenceClient
+from .v2_adapter import ConfluenceV2Adapter
 
 logger = logging.getLogger("mcp-atlassian")
 
 
 class LabelsMixin(ConfluenceClient):
     """Mixin for Confluence label operations."""
+
+    @property
+    def _v2_adapter(self) -> ConfluenceV2Adapter | None:
+        """Get the v2 API adapter for Cloud OAuth.
+
+        Confluence Cloud has removed the v1 label read endpoint from the OAuth
+        gateway (410 Gone), so label reads go through v2 there.
+
+        Returns:
+            ConfluenceV2Adapter instance if OAuth is configured on Cloud,
+            None otherwise.
+        """
+        if self.config.auth_type == "oauth" and self.config.is_cloud:
+            return ConfluenceV2Adapter(
+                session=self.confluence._session, base_url=self.confluence.url
+            )
+        return None
 
     def get_page_labels(self, page_id: str) -> list[ConfluenceLabel]:
         """
@@ -25,8 +44,12 @@ class LabelsMixin(ConfluenceClient):
             Exception: If there is an error getting the label
         """
         try:
-            # Get labels with expanded content
-            labels_response = self.confluence.get_page_labels(page_id=page_id)
+            v2_adapter = self._v2_adapter
+            labels_response: Any
+            if v2_adapter:
+                labels_response = v2_adapter.get_page_labels(page_id)
+            else:
+                labels_response = self.confluence.get_page_labels(page_id=page_id)
 
             # Process each label
             label_models = []

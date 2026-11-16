@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from mcp.server.auth.provider import (
+    AuthorizationParams,
     OAuthClientInformationFull,
     RegistrationError,
 )
@@ -65,6 +66,27 @@ def _redirect_target(uri: str) -> tuple[str, str, int | None, str] | None:
     return scheme, hostname, port, path.rstrip("/") or "/"
 
 
+# Dynamic client registration is unauthenticated and each record is kept,
+# so one record is bounded. Real client metadata is well under these limits.
+_MAX_CLIENT_NAME_CHARS = 256
+_MAX_CLIENT_METADATA_BYTES = 16 * 1024
+
+
+def _check_registration_size(client_info: OAuthClientInformationFull) -> None:
+    name = client_info.client_name or ""
+    if len(name) > _MAX_CLIENT_NAME_CHARS:
+        raise RegistrationError(
+            "invalid_client_metadata",
+            f"client_name is longer than {_MAX_CLIENT_NAME_CHARS} characters",
+        )
+    size = len(client_info.model_dump_json(exclude_none=True).encode())
+    if size > _MAX_CLIENT_METADATA_BYTES:
+        raise RegistrationError(
+            "invalid_client_metadata",
+            f"Client metadata is larger than {_MAX_CLIENT_METADATA_BYTES} bytes",
+        )
+
+
 def _callback_uri(base_url: str, redirect_path: str) -> str:
     """Build the proxy's callback URI from its public base URL and route."""
     parsed = urlsplit(base_url)
@@ -92,6 +114,7 @@ class HardenedOAuthProxy(OAuthProxy):
         )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        _check_registration_size(client_info)
         for redirect_uri in client_info.redirect_uris or []:
             if _redirect_target(str(redirect_uri)) == self._proxy_callback_target:
                 raise RegistrationError(
@@ -126,6 +149,29 @@ class HardenedOAuthProxy(OAuthProxy):
 
         client_info = client_info.model_copy(update=updates)
         await super().register_client(client_info)
+
+    async def authorize(
+        self,
+        client: OAuthClientInformationFull,
+        params: AuthorizationParams,
+    ) -> str:
+        """Request the forced scopes from the upstream IdP on every authorization.
+
+        A client may request a subset of its registered scopes, for example
+        one that registered before the operator extended the scope list.
+        Without this override the upstream IdP issues a token that lacks the
+        missing scopes, and the tools that need them fail.
+        """
+        if self._forced_scopes is not None:
+            requested = params.scopes or []
+            if set(requested) != set(self._forced_scopes):
+                logger.info(
+                    "Authorize requested scope %s; enforcing %s",
+                    requested,
+                    self._forced_scopes,
+                )
+            params = params.model_copy(update={"scopes": list(self._forced_scopes)})
+        return await super().authorize(client, params)
 
 
 __all__ = ["HardenedOAuthProxy", "parse_env_list"]

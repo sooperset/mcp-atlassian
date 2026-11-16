@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from typing import Any
 
 import pytest
 import requests
@@ -326,8 +327,16 @@ class TestJiraCloudTransitions:
         )
         resource_tracker.add_jira_issue(issue.key)
 
-        transitions = jira_fetcher.get_transitions(issue.key)
+        transitions = jira_fetcher.get_available_transitions(
+            issue.key, expand_fields=True
+        )
         assert len(transitions) > 0
+        assert all(isinstance(t["has_screen"], bool) for t in transitions)
+        for transition in transitions:
+            assert all(
+                field.get("key") and field.get("name")
+                for field in transition.get("required_fields", [])
+            )
 
         # Find "In Progress" transition or use first available
         target_id = None
@@ -338,15 +347,40 @@ class TestJiraCloudTransitions:
                 break
         if target_id is None:
             target_id = transitions[0]["id"]
+        target = next(t for t in transitions if t["id"] == target_id)
+
+        # Plain text inside update_data must be converted to ADF for REST v3.
+        # Jira allows one comment operation per transition, so the comment
+        # goes through update_data instead of the comment argument.
+        update_data: dict[str, Any] = {
+            "comment": [{"add": {"body": f"Cloud transition update comment {uid}"}}]
+        }
+        # Jira accepts a worklog only when the transition has a screen that
+        # carries the field; the shared Cloud project uses screenless transitions.
+        if target["has_screen"]:
+            update_data["worklog"] = [
+                {
+                    "add": {
+                        "timeSpent": "1m",
+                        "comment": f"Cloud transition worklog {uid}",
+                    }
+                }
+            ]
 
         jira_fetcher.transition_issue(
             issue.key,
             target_id,
-            comment=f"Cloud transition comment {uid}",
+            update_data=update_data,
         )
 
         updated = jira_fetcher.get_issue(issue.key)
         assert updated.status is not None
+        if target["has_screen"]:
+            # Jira Cloud drops comment and worklog updates on screenless
+            # transitions, so the text is only checked when a screen exists.
+            comments = jira_fetcher.get_issue_comments(issue.key)
+            bodies = " ".join(str(c.get("body", "")) for c in comments)
+            assert f"Cloud transition update comment {uid}" in bodies
 
 
 class TestJiraCloudJSMComments:
