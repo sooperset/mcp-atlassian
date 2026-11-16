@@ -705,7 +705,7 @@ class PagesMixin(ConfluenceClient):
             start: The starting index for pagination
             limit: Maximum number of pages to return
             convert_to_markdown: When True, returns content in markdown format,
-                               otherwise returns raw HTML (keyword-only)
+                otherwise returns unchanged Confluence storage XHTML (keyword-only)
 
         Returns:
             List of ConfluencePage models containing page content and metadata
@@ -723,15 +723,15 @@ class PagesMixin(ConfluenceClient):
                     f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
                 )
                 content = ""
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=str(page.get("id", "")),
-            )
-
-            # Use the appropriate content format based on the convert_to_markdown flag
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            if convert_to_markdown:
+                _, page_content = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=str(page.get("id", "")),
+                )
+            else:
+                page_content = content
 
             # Ensure space information is included
             if "space" not in page:
@@ -1168,7 +1168,7 @@ class PagesMixin(ConfluenceClient):
             limit: Maximum number of child items to return
             expand: Fields to expand in the response
             convert_to_markdown: When True, returns content in markdown format,
-                               otherwise returns raw HTML (keyword-only)
+                otherwise returns unchanged Confluence storage XHTML (keyword-only)
             include_folders: When True, also returns child folders (keyword-only)
 
         Returns:
@@ -1528,8 +1528,8 @@ class PagesMixin(ConfluenceClient):
         Args:
             page_id: The ID of the page to get history for
             version: The version to get history for
-            convert_to_markdown: When True, returns content in
-                markdown format
+            convert_to_markdown: When True, returns markdown; otherwise returns
+                unchanged Confluence storage XHTML.
 
         Returns:
             ConfluencePage model containing the page history
@@ -1581,15 +1581,16 @@ class PagesMixin(ConfluenceClient):
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=str(page.get("id", "")),
-                attachments=page_attachments,
-            )
-
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            if convert_to_markdown:
+                _, page_content = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=str(page.get("id", "")),
+                    attachments=page_attachments,
+                )
+            else:
+                page_content = content
 
             emoji = self._get_page_emoji(page_id)
             return ConfluencePage.from_api_response(
