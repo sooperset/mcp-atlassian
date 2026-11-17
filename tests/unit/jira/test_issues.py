@@ -1952,6 +1952,38 @@ class TestIssuesMixin:
         sent_fields = payload["issueUpdates"][0]["fields"]
         assert sent_fields["customfield_10078"]["type"] == "doc"
 
+    @pytest.mark.parametrize("parent", ["T-1", {"key": "T-1"}])
+    def test_batch_subtask_parent(self, issues_mixin: IssuesMixin, parent):
+        """Top-level parent (key string or dict) is sent in the payload."""
+        issues_mixin.jira.create_issues.return_value = {
+            "issues": [{"id": "1", "key": "T-2"}],
+            "errors": [],
+        }
+        issues_mixin.jira.get_issue.return_value = {
+            "id": "1",
+            "key": "T-2",
+            "fields": {"summary": "S"},
+        }
+        issues_mixin.batch_create_issues(
+            [
+                {
+                    "project_key": "T",
+                    "summary": "S",
+                    "issue_type": "Unteraufgabe",
+                    "parent": parent,
+                }
+            ]
+        )
+        sent = issues_mixin.jira.create_issues.call_args[0][0]
+        assert sent[0]["fields"]["parent"] == {"key": "T-1"}
+
+    def test_batch_subtask_no_parent(self, issues_mixin: IssuesMixin):
+        """Sub-task without parent raises."""
+        with pytest.raises(ValueError, match="parent"):
+            issues_mixin.batch_create_issues(
+                [{"project_key": "T", "summary": "S", "issue_type": "Sub-task"}]
+            )
+
     def test_batch_create_issues_validate_only(self, issues_mixin: IssuesMixin):
         """Test batch_create_issues with validate_only=True."""
         # Setup test data

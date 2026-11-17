@@ -2128,6 +2128,9 @@ async def batch_create_issues(
                 "- description (optional): Issue description in Markdown format\n"
                 "- assignee (optional): Assignee username or email\n"
                 "- components (optional): Array of component names\n"
+                "- parent (optional): Parent issue key for subtasks or hierarchy (e.g., 'PROJ-1')\n"
+                "- additional_fields (optional): Object or JSON string of extra "
+                'fields, e.g. {"parent": "PROJ-1"} for sub-tasks\n'
                 "Example: [\n"
                 '  {"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"},\n'
                 '  {"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]}\n'
@@ -2166,6 +2169,23 @@ async def batch_create_issues(
         raise ValueError("Invalid JSON in issues")
     except Exception as e:
         raise ValueError(f"Invalid input for issues: {e}") from e
+
+    # Unpack per-item additional_fields; reject conflicting values.
+    for i, item in enumerate(issues_list):
+        if isinstance(item, dict) and "additional_fields" in item:
+            extra = _parse_additional_fields(
+                item.pop("additional_fields"),
+                param_name=f"issues[{i}].additional_fields",
+            )
+            for key, value in extra.items():
+                if key not in item or item[key] is None or item[key] == "":
+                    item[key] = value
+                elif item[key] != value:
+                    raise ValueError(
+                        f"'{key}' is set both on issues[{i}] and in "
+                        f"issues[{i}].additional_fields with different values. "
+                        "Set it in one place."
+                    )
 
     # Create issues in batch
     created_issues = await run_fetcher_call(

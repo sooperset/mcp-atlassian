@@ -1313,6 +1313,51 @@ async def test_batch_create_issues(jira_client, mock_jira_fetcher):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("extra", ['{"parent": "T-1"}', {"parent": "T-1"}])
+async def test_batch_additional_fields(jira_client, mock_jira_fetcher, extra):
+    """Per-item additional_fields (str or dict) is unpacked into the item."""
+    item = {
+        "project_key": "T",
+        "summary": "S",
+        "issue_type": "Sub-task",
+        "additional_fields": extra,
+    }
+    await jira_client.call_tool(
+        "jira_batch_create_issues", {"issues": json.dumps([item])}
+    )
+    sent = mock_jira_fetcher.batch_create_issues.call_args[0][0][0]
+    assert sent["parent"] == "T-1"
+    assert "additional_fields" not in sent
+
+
+@pytest.mark.anyio
+async def test_batch_additional_fields_bad(jira_client):
+    """Invalid per-item additional_fields raises a clear error."""
+    item = {"project_key": "T", "summary": "S", "issue_type": "Task"}
+    item["additional_fields"] = "{bad"
+    with pytest.raises(ToolError, match="additional_fields is not valid JSON"):
+        await jira_client.call_tool(
+            "jira_batch_create_issues", {"issues": json.dumps([item])}
+        )
+
+
+@pytest.mark.anyio
+async def test_batch_parent_conflict(jira_client):
+    """Disagreeing top-level and additional_fields parent raises ValueError."""
+    item = {
+        "project_key": "T",
+        "summary": "S",
+        "issue_type": "Sub-task",
+        "parent": "T-1",
+        "additional_fields": '{"parent": "T-2"}',
+    }
+    with pytest.raises(ToolError, match="different values"):
+        await jira_client.call_tool(
+            "jira_batch_create_issues", {"issues": json.dumps([item])}
+        )
+
+
+@pytest.mark.anyio
 async def test_batch_create_issues_invalid_json(jira_client):
     """Test error handling for invalid JSON in batch issue creation."""
     with pytest.raises(ToolError) as excinfo:
