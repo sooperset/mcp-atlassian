@@ -6,8 +6,9 @@ both the default HTTPAdapter and any service-specific adapters (e.g.
 SSLIgnoreAdapter mounted by configure_ssl_verification) get the same retry
 behavior. Call AFTER configure_ssl_verification.
 
-The optional retry policy, concurrency cap, rate limiter, and circuit breaker
-are disabled by default and gated behind env vars. The send wrappers patch
+Reads (GET/HEAD/OPTIONS) are retried a small, bounded number of times by
+default; the concurrency cap, rate limiter, and circuit breaker are disabled by
+default and gated behind env vars. The send wrappers patch
 adapter.send in place (rather than replacing the adapter), so they compose with
 whatever adapter is mounted.
 """
@@ -15,9 +16,12 @@ whatever adapter is mounted.
 import logging
 import threading
 import time
+from collections import OrderedDict
+from typing import Any
 
 from requests import Session
 from requests.adapters import BaseAdapter, HTTPAdapter
+from urllib3.exceptions import InvalidHeader
 from urllib3.util.retry import Retry
 
 from .env import (
@@ -26,17 +30,65 @@ from .env import (
     is_env_extended_truthy,
     is_env_truthy,
 )
+from .urls import upstream_key
 
 logger = logging.getLogger("mcp-atlassian.http")
 
-DEFAULT_RETRY_TOTAL = 0
+DEFAULT_RETRY_TOTAL = 3
 DEFAULT_RETRY_BACKOFF = 1.0
+DEFAULT_RETRY_MAX_RETRY_AFTER = 60
 DEFAULT_RETRY_STATUSES = (429, 502, 503, 504)
 _READ_METHODS = frozenset(["GET", "HEAD", "OPTIONS"])
 _ALL_METHODS = frozenset(["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"])
 _THROTTLED_ATTR = "_mcp_atlassian_throttled"
 _RATE_LIMITED_ATTR = "_mcp_atlassian_rate_limited"
 _CIRCUIT_BREAKER_ATTR = "_mcp_atlassian_circuit_breaker"
+_DEFAULT_TIMEOUT_ATTR = "_mcp_atlassian_default_timeout"
+
+
+class _BoundedRetry(Retry):
+    """urllib3 Retry whose ``Retry-After`` waits are bounded on both sides.
+
+    * Cap: a server ``Retry-After`` longer than ``max_retry_after`` seconds is
+      cut down to it (urllib3's own ceiling is six hours).
+    * Floor: when the header is present the wait is never shorter than the
+      exponential backoff, nor than ``backoff_factor``, so ``Retry-After: 0``
+      cannot cause zero-delay retries (the #1543 storm).
+    * An unparseable header falls back to plain backoff instead of raising.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        max_retry_after: float = DEFAULT_RETRY_MAX_RETRY_AFTER,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.max_retry_after = max_retry_after
+
+    def new(self, **kw: Any) -> "_BoundedRetry":
+        # Retry.new() rebuilds via type(self)(**params) with only the stock
+        # parameters; carry the cap over to each incremented copy.
+        new_retry = super().new(**kw)
+        new_retry.max_retry_after = self.max_retry_after
+        return new_retry
+
+    def get_retry_after(self, response: Any) -> float | None:
+        try:
+            return super().get_retry_after(response)
+        except InvalidHeader:
+            logger.debug("Ignoring invalid Retry-After header; using backoff")
+            return None
+
+    def sleep_for_retry(self, response: Any = None) -> bool:
+        retry_after = self.get_retry_after(response)
+        if retry_after is None:
+            return False
+        floor = max(self.backoff_factor, self.get_backoff_time())
+        delay = max(min(retry_after, self.max_retry_after), floor)
+        if delay > 0:
+            time.sleep(delay)
+        return True
 
 
 class CircuitBreakerOpenError(Exception):
@@ -96,6 +148,7 @@ class _CircuitBreaker:
         self.failures = 0
         self.opened_at: float | None = None
         self.probe_in_flight = False
+        self.in_use = 0  # requests in flight; guarded by the registry lock
         self.lock = threading.Lock()
 
     def before_send(self) -> bool:
@@ -168,27 +221,42 @@ class _CircuitBreaker:
             )
 
 
-_circuit_breaker: _CircuitBreaker | None = None
+# One breaker per upstream site (see utils.urls.upstream_key): failures from
+# one caller's upstream must not stop requests to another upstream.
+# Least recently used first. Entries whose requests are in flight are never
+# evicted, so the size stays at MAX_CIRCUIT_BREAKERS plus at most the number of
+# concurrent requests.
+_circuit_breakers: OrderedDict[str, _CircuitBreaker] = OrderedDict()
 _circuit_breaker_init_lock = threading.Lock()
+MAX_CIRCUIT_BREAKERS = 1024
 
 
 def configure_retry(session: Session, *, service: str = "atlassian") -> None:
-    """Apply a urllib3 Retry policy to all adapters on the session.
+    """Apply a bounded urllib3 Retry policy to all adapters on the session.
+
+    Enabled by default with 3 retries for idempotent reads (GET/HEAD/OPTIONS).
+    This replaces atlassian-python-api's unbounded ``retry_with_header`` loop,
+    which callers must disable (see #1543), so this is the only retry layer.
 
     Env knobs:
-      ATLASSIAN_RETRY_TOTAL          (int,   default 0; <=0 disables)
+      ATLASSIAN_RETRY_TOTAL          (int,   default 3; <=0 disables retries)
       ATLASSIAN_RETRY_BACKOFF        (float, default 1.0 seconds — exponential factor)
       ATLASSIAN_RETRY_INCLUDE_WRITES (bool,  default false; if true also retries
                                      POST/PUT/PATCH/DELETE — only safe when the
                                      server is known to be idempotent for them)
       ATLASSIAN_RETRY_IGNORE_RETRY_AFTER (bool, default false; ignore the server's
                                      Retry-After header and always use exponential
-                                     backoff — enable for gateways that emit bogus
-                                     values such as ``Retry-After: 0``)
+                                     backoff)
+      ATLASSIAN_RETRY_MAX_RETRY_AFTER (int, default 60 seconds; longer Retry-After
+                                     values are capped to this)
 
-    Retries fire on 429, 502, 503, 504 and on connection errors. The Retry-After
-    header is respected when present, unless ATLASSIAN_RETRY_IGNORE_RETRY_AFTER
-    is set.
+    Retries fire on 429, 502, 503, 504 and on connection errors; other statuses
+    (including 401/403) are returned immediately. The Retry-After header is
+    honored up to ATLASSIAN_RETRY_MAX_RETRY_AFTER, and never waits less than the
+    exponential backoff, so ``Retry-After: 0`` cannot cause a tight loop.
+
+    Retries happen inside ``adapter.send``, so the circuit breaker and rate
+    limiter (which wrap ``send``) see one call per logical request.
     """
     total = get_int_env("ATLASSIAN_RETRY_TOTAL", DEFAULT_RETRY_TOTAL)
     if total <= 0:
@@ -199,7 +267,12 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
     include_writes = is_env_extended_truthy("ATLASSIAN_RETRY_INCLUDE_WRITES")
     methods = _ALL_METHODS if include_writes else _READ_METHODS
 
-    retry = Retry(
+    max_retry_after = max(
+        0,
+        get_int_env("ATLASSIAN_RETRY_MAX_RETRY_AFTER", DEFAULT_RETRY_MAX_RETRY_AFTER),
+    )
+
+    retry = _BoundedRetry(
         total=total,
         connect=total,
         read=total,
@@ -211,6 +284,7 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
             "ATLASSIAN_RETRY_IGNORE_RETRY_AFTER"
         ),
         raise_on_status=False,
+        max_retry_after=max_retry_after,
     )
 
     if not session.adapters:
@@ -223,12 +297,14 @@ def configure_retry(session: Session, *, service: str = "atlassian") -> None:
             adapter.max_retries = retry
 
     logger.debug(
-        "%s: retry configured total=%d backoff=%.2fs statuses=%s writes=%s",
+        "%s: retry configured total=%d backoff=%.2fs statuses=%s writes=%s "
+        "max_retry_after=%ds",
         service,
         total,
         backoff,
         DEFAULT_RETRY_STATUSES,
         include_writes,
+        max_retry_after,
     )
 
 
@@ -359,48 +435,87 @@ def configure_rate_limit(session: Session, *, service: str = "atlassian") -> Non
     logger.info("%s: rate limit %.2f rps applied", service, rate)
 
 
-def _get_circuit_breaker(threshold: int, cooldown: float) -> _CircuitBreaker:
-    global _circuit_breaker
-    if _circuit_breaker is not None:
-        return _circuit_breaker
+def _checkout_circuit_breaker(
+    key: str, threshold: int, cooldown: float
+) -> _CircuitBreaker:
+    """Return the breaker for one upstream key, marked in use by the caller."""
     with _circuit_breaker_init_lock:
-        if _circuit_breaker is None:
-            _circuit_breaker = _CircuitBreaker(threshold, cooldown)
-    return _circuit_breaker
+        breaker = _circuit_breakers.get(key)
+        if breaker is None:
+            breaker = _CircuitBreaker(threshold, cooldown)
+            _circuit_breakers[key] = breaker
+        else:
+            _circuit_breakers.move_to_end(key)
+        breaker.in_use += 1
+        _evict_idle_circuit_breakers()
+        return breaker
+
+
+def _release_circuit_breaker(breaker: _CircuitBreaker) -> None:
+    with _circuit_breaker_init_lock:
+        breaker.in_use -= 1
+        _evict_idle_circuit_breakers()
+
+
+def _evict_idle_circuit_breakers() -> None:
+    """Drop least recently used idle breakers past the limit (lock held)."""
+    excess = len(_circuit_breakers) - MAX_CIRCUIT_BREAKERS
+    if excess <= 0:
+        return
+    for old_key in list(_circuit_breakers):
+        if excess <= 0:
+            break
+        if _circuit_breakers[old_key].in_use == 0:
+            del _circuit_breakers[old_key]
+            excess -= 1
 
 
 def _reset_circuit_breaker_for_tests() -> None:
-    global _circuit_breaker
     with _circuit_breaker_init_lock:
-        _circuit_breaker = None
+        _circuit_breakers.clear()
+
+
+def _request_upstream(args: tuple[object, ...], kwargs: dict[str, object]) -> str:
+    request = args[0] if args else kwargs.get("request")
+    url = getattr(request, "url", None)
+    return upstream_key(url) if isinstance(url, str) else ""
 
 
 def _wrap_adapter_circuit_breaker(
-    adapter: BaseAdapter, breaker: _CircuitBreaker
+    adapter: BaseAdapter, threshold: int, cooldown: float
 ) -> None:
     if getattr(adapter, _CIRCUIT_BREAKER_ATTR, False):
         return
     original_send = adapter.send
 
     def breaker_send(*args: object, **kwargs: object) -> object:
-        probe = breaker.before_send()
+        breaker = _checkout_circuit_breaker(
+            _request_upstream(args, kwargs), threshold, cooldown
+        )
         try:
-            response = original_send(*args, **kwargs)
-        except Exception:
-            breaker.on_exception(probe=probe)
-            raise
-        status = getattr(response, "status_code", None)
-        breaker.on_response(status if isinstance(status, int) else None, probe=probe)
-        return response
+            probe = breaker.before_send()
+            try:
+                response = original_send(*args, **kwargs)
+            except Exception:
+                breaker.on_exception(probe=probe)
+                raise
+            status = getattr(response, "status_code", None)
+            breaker.on_response(
+                status if isinstance(status, int) else None, probe=probe
+            )
+            return response
+        finally:
+            _release_circuit_breaker(breaker)
 
     adapter.send = breaker_send  # type: ignore[method-assign]
     setattr(adapter, _CIRCUIT_BREAKER_ATTR, True)
 
 
 def configure_circuit_breaker(session: Session, *, service: str = "atlassian") -> None:
-    """Trip a process-wide circuit breaker after N consecutive 429/503 responses.
+    """Trip a circuit breaker after N consecutive 429/503 responses.
 
-    Disabled by default. When tripped, in-flight Sessions raise
+    Disabled by default. Breaker state is kept per upstream site, so one
+    site's 429/503 responses do not block requests to other sites. When tripped, in-flight Sessions raise
     CircuitBreakerOpenError immediately instead of waiting on the per-request
     timeout (default 75s) for each additional doomed request.
 
@@ -415,17 +530,49 @@ def configure_circuit_breaker(session: Session, *, service: str = "atlassian") -
         logger.debug("%s: circuit breaker disabled", service)
         return
     cooldown = get_float_env("ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN", 30.0)
-    breaker = _get_circuit_breaker(threshold, cooldown)
     if not session.adapters:
         return
     for adapter in session.adapters.values():
-        _wrap_adapter_circuit_breaker(adapter, breaker)
+        _wrap_adapter_circuit_breaker(adapter, threshold, cooldown)
     logger.info(
         "%s: circuit breaker armed threshold=%d cooldown=%.1fs",
         service,
         threshold,
         cooldown,
     )
+
+
+def _wrap_adapter_default_timeout(adapter: BaseAdapter, timeout: float) -> None:
+    if getattr(adapter, _DEFAULT_TIMEOUT_ATTR, False):
+        return
+    original_send = adapter.send
+
+    def send_with_default_timeout(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = timeout
+        return original_send(*args, **kwargs)
+
+    adapter.send = send_with_default_timeout  # type: ignore[method-assign, assignment]
+    setattr(adapter, _DEFAULT_TIMEOUT_ATTR, True)
+
+
+def configure_default_timeout(
+    session: Session, timeout: float, *, service: str = "atlassian"
+) -> None:
+    """Apply the service timeout to requests sent without an explicit timeout.
+
+    ``requests`` waits forever when no timeout is given. atlassian-python-api
+    passes its configured timeout on its own calls, but direct
+    ``client._session.get/post/put`` calls (attachments, permissions,
+    analytics, ...) bypass it, so a stalled connect or read blocks the caller
+    indefinitely — and, from an async tool handler, the whole event loop.
+    Explicit per-call timeouts are kept.
+    """
+    if not session.adapters:
+        return
+    for adapter in session.adapters.values():
+        _wrap_adapter_default_timeout(adapter, timeout)
+    logger.debug("%s: default request timeout=%ss", service, timeout)
 
 
 def format_rate_limit_error(http_err: object, *, service: str) -> str:

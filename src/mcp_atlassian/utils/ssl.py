@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from requests import PreparedRequest, Response
+from requests.adapters import HTTPAdapter
 from requests.sessions import Session
 from requests.utils import should_bypass_proxies
 from urllib3.poolmanager import PoolManager
@@ -196,6 +197,29 @@ class SSLIgnoreAdapter(NoProxyAdapter):
         )
 
 
+def _mount_for_origin(session: Session, url: str, adapter: HTTPAdapter) -> None:
+    """Mount ``adapter`` for exactly the host and port of ``url``, both schemes.
+
+    Each prefix ends in "/", so "https://host" cannot also match
+    "https://host.other.example" or "https://host:8443". The default port is
+    mounted with and without its number, so "https://host/" and
+    "https://host:443/" (the same origin) get the same adapter.
+    """
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if not host:
+        return
+    if ":" in host:  # IPv6 literal
+        host = f"[{host}]"
+    port = parsed.port
+    for scheme, default in (("https", 443), ("http", 80)):
+        if port is None or port == default:
+            session.mount(f"{scheme}://{host}/", adapter)
+            session.mount(f"{scheme}://{host}:{default}/", adapter)
+        else:
+            session.mount(f"{scheme}://{host}:{port}/", adapter)
+
+
 def configure_proxy_bypass(
     service_name: str,
     url: str,
@@ -221,13 +245,8 @@ def configure_proxy_bypass(
         logger.debug(
             f"{service_name}: Configuring proxy bypass adapter for NO_PROXY={no_proxy}"
         )
-        # Get the domain from the configured URL
-        domain = urlparse(url).netloc
-
-        # Mount the adapter to handle requests to this domain
-        adapter = NoProxyAdapter(no_proxy=no_proxy)
-        session.mount(f"https://{domain}", adapter)
-        session.mount(f"http://{domain}", adapter)
+        # Mount the adapter to handle requests to this host and port
+        _mount_for_origin(session, url, NoProxyAdapter(no_proxy=no_proxy))
 
 
 def configure_ssl_verification(
@@ -239,7 +258,7 @@ def configure_ssl_verification(
     client_key: str | None = None,
     client_key_password: str | None = None,
     no_proxy: str | None = None,
-) -> None:
+) -> bool | str:
     """Configure SSL verification and client certificates for a specific service.
 
     If SSL verification is disabled, this function will configure the session
@@ -262,6 +281,13 @@ def configure_ssl_verification(
         client_key_password: Password for encrypted private key (optional)
         no_proxy: The no-proxy list to honor on the mounted adapter. Defaults to
             the ``NO_PROXY`` environment variable when not provided.
+
+    Returns:
+        The effective requests ``verify`` value for this service: ``False``
+        when verification is disabled, the operator's CA bundle path when one
+        is configured, else ``True``. Callers must propagate this to wrappers
+        that pass ``verify=`` per request (atlassian-python-api does), because
+        a per-request value overrides ``session.verify``.
     """
     no_proxy = no_proxy or os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
     # Configure client certificate if provided (must be actual string paths).
@@ -290,24 +316,61 @@ def configure_ssl_verification(
             key_configured,
         )
 
+    effective_verify: bool | str = ssl_verify
+    if ssl_verify:
+        # PAT and OAuth sessions run with trust_env=False (so .netrc cannot
+        # override explicit credentials), which also stops requests from
+        # honoring REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE. Resolve the bundle
+        # explicitly so a private CA keeps working on those sessions — e.g.
+        # when the OS trust store injection is disabled for the in-app TLS
+        # listener.
+        # These env vars are operator-only process configuration; nothing in
+        # the per-request (multi-tenant) path may write them.
+        ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get(
+            "CURL_CA_BUNDLE"
+        )
+        if ca_bundle:
+            # requests accepts a CA bundle file or an OpenSSL-style hashed
+            # CA directory here; accept both (including symlinks to either),
+            # but reject special files — a FIFO would block the TLS layer
+            # instead of failing fast.
+            if not (os.path.isfile(ca_bundle) or os.path.isdir(ca_bundle)):
+                # Log the path server-side only; the raised message can reach
+                # the MCP client via tool errors.
+                logger.error(
+                    "%s CA bundle from REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE is "
+                    "not a regular file or directory: %r",
+                    service_name,
+                    ca_bundle,
+                )
+                raise ValueError(
+                    f"{service_name} CA bundle configuration is invalid; "
+                    "see server logs."
+                )
+            session.verify = ca_bundle
+            effective_verify = ca_bundle
+            logger.debug(
+                "%s outbound SSL verification uses CA bundle: %s",
+                service_name,
+                ca_bundle,
+            )
+
     if not ssl_verify:
         logger.warning(
             f"{service_name} SSL verification disabled. This is insecure and "
             "should only be used in testing environments."
         )
 
-        # Mount the SSL ignore adapter which also handles NO_PROXY
-        domain = urlparse(url).netloc
-        adapter = SSLIgnoreAdapter(no_proxy=no_proxy)
-        session.mount(f"https://{domain}", adapter)
-        session.mount(f"http://{domain}", adapter)
+        # Mount the SSL ignore adapter (which also handles NO_PROXY) for this
+        # exact origin only. Every other destination goes through the SSRF
+        # pinning adapter, which verifies certificates off this origin.
+        _mount_for_origin(session, url, SSLIgnoreAdapter(no_proxy=no_proxy))
     else:
         # Even with SSL verification enabled, we may need to handle NO_PROXY
         if no_proxy:
             logger.debug(
                 f"{service_name}: Mounting proxy bypass adapter for NO_PROXY={no_proxy}"
             )
-            domain = urlparse(url).netloc
-            adapter = NoProxyAdapter(no_proxy=no_proxy)
-            session.mount(f"https://{domain}", adapter)
-            session.mount(f"http://{domain}", adapter)
+            _mount_for_origin(session, url, NoProxyAdapter(no_proxy=no_proxy))
+
+    return effective_verify

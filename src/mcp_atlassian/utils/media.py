@@ -4,12 +4,17 @@ import base64
 import logging
 import mimetypes
 from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Maximum attachment size for inline download (50 MB).
 # Used by both Jira and Confluence server tools to gate in-memory transfers.
 ATTACHMENT_MAX_BYTES: int = 50 * 1024 * 1024
+
+# Total attachment bytes one tool call may hold in memory across all the
+# attachments it returns inline (see AttachmentBudget).
+ATTACHMENT_CALL_MAX_BYTES: int = ATTACHMENT_MAX_BYTES
 
 _IMAGE_MIME_TYPES = frozenset(
     {
@@ -66,6 +71,66 @@ def is_image_attachment(
     return False, media_type or "application/octet-stream"
 
 
+class AttachmentTooLargeError(Exception):
+    """A streamed attachment body passed the size limit before it ended."""
+
+    def __init__(self, bytes_read: int, max_bytes: int) -> None:
+        super().__init__(
+            f"Attachment body passed the {max_bytes} byte limit "
+            f"after {bytes_read} bytes; stopped reading"
+        )
+        self.bytes_read = bytes_read
+        self.max_bytes = max_bytes
+
+
+class AttachmentBudget:
+    """The attachment bytes one tool call may still hold in memory.
+
+    A tool that returns several attachments inline creates one budget, checks
+    each attachment with :meth:`refusal` before and after fetching it, and
+    :meth:`spend` s the bytes it keeps. Attachments past the budget are
+    reported instead of fetched, so one call holds at most
+    ``ATTACHMENT_CALL_MAX_BYTES`` however many attachments there are.
+    """
+
+    def __init__(self) -> None:
+        self.total = ATTACHMENT_CALL_MAX_BYTES
+        self.remaining = self.total
+
+    def refusal(self, size: int | None) -> str | None:
+        """Return why *size* bytes cannot be kept, or None if they can."""
+        if size is None or size <= self.remaining:
+            return None
+        limit = f"the {self.total // (1024 * 1024)} MB inline limit"
+        if self.remaining < self.total:
+            limit = f"the {self.remaining} bytes left of {limit} for one call"
+        return f"{size} bytes which exceeds {limit}."
+
+    def spend(self, size: int) -> None:
+        """Record that *size* bytes are kept."""
+        self.remaining -= size
+
+
+def read_capped(response: Any, max_bytes: int) -> bytes:
+    """Read a streamed response body, giving up once it passes ``max_bytes``.
+
+    Attachment metadata is checked before a download, but the body can be
+    larger than the metadata says. Stopping here bounds memory use by the
+    limit instead of by what the upstream sends.
+
+    Raises:
+        AttachmentTooLargeError: The body is larger than ``max_bytes``.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=8192):
+        total += len(chunk)
+        if total > max_bytes:
+            raise AttachmentTooLargeError(total, max_bytes)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def fetch_and_encode_attachment(
     fetch_fn: Callable[[str], bytes | None],
     url: str,
@@ -95,14 +160,23 @@ def fetch_and_encode_attachment(
         first two are ``None`` and *fetched_bytes* distinguishes
         the failure mode:
 
-        * ``fetched_bytes == 0`` -- fetch returned ``None`` or
-          raised an exception.
-        * ``fetched_bytes > 0``  -- downloaded data exceeded
-          *max_bytes* (the actual size is returned so callers can
-          report it).
+        * ``fetched_bytes == 0`` -- fetch returned ``None`` or raised
+          an exception other than ``AttachmentTooLargeError``.
+        * ``fetched_bytes > 0``  -- the attachment is too large: the
+          whole body was received and is larger than *max_bytes*, or
+          ``fetch_fn`` stopped at its own limit and raised
+          ``AttachmentTooLargeError``. The value is the number of
+          bytes received.
     """
     try:
         data_bytes = fetch_fn(url)
+    except AttachmentTooLargeError as exc:
+        logger.warning(
+            "Attachment '%s' passed the %d byte limit while downloading",
+            filename,
+            exc.max_bytes,
+        )
+        return None, None, exc.bytes_read
     except Exception:
         logger.warning(
             "Failed to fetch attachment '%s' from %s",

@@ -1,6 +1,7 @@
 """Tests for the OAuth utilities."""
 
 import json
+import logging
 import time
 import urllib.parse
 from unittest.mock import MagicMock, patch
@@ -182,6 +183,64 @@ class TestOAuthConfig:
         assert result is False
         assert config.access_token is None
         assert config.refresh_token is None
+
+    @pytest.mark.parametrize(
+        ("body", "expected_fragment"),
+        [
+            (
+                '{"error":"invalid_grant","error_description":"bad code",'
+                '"access_token":"LEAKED-ACCESS-TOKEN"}',
+                "error='invalid_grant'",
+            ),
+            ("not json LEAKED-ACCESS-TOKEN", "Response body omitted."),
+        ],
+    )
+    @patch("requests.post")
+    def test_exchange_code_failure_does_not_log_response_body(
+        self, mock_post, body, expected_fragment, caplog
+    ):
+        """A failed token response is summarized without its raw body."""
+        mock_response = MagicMock()
+        mock_response.ok = False
+        mock_response.status_code = 400
+        mock_response.text = body
+        mock_response.json.side_effect = lambda: json.loads(body)
+        mock_post.return_value = mock_response
+
+        config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read:jira-work",
+        )
+        with caplog.at_level(logging.DEBUG, logger="mcp-atlassian.oauth"):
+            assert config.exchange_code_for_tokens("test-code") is False
+
+        assert "LEAKED-ACCESS-TOKEN" not in caplog.text
+        assert expected_fragment in caplog.text
+
+    @patch("requests.post")
+    def test_exchange_code_malformed_success_body_is_not_logged(
+        self, mock_post, caplog
+    ):
+        """A 200 response that is not JSON is not echoed into the log."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.status_code = 200
+        mock_response.text = "<html>LEAKED-ACCESS-TOKEN</html>"
+        mock_response.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+        mock_post.return_value = mock_response
+
+        config = OAuthConfig(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read:jira-work",
+        )
+        with caplog.at_level(logging.DEBUG, logger="mcp-atlassian.oauth"):
+            assert config.exchange_code_for_tokens("test-code") is False
+
+        assert "LEAKED-ACCESS-TOKEN" not in caplog.text
 
     @patch("requests.post")
     def test_refresh_access_token_success(self, mock_post):
