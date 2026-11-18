@@ -1739,6 +1739,23 @@ class TestAttachmentsMixin:
         assert result["success"] is False
         assert "404 Not Found" in result["error"]
 
+    def test_delete_attachment_v1_error_carries_the_response_body(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        from requests.exceptions import HTTPError
+
+        attachments_mixin.config.auth_type = "basic"
+        response = Mock(status_code=403)
+        response.text = "PermissionException: Could not delete attachment att999"
+        response.raise_for_status.side_effect = HTTPError("403 Client Error")
+        attachments_mixin.confluence._session.delete.return_value = response
+
+        result = attachments_mixin.delete_attachment("att999")
+
+        assert result["success"] is False
+        assert "403 Client Error" in result["error"]
+        assert "PermissionException" in result["error"]
+
     def test_delete_attachment_v2_error(self, attachments_mixin: AttachmentsMixin):
         """Test deletion fails when v2 adapter raises error."""
         # Mock config URL to be cloud and OAuth

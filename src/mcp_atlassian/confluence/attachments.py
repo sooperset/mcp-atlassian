@@ -1041,7 +1041,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 base_url = self._rest_base_url()
                 url = f"{base_url}/rest/api/content/{attachment_id}"
                 response = self.confluence._session.delete(url)
-                response.raise_for_status()
+                _raise_for_status_with_body(response)
 
             logger.info(f"Successfully deleted attachment {attachment_id}")
 
