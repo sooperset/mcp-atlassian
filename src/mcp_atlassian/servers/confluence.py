@@ -515,12 +515,15 @@ async def get_page_children(
     include_folders: Annotated[
         bool,
         Field(
-            description="Whether to include child folders in addition to child pages",
+            description=(
+                "Whether to include child folders in addition to child pages. "
+                "Folders are a Cloud-only content type; ignored on Server/Data Center"
+            ),
             default=True,
         ),
     ] = True,
 ) -> str:
-    """Get child pages and folders of a specific Confluence page.
+    """Get child pages, plus child folders on Confluence Cloud.
 
     Args:
         ctx: The FastMCP context.
@@ -531,9 +534,12 @@ async def get_page_children(
         convert_to_markdown: Convert content to markdown if include_content is true.
         start: Starting index for pagination.
         include_folders: Whether to include child folders (default: True).
+            Folders are a Cloud-only content type; the flag is ignored on
+            Server/Data Center.
 
     Returns:
-        JSON string representing a list of child page and folder objects.
+        JSON string representing a list of child page objects, plus child folder
+        objects on Cloud when include_folders is true.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
     if include_content and "body" not in expand:

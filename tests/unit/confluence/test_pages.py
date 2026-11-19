@@ -800,10 +800,12 @@ class TestPagesMixin:
             pages_mixin.delete_page(page_id)
 
     def test_get_page_children_success(self, pages_mixin):
-        """Test successfully getting child pages and folders."""
+        """Test getting child pages on Server/DC, which has no folder type."""
         # Arrange
         parent_id = "123456"
-        pages_mixin.config.url = "https://confluence.example.com"
+        pages_mixin.config = MagicMock(
+            url="https://confluence.example.com", is_cloud=False
+        )
 
         # Mock the response from get_page_child_by_type for pages
         child_pages_data = {
@@ -824,42 +826,23 @@ class TestPagesMixin:
                 },
             ]
         }
-        # Mock the response for folders
-        child_folders_data = {
-            "results": [
-                {
-                    "id": "111222",
-                    "title": "Child Folder 1",
-                    "type": "folder",
-                    "space": {"key": "DEMO"},
-                    "version": {"number": 1},
-                },
-            ]
-        }
-
-        # Mock to return pages first, then folders
-        pages_mixin.confluence.get_page_child_by_type.side_effect = [
-            child_pages_data,
-            child_folders_data,
-        ]
+        pages_mixin.confluence.get_page_child_by_type.return_value = child_pages_data
 
         # Act
         results = pages_mixin.get_page_children(
             page_id=parent_id, limit=10, expand="version"
         )
 
-        # Assert - should be called twice (once for pages, once for folders)
-        assert pages_mixin.confluence.get_page_child_by_type.call_count == 2
+        # Assert - Server/DC has no folder child type, so only pages are fetched
+        assert pages_mixin.confluence.get_page_child_by_type.call_count == 1
 
-        # Verify the results include both pages and folders
-        assert len(results) == 3
+        # Verify only the page children are returned
+        assert len(results) == 2
         assert isinstance(results[0], ConfluencePage)
         assert results[0].id == "789012"
         assert results[0].title == "Child Page 1"
         assert results[1].id == "345678"
         assert results[1].title == "Child Page 2"
-        assert results[2].id == "111222"
-        assert results[2].title == "Child Folder 1"
 
     def test_get_page_children_default_expands_history(self, pages_mixin):
         """Test default child lookup requests and returns page metadata."""
@@ -953,13 +936,7 @@ class TestPagesMixin:
                 }
             ]
         }
-        # Mock empty folders response
-        child_folders_data = {"results": []}
-
-        pages_mixin.confluence.get_page_child_by_type.side_effect = [
-            child_pages_data,
-            child_folders_data,
-        ]
+        pages_mixin.confluence.get_page_child_by_type.return_value = child_pages_data
 
         # Mock the preprocessor
         pages_mixin.preprocessor.process_html_content.return_value = (
@@ -988,7 +965,7 @@ class TestPagesMixin:
         parent_id = "123456"
         pages_mixin.config.url = "https://confluence.example.com"
 
-        # Mock empty response for both pages and folders
+        # Mock an empty page response
         pages_mixin.confluence.get_page_child_by_type.return_value = {"results": []}
 
         # Act
@@ -1286,13 +1263,14 @@ class TestPagesMixin:
             "https://example.atlassian.net/wiki/spaces/IOT/pages/2645262347"
         )
 
-    def test_get_page_children_folder_error_graceful(self, pages_mixin):
-        """Test that folder fetch errors don't fail the whole operation."""
+    def test_get_page_children_server_skips_folder_lookup(self, pages_mixin):
+        """Server/DC never queries the folder child type."""
         # Arrange
         parent_id = "123456"
-        pages_mixin.config.url = "https://confluence.example.com"
+        pages_mixin.config = MagicMock(
+            url="https://confluence.example.com", is_cloud=False
+        )
 
-        # Mock pages success, folders failure
         child_pages_data = {
             "results": [
                 {
@@ -1303,17 +1281,20 @@ class TestPagesMixin:
                 },
             ]
         }
-        pages_mixin.confluence.get_page_child_by_type.side_effect = [
-            child_pages_data,
-            Exception("Folder API not supported"),
-        ]
+        pages_mixin.confluence.get_page_child_by_type.return_value = child_pages_data
 
         # Act
         results = pages_mixin.get_page_children(page_id=parent_id)
 
-        # Assert - should still return pages even if folder fetch fails
+        # Assert - folder children are only a Cloud concept, so the lookup that
+        # always failed on Server/DC is no longer issued.
         assert len(results) == 1
         assert results[0].id == "789012"
+        assert pages_mixin.confluence.get_page_child_by_type.call_count == 1
+        assert (
+            pages_mixin.confluence.get_page_child_by_type.call_args.kwargs["type"]
+            == "page"
+        )
 
     def test_get_page_success(self, pages_mixin):
         """Test successful page retrieval."""
