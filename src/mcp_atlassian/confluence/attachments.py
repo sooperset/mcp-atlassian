@@ -3,12 +3,27 @@
 import logging
 import mimetypes
 import os
+import re
 import urllib.parse
 from pathlib import Path
 from typing import Any
 
+from requests import Response
+from requests.exceptions import HTTPError
+
 from ..models.confluence import ConfluenceAttachment
-from ..utils.io import validate_safe_path
+from ..utils.io import (
+    get_file_root,
+    is_in_cwd_root,
+    open_confined,
+    validate_safe_path,
+)
+from ..utils.media import (
+    ATTACHMENT_MAX_BYTES,
+    AttachmentTooLargeError,
+    read_capped,
+)
+from ..utils.ssrf_adapter import ensure_attachment_origin
 from ..utils.urls import resolve_relative_url
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
@@ -16,6 +31,73 @@ from .v2_adapter import ConfluenceV2Adapter
 
 # Configure logging
 logger = logging.getLogger("mcp-confluence")
+
+#: Confluence attachment IDs: ``att`` followed by digits, or bare digits.
+#: Anything else (``/``, ``..``, ``%2F``, ``?``) would be interpolated into an
+#: authenticated REST URL and could reach endpoints the tool never intends.
+ATTACHMENT_ID_PATTERN = r"^(att)?\d+$"
+_ATTACHMENT_ID_RE = re.compile(ATTACHMENT_ID_PATTERN)
+
+#: How much of an error response body is kept in an upload error message.
+_ERROR_BODY_LIMIT = 500
+
+
+def _raise_for_status_with_body(response: Response) -> None:
+    """Raise for an HTTP error status, keeping Confluence's reason in the message.
+
+    ``raise_for_status`` reports the status line only, so the reason Confluence
+    gives in the body (for example a rejected comment) would be lost.
+
+    Args:
+        response: The response to check.
+
+    Raises:
+        HTTPError: If the status is 4xx or 5xx.
+    """
+    try:
+        response.raise_for_status()
+    except HTTPError as e:
+        body = response.text.strip()
+        if not body:
+            raise
+        msg = f"{e}: {body[:_ERROR_BODY_LIMIT]}"
+        raise HTTPError(msg, response=response) from e
+
+
+#: Key under which ``_send_attachment_request`` reports, on the attachment it
+#: returns, that the file was stored but its comment was not.
+_COMMENT_WARNING_KEY = "mcp_comment_warning"
+
+
+def _comment_warning(attachment: Any) -> dict[str, str]:
+    """Return the ``warning`` entry for an upload result, if there is one."""
+    warning = (
+        attachment.get(_COMMENT_WARNING_KEY) if isinstance(attachment, dict) else None
+    )
+    return {"warning": warning} if warning else {}
+
+
+def validate_attachment_id(attachment_id: str) -> str:
+    """Return *attachment_id* if it is a well-formed Confluence attachment ID.
+
+    Args:
+        attachment_id: The caller-supplied attachment ID.
+
+    Returns:
+        The attachment ID unchanged.
+
+    Raises:
+        ValueError: If the ID is not ``att<digits>`` or ``<digits>``.
+    """
+    if not isinstance(attachment_id, str) or not _ATTACHMENT_ID_RE.fullmatch(
+        attachment_id
+    ):
+        msg = (
+            f"Invalid attachment ID {attachment_id!r}: expected 'att' followed "
+            "by digits (e.g. 'att123456789')"
+        )
+        raise ValueError(msg)
+    return attachment_id
 
 
 class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
@@ -45,6 +127,23 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             The base URL to use for direct REST API calls.
         """
         return self._v1_rest_base_url()
+
+    def _ensure_same_origin(self, url: str) -> None:
+        """Reject an attachment URL that points away from the Confluence host.
+
+        The session sends the configured credentials with every request, so a
+        download link naming another host would forward them there.
+
+        Args:
+            url: The absolute URL about to be fetched.
+
+        Raises:
+            ValueError: If *url* is not on the Confluence origin or under
+                MCP_ALLOWED_URL_DOMAINS.
+        """
+        ensure_attachment_origin(
+            url, (self.config.url, getattr(self.confluence, "url", None))
+        )
 
     def _resolve_attachment_download_url(
         self,
@@ -180,6 +279,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                     "id": attachment.get("id")
                     if isinstance(attachment, dict)
                     else None,
+                    **_comment_warning(attachment),
                 }
             else:
                 logger.error(
@@ -232,13 +332,14 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             result = self.upload_attachment(content_id, file_path, comment, minor_edit)
 
             if result.get("success"):
-                uploaded.append(
-                    {
-                        "filename": result.get("filename"),
-                        "size": result.get("size"),
-                        "id": result.get("id"),
-                    }
-                )
+                entry = {
+                    "filename": result.get("filename"),
+                    "size": result.get("size"),
+                    "id": result.get("id"),
+                }
+                if warning := result.get("warning"):
+                    entry["warning"] = warning
+                uploaded.append(entry)
             else:
                 failed.append(
                     {
@@ -248,7 +349,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 )
 
         return {
-            "success": True,
+            "success": bool(uploaded),
             "content_id": content_id,
             "total": len(file_paths),
             "uploaded": uploaded,
@@ -316,6 +417,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                     "id": attachment.get("id")
                     if isinstance(attachment, dict)
                     else None,
+                    **_comment_warning(attachment),
                 }
 
             logger.error(
@@ -341,26 +443,36 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
 
         Returns:
             The raw bytes of the attachment, or None on failure.
+
+        Raises:
+            AttachmentTooLargeError: The body passed the inline size limit.
         """
         if not url:
             logger.error("No URL provided for attachment fetch")
             return None
 
         try:
+            self._ensure_same_origin(url)
             logger.info(f"Fetching attachment from {url}")
             response = self.confluence._session.get(url, stream=True)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
 
-            chunks: list[bytes] = []
-            for chunk in response.iter_content(chunk_size=8192):
-                chunks.append(chunk)
+                data = read_capped(response, ATTACHMENT_MAX_BYTES)
+                logger.info(
+                    f"Successfully fetched attachment from {url} "
+                    f"(size: {len(data)} bytes)"
+                )
+                return data
+            finally:
+                response.close()
 
-            data = b"".join(chunks)
-            logger.info(
-                f"Successfully fetched attachment from {url} (size: {len(data)} bytes)"
+        except AttachmentTooLargeError:
+            logger.warning(
+                f"Attachment from {url} is larger than "
+                f"{ATTACHMENT_MAX_BYTES} bytes; stopped reading"
             )
-            return data
-
+            raise
         except Exception as e:
             logger.error(f"Error fetching attachment: {str(e)}")
             return None
@@ -381,13 +493,27 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             return False
 
         try:
-            # Convert to absolute path if relative
+            # Relative paths resolve against the configured file root (the
+            # working directory unless MCP_ATLASSIAN_FILES_DIR or a remote
+            # transport sets another one).
             if not os.path.isabs(target_path):
-                target_path = os.path.abspath(target_path)
+                target_path = os.path.normpath(
+                    os.path.join(get_file_root(), target_path)
+                )
 
             # Guard against path traversal (resolves symlinks)
             validate_safe_path(target_path)
 
+            # Do not write into the working-directory root itself: a file landing
+            # there could overwrite an importable module and gain code execution
+            # on import. Same guard as the Jira download path.
+            if is_in_cwd_root(target_path):
+                logger.error(
+                    f"Refusing to download into the working-directory root: {target_path}"
+                )
+                return False
+
+            self._ensure_same_origin(url)
             logger.info(f"Downloading attachment from {url} to {target_path}")
 
             # Create the directory if it doesn't exist
@@ -395,12 +521,17 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
 
             # Use the Confluence session to download the file
             response = self.confluence._session.get(url, stream=True)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
 
-            # Write the file to disk
-            with open(target_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                # Write the file to disk. open_confined re-checks the boundary
+                # on the descriptor it opens, so a symlink swapped in since the
+                # validation above cannot redirect the write.
+                with open_confined(target_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            finally:
+                response.close()
 
             # Verify the file was created
             if os.path.exists(target_path):
@@ -430,9 +561,11 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         Returns:
             A dictionary with download results
         """
-        # Convert to absolute path if relative
+        # Relative paths resolve against the configured file root (the
+        # working directory unless MCP_ATLASSIAN_FILES_DIR or a remote
+        # transport sets another one).
         if not os.path.isabs(target_dir):
-            target_dir = os.path.abspath(target_dir)
+            target_dir = os.path.normpath(os.path.join(get_file_root(), target_dir))
 
         # Guard against path traversal (resolves symlinks)
         validate_safe_path(target_dir)
@@ -634,7 +767,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             Attachment metadata dict if successful, None otherwise
         """
         try:
-            with open(file_path, "rb") as file_handle:
+            with open_confined(file_path, "rb") as file_handle:
                 return self._send_attachment_request(
                     content_id, filename, file_handle, comment, minor_edit
                 )
@@ -681,6 +814,41 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             )
             raise
 
+    def _find_attachments_by_filename(
+        self,
+        content_id: str,
+        filename: str,
+        *,
+        list_url: str,
+        headers: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """Find the attachments on ``content_id`` whose title is ``filename``.
+
+        Replacing an existing attachment needs its id. Under Cloud OAuth the v1
+        list endpoint answers 410 Gone, so ask the v2 API there and keep the v1
+        GET for token, basic, and Server/DC auth.
+        """
+        v2_adapter = self._v2_adapter
+        if v2_adapter:
+            try:
+                results = v2_adapter.get_page_attachments(
+                    content_id, filename=filename
+                ).get("results", [])
+                return [r for r in results if isinstance(r, dict)]
+            except Exception as e:
+                logger.warning(
+                    f"v2 attachment lookup for '{filename}' on {content_id} "
+                    f"failed, falling back to v1: {e}"
+                )
+
+        encoded_filename = urllib.parse.quote(filename, safe="")
+        att_list = self.confluence._session.get(
+            f"{list_url}?filename={encoded_filename}",
+            headers=headers,
+        )
+        att_list.raise_for_status()
+        return att_list.json().get("results", [])
+
     def _send_attachment_request(
         self,
         content_id: str,
@@ -709,14 +877,24 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             Attachment metadata dict.
         """
 
-        def make_files(content: Any) -> dict[str, Any]:
+        def make_files(content: Any, part_comment: str | None) -> dict[str, Any]:
             # Confluence Cloud rejects a file part without a Content-Type
             # (HTTP 415 on /child/attachment/{id}/data), so always send one.
             mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
             files: dict[str, Any] = {"file": (filename, content, mime_type)}
-            if comment:
-                files["comment"] = (None, comment, "text/plain; charset=utf-8")
+            if part_comment:
+                files["comment"] = (None, part_comment, "text/plain; charset=utf-8")
             return files
+
+        # Confluence Cloud reads the create endpoint's comment field as a
+        # comma-separated list with one entry per file, and answers HTTP 400
+        # ("Must be same number of attachment files and comments") when a
+        # single comment contains a comma. No escaping is accepted. The
+        # new-version endpoint and the properties update take the text as it
+        # is, so such a comment is left out of the create and set afterwards.
+        deferred_comment = (
+            comment if comment and "," in comment and self.config.is_cloud else None
+        )
 
         base_url = self._rest_base_url()
         url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
@@ -731,8 +909,12 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         # Use POST to create a new attachment on Server/DC. PUT on the list
         # endpoint is not supported by Confluence Server/DC.
         response = self.confluence._session.post(
-            url, headers=headers, files=make_files(file_obj), data=data
+            url,
+            headers=headers,
+            files=make_files(file_obj, None if deferred_comment else comment),
+            data=data,
         )
+        created = True
 
         # Server/DC returns HTTP 400 for an existing attachment name. Look up the
         # attachment ID and POST to its /data endpoint to create a new version.
@@ -741,13 +923,9 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 f"Attachment '{filename}' already exists on content {content_id}, "
                 "updating existing attachment version"
             )
-            encoded_filename = urllib.parse.quote(filename, safe="")
-            att_list = self.confluence._session.get(
-                f"{url}?filename={encoded_filename}",
-                headers=headers,
+            att_results = self._find_attachments_by_filename(
+                content_id, filename, list_url=url, headers=headers
             )
-            att_list.raise_for_status()
-            att_results = att_list.json().get("results", [])
             if att_results:
                 if hasattr(file_obj, "seek"):
                     file_obj.seek(0)
@@ -759,11 +937,12 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 response = self.confluence._session.post(
                     update_url,
                     headers=headers,
-                    files=make_files(file_obj),
+                    files=make_files(file_obj, comment),
                     data=data,
                 )
+                created = False
 
-        response.raise_for_status()
+        _raise_for_status_with_body(response)
 
         # Parse response
         result = response.json()
@@ -771,8 +950,63 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         # Return first result if it's a list
         if isinstance(result, dict) and "results" in result:
             results = result.get("results", [])
-            return results[0] if results else result
-        return result
+            attachment = results[0] if results else result
+        else:
+            attachment = result
+
+        if deferred_comment and created:
+            warning = self._set_attachment_comment(
+                content_id, attachment, deferred_comment, minor_edit
+            )
+            if warning:
+                attachment[_COMMENT_WARNING_KEY] = warning
+        return attachment
+
+    def _set_attachment_comment(
+        self,
+        content_id: str,
+        attachment: dict[str, Any],
+        comment: str,
+        minor_edit: bool,
+    ) -> str | None:
+        """Set the comment of a just-created attachment through its properties.
+
+        The properties update does not create a new attachment version.
+
+        Args:
+            content_id: The ID of the content the attachment belongs to.
+            attachment: The attachment as returned by the create request.
+            comment: The comment text.
+            minor_edit: Whether this is a minor edit.
+
+        Returns:
+            ``None`` when the comment was set, otherwise why it was not.
+        """
+        attachment_id = attachment.get("id")
+        try:
+            validate_attachment_id(str(attachment_id))
+            response = self.confluence._session.put(
+                f"{self._rest_base_url()}/rest/api/content/{content_id}"
+                f"/child/attachment/{attachment_id}",
+                json={
+                    "id": attachment_id,
+                    "type": "attachment",
+                    # The current version number: only a new file needs the next.
+                    "version": {
+                        "number": (attachment.get("version") or {}).get("number", 1),
+                        "minorEdit": minor_edit,
+                    },
+                    "metadata": {"comment": comment},
+                },
+            )
+            _raise_for_status_with_body(response)
+        except Exception as e:
+            logger.warning(
+                f"Attachment {attachment_id} was uploaded to content {content_id} "
+                f"but its comment could not be set: {e}"
+            )
+            return f"The attachment was uploaded but its comment was not set: {e}"
+        return None
 
     def delete_attachment(self, attachment_id: str) -> dict[str, Any]:
         """
@@ -789,6 +1023,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
             return {"success": False, "error": "No attachment ID provided"}
 
         try:
+            validate_attachment_id(attachment_id)
             logger.info(f"Deleting attachment {attachment_id}")
 
             # Use v2 API for OAuth authentication, v1 API for token/basic auth

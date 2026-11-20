@@ -1,5 +1,6 @@
 """Confluence-specific text preprocessing module."""
 
+import importlib.util
 import logging
 import re
 import tempfile
@@ -15,13 +16,58 @@ from md2conf.converter import (
     attachment_name,
     elements_from_strings,
     elements_to_string,
-    markdown_to_html,
 )
 from md2conf.metadata import ConfluenceSiteMetadata
+from pymdownx import magiclink  # type: ignore[import-untyped]
 
 from .base import BasePreprocessor
 
 logger = logging.getLogger("mcp-atlassian")
+
+
+#: The URL host part of pymdown-extensions 12.x magiclink. Host and path
+#: both accept dots, so a short URL followed by a run of dots backtracks in
+#: quadratic time (8000 dots took a second); before 11.0.1 a nested repeat
+#: made it exponential. 13.0 rewrote the pattern without a host part.
+_MAGIC_LINK_HOST = r"[^_\W](?:[-\w]|\.(?!=$))*"
+
+
+def _linear_magic_link_re() -> re.Pattern[str] | None:
+    """Return magiclink's URL pattern with the host cut to one character.
+
+    The path part that follows accepts every host character, so the cut
+    pattern matches the same spans. Returns ``None`` when the installed
+    version has no such host part.
+    """
+    if magiclink.RE_LINK.count(_MAGIC_LINK_HOST) != 2:
+        return None
+    return re.compile(
+        magiclink.RE_LINK.replace(_MAGIC_LINK_HOST, r"[^_\W]"),
+        re.DOTALL | re.UNICODE,
+    )
+
+
+_MAGIC_LINK_RE = _linear_magic_link_re()
+
+
+def markdown_to_html(content: str) -> str:
+    """Convert Markdown like ``md2conf.converter.markdown_to_html``.
+
+    md2conf keeps one module-level Markdown converter that every call resets
+    and reuses: calls from two worker threads at once mixed their documents,
+    and a conversion that failed inside it left state behind that broke
+    every later one. Each call here runs a private copy of the
+    ``md2conf.markdown`` module, so it gets a converter of its own, built
+    with the settings of whichever md2conf version is installed.
+    """
+    spec = importlib.util.find_spec("md2conf.markdown")
+    if spec is None or spec.loader is None:
+        raise RuntimeError("md2conf.markdown is not importable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if _MAGIC_LINK_RE is not None:
+        module._CONVERTER.inlinePatterns["magic-link"].compiled_re = _MAGIC_LINK_RE
+    return str(module.markdown_to_html(content))
 
 
 class ConfluencePreprocessor(BasePreprocessor):
@@ -93,11 +139,13 @@ class ConfluencePreprocessor(BasePreprocessor):
                 if not base_path.endswith("/"):
                     base_path += "/"
 
-                # Create converter options
+                # Diagram extensions are off: they start external renderers
+                # on caller-supplied source, and their images and source
+                # attachments are never uploaded. Diagram blocks stay code.
                 options = ConverterOptions(
                     force_valid_url=False,
                     heading_anchors=enable_heading_anchors,
-                    render_mermaid=False,
+                    extensions=[],
                     task_lists=apply_task_lists,
                 )
 

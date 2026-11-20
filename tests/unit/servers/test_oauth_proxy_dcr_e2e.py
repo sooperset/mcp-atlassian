@@ -338,3 +338,40 @@ async def test_oauth_proxy_dcr_happy_path_over_loopback_tls(
 
     assert response.status_code == 200
     assert response.json()["access_token"]
+
+
+@pytest.mark.anyio
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"client_name": "n" * 1024},
+        {"contacts": [f"user{i}@example.com" for i in range(2000)]},
+    ],
+    ids=["long-client-name", "large-metadata"],
+)
+async def test_oauth_proxy_rejects_oversized_registration(
+    tmp_path, monkeypatch, extra
+) -> None:
+    """A registration record is bounded in size before it is stored."""
+    import fastmcp
+
+    monkeypatch.setattr(fastmcp.settings, "home", tmp_path)
+    proxy_app = _build_proxy_app("https://issuer.test", "https://mcp.test")
+    registration = {
+        "redirect_uris": ["http://127.0.0.1:4242/cb"],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=proxy_app), base_url="https://mcp.test"
+    ) as client:
+        rejected = await client.post("/register", json={**registration, **extra})
+        accepted = await client.post(
+            "/register", json={**registration, "client_name": "Claude Code"}
+        )
+
+    assert rejected.status_code == 400
+    assert rejected.json()["error"] == "invalid_client_metadata"
+    assert accepted.status_code == 201

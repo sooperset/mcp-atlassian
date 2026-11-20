@@ -15,6 +15,7 @@ This guide covers IDE integration, environment variables, and advanced configura
 | Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Claude Desktop (Linux) | `~/.config/Claude/claude_desktop_config.json` |
 | Cursor | Settings → MCP → + Add new global MCP server |
+| VS Code with GitHub Copilot | `~/.copilot/mcp-config.json` or `.mcp.json` in a workspace root. See [Installation](/docs/installation#github-copilot). |
 
 ### Basic Configuration (uvx)
 
@@ -276,6 +277,7 @@ JIRA_PROJECT_KEY_PATTERN=^[A-Z0-9][A-Z0-9_]*$
 | `MCP_SSL_CERTFILE` | TLS certificate (PEM) for the server's own HTTPS listener (see [HTTP Transport](/docs/http-transport#tls-https-listener)) |
 | `MCP_SSL_KEYFILE` | TLS private key (PEM) for the HTTPS listener; must be set together with the certificate |
 | `READ_ONLY_MODE` | Disable write operations (`true`/`false`) |
+| `MCP_ATLASSIAN_FILES_DIR` | Directory that confines every server-side file path a tool accepts (attachment uploads, `content_file`, attachment downloads). Unset = the working directory on `stdio`, `~/.mcp-atlassian/files` on `sse`/`streamable-http`. A remote transport refuses to start if this is a filesystem root or a home directory. See [HTTP Transport](/http-transport#server-side-file-paths). |
 | `MCP_VERBOSE` | Enable verbose logging (`true`/`false`) |
 | `MCP_VERY_VERBOSE` | Enable debug logging (`true`/`false`) |
 | `MCP_LOGGING_STDOUT` | Log to stdout instead of stderr (`true`/`false`) |
@@ -319,7 +321,7 @@ never retried. Set `ATLASSIAN_RETRY_TOTAL=0` to turn retries off.
 | `ATLASSIAN_MAX_CONCURRENT_REQUESTS` | Process-wide cap for concurrent Jira and Confluence requests. `0` or unset disables the cap. |
 | `ATLASSIAN_REQUESTS_PER_SECOND` | Process-wide outbound request rate limit. `0` or unset disables the limit. |
 | `ATLASSIAN_MAX_PAGINATION_LIMIT` | Clamp user-supplied page sizes for high-fanout list/search calls. `0` or unset disables clamping. |
-| `ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD` | Open a process-wide circuit breaker after this many consecutive `429/503` responses. `0` or unset disables it. |
+| `ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD` | Open a circuit breaker for an upstream site after this many consecutive `429/503` responses from that site. Each site has its own breaker. `0` or unset disables it. |
 | `ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN` | Circuit breaker cooldown in seconds before allowing a probe request (default: `30.0`). |
 
 ## Proxy Configuration
@@ -378,6 +380,10 @@ control any passthrough header they are allowed to send to the MCP endpoint.
 When external auth uses a client-supplied Jira or Confluence URL, configure
 `MCP_ALLOWED_URL_DOMAINS`; dynamic URLs are rejected without this allowlist so
 trusted session headers cannot be forwarded to an attacker-controlled host.
+Header-based PAT requests (`X-Atlassian-*-Url` with a personal token) forward
+passthrough headers only when the URL host is the configured `JIRA_URL` /
+`CONFLUENCE_URL` host or matches `MCP_ALLOWED_URL_DOMAINS`; other destinations
+receive the caller's token without any passthrough header.
 
 <Note>
 Header values are masked in debug logs for security.

@@ -4,11 +4,13 @@ import base64
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
+import anyio
 from fastmcp import FastMCP
 from fastmcp import settings as fastmcp_settings
 from fastmcp.exceptions import NotFoundError
@@ -29,8 +31,10 @@ from mcp_atlassian.utils.credential_command import (
 )
 from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.environment import get_available_services
-from mcp_atlassian.utils.io import is_read_only_mode
-from mcp_atlassian.utils.logging import mask_sensitive
+from mcp_atlassian.utils.io import (
+    configure_file_root_for_transport,
+    is_read_only_mode,
+)
 from mcp_atlassian.utils.oauth import (
     CLOUD_AUTHORIZE_URL,
     CLOUD_TOKEN_URL,
@@ -461,22 +465,37 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         allowed_hosts: list[str] | None = None,
         allowed_origins: list[str] | None = None,
     ) -> StarletteWithLifespan:
+        # The CLI sets the file-path boundary before starting, but an ASGI
+        # server that imports this app directly (``uvicorn module:app``) never
+        # runs the CLI. Every HTTP app serves remote callers, so set the
+        # remote boundary here as well; it raises on a root/home directory.
+        configure_file_root_for_transport(
+            "sse" if transport == "sse" else "streamable-http"
+        )
+        host_origin_protection, allowed_origins = _host_origin_defaults(
+            host_origin_protection, allowed_origins
+        )
         final_path = path
-        auth_endpoints: frozenset[tuple[str, str]]
+        auth_paths: frozenset[str]
+        auth_mounts: frozenset[str] = frozenset()
         if transport in ("http", "streamable-http"):
             configured_path = path or fastmcp_settings.streamable_http_path
             final_path = self._normalize_http_path(configured_path)
             self._active_streamable_http_path = final_path
-            auth_endpoints = frozenset({("POST", final_path)})
+            auth_paths = frozenset({final_path})
         else:
             sse_path = self._normalize_http_path(path or fastmcp_settings.sse_path)
             message_path = self._normalize_http_path(fastmcp_settings.message_path)
-            auth_endpoints = frozenset({("GET", sse_path), ("POST", message_path)})
+            auth_paths = frozenset({sse_path})
+            # FastMCP serves the SSE message endpoint through a Starlette Mount,
+            # which accepts every method and every sub-path.
+            auth_mounts = frozenset({message_path})
 
         user_token_mw = Middleware(
             UserTokenMiddleware,
             mcp_server_ref=self,
-            auth_endpoints=auth_endpoints,
+            auth_paths=auth_paths,
+            auth_mounts=auth_mounts,
         )
         final_middleware_list = [user_token_mw]
         if middleware:
@@ -496,6 +515,85 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         return app
 
 
+# Browser origins on this machine. "[[]" is fnmatch for a literal "[".
+_LOCAL_ORIGINS = (
+    "http://localhost:*",
+    "https://localhost:*",
+    "http://127.0.0.1:*",
+    "https://127.0.0.1:*",
+    "http://[[]::1]:*",
+    "https://[[]::1]:*",
+)
+
+
+def _host_origin_defaults(
+    requested: bool | Literal["auto"] | None,
+    allowed_origins: list[str] | None,
+) -> tuple[bool | Literal["auto"] | None, list[str] | None]:
+    """Return the Host/Origin protection and origin allowlist for an HTTP app.
+
+    FastMCP checks Host and Origin only when asked to. When header-less
+    requests are served with the operator's global credentials
+    (``ALLOW_GLOBAL_CRED_FALLBACK`` or ``IGNORE_HEADER_AUTH``), a page in a
+    browser that can reach the listener could act with those credentials.
+    There the default becomes FastMCP's ``"auto"`` mode with an explicit
+    origin allowlist: a request that carries an ``Origin`` header must come
+    from a local origin or one the operator listed, on every address, while
+    the ``Host`` check stays on loopback requests so a proxied or container
+    bind keeps working. Requests without ``Origin`` (MCP clients, proxies)
+    are unaffected. An explicit ``FASTMCP_HTTP_HOST_ORIGIN_PROTECTION`` or a
+    protection value other than the off default is kept as given.
+
+    Args:
+        requested: The protection passed to ``http_app``. ``run_async`` passes
+            the resolved FastMCP setting, so ``False`` can mean "not set".
+        allowed_origins: The origin allowlist passed to ``http_app``.
+
+    Returns:
+        The protection and origin allowlist to pass to FastMCP.
+    """
+    if requested not in (None, False):
+        return requested, allowed_origins
+    if "http_host_origin_protection" in fastmcp_settings.model_fields_set:
+        return requested, allowed_origins
+    if not (
+        is_env_truthy("ALLOW_GLOBAL_CRED_FALLBACK")
+        or is_env_truthy("IGNORE_HEADER_AUTH")
+    ):
+        return requested, allowed_origins
+    configured = (
+        allowed_origins
+        if allowed_origins is not None
+        else fastmcp_settings.http_allowed_origins
+    )
+    return "auto", [*(configured or []), *_LOCAL_ORIGINS]
+
+
+def _route_path(scope: Scope) -> str:
+    """Return the path the Starlette router matches for ``scope``.
+
+    Starlette strips ``root_path`` (set by ``uvicorn --root-path`` or a parent
+    ``Mount``) from ``path`` before routing, so the auth gate must compare the
+    same stripped path; otherwise ``/prefix/mcp`` is routed to ``/mcp`` while
+    the gate sees ``/prefix/mcp`` and lets it through. This mirrors
+    ``starlette._utils.get_route_path``.
+    """
+    path: str = scope.get("path", "")
+    root_path: str = scope.get("root_path", "") or ""
+    if not root_path or not path.startswith(root_path):
+        return path
+    if path == root_path:
+        return ""
+    if path[len(root_path)] == "/":
+        return path[len(root_path) :]
+    return path
+
+
+# Atlassian cloud IDs are UUIDs. Allow letters, digits and hyphens only, so a
+# header value cannot add path segments, a query or a fragment to the API URL.
+_CLOUD_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,127}")
+
+
 class UserTokenMiddleware:
     """ASGI-compliant middleware to extract Atlassian user tokens/credentials.
 
@@ -507,11 +605,23 @@ class UserTokenMiddleware:
         self,
         app: ASGIApp,
         mcp_server_ref: Optional["AtlassianMCP"] = None,
-        auth_endpoints: frozenset[tuple[str, str]] | None = None,
+        auth_paths: frozenset[str] | None = None,
+        auth_mounts: frozenset[str] | None = None,
     ) -> None:
+        """Initialize the middleware.
+
+        Args:
+            app: The downstream ASGI application.
+            mcp_server_ref: The MCP server, used to resolve the transport path.
+            auth_paths: Transport paths that require authentication for every
+                HTTP method. Defaults to the streamable HTTP path.
+            auth_mounts: Transport mount points that require authentication for
+                every HTTP method on the mount path and all of its sub-paths.
+        """
         self.app = app
         self.mcp_server_ref = mcp_server_ref
-        self.auth_endpoints = auth_endpoints
+        self.auth_paths = auth_paths
+        self.auth_mounts = auth_mounts or frozenset()
         if not self.mcp_server_ref:
             logger.warning(
                 "UserTokenMiddleware initialized without mcp_server_ref. "
@@ -553,7 +663,7 @@ class UserTokenMiddleware:
             and self.mcp_server_ref
             and self._should_process_auth(scope_copy)
         ):
-            self._process_authentication_headers(scope_copy)
+            await self._process_authentication_headers(scope_copy)
 
         # Create wrapped send function to handle client disconnections gracefully
         async def safe_send(message: Message) -> None:
@@ -601,7 +711,25 @@ class UserTokenMiddleware:
             return  # Don't call self.app - request is rejected
 
         # Call the next application with modified scope and safe send wrapper
-        await self.app(scope_copy, receive, safe_send)
+        try:
+            await self.app(scope_copy, receive, safe_send)
+        finally:
+            self._close_request_fetchers(scope_copy["state"])
+
+    def _close_request_fetchers(self, state: dict[str, Any]) -> None:
+        """Close request-scoped Jira/Confluence fetchers after the response."""
+        # close() only releases the connection pool; dropping the fetcher from
+        # state releases the Session that still holds its auth and headers.
+        for state_key in ("jira_fetcher", "confluence_fetcher"):
+            fetcher = state.pop(state_key, None)
+            close = getattr(fetcher, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    logger.debug(
+                        f"Error closing {state_key} after request", exc_info=True
+                    )
 
     async def _send_json_error_response(
         self, send: Send, status_code: int, error_message: str
@@ -627,26 +755,36 @@ class UserTokenMiddleware:
         await send({"type": "http.response.body", "body": body})
 
     def _should_process_auth(self, scope: Scope) -> bool:
-        """Check if this request should be processed for authentication."""
+        """Check if this request targets an MCP transport endpoint.
+
+        The check is by path only. Every HTTP method the transport routes accept
+        (GET, HEAD, POST, PUT, DELETE, OPTIONS, ...) is authenticated the same way.
+        """
         if not self.mcp_server_ref:
             return False
 
         try:
-            method = scope.get("method", "").upper()
-            request_path = AtlassianMCP._normalize_http_path(scope.get("path", ""))
-            if self.auth_endpoints is not None:
-                return (method, request_path) in self.auth_endpoints
-
-            return (
-                method == "POST"
-                and request_path == self.mcp_server_ref.get_streamable_http_path()
+            request_path = AtlassianMCP._normalize_http_path(_route_path(scope))
+            auth_paths = self.auth_paths
+            if auth_paths is None:
+                auth_paths = frozenset({self.mcp_server_ref.get_streamable_http_path()})
+            if request_path in auth_paths:
+                return True
+            return any(
+                request_path == mount
+                or request_path.startswith(f"{mount.rstrip('/')}/")
+                for mount in self.auth_mounts
             )
         except (AttributeError, ValueError) as e:
             logger.warning(f"Error checking auth path: {e}")
             return False
 
-    def _process_authentication_headers(self, scope: Scope) -> None:
-        """Process authentication headers and store in scope state."""
+    async def _process_authentication_headers(self, scope: Scope) -> None:
+        """Process authentication headers and store in scope state.
+
+        URL headers are checked only when the request carries a credential,
+        and their DNS check runs in a worker thread, off the event loop.
+        """
         try:
             # Parse headers from scope (headers are byte tuples per ASGI spec)
             headers = dict(scope.get("headers", []))
@@ -685,9 +823,16 @@ class UserTokenMiddleware:
                 else None
             )
 
+            # A URL header is used only together with a credential. Without
+            # one the request is rejected below, so skip its DNS check.
+            if not (auth_header_str or jira_token_str or confluence_token_str):
+                jira_url_str = confluence_url_str = None
+
             # Validate URLs to prevent SSRF
             if jira_url_str:
-                ssrf_error = validate_url_for_ssrf(jira_url_str)
+                ssrf_error = await anyio.to_thread.run_sync(
+                    validate_url_for_ssrf, jira_url_str
+                )
                 if ssrf_error:
                     scope["state"]["auth_validation_error"] = (
                         f"Forbidden: Invalid Jira URL - {ssrf_error}"
@@ -695,7 +840,9 @@ class UserTokenMiddleware:
                     return
 
             if confluence_url_str:
-                ssrf_error = validate_url_for_ssrf(confluence_url_str)
+                ssrf_error = await anyio.to_thread.run_sync(
+                    validate_url_for_ssrf, confluence_url_str
+                )
                 if ssrf_error:
                     scope["state"]["auth_validation_error"] = (
                         f"Forbidden: Invalid Confluence URL - {ssrf_error}"
@@ -735,8 +882,14 @@ class UserTokenMiddleware:
                 f"CloudId present: {bool(cloud_id_str)}"
             )
 
-            # Process Cloud ID
+            # Process Cloud ID. It is interpolated into the Atlassian API path,
+            # so only accept the characters a cloud ID can contain.
             if cloud_id_str and cloud_id_str.strip():
+                if not _CLOUD_ID_PATTERN.fullmatch(cloud_id_str.strip()):
+                    scope["state"]["auth_validation_error"] = (
+                        "Unauthorized: Invalid X-Atlassian-Cloud-Id header"
+                    )
+                    return
                 scope["state"]["user_atlassian_cloud_id"] = cloud_id_str.strip()
                 logger.debug(
                     f"UserTokenMiddleware: Extracted cloudId: {cloud_id_str.strip()}"
@@ -775,8 +928,7 @@ class UserTokenMiddleware:
                 scope["state"]["user_atlassian_token"] = token
                 scope["state"]["user_atlassian_auth_type"] = "oauth"
                 logger.debug(
-                    "UserTokenMiddleware: Bearer token extracted (masked): "
-                    f"...{mask_sensitive(token, 8)}"
+                    f"UserTokenMiddleware: Bearer token extracted (length {len(token)})"
                 )
 
         elif auth_header.startswith("Token "):
@@ -789,8 +941,7 @@ class UserTokenMiddleware:
                 scope["state"]["user_atlassian_token"] = token
                 scope["state"]["user_atlassian_auth_type"] = "pat"
                 logger.debug(
-                    "UserTokenMiddleware: PAT token extracted (masked): "
-                    f"...{mask_sensitive(token, 8)}"
+                    f"UserTokenMiddleware: PAT token extracted (length {len(token)})"
                 )
 
         elif auth_header.startswith("Basic "):
@@ -970,6 +1121,10 @@ def _build_auth_provider() -> HardenedOAuthProxy | None:
         valid_scopes=scopes or None,
         allowed_grant_types=allowed_grant_types,
         forced_scopes=scopes or None,
+        # Atlassian rejects the RFC 8707 resource indicator with
+        # "invalid_target: Incorrect resource parameters". The proxy still
+        # checks that a client's resource matches this server.
+        forward_resource=False,
         token_endpoint_auth_method="client_secret_post",  # noqa: S106
         extra_authorize_params=(
             {"audience": "api.atlassian.com", "prompt": "consent"} if is_cloud else None

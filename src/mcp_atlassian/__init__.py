@@ -42,6 +42,7 @@ from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.lifecycle import (
     ensure_clean_exit,
     setup_signal_handlers,
+    wait_for_shutdown_request,
 )
 from mcp_atlassian.utils.logging import setup_logging
 
@@ -63,6 +64,10 @@ _TRUSTSTORE_INJECTED = ssl.SSLContext.__module__.startswith("truststore")
 # this also excludes them; TLS 1.3 suites are configured separately by OpenSSL
 # and remain enabled.
 _TLS_LISTENER_CIPHERS = "ECDHE+AESGCM:ECDHE+CHACHA20:!aNULL:!eNULL:!MD5"
+
+# How long a stdio server may take to unwind after a shutdown request before
+# the process exits anyway.
+_STDIO_SHUTDOWN_GRACE_SECONDS = 5.0
 
 # Initialize logging with appropriate level
 logging_level = logging.WARNING
@@ -99,33 +104,55 @@ async def _watch_parent_exit(stop_event: threading.Event) -> None:
 async def _run_stdio_with_stdin_guard(run_kwargs: dict[str, object]) -> None:
     from mcp_atlassian.servers import main_mcp
 
-    parent_watch_stop = threading.Event()
+    watch_stop = threading.Event()
     server_task = asyncio.create_task(main_mcp.run_async(**run_kwargs))
-    parent_task = asyncio.create_task(_watch_parent_exit(parent_watch_stop))
+    parent_task = asyncio.create_task(_watch_parent_exit(watch_stop))
+    # SIGTERM is how MCP clients and `docker stop` ask a stdio server to go
+    # away. setup_signal_handlers() only records the request, so without this
+    # watcher the handler swallows the signal and the process is orphaned.
+    signal_task = asyncio.create_task(wait_for_shutdown_request(watch_stop))
 
     done, pending = await asyncio.wait(
-        {server_task, parent_task},
+        {server_task, parent_task, signal_task},
         return_when=asyncio.FIRST_COMPLETED,
     )
-    parent_watch_stop.set()
+    watch_stop.set()
 
-    if parent_task in done and not server_task.done():
-        logger.info("Parent process exited. Shutting down STDIO server.")
+    stopping = not server_task.done()
+    if stopping:
+        if signal_task in done:
+            logger.info("Shutdown signal received. Shutting down STDIO server.")
+        else:
+            logger.info("Parent process exited. Shutting down STDIO server.")
         server_task.cancel()
 
-    for task in pending:
+    for task in (parent_task, signal_task):
         task.cancel()
+    await asyncio.gather(parent_task, signal_task, return_exceptions=True)
 
-    await asyncio.gather(*pending, return_exceptions=True)
+    if stopping:
+        # The stdio transport reads stdin from a worker thread, so a blocked
+        # read swallows the cancellation and awaiting the task here would hang
+        # forever — which is how the process ends up orphaned. Give the server
+        # a bounded moment to unwind, then leave.
+        await asyncio.wait({server_task}, timeout=_STDIO_SHUTDOWN_GRACE_SECONDS)
+        if not server_task.done():
+            logger.warning(
+                "STDIO server did not stop within %ss of the shutdown request; "
+                "exiting now.",
+                _STDIO_SHUTDOWN_GRACE_SECONDS,
+            )
+            ensure_clean_exit()
+            os._exit(0)
+            return
 
-    if server_task.done():
-        server_result = await asyncio.gather(server_task, return_exceptions=True)
-        if (
-            server_result
-            and isinstance(server_result[0], Exception)
-            and not isinstance(server_result[0], asyncio.CancelledError)
-        ):
-            raise server_result[0]
+    server_result = await asyncio.gather(server_task, return_exceptions=True)
+    if (
+        server_result
+        and isinstance(server_result[0], Exception)
+        and not isinstance(server_result[0], asyncio.CancelledError)
+    ):
+        raise server_result[0]
 
 
 def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
@@ -144,6 +171,60 @@ def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
     except OSError as exc:  # ssl.SSLError is an OSError subclass
         logger.error(f"TLS certificate/key could not be loaded: {exc}")
         sys.exit(1)
+
+
+# CLI options that take a secret value, mapped to the environment variable
+# that should be used instead. Values on the command line are readable by other
+# local users through the process argument list (for example /proc/PID/cmdline).
+SECRET_CLI_OPTIONS: dict[str, tuple[str, str]] = {
+    "confluence_token": ("--confluence-token", "CONFLUENCE_API_TOKEN"),
+    "confluence_personal_token": (
+        "--confluence-personal-token",
+        "CONFLUENCE_PERSONAL_TOKEN",
+    ),
+    "jira_token": ("--jira-token", "JIRA_API_TOKEN"),
+    "jira_personal_token": ("--jira-personal-token", "JIRA_PERSONAL_TOKEN"),
+    "oauth_client_secret": ("--oauth-client-secret", "ATLASSIAN_OAUTH_CLIENT_SECRET"),
+    "oauth_access_token": ("--oauth-access-token", "ATLASSIAN_OAUTH_ACCESS_TOKEN"),
+}
+
+
+def _warn_secret_cli_options(ctx: click.Context) -> None:
+    """Warn when a secret was passed as a command-line argument.
+
+    Args:
+        ctx: The Click context of the running command.
+    """
+    for param_name, (option, env_var) in SECRET_CLI_OPTIONS.items():
+        if (
+            ctx.get_parameter_source(param_name)
+            != click.core.ParameterSource.COMMANDLINE
+        ):
+            continue
+        logger.warning(
+            f"{option} puts a secret in the process argument list, which other "
+            f"local users can read. Set {env_var} in the environment or an "
+            "--env-file instead. This option will be removed in a future release."
+        )
+
+
+def _warn_unrestricted_header_urls() -> None:
+    """Warn once when HTTP transport accepts request-supplied URLs unrestricted.
+
+    Over HTTP, callers can name their own Jira/Confluence URL through
+    ``X-Atlassian-Jira-Url`` / ``X-Atlassian-Confluence-Url`` (header-based
+    PAT). Without ``MCP_ALLOWED_URL_DOMAINS`` any public host is accepted.
+    The allowlist becomes mandatory in v0.25.
+    """
+    if os.getenv("MCP_ALLOWED_URL_DOMAINS", "").strip():
+        return
+    logger.warning(
+        "MCP_ALLOWED_URL_DOMAINS is not set: HTTP clients may send "
+        "X-Atlassian-Jira-Url / X-Atlassian-Confluence-Url headers pointing at "
+        "any public host. Set it to the domains your users connect to, e.g. "
+        "MCP_ALLOWED_URL_DOMAINS=atlassian.net,jira.example.com. It will be "
+        "required for HTTP transports with header-based URLs in v0.25."
+    )
 
 
 @click.version_option(__version__, prog_name="mcp-atlassian")
@@ -193,10 +274,16 @@ def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
     help="Confluence URL (e.g., https://your-domain.atlassian.net/wiki)",
 )
 @click.option("--confluence-username", help="Confluence username/email")
-@click.option("--confluence-token", help="Confluence API token")
+@click.option(
+    "--confluence-token",
+    help="Confluence API token."
+    " Deprecated: visible to other local users, set CONFLUENCE_API_TOKEN instead.",
+)
 @click.option(
     "--confluence-personal-token",
-    help="Confluence Personal Access Token (for Confluence Server/Data Center)",
+    help="Confluence Personal Access Token (for Confluence Server/Data Center)."
+    " Deprecated: visible to other local users, set CONFLUENCE_PERSONAL_TOKEN"
+    " instead.",
 )
 @click.option(
     "--confluence-ssl-verify/--no-confluence-ssl-verify",
@@ -212,10 +299,15 @@ def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
     help="Jira URL (e.g., https://your-domain.atlassian.net or https://jira.your-company.com)",
 )
 @click.option("--jira-username", help="Jira username/email (for Jira Cloud)")
-@click.option("--jira-token", help="Jira API token (for Jira Cloud)")
+@click.option(
+    "--jira-token",
+    help="Jira API token (for Jira Cloud)."
+    " Deprecated: visible to other local users, set JIRA_API_TOKEN instead.",
+)
 @click.option(
     "--jira-personal-token",
-    help="Jira Personal Access Token (for Jira Server/Data Center)",
+    help="Jira Personal Access Token (for Jira Server/Data Center)."
+    " Deprecated: visible to other local users, set JIRA_PERSONAL_TOKEN instead.",
 )
 @click.option(
     "--jira-ssl-verify/--no-jira-ssl-verify",
@@ -245,7 +337,9 @@ def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
 )
 @click.option(
     "--oauth-client-secret",
-    help="OAuth 2.0 client secret for Atlassian Cloud",
+    help="OAuth 2.0 client secret for Atlassian Cloud."
+    " Deprecated: visible to other local users, set ATLASSIAN_OAUTH_CLIENT_SECRET"
+    " instead.",
 )
 @click.option(
     "--oauth-redirect-uri",
@@ -262,7 +356,9 @@ def _preflight_tls_certificates(certfile: str, keyfile: str) -> None:
 @click.option(
     "--oauth-access-token",
     help="Atlassian Cloud OAuth 2.0 access token (if you have your own you'd like to "
-    "use for the session.)",
+    "use for the session.)"
+    " Deprecated: visible to other local users, set ATLASSIAN_OAUTH_ACCESS_TOKEN"
+    " instead.",
 )
 @click.option(
     "--ssl-certfile",
@@ -372,6 +468,8 @@ def main(
             sys.exit(1)
 
     click_ctx = click.get_current_context(silent=True)
+    if click_ctx:
+        _warn_secret_cli_options(click_ctx)
 
     # Transport precedence
     final_transport = os.getenv("TRANSPORT", "stdio").lower()
@@ -568,6 +666,14 @@ def main(
     if click_ctx and was_option_provided(click_ctx, "jira_projects_filter"):
         os.environ["JIRA_PROJECTS_FILTER"] = jira_projects_filter
 
+    from mcp_atlassian.utils.io import configure_file_root_for_transport
+
+    try:
+        configure_file_root_for_transport(final_transport)
+    except ValueError as e:
+        logger.error(f"Refusing to start: {e}")
+        sys.exit(1)
+
     from mcp_atlassian.servers import main_mcp
 
     run_kwargs = {
@@ -592,6 +698,7 @@ def main(
                 log_display_path = fastmcp_settings.streamable_http_path or "/mcp"
 
         run_kwargs["stateless_http"] = final_stateless
+        _warn_unrestricted_header_urls()
 
         if final_ssl_enabled:
             run_kwargs["uvicorn_config"] = {

@@ -14,6 +14,7 @@ from ..models.jira import (
     JiraRequestTypesResult,
 )
 from ..utils.media import ATTACHMENT_MAX_BYTES
+from ..utils.urls import path_segment
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -420,7 +421,7 @@ class CustomerRequestsMixin(JiraClient):
 
         response = self.jira.get(
             "rest/servicedeskapi/servicedesk/"
-            f"{service_desk_id}/requesttype/{request_type_id}/field"
+            f"{path_segment(service_desk_id)}/requesttype/{path_segment(request_type_id)}/field"
         )
         if not isinstance(response, dict):
             msg = (

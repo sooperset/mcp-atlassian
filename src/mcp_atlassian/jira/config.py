@@ -4,7 +4,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, ClassVar, Literal
 
 from ..utils.env import (
     get_custom_headers,
@@ -192,6 +192,42 @@ class JiraConfig:
     # internal-only (non-customer-visible) comments. See
     # JIRA_INTERNAL_ONLY_PROJECTS. Empty by default (guard disabled).
 
+    # Operator policy: settings that bound what any request may do, whoever's
+    # credentials it carries. Per-request configs copy them from the server
+    # config (or from the environment when there is none).
+    OPERATOR_POLICY_FIELDS: ClassVar[tuple[str, ...]] = (
+        "projects_filter",
+        "internal_only_projects",
+        "disable_jira_markup_translation",
+        "timeout",
+        "sla_config",
+    )
+
+    @classmethod
+    def operator_policy_from_env(cls) -> dict[str, Any]:
+        """Read the OPERATOR_POLICY_FIELDS values from the environment.
+
+        Returns:
+            Keyword arguments for the constructor, one per policy field.
+        """
+        timeout = 75  # Default timeout
+        if os.getenv("JIRA_TIMEOUT") and os.getenv("JIRA_TIMEOUT", "").isdigit():
+            timeout = int(os.getenv("JIRA_TIMEOUT", "75"))
+        return {
+            "projects_filter": os.getenv("JIRA_PROJECTS_FILTER"),
+            # Internal-only projects: server-side guard forcing
+            # jira_add_comment/jira_edit_comment to internal comments for
+            # these JSM project keys. Unset/empty = no-op.
+            "internal_only_projects": _parse_internal_only_projects(
+                os.getenv("JIRA_INTERNAL_ONLY_PROJECTS")
+            ),
+            "disable_jira_markup_translation": (
+                os.getenv("DISABLE_JIRA_MARKUP_TRANSLATION", "false").lower() == "true"
+            ),
+            "timeout": timeout,
+            "sla_config": None,
+        }
+
     @property
     def is_cloud(self) -> bool:
         """Check if this is a cloud instance.
@@ -327,16 +363,6 @@ class JiraConfig:
         # SSL verification (for Server/DC)
         ssl_verify = is_env_ssl_verify("JIRA_SSL_VERIFY")
 
-        # Get the projects filter if provided
-        projects_filter = os.getenv("JIRA_PROJECTS_FILTER")
-
-        # Internal-only projects: server-side guard forcing
-        # jira_add_comment/jira_edit_comment to internal (non-customer-visible)
-        # comments for these JSM project keys. Unset/empty = no-op.
-        internal_only_projects = _parse_internal_only_projects(
-            os.getenv("JIRA_INTERNAL_ONLY_PROJECTS")
-        )
-
         # Proxy settings
         proxy_settings = get_proxy_settings_from_env("JIRA")
 
@@ -344,20 +370,10 @@ class JiraConfig:
         custom_headers = get_custom_headers("JIRA_CUSTOM_HEADERS")
         passthrough_headers = get_header_names("JIRA_PASSTHROUGH_HEADERS")
 
-        # Markup translation setting
-        disable_jira_markup_translation = (
-            os.getenv("DISABLE_JIRA_MARKUP_TRANSLATION", "false").lower() == "true"
-        )
-
         # Client certificate settings
         client_cert = os.getenv("JIRA_CLIENT_CERT")
         client_key = os.getenv("JIRA_CLIENT_KEY")
         client_key_password = os.getenv("JIRA_CLIENT_KEY_PASSWORD")
-
-        # Timeout setting
-        timeout = 75  # Default timeout
-        if os.getenv("JIRA_TIMEOUT") and os.getenv("JIRA_TIMEOUT", "").isdigit():
-            timeout = int(os.getenv("JIRA_TIMEOUT", "75"))
 
         return cls(
             url=url or "",
@@ -367,7 +383,6 @@ class JiraConfig:
             personal_token=personal_token,
             oauth_config=oauth_config,
             ssl_verify=ssl_verify,
-            projects_filter=projects_filter,
             http_proxy=proxy_settings["http_proxy"],
             https_proxy=proxy_settings["https_proxy"],
             no_proxy=proxy_settings["no_proxy"],
@@ -376,12 +391,10 @@ class JiraConfig:
             proxy_wpad_url=proxy_settings["proxy_wpad_url"],
             custom_headers=custom_headers,
             passthrough_headers=passthrough_headers,
-            disable_jira_markup_translation=disable_jira_markup_translation,
             client_cert=client_cert,
             client_key=client_key,
             client_key_password=client_key_password,
-            timeout=timeout,
-            internal_only_projects=internal_only_projects,
+            **cls.operator_policy_from_env(),
         )
 
     def is_auth_configured(self) -> bool:

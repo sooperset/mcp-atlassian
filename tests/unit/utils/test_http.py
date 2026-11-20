@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import MagicMock
 
 import pytest
+from requests import Response
 from requests.adapters import HTTPAdapter
 from requests.sessions import Session
 from urllib3.util.retry import Retry
@@ -23,6 +24,7 @@ from mcp_atlassian.utils.http import (
     _reset_rate_limit_bucket_for_tests,
     configure_circuit_breaker,
     configure_concurrency,
+    configure_default_timeout,
     configure_rate_limit,
     configure_retry,
     format_rate_limit_error,
@@ -689,10 +691,9 @@ def test_circuit_breaker_resets_on_success(monkeypatch: pytest.MonkeyPatch):
     for _ in range(5):
         adapter.send(MagicMock())  # must not raise
 
-    from mcp_atlassian.utils.http import _circuit_breaker
+    from mcp_atlassian.utils.http import _circuit_breakers
 
-    assert _circuit_breaker is not None
-    assert _circuit_breaker.failures == 2  # last two 429s, no trip
+    assert _circuit_breakers[""].failures == 2  # last two 429s, no trip
 
 
 def test_circuit_breaker_cooldown_then_reset(monkeypatch: pytest.MonkeyPatch):
@@ -775,3 +776,154 @@ def test_circuit_breaker_allows_only_one_half_open_probe(
 
     assert results.count("sent") == 1
     assert results.count("blocked") == 3
+
+
+def test_configure_default_timeout_bounds_request_without_timeout():
+    """A direct ``session.get()`` without ``timeout=`` against a server that
+    accepts the connection but never answers must time out instead of blocking
+    forever (requests' default is no timeout)."""
+    import socket
+
+    import requests
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    port = server.getsockname()[1]
+    try:
+        session = _new_session()
+        configure_default_timeout(session, 0.5, service="Test")
+
+        started = time.monotonic()
+        with pytest.raises(requests.exceptions.ReadTimeout):
+            session.get(f"http://127.0.0.1:{port}/")
+        assert time.monotonic() - started < 5
+    finally:
+        server.close()
+
+
+def test_configure_default_timeout_keeps_explicit_timeout():
+    session = Session()
+    adapter = MagicMock(spec=HTTPAdapter)
+    original_send = adapter.send
+    session.mount("https://", adapter)
+    configure_default_timeout(session, 75, service="Test")
+
+    session.adapters["https://"].send(MagicMock(), timeout=3)
+    session.adapters["https://"].send(MagicMock(), timeout=None)
+    session.adapters["https://"].send(MagicMock())
+
+    timeouts = [c.kwargs["timeout"] for c in original_send.call_args_list]
+    assert timeouts == [3, 75, 75]
+
+
+def _build_host_session(status_by_host: dict[str, int]) -> tuple[Session, list[str]]:
+    """Session whose transport answers by host and records each request URL."""
+    session = Session()
+    sent: list[str] = []
+
+    def fake_send(request, **kwargs):
+        sent.append(request.url)
+        resp = Response()
+        resp.status_code = next(
+            code for prefix, code in status_by_host.items() if prefix in request.url
+        )
+        resp.url = request.url
+        resp.request = request
+        resp._content = b"{}"
+        return resp
+
+    for adapter in session.adapters.values():
+        adapter.send = fake_send  # type: ignore[method-assign]
+    return session, sent
+
+
+def test_circuit_breaker_state_is_per_upstream(monkeypatch: pytest.MonkeyPatch):
+    """Tripping the breaker for one upstream leaves other upstreams usable."""
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD", "3")
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN", "60")
+    statuses = {
+        "a.example.test": 503,
+        "b.example.test": 200,
+        "/ex/jira/site-a/": 429,
+        "/ex/jira/site-b/": 200,
+    }
+    session_a, _ = _build_host_session(statuses)
+    session_b, sent_b = _build_host_session(statuses)
+    configure_circuit_breaker(session_a, service="Jira")
+    configure_circuit_breaker(session_b, service="Confluence")
+
+    for _ in range(3):
+        assert (
+            session_a.get("https://a.example.test/rest/api/2/myself").status_code == 503
+        )
+    with pytest.raises(CircuitBreakerOpenError):
+        session_a.get("https://a.example.test/rest/api/2/myself")
+
+    # Another upstream, through another session and through the tripped one.
+    assert (
+        session_b.get("https://b.example.test/wiki/rest/api/space").status_code == 200
+    )
+    assert session_a.get("https://b.example.test/rest/api/2/myself").status_code == 200
+    assert len(sent_b) == 1
+
+    # Cloud OAuth sites share the api.atlassian.com host but not breaker state.
+    gateway = "https://api.atlassian.com/ex/jira"
+    for _ in range(3):
+        session_a.get(f"{gateway}/site-a/rest/api/3/myself")
+    with pytest.raises(CircuitBreakerOpenError):
+        session_a.get(f"{gateway}/site-a/rest/api/3/myself")
+    assert session_a.get(f"{gateway}/site-b/rest/api/3/myself").status_code == 200
+
+
+def test_circuit_breaker_registry_stays_bounded(monkeypatch: pytest.MonkeyPatch):
+    """Failures on many sites do not grow the registry past its limit."""
+    from mcp_atlassian.utils import http
+
+    monkeypatch.setenv("ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD", "3")
+    session, _ = _build_host_session({"example.test": 503})
+    configure_circuit_breaker(session, service="Jira")
+
+    for n in range(1100):
+        session.get(f"https://site{n}.example.test/rest/api/2/myself")
+
+    assert len(http._circuit_breakers) <= http.MAX_CIRCUIT_BREAKERS
+
+
+def test_circuit_breaker_in_use_is_not_evicted(monkeypatch: pytest.MonkeyPatch):
+    """A breaker with a request in flight keeps its failure record."""
+    from mcp_atlassian.utils import http
+
+    monkeypatch.setattr(http, "MAX_CIRCUIT_BREAKERS", 2)
+    busy = http._checkout_circuit_breaker("https://busy.test:443", 3, 60)
+    busy.on_response(503, probe=False)
+    for n in range(5):
+        http._release_circuit_breaker(
+            http._checkout_circuit_breaker(f"https://s{n}.test:443", 3, 60)
+        )
+
+    assert http._circuit_breakers["https://busy.test:443"] is busy
+    assert busy.failures == 1
+    assert len(http._circuit_breakers) <= 3
+    http._release_circuit_breaker(busy)
+
+
+def test_circuit_breaker_registry_shrinks_after_saturation(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """While every entry is in use the registry may exceed the limit; once
+    they are returned it drops back to the limit."""
+    from mcp_atlassian.utils import http
+
+    monkeypatch.setattr(http, "MAX_CIRCUIT_BREAKERS", 2)
+    held = [
+        http._checkout_circuit_breaker(f"https://s{n}.test:443", 3, 60)
+        for n in range(5)
+    ]
+    assert len(http._circuit_breakers) == 5  # all in use: nothing evictable
+
+    for breaker in held:
+        http._release_circuit_breaker(breaker)
+
+    assert len(http._circuit_breakers) <= 2
+    assert all(b.in_use == 0 for b in http._circuit_breakers.values())

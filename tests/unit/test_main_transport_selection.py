@@ -55,6 +55,32 @@ class TestMainTransportSelection:
                     assert "_run_stdio_with_stdin_guard" not in coro_repr
                     assert "run_async" in coro_repr or hasattr(called_coro, "cr_code")
 
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("transport", ["sse", "streamable-http"])
+    def test_http_transport_refuses_root_files_dir(self, mock_asyncio_run, transport):
+        """A remote transport must not start with file paths confined to /."""
+        with patch.dict(
+            "os.environ", {"TRANSPORT": transport, "MCP_ATLASSIAN_FILES_DIR": "/"}
+        ):
+            with patch("sys.argv", ["mcp-atlassian"]):
+                with pytest.raises(SystemExit) as exc:
+                    main()
+        assert exc.value.code == 1
+        assert not mock_asyncio_run.called
+
+    def test_stdio_transport_allows_root_files_dir(self, mock_server, mock_asyncio_run):
+        """Local stdio keeps working when started from / or with a wide dir."""
+        with patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=mock_server):
+            with patch.dict(
+                "os.environ", {"TRANSPORT": "stdio", "MCP_ATLASSIAN_FILES_DIR": "/"}
+            ):
+                with patch("sys.argv", ["mcp-atlassian"]):
+                    try:
+                        main()
+                    except SystemExit:
+                        pass
+        assert mock_asyncio_run.called
+
     def test_stdio_transport_uses_stdin_guard(self, mock_server, mock_asyncio_run):
         with patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=mock_server):
             with patch.dict("os.environ", {"TRANSPORT": "stdio"}):
@@ -147,6 +173,82 @@ class TestMainTransportSelection:
                 await _run_stdio_with_stdin_guard({"transport": "stdio"})
 
         assert server_cancelled.is_set()
+
+    @pytest.mark.asyncio
+    async def test_stdio_guard_cancels_server_on_shutdown_signal(self):
+        """SIGTERM stops a stdio server instead of orphaning the process."""
+        server_started = asyncio.Event()
+        server_cancelled = asyncio.Event()
+
+        async def fake_run_async(**kwargs):
+            del kwargs
+            server_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                server_cancelled.set()
+                raise
+
+        async def never_fires(_stop_event) -> None:
+            await asyncio.Event().wait()
+
+        async def fake_shutdown_request(_stop_event, *args, **kwargs) -> None:
+            await server_started.wait()
+
+        with (
+            patch(
+                "mcp_atlassian.servers.main_mcp.run_async", side_effect=fake_run_async
+            ),
+            patch("mcp_atlassian._watch_parent_exit", side_effect=never_fires),
+            patch(
+                "mcp_atlassian.wait_for_shutdown_request",
+                side_effect=fake_shutdown_request,
+            ),
+        ):
+            await _run_stdio_with_stdin_guard({"transport": "stdio"})
+
+        assert server_cancelled.is_set()
+
+    @pytest.mark.asyncio
+    async def test_stdio_guard_exits_when_server_ignores_cancellation(self):
+        """A stdin read that swallows the cancellation does not hang shutdown."""
+        server_started = asyncio.Event()
+
+        async def slow_to_stop_run_async(**kwargs):
+            del kwargs
+            server_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                # The real stdio server is parked in a blocking stdin read, so
+                # the cancellation does not land until that read returns.
+                await asyncio.shield(asyncio.sleep(0.3))
+                raise
+
+        async def never_fires(_stop_event) -> None:
+            await asyncio.Event().wait()
+
+        async def fake_shutdown_request(_stop_event, *args, **kwargs) -> None:
+            await server_started.wait()
+
+        with (
+            patch(
+                "mcp_atlassian.servers.main_mcp.run_async",
+                side_effect=slow_to_stop_run_async,
+            ),
+            patch("mcp_atlassian._watch_parent_exit", side_effect=never_fires),
+            patch(
+                "mcp_atlassian.wait_for_shutdown_request",
+                side_effect=fake_shutdown_request,
+            ),
+            patch("mcp_atlassian._STDIO_SHUTDOWN_GRACE_SECONDS", 0.05),
+            patch("mcp_atlassian.ensure_clean_exit") as mock_clean_exit,
+            patch("os._exit") as mock_exit,
+        ):
+            await _run_stdio_with_stdin_guard({"transport": "stdio"})
+
+        mock_clean_exit.assert_called_once()
+        mock_exit.assert_called_once_with(0)
 
     def test_signal_handlers_always_setup(self, mock_server):
         """Test that signal handlers are set up regardless of transport."""
@@ -1041,3 +1143,109 @@ class TestServerTLSRealCertificates:
         assert not isinstance(
             exc_info.value, ssl.SSLWantReadError | ssl.SSLWantWriteError
         ), "server continued the legacy handshake instead of rejecting it"
+
+
+class TestSecretCliOptionWarning:
+    """Secrets passed on the command line produce a deprecation warning."""
+
+    @staticmethod
+    def _ctx(sources):
+        import click
+
+        ctx = MagicMock()
+        ctx.get_parameter_source.side_effect = lambda name: sources.get(
+            name, click.core.ParameterSource.DEFAULT
+        )
+        return ctx
+
+    def test_warns_for_secret_given_on_command_line(self):
+        import click
+
+        from mcp_atlassian import _warn_secret_cli_options
+
+        ctx = self._ctx({"jira_token": click.core.ParameterSource.COMMANDLINE})
+        with patch("mcp_atlassian.logger.warning") as warning:
+            _warn_secret_cli_options(ctx)
+
+        warning.assert_called_once()
+        message = warning.call_args.args[0]
+        assert "--jira-token" in message
+        assert "JIRA_API_TOKEN" in message
+
+    def test_no_warning_for_secret_from_environment(self):
+        import click
+
+        from mcp_atlassian import _warn_secret_cli_options
+
+        ctx = self._ctx(
+            {"jira_token": click.core.ParameterSource.ENVIRONMENT},
+        )
+        with patch("mcp_atlassian.logger.warning") as warning:
+            _warn_secret_cli_options(ctx)
+
+        warning.assert_not_called()
+
+    def test_every_secret_option_maps_to_a_cli_parameter(self):
+        from mcp_atlassian import SECRET_CLI_OPTIONS
+
+        option_names = {
+            opt for param in main.params for opt in getattr(param, "opts", [])
+        }
+        for option, _env_var in SECRET_CLI_OPTIONS.values():
+            assert option in option_names
+
+
+class TestUnrestrictedHeaderUrlWarning:
+    """HTTP deployments without MCP_ALLOWED_URL_DOMAINS get one startup warning."""
+
+    def test_warns_when_allowlist_unset(self, monkeypatch):
+        from mcp_atlassian import _warn_unrestricted_header_urls
+
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        with patch("mcp_atlassian.logger.warning") as warning:
+            _warn_unrestricted_header_urls()
+
+        warning.assert_called_once()
+        message = warning.call_args.args[0]
+        assert "v0.25" in message
+        assert "MCP_ALLOWED_URL_DOMAINS=" in message
+
+    @pytest.mark.parametrize("value", ["atlassian.net", " jira.example.com "])
+    def test_silent_when_allowlist_set(self, monkeypatch, value):
+        from mcp_atlassian import _warn_unrestricted_header_urls
+
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", value)
+        with patch("mcp_atlassian.logger.warning") as warning:
+            _warn_unrestricted_header_urls()
+
+        warning.assert_not_called()
+
+    def test_whitespace_allowlist_counts_as_unset(self, monkeypatch):
+        from mcp_atlassian import _warn_unrestricted_header_urls
+
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "  ")
+        with patch("mcp_atlassian.logger.warning") as warning:
+            _warn_unrestricted_header_urls()
+
+        warning.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("transport", "expected_calls"),
+        [("streamable-http", 1), ("sse", 1), ("stdio", 0)],
+    )
+    def test_main_checks_only_http_transports(self, transport, expected_calls):
+        server = MagicMock()
+        server.run_async = AsyncMock(return_value=None)
+        with (
+            patch("mcp_atlassian.servers.main.AtlassianMCP", return_value=server),
+            patch("mcp_atlassian._warn_unrestricted_header_urls") as warn,
+            patch("asyncio.run", side_effect=lambda coro: coro.close()),
+            patch.dict("os.environ", {"TRANSPORT": transport}),
+            patch("sys.argv", ["mcp-atlassian"]),
+        ):
+            try:
+                main()
+            except SystemExit:
+                pass
+
+        assert warn.call_count == expected_calls

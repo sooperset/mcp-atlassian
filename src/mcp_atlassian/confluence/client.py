@@ -11,14 +11,15 @@ from ..exceptions import MCPAtlassianAuthenticationError
 from ..utils.http import (
     configure_circuit_breaker,
     configure_concurrency,
+    configure_default_timeout,
     configure_rate_limit,
     configure_retry,
 )
-from ..utils.logging import get_masked_session_headers, log_config_param, mask_sensitive
+from ..utils.logging import get_masked_session_headers, log_config_param
 from ..utils.oauth import configure_oauth_session
 from ..utils.proxy import apply_proxy_configuration
 from ..utils.ssl import configure_ssl_verification
-from ..utils.ssrf_adapter import mount_ssrf_pinning
+from ..utils.ssrf_adapter import bind_credentials_to_host, mount_ssrf_pinning
 from ..utils.urls import make_ssrf_redirect_hook
 from ..utils.user_agent import get_default_user_agent
 from .config import ConfluenceConfig
@@ -43,6 +44,9 @@ class ConfluenceClient:
         """
         self.config = config or ConfluenceConfig.from_env()
         transport_url = self.config.url
+        # Fixed, code-built gateway URLs that may keep the deployment proxy.
+        # ``config.url`` can come from a request header, so it is never added.
+        proxy_trusted_urls: list[str] = []
 
         # Initialize the Confluence client based on auth type
         if self.config.auth_type == "oauth":
@@ -76,6 +80,8 @@ class ConfluenceClient:
                 api_url = f"https://api.atlassian.com/ex/confluence/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
             transport_url = api_url
+            if not is_dc_oauth:
+                proxy_trusted_urls.append(api_url)
 
             # Initialize Confluence with the session
             self.confluence = Confluence(
@@ -89,7 +95,7 @@ class ConfluenceClient:
             logger.debug(
                 f"Initializing Confluence client with Token (PAT) auth. "
                 f"URL: {self.config.url}, "
-                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
+                f"Token length: {len(str(self.config.personal_token))}"
             )
             self.confluence = Confluence(
                 url=self.config.url,
@@ -179,7 +185,7 @@ class ConfluenceClient:
         self.confluence._session.hooks["response"].append(make_ssrf_redirect_hook())
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
-        mount_ssrf_pinning(self.confluence._session, transport_url)
+        mount_ssrf_pinning(self.confluence._session, *proxy_trusted_urls)
 
         # atlassian-python-api's built-in retry_with_header performs an UNBOUNDED,
         # header-driven retry (``time.sleep(int(Retry-After)); retry``). It melts
@@ -197,6 +203,9 @@ class ConfluenceClient:
         configure_concurrency(self.confluence._session, service="Confluence")
         configure_rate_limit(self.confluence._session, service="Confluence")
         configure_circuit_breaker(self.confluence._session, service="Confluence")
+        configure_default_timeout(
+            self.confluence._session, self.config.timeout, service="Confluence"
+        )
 
         self.confluence._session = apply_proxy_configuration(
             logger=logger,
@@ -214,6 +223,13 @@ class ConfluenceClient:
         # Apply custom headers if configured
         if self.config.custom_headers:
             self._apply_custom_headers()
+        # Credentials and custom headers belong to the service host only.
+        custom_headers = self.config.custom_headers
+        bind_credentials_to_host(
+            self.confluence._session,
+            transport_url,
+            list(custom_headers) if isinstance(custom_headers, dict) else [],
+        )
 
         # Import here to avoid circular imports
         from ..preprocessing.confluence import ConfluencePreprocessor
@@ -229,6 +245,12 @@ class ConfluenceClient:
                     "Authentication validation failed during client initialization - "
                     "continuing anyway"
                 )
+
+    def close(self) -> None:
+        """Close the underlying requests session and release pooled connections."""
+        session = getattr(self.confluence, "_session", None)
+        if session is not None:
+            session.close()
 
     def _v1_rest_base_url(self) -> str:
         """Return the base URL for direct Confluence REST API v1 calls.

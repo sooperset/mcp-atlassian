@@ -14,19 +14,23 @@ from mcp_atlassian.preprocessing import JiraPreprocessor
 from mcp_atlassian.utils.http import (
     configure_circuit_breaker,
     configure_concurrency,
+    configure_default_timeout,
     configure_rate_limit,
     configure_retry,
 )
 from mcp_atlassian.utils.logging import (
     get_masked_session_headers,
     log_config_param,
-    mask_sensitive,
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
 from mcp_atlassian.utils.proxy import apply_proxy_configuration
 from mcp_atlassian.utils.ssl import configure_ssl_verification
-from mcp_atlassian.utils.ssrf_adapter import mount_ssrf_pinning
-from mcp_atlassian.utils.urls import make_ssrf_redirect_hook
+from mcp_atlassian.utils.ssrf_adapter import (
+    bind_credentials_to_host,
+    mount_ssrf_pinning,
+)
+from mcp_atlassian.utils.truncation import mark_truncated
+from mcp_atlassian.utils.urls import make_ssrf_redirect_hook, path_segment
 from mcp_atlassian.utils.user_agent import get_default_user_agent
 
 from ..models.jira.adf import markdown_to_adf
@@ -34,6 +38,9 @@ from .config import JiraConfig, normalize_project_key
 
 # Configure logging
 logger = logging.getLogger("mcp-jira")
+
+# A paged (nextPageToken) read stops after this many requests.
+MAX_PAGED_REQUESTS = 100
 
 
 class JiraClient:
@@ -58,6 +65,9 @@ class JiraClient:
         # Load configuration from environment variables if not provided
         self.config = config or JiraConfig.from_env()
         transport_url = self.config.url
+        # Fixed, code-built gateway URLs that may keep the deployment proxy.
+        # ``config.url`` can come from a request header, so it is never added.
+        proxy_trusted_urls: list[str] = []
 
         # Initialize the Jira client based on auth type
         if self.config.auth_type == "oauth":
@@ -91,6 +101,8 @@ class JiraClient:
                 api_url = f"https://api.atlassian.com/ex/jira/{self.config.oauth_config.cloud_id}"
                 is_cloud = True
             transport_url = api_url
+            if not is_dc_oauth:
+                proxy_trusted_urls.append(api_url)
 
             # Initialize Jira with the session
             self.jira = Jira(
@@ -104,7 +116,7 @@ class JiraClient:
             logger.debug(
                 f"Initializing Jira client with Token (PAT) auth. "
                 f"URL: {self.config.url}, "
-                f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
+                f"Token length: {len(str(self.config.personal_token))}"
             )
             self.jira = Jira(
                 url=self.config.url,
@@ -193,7 +205,7 @@ class JiraClient:
         self.jira._session.hooks["response"].append(make_ssrf_redirect_hook())
         # Pin DNS resolution against rebinding: resolve+validate once and connect
         # to that address, closing the validate→reconnect TOCTOU. Preserves TLS SNI.
-        mount_ssrf_pinning(self.jira._session, transport_url)
+        mount_ssrf_pinning(self.jira._session, *proxy_trusted_urls)
 
         # atlassian-python-api's built-in retry_with_header performs an UNBOUNDED,
         # header-driven retry (``time.sleep(int(Retry-After)); retry``). It melts
@@ -211,6 +223,9 @@ class JiraClient:
         configure_concurrency(self.jira._session, service="Jira")
         configure_rate_limit(self.jira._session, service="Jira")
         configure_circuit_breaker(self.jira._session, service="Jira")
+        configure_default_timeout(
+            self.jira._session, self.config.timeout, service="Jira"
+        )
 
         self.jira._session = apply_proxy_configuration(
             logger=logger,
@@ -228,6 +243,13 @@ class JiraClient:
         # Apply custom headers if configured
         if self.config.custom_headers:
             self._apply_custom_headers()
+        # Credentials and custom headers belong to the service host only.
+        custom_headers = self.config.custom_headers
+        bind_credentials_to_host(
+            self.jira._session,
+            transport_url,
+            list(custom_headers) if isinstance(custom_headers, dict) else [],
+        )
 
         # Initialize the text preprocessor for text processing capabilities
         self.preprocessor = JiraPreprocessor(
@@ -246,6 +268,12 @@ class JiraClient:
                     "Authentication validation failed during client initialization - "
                     "continuing anyway"
                 )
+
+    def close(self) -> None:
+        """Close the underlying requests session and release pooled connections."""
+        session = getattr(self.jira, "_session", None)
+        if session is not None:
+            session.close()
 
     def _validate_authentication(self) -> None:
         """Validate authentication by making a simple API call."""
@@ -372,12 +400,41 @@ class JiraClient:
         Returns False (no-op) whenever the env var is unset/empty, which is
         the default for every deployment that hasn't opted in.
         """
-        if not self.config.internal_only_projects:
-            return False
-        return (
-            self._project_key_from_issue_key(issue_key)
-            in self.config.internal_only_projects
-        )
+        return self._internal_only_issue_key(issue_key) is not None
+
+    def _internal_only_issue_key(self, issue_key: str) -> str | None:
+        """Return the key to act on if issue_key is in an internal-only project.
+
+        The key prefix is checked first. Otherwise the issue is looked up,
+        because Jira still accepts the old key of a moved issue or a renamed
+        project; for such an alias the issue's current key is returned so
+        that probes and writes target it. A lookup that fails counts as
+        internal-only.
+
+        Returns:
+            None when the issue is not in JIRA_INTERNAL_ONLY_PROJECTS,
+            otherwise the caller's key (prefix match) or the current key.
+        """
+        guarded = self.config.internal_only_projects
+        if not guarded:
+            return None
+        if self._project_key_from_issue_key(issue_key) in guarded:
+            return issue_key
+        try:
+            issue = self.jira.issue(issue_key, fields="project")
+            project = issue["fields"]["project"]["key"]
+            current_key = issue["key"]
+            if not isinstance(project, str) or not isinstance(current_key, str):
+                raise TypeError("issue response has no project or key")
+        except Exception as e:  # noqa: BLE001 - any failure keeps the guard
+            logger.warning(
+                f"Could not resolve the project of {issue_key!r}; treating it "
+                f"as internal-only: {e}"
+            )
+            return issue_key
+        if normalize_project_key(project) in guarded:
+            return current_key
+        return None
 
     def _post_api3(
         self,
@@ -430,8 +487,9 @@ class JiraClient:
 
         all_results: list[dict] = []
         current_data = params_or_json or {}
+        seen_tokens: set[str] = set()
 
-        while True:
+        for _ in range(MAX_PAGED_REQUESTS):
             if method == "get":
                 api_result = self.jira.get(
                     path=url, params=current_data, absolute=absolute
@@ -450,11 +508,19 @@ class JiraClient:
             all_results.append(api_result)
 
             # Check if this is the last page
-            if "nextPageToken" not in api_result:
+            next_token = api_result.get("nextPageToken")
+            if next_token is None:
                 break
+            if str(next_token) in seen_tokens:
+                logger.warning("Stopping pagination after repeated nextPageToken")
+                return mark_truncated(all_results, certain=False)
+            seen_tokens.add(str(next_token))
 
             # Update for next iteration
-            current_data["nextPageToken"] = api_result["nextPageToken"]
+            current_data["nextPageToken"] = next_token
+        else:
+            logger.warning("Stopping pagination of %s at the page limit", url)
+            return mark_truncated(all_results, certain=False)
 
         return all_results
 
@@ -537,7 +603,9 @@ class JiraClient:
         if not payload:
             raise ValueError("update_version requires at least one field to update")
         logger.info(f"Updating Jira version {version_id}: {payload}")
-        result = self.jira.put(f"/rest/api/2/version/{version_id}", data=payload)
+        result = self.jira.put(
+            f"/rest/api/2/version/{path_segment(version_id)}", data=payload
+        )
         if not isinstance(result, dict):
             error_message = f"Unexpected response from Jira API: {result}"
             raise ValueError(error_message)

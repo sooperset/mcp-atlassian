@@ -67,6 +67,7 @@ configuration; each request's `Authorization: Token ...` value replaces them.
 <Note>
 Enterprise CA certificates in the OS trust store (Windows Certificate Store, macOS Keychain, Linux system CAs) are trusted automatically.
 For self-signed certificates not in the OS trust store, set `JIRA_SSL_VERIFY=false` and/or `CONFLUENCE_SSL_VERIFY=false`.
+For header-based PAT requests (`X-Atlassian-*-Url`), this setting applies only to the `JIRA_URL`/`CONFLUENCE_URL` origin and to hosts under `MCP_ALLOWED_URL_DOMAINS`; other request URLs keep certificate verification on.
 </Note>
 
 ## Client Certificate (mTLS) (Server/Data Center)
@@ -85,6 +86,8 @@ CONFLUENCE_CLIENT_CERT=/etc/mcp-atlassian/confluence-client-combined.pem
 ```
 
 In the example, Jira uses separate certificate and key files, while Confluence uses a combined PEM. For a combined PEM, omit `*_CLIENT_KEY`. The matching `JIRA_*` and `CONFLUENCE_*` variables configure each service independently.
+
+In a multi-user deployment, the configured client certificate is attached to every user's request and is sent only to the configured `JIRA_URL` or `CONFLUENCE_URL`. Use it to protect the connection (mTLS), and do not let the upstream server or proxy map the certificate to a specific Atlassian account.
 
 <Warning>
 **Encrypted private keys are not supported.** If your key is passphrase-protected, decrypt it first:
@@ -157,6 +160,34 @@ ATLASSIAN_OAUTH_SCOPE=read:jira-work write:jira-work read:confluence-content.all
 <Warning>
 Include `offline_access` in your scope to allow automatic token refresh.
 </Warning>
+
+#### Confluence Cloud granular scopes
+
+On Cloud, OAuth requests go through the `api.atlassian.com` gateway. Atlassian
+has removed most Confluence v1 REST endpoints there (410 Gone), so the server
+uses the v2 REST API for those operations. v2 endpoints accept only granular
+scopes: with classic scopes such as `read:confluence-content.all` alone they
+answer `401 scope does not match`.
+
+Add the granular scopes to your app in the developer console (Permissions,
+Confluence API, Granular scopes), list them in `ATLASSIAN_OAUTH_SCOPE`, and
+authorize again so the token carries them.
+
+| Scope | Needed for |
+|---|---|
+| `read:page:confluence` | Reading pages, page history and diffs, page labels, the space page tree |
+| `read:space:confluence` | Listing spaces and resolving a space key |
+| `read:comment:confluence` | Reading footer and inline comments |
+| `read:attachment:confluence` | Listing and reading attachments |
+| `read:hierarchical-content:confluence` | Listing a page's children |
+| `write:page:confluence` | Creating, updating and moving pages, setting the page emoji |
+| `delete:page:confluence` | Deleting pages |
+| `write:comment:confluence` | Adding comments and replies |
+| `delete:attachment:confluence` | Deleting attachments |
+
+Keep the classic scopes as well. Search and a few writes (adding a label,
+uploading an attachment) still use v1 endpoints that remain on the gateway.
+A read-only setup needs only the `read:` rows.
 
 ### MCP OAuth Proxy (DCR + Discovery)
 
