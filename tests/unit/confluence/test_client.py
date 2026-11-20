@@ -267,7 +267,7 @@ def test_init_sets_proxies_and_no_proxy(monkeypatch):
     client = ConfluenceClient(config=config)
     assert mock_session.proxies["http"] == "http://proxy:8080"
     assert mock_session.proxies["https"] == "https://proxy:8443"
-    assert mock_session.proxies["socks"] == "socks5://user:pass@proxy:1080"
+    assert mock_session.proxies["all"] == "socks5://user:pass@proxy:1080"
     assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
 
 

@@ -11,6 +11,7 @@ from pypac.parser import MalformedPacError
 from requests import PreparedRequest, Session
 from requests.adapters import HTTPAdapter
 from requests.exceptions import ProxyError
+from requests.utils import select_proxy
 
 from mcp_atlassian.confluence.client import ConfluenceClient
 from mcp_atlassian.confluence.config import ConfluenceConfig
@@ -21,6 +22,7 @@ from mcp_atlassian.utils.proxy import (
     _load_pac_file,
     _NoProxyAwarePACSession,
     apply_proxy_configuration,
+    get_explicit_proxy_map,
     get_proxy_settings_from_env,
 )
 from mcp_atlassian.utils.ssl import NoProxyAdapter, configure_proxy_bypass
@@ -56,7 +58,7 @@ def test_jira_client_passes_proxies_to_requests(monkeypatch):
     )
     assert mock_session.proxies["http"] == "http://proxy:8080"
     assert mock_session.proxies["https"] == "https://proxy:8443"
-    assert mock_session.proxies["socks"] == "socks5://user:pass@proxy:1080"
+    assert mock_session.proxies["all"] == "socks5://user:pass@proxy:1080"
 
 
 def test_confluence_client_passes_proxies_to_requests(monkeypatch):
@@ -94,7 +96,7 @@ def test_confluence_client_passes_proxies_to_requests(monkeypatch):
     )
     assert mock_session.proxies["http"] == "http://proxy:8080"
     assert mock_session.proxies["https"] == "https://proxy:8443"
-    assert mock_session.proxies["socks"] == "socks5://user:pass@proxy:1080"
+    assert mock_session.proxies["all"] == "socks5://user:pass@proxy:1080"
 
 
 def test_jira_client_no_proxy_env(monkeypatch):
@@ -187,7 +189,7 @@ class TestProxyConfigurationEnhanced(BaseAuthTest):
 
         _client = JiraClient(config=config)
         assert (
-            mock_session.proxies["socks"]
+            mock_session.proxies["all"]
             == "socks5://socksuser:sockspass@socks.company.com:1080"
         )
 
@@ -370,8 +372,28 @@ def test_apply_proxy_configuration_returns_same_session_for_explicit_proxies(
     assert result is session
     assert session.proxies["http"] == "http://proxy:8080"
     assert session.proxies["https"] == "https://proxy:8443"
-    assert session.proxies["socks"] == "socks5://proxy:1080"
+    assert session.proxies["all"] == "socks5://proxy:1080"
     assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
+
+
+def test_socks_proxy_is_used_for_requests_without_scheme_proxy():
+    """A SOCKS proxy must land under a key requests actually looks up."""
+    config = JiraConfig(
+        url="https://test.atlassian.net",
+        auth_type="basic",
+        username="user",
+        api_token="token",
+        socks_proxy="socks5://proxy:1080",
+    )
+
+    proxies = get_explicit_proxy_map(config)
+
+    assert select_proxy("https://test.atlassian.net/rest/api/2/myself", proxies) == (
+        "socks5://proxy:1080"
+    )
+    assert select_proxy("http://test.atlassian.net/", proxies) == (
+        "socks5://proxy:1080"
+    )
 
 
 def test_apply_proxy_configuration_wraps_session_for_wpad():
