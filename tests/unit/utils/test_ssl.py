@@ -100,9 +100,12 @@ def test_configure_ssl_verification_disabled():
             # Assert
             mock_adapter_class.assert_called_once()
             # Verify the adapter is mounted for both http and https
-            assert session.mount.call_count == 2
-            session.mount.assert_any_call("https://test.example.com", mock_adapter)
-            session.mount.assert_any_call("http://test.example.com", mock_adapter)
+            # Each scheme, with and without the default port.
+            assert session.mount.call_count == 4
+            session.mount.assert_any_call("https://test.example.com/", mock_adapter)
+            session.mount.assert_any_call("https://test.example.com:443/", mock_adapter)
+            session.mount.assert_any_call("http://test.example.com/", mock_adapter)
+            session.mount.assert_any_call("http://test.example.com:80/", mock_adapter)
 
 
 def test_configure_ssl_verification_enabled(monkeypatch):
@@ -159,11 +162,11 @@ def test_configure_ssl_verification_disabled_with_real_session():
         )
 
         # Should add custom adapters for http and https protocols
-        assert len(session.adapters) == original_adapters_count + 2
-        assert "https://example.com" in session.adapters
-        assert "http://example.com" in session.adapters
-        assert isinstance(session.adapters["https://example.com"], SSLIgnoreAdapter)
-        assert isinstance(session.adapters["http://example.com"], SSLIgnoreAdapter)
+        assert len(session.adapters) == original_adapters_count + 4
+        assert "https://example.com/" in session.adapters
+        assert "http://example.com/" in session.adapters
+        assert isinstance(session.adapters["https://example.com/"], SSLIgnoreAdapter)
+        assert isinstance(session.adapters["http://example.com/"], SSLIgnoreAdapter)
 
 
 def test_ssl_ignore_adapter():
@@ -310,7 +313,7 @@ def test_configure_ssl_disabled_with_client_cert():
             # Assert - Both client cert and SSL adapter should be configured
             assert session.cert == ("/path/to/cert.pem", "/path/to/key.pem")
             mock_adapter_class.assert_called_once()
-            assert session.mount.call_count == 2
+            assert session.mount.call_count == 4
 
 
 def test_ssl_ignore_adapter_is_subclass_of_no_proxy_adapter():
@@ -438,7 +441,7 @@ def test_configure_ssl_verification_captures_no_proxy_on_adapter(monkeypatch):
         no_proxy="explicit.example.com",
     )
 
-    adapter = session.get_adapter("https://test.example.com")
+    adapter = session.get_adapter("https://test.example.com/")
     assert isinstance(adapter, NoProxyAdapter)
     assert adapter._no_proxy == "explicit.example.com"
 
@@ -456,9 +459,9 @@ def test_configure_ssl_verification_enabled_with_no_proxy_mounts_adapter(monkeyp
         ssl_verify=True,
     )
 
-    assert len(session.adapters) == original_adapters_count + 2
-    assert isinstance(session.get_adapter("https://test.example.com"), NoProxyAdapter)
-    assert isinstance(session.get_adapter("http://test.example.com"), NoProxyAdapter)
+    assert len(session.adapters) == original_adapters_count + 4
+    assert isinstance(session.get_adapter("https://test.example.com/"), NoProxyAdapter)
+    assert isinstance(session.get_adapter("http://test.example.com/"), NoProxyAdapter)
     # Must not be the stricter SSLIgnoreAdapter — SSL verification stays enabled
     assert not isinstance(
         session.get_adapter("https://test.example.com"), SSLIgnoreAdapter

@@ -66,6 +66,27 @@ def _redirect_target(uri: str) -> tuple[str, str, int | None, str] | None:
     return scheme, hostname, port, path.rstrip("/") or "/"
 
 
+# Dynamic client registration is unauthenticated and each record is kept,
+# so one record is bounded. Real client metadata is well under these limits.
+_MAX_CLIENT_NAME_CHARS = 256
+_MAX_CLIENT_METADATA_BYTES = 16 * 1024
+
+
+def _check_registration_size(client_info: OAuthClientInformationFull) -> None:
+    name = client_info.client_name or ""
+    if len(name) > _MAX_CLIENT_NAME_CHARS:
+        raise RegistrationError(
+            "invalid_client_metadata",
+            f"client_name is longer than {_MAX_CLIENT_NAME_CHARS} characters",
+        )
+    size = len(client_info.model_dump_json(exclude_none=True).encode())
+    if size > _MAX_CLIENT_METADATA_BYTES:
+        raise RegistrationError(
+            "invalid_client_metadata",
+            f"Client metadata is larger than {_MAX_CLIENT_METADATA_BYTES} bytes",
+        )
+
+
 def _callback_uri(base_url: str, redirect_path: str) -> str:
     """Build the proxy's callback URI from its public base URL and route."""
     parsed = urlsplit(base_url)
@@ -93,6 +114,7 @@ class HardenedOAuthProxy(OAuthProxy):
         )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        _check_registration_size(client_info)
         for redirect_uri in client_info.redirect_uris or []:
             if _redirect_target(str(redirect_uri)) == self._proxy_callback_target:
                 raise RegistrationError(

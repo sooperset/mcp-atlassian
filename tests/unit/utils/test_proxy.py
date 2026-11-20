@@ -661,8 +661,8 @@ class TestNoProxyAdapter:
         monkeypatch.setenv("NO_PROXY", "example.com")
         session = Session()
         configure_proxy_bypass("TestService", "https://example.com", session)
-        assert isinstance(session.get_adapter("https://example.com"), NoProxyAdapter)
-        assert isinstance(session.get_adapter("http://example.com"), NoProxyAdapter)
+        assert isinstance(session.get_adapter("https://example.com/"), NoProxyAdapter)
+        assert isinstance(session.get_adapter("http://example.com/"), NoProxyAdapter)
 
     def test_configure_proxy_bypass_does_nothing_when_no_proxy_not_set(
         self, monkeypatch

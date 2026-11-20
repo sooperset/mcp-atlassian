@@ -22,6 +22,7 @@ from starlette.requests import Request
 
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
+from mcp_atlassian.servers.async_utils import run_fetcher_call
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.utils.credential_command import get_resolver
 from mcp_atlassian.utils.env import (
@@ -31,7 +32,11 @@ from mcp_atlassian.utils.env import (
 )
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.proxy import get_proxy_settings_from_env
-from mcp_atlassian.utils.ssrf_adapter import is_operator_trusted_url
+from mcp_atlassian.utils.ssrf_adapter import (
+    Origin,
+    is_operator_trusted_url,
+    url_origin,
+)
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 if TYPE_CHECKING:
@@ -60,8 +65,6 @@ class _ServiceSpec:
     url_header: str  # X-Atlassian-{Service}-Url
     token_header: str  # X-Atlassian-{Service}-Personal-Token
     passthrough_env_var: str  # {SERVICE}_PASSTHROUGH_HEADERS
-    filter_attr: str  # "projects_filter" / "spaces_filter"
-    filter_env_var: str  # JIRA_PROJECTS_FILTER / CONFLUENCE_SPACES_FILTER
     get_session: Callable[[Any], Any]  # fetcher → session
     validate_fn: Callable[[Any], Any]  # fetcher → validation data
     on_validated: Callable[
@@ -328,8 +331,6 @@ def _jira_spec() -> _ServiceSpec:
         url_header="X-Atlassian-Jira-Url",
         token_header="X-Atlassian-Jira-Personal-Token",  # noqa: S106
         passthrough_env_var="JIRA_PASSTHROUGH_HEADERS",
-        filter_attr="projects_filter",
-        filter_env_var="JIRA_PROJECTS_FILTER",
         get_session=lambda f: f.jira._session,
         validate_fn=lambda f: f.get_current_user_account_id(),
         on_validated=_jira_on_validated,
@@ -351,8 +352,6 @@ def _confluence_spec() -> _ServiceSpec:
         url_header="X-Atlassian-Confluence-Url",
         token_header="X-Atlassian-Confluence-Personal-Token",  # noqa: S106
         passthrough_env_var="CONFLUENCE_PASSTHROUGH_HEADERS",
-        filter_attr="spaces_filter",
-        filter_env_var="CONFLUENCE_SPACES_FILTER",
         get_session=lambda f: f.confluence._session,
         validate_fn=lambda f: f.get_current_user_info(),
         on_validated=_confluence_on_validated,
@@ -482,44 +481,67 @@ def _header_url_passthrough_names(url: str, spec: _ServiceSpec) -> list[str]:
     return []
 
 
-def _get_header_pat_network_config(ctx: Context, spec: _ServiceSpec) -> dict[str, Any]:
+def _get_header_pat_network_config(
+    ctx: Context, spec: _ServiceSpec, url: str
+) -> dict[str, Any]:
     """Resolve operator-controlled network settings for header PAT requests.
+
+    The operator's ``*_SSL_VERIFY=false`` is meant for the operator's own
+    instance, so it applies only when ``url`` is operator-trusted: the
+    configured service origin or a host under ``MCP_ALLOWED_URL_DOMAINS``.
+    Any other request-supplied host keeps certificate verification on.
 
     Args:
         ctx: FastMCP request context.
         spec: Service specification for Jira or Confluence.
+        url: The service URL taken from the request header.
 
     Returns:
-        SSL and proxy settings from the global config when available, otherwise
-        from service-specific or shared environment variables.
+        SSL, proxy and timeout settings from the global config when available,
+        otherwise from service-specific or shared environment variables.
     """
+    operator_origins: list[Origin] = []
     try:
         global_config = _get_global_config(ctx, spec)
     except ValueError:
         env_prefix = spec.name.upper()
-        proxy_settings = get_proxy_settings_from_env(env_prefix)
-        return {
+        settings: dict[str, Any] = {
             "ssl_verify": is_env_ssl_verify(f"{env_prefix}_SSL_VERIFY"),
-            **proxy_settings,
+            **get_proxy_settings_from_env(env_prefix),
         }
+    else:
+        settings = {
+            "ssl_verify": global_config.ssl_verify,
+            "http_proxy": global_config.http_proxy,
+            "https_proxy": global_config.https_proxy,
+            "no_proxy": global_config.no_proxy,
+            "socks_proxy": global_config.socks_proxy,
+            "proxy_wpad_enable": global_config.proxy_wpad_enable,
+            "proxy_wpad_url": global_config.proxy_wpad_url,
+        }
+        origin = url_origin(global_config.url)
+        if origin is not None:
+            operator_origins.append(origin)
+    if not settings["ssl_verify"] and not is_operator_trusted_url(
+        url, operator_origins
+    ):
+        logger.warning(
+            "%s SSL verification stays on for %s: SSL_VERIFY=false applies only "
+            "to the configured URL origin or MCP_ALLOWED_URL_DOMAINS.",
+            spec.name,
+            urlparse(url).hostname or "<no host>",
+        )
+        settings["ssl_verify"] = True
+    return settings
 
-    return {
-        "ssl_verify": global_config.ssl_verify,
-        "http_proxy": global_config.http_proxy,
-        "https_proxy": global_config.https_proxy,
-        "no_proxy": global_config.no_proxy,
-        "socks_proxy": global_config.socks_proxy,
-        "proxy_wpad_enable": global_config.proxy_wpad_enable,
-        "proxy_wpad_url": global_config.proxy_wpad_url,
-    }
 
+def _get_operator_policy_kwargs(ctx: Context, spec: _ServiceSpec) -> dict[str, Any]:
+    """Return the operator policy settings for a per-request config.
 
-def _get_operator_filter_kwargs(ctx: Context, spec: _ServiceSpec) -> dict[str, Any]:
-    """Return the operator's project/space allowlist for a per-request config.
-
-    The allowlist is operator policy and must bound every request, whatever
-    credentials the caller supplied. It comes from the global config when
-    available, otherwise from the environment variable.
+    Policy settings (the config class's ``OPERATOR_POLICY_FIELDS``: allowlists,
+    internal-only projects, markup translation, timeouts) bound every request,
+    whatever credentials the caller supplied. They come from the global config
+    when available, otherwise from the environment.
 
     Args:
         ctx: FastMCP request context.
@@ -531,9 +553,11 @@ def _get_operator_filter_kwargs(ctx: Context, spec: _ServiceSpec) -> dict[str, A
     try:
         global_config = _get_global_config(ctx, spec)
     except ValueError:
-        value = os.getenv(spec.filter_env_var)
-        return {spec.filter_attr: value if value and value.strip() else None}
-    return {spec.filter_attr: getattr(global_config, spec.filter_attr, None)}
+        return spec.config_class.operator_policy_from_env()  # type: ignore[attr-defined, no-any-return]
+    return {
+        name: getattr(global_config, name)
+        for name in spec.config_class.OPERATOR_POLICY_FIELDS  # type: ignore[attr-defined]
+    }
 
 
 def _create_and_validate(
@@ -938,14 +962,15 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 url=url_header_val,
                 auth_type="pat",
                 personal_token=token_header_val,
-                **_get_header_pat_network_config(ctx, spec),
+                **_get_header_pat_network_config(ctx, spec, url_header_val),
                 # Never forward instance-specific custom headers to a URL
                 # selected per request.
                 custom_headers=None,
                 passthrough_headers=_header_url_passthrough_names(url_header_val, spec),
-                **_get_operator_filter_kwargs(ctx, spec),
+                **_get_operator_policy_kwargs(ctx, spec),
             )
-            return _create_and_validate(
+            return await run_fetcher_call(
+                _create_and_validate,
                 request,
                 spec,
                 header_config,
@@ -976,7 +1001,8 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 auth_type="basic",
                 credentials=credentials,
             )
-            return _create_and_validate(
+            return await run_fetcher_call(
+                _create_and_validate,
                 request,
                 spec,
                 user_config,
@@ -1026,7 +1052,8 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 credentials=credentials,
                 cloud_id=user_cloud_id,
             )
-            return _create_and_validate(
+            return await run_fetcher_call(
+                _create_and_validate,
                 request,
                 spec,
                 user_config,
@@ -1098,7 +1125,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             )
         else:
             config = spec.config_class.from_env()  # type: ignore[attr-defined]
-            fetcher = spec.fetcher_class(config=config)
+            fetcher = await run_fetcher_call(spec.fetcher_class, config=config)
             logger.info(
                 "%s credentials resolved from *_COMMAND env vars on first use.",
                 spec.name,
@@ -1128,7 +1155,9 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                             "exfiltration."
                         )
                         raise ValueError(error_msg)
-                    ssrf_error = validate_url_for_ssrf(url_from_header)
+                    ssrf_error = await run_fetcher_call(
+                        validate_url_for_ssrf, url_from_header
+                    )
                     if ssrf_error:
                         error_msg = f"Forbidden: Invalid {spec.name} URL - {ssrf_error}"
                         raise ValueError(error_msg)
@@ -1149,7 +1178,9 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             global_config_fallback = _with_request_passthrough_headers(
                 request, spec, global_config_fallback
             )
-        fetcher = spec.fetcher_class(config=global_config_fallback)
+        fetcher = await run_fetcher_call(
+            spec.fetcher_class, config=global_config_fallback
+        )
         if request is not None:
             # Cache on request.state so UserTokenMiddleware can close it in its
             # finally block, giving the global-credential fallback the same

@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
+import anyio
 from fastmcp import FastMCP
 from fastmcp import settings as fastmcp_settings
 from fastmcp.exceptions import NotFoundError
@@ -34,7 +35,6 @@ from mcp_atlassian.utils.io import (
     configure_file_root_for_transport,
     is_read_only_mode,
 )
-from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.oauth import (
     CLOUD_AUTHORIZE_URL,
     CLOUD_TOKEN_URL,
@@ -472,6 +472,9 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         configure_file_root_for_transport(
             "sse" if transport == "sse" else "streamable-http"
         )
+        host_origin_protection, allowed_origins = _host_origin_defaults(
+            host_origin_protection, allowed_origins
+        )
         final_path = path
         auth_paths: frozenset[str]
         auth_mounts: frozenset[str] = frozenset()
@@ -510,6 +513,60 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
             allowed_origins=allowed_origins,
         )
         return app
+
+
+# Browser origins on this machine. "[[]" is fnmatch for a literal "[".
+_LOCAL_ORIGINS = (
+    "http://localhost:*",
+    "https://localhost:*",
+    "http://127.0.0.1:*",
+    "https://127.0.0.1:*",
+    "http://[[]::1]:*",
+    "https://[[]::1]:*",
+)
+
+
+def _host_origin_defaults(
+    requested: bool | Literal["auto"] | None,
+    allowed_origins: list[str] | None,
+) -> tuple[bool | Literal["auto"] | None, list[str] | None]:
+    """Return the Host/Origin protection and origin allowlist for an HTTP app.
+
+    FastMCP checks Host and Origin only when asked to. When header-less
+    requests are served with the operator's global credentials
+    (``ALLOW_GLOBAL_CRED_FALLBACK`` or ``IGNORE_HEADER_AUTH``), a page in a
+    browser that can reach the listener could act with those credentials.
+    There the default becomes FastMCP's ``"auto"`` mode with an explicit
+    origin allowlist: a request that carries an ``Origin`` header must come
+    from a local origin or one the operator listed, on every address, while
+    the ``Host`` check stays on loopback requests so a proxied or container
+    bind keeps working. Requests without ``Origin`` (MCP clients, proxies)
+    are unaffected. An explicit ``FASTMCP_HTTP_HOST_ORIGIN_PROTECTION`` or a
+    protection value other than the off default is kept as given.
+
+    Args:
+        requested: The protection passed to ``http_app``. ``run_async`` passes
+            the resolved FastMCP setting, so ``False`` can mean "not set".
+        allowed_origins: The origin allowlist passed to ``http_app``.
+
+    Returns:
+        The protection and origin allowlist to pass to FastMCP.
+    """
+    if requested not in (None, False):
+        return requested, allowed_origins
+    if "http_host_origin_protection" in fastmcp_settings.model_fields_set:
+        return requested, allowed_origins
+    if not (
+        is_env_truthy("ALLOW_GLOBAL_CRED_FALLBACK")
+        or is_env_truthy("IGNORE_HEADER_AUTH")
+    ):
+        return requested, allowed_origins
+    configured = (
+        allowed_origins
+        if allowed_origins is not None
+        else fastmcp_settings.http_allowed_origins
+    )
+    return "auto", [*(configured or []), *_LOCAL_ORIGINS]
 
 
 def _route_path(scope: Scope) -> str:
@@ -606,7 +663,7 @@ class UserTokenMiddleware:
             and self.mcp_server_ref
             and self._should_process_auth(scope_copy)
         ):
-            self._process_authentication_headers(scope_copy)
+            await self._process_authentication_headers(scope_copy)
 
         # Create wrapped send function to handle client disconnections gracefully
         async def safe_send(message: Message) -> None:
@@ -722,8 +779,12 @@ class UserTokenMiddleware:
             logger.warning(f"Error checking auth path: {e}")
             return False
 
-    def _process_authentication_headers(self, scope: Scope) -> None:
-        """Process authentication headers and store in scope state."""
+    async def _process_authentication_headers(self, scope: Scope) -> None:
+        """Process authentication headers and store in scope state.
+
+        URL headers are checked only when the request carries a credential,
+        and their DNS check runs in a worker thread, off the event loop.
+        """
         try:
             # Parse headers from scope (headers are byte tuples per ASGI spec)
             headers = dict(scope.get("headers", []))
@@ -762,9 +823,16 @@ class UserTokenMiddleware:
                 else None
             )
 
+            # A URL header is used only together with a credential. Without
+            # one the request is rejected below, so skip its DNS check.
+            if not (auth_header_str or jira_token_str or confluence_token_str):
+                jira_url_str = confluence_url_str = None
+
             # Validate URLs to prevent SSRF
             if jira_url_str:
-                ssrf_error = validate_url_for_ssrf(jira_url_str)
+                ssrf_error = await anyio.to_thread.run_sync(
+                    validate_url_for_ssrf, jira_url_str
+                )
                 if ssrf_error:
                     scope["state"]["auth_validation_error"] = (
                         f"Forbidden: Invalid Jira URL - {ssrf_error}"
@@ -772,7 +840,9 @@ class UserTokenMiddleware:
                     return
 
             if confluence_url_str:
-                ssrf_error = validate_url_for_ssrf(confluence_url_str)
+                ssrf_error = await anyio.to_thread.run_sync(
+                    validate_url_for_ssrf, confluence_url_str
+                )
                 if ssrf_error:
                     scope["state"]["auth_validation_error"] = (
                         f"Forbidden: Invalid Confluence URL - {ssrf_error}"
@@ -858,8 +928,7 @@ class UserTokenMiddleware:
                 scope["state"]["user_atlassian_token"] = token
                 scope["state"]["user_atlassian_auth_type"] = "oauth"
                 logger.debug(
-                    "UserTokenMiddleware: Bearer token extracted (masked): "
-                    f"...{mask_sensitive(token, 8)}"
+                    f"UserTokenMiddleware: Bearer token extracted (length {len(token)})"
                 )
 
         elif auth_header.startswith("Token "):
@@ -872,8 +941,7 @@ class UserTokenMiddleware:
                 scope["state"]["user_atlassian_token"] = token
                 scope["state"]["user_atlassian_auth_type"] = "pat"
                 logger.debug(
-                    "UserTokenMiddleware: PAT token extracted (masked): "
-                    f"...{mask_sensitive(token, 8)}"
+                    f"UserTokenMiddleware: PAT token extracted (length {len(token)})"
                 )
 
         elif auth_header.startswith("Basic "):

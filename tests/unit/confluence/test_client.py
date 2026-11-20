@@ -299,7 +299,7 @@ def test_init_configures_no_proxy_adapter_from_config(monkeypatch):
     assert os.environ["NO_PROXY"] == "test.atlassian.net"
     assert mock_confluence._session.proxies["https"] == "https://proxy:8443"
     assert isinstance(
-        mock_confluence._session.get_adapter("https://test.atlassian.net"),
+        mock_confluence._session.get_adapter("https://test.atlassian.net/"),
         NoProxyAdapter,
     )
 

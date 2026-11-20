@@ -15,6 +15,7 @@ This guide covers IDE integration, environment variables, and advanced configura
 | Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Claude Desktop (Linux) | `~/.config/Claude/claude_desktop_config.json` |
 | Cursor | Settings → MCP → + Add new global MCP server |
+| VS Code with GitHub Copilot | `~/.copilot/mcp-config.json` or `.mcp.json` in a workspace root. See [Installation](/docs/installation#github-copilot). |
 
 ### Basic Configuration (uvx)
 
@@ -320,7 +321,7 @@ never retried. Set `ATLASSIAN_RETRY_TOTAL=0` to turn retries off.
 | `ATLASSIAN_MAX_CONCURRENT_REQUESTS` | Process-wide cap for concurrent Jira and Confluence requests. `0` or unset disables the cap. |
 | `ATLASSIAN_REQUESTS_PER_SECOND` | Process-wide outbound request rate limit. `0` or unset disables the limit. |
 | `ATLASSIAN_MAX_PAGINATION_LIMIT` | Clamp user-supplied page sizes for high-fanout list/search calls. `0` or unset disables clamping. |
-| `ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD` | Open a process-wide circuit breaker after this many consecutive `429/503` responses. `0` or unset disables it. |
+| `ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD` | Open a circuit breaker for an upstream site after this many consecutive `429/503` responses from that site. Each site has its own breaker. `0` or unset disables it. |
 | `ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN` | Circuit breaker cooldown in seconds before allowing a probe request (default: `30.0`). |
 
 ## Proxy Configuration

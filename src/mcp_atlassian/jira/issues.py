@@ -13,7 +13,9 @@ from ..exceptions import MCPAtlassianAuthenticationError, ScopeViolationError
 from ..models.jira import JiraIssue
 from ..models.jira.adf import merge_adf_with_preserved_media
 from ..models.jira.common import JiraChangelog
+from ..models.jira.issue import restrict_changelogs
 from ..utils import parse_date
+from ..utils.truncation import merge_truncation
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import (
     AttachmentsOperationsProto,
@@ -24,7 +26,7 @@ from .protocols import (
     ProjectsOperationsProto,
     UsersOperationsProto,
 )
-from .scope import ScopeMixin, allowed_project_keys
+from .scope import ScopeMixin, allowed_project_keys, output_scope_kwargs
 
 logger = logging.getLogger("mcp-jira")
 
@@ -287,7 +289,7 @@ class IssuesMixin(
                 issue,
                 base_url=self.config.url if hasattr(self, "config") else None,
                 requested_fields=model_fields,
-                allowed_projects=allowed_project_keys(self.config),
+                **output_scope_kwargs(self),
             )
         except HTTPError as http_err:
             status_code = (
@@ -628,7 +630,7 @@ class IssuesMixin(
         issue_type: str,
         description: str = "",
         assignee: str | None = None,
-        components: list[str] | None = None,
+        components: list[str | dict[str, Any]] | None = None,
         **kwargs: Any,  # noqa: ANN401 - Dynamic field types are necessary for Jira API
     ) -> JiraIssue:
         """
@@ -640,7 +642,8 @@ class IssuesMixin(
             issue_type: The type of issue to create
             description: The issue description
             assignee: The username or account ID of the assignee
-            components: List of component names to assign (e.g., ["Frontend", "API"])
+            components: Components to assign, as names (e.g., ["Frontend", "API"])
+                or {"id": ...} / {"name": ...} objects
             **kwargs: Additional fields to set on the issue
 
         Returns:
@@ -713,17 +716,18 @@ class IssuesMixin(
             # Add components if provided
             if components:
                 if isinstance(components, list):
-                    # Filter out any None or empty/whitespace-only strings
-                    valid_components = [
-                        comp_name.strip()
-                        for comp_name in components
-                        if isinstance(comp_name, str) and comp_name.strip()
-                    ]
+                    # Names become {"name": ...}; {"id"} / {"name"} objects are
+                    # kept. None, blank names and other items are skipped.
+                    valid_components: list[dict[str, Any]] = []
+                    for comp in components:
+                        if isinstance(comp, str) and comp.strip():
+                            valid_components.append({"name": comp.strip()})
+                        elif isinstance(comp, dict) and (
+                            "id" in comp or "name" in comp
+                        ):
+                            valid_components.append(comp)
                     if valid_components:
-                        # Format as list of {"name": ...} dicts for the API
-                        fields["components"] = [
-                            {"name": comp_name} for comp_name in valid_components
-                        ]
+                        fields["components"] = valid_components
 
             # Resolve epic link aliases (epicKey, epic_link, etc.) before
             # kwargs_copy so the alias is not double-processed.
@@ -800,9 +804,7 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(
-                issue_data, allowed_projects=allowed_project_keys(self.config)
-            )
+            return JiraIssue.from_api_response(issue_data, **output_scope_kwargs(self))
 
         except Exception as e:
             self._handle_create_issue_error(e, issue_type)
@@ -1476,7 +1478,7 @@ class IssuesMixin(
             issue = JiraIssue.from_api_response(
                 issue_data,
                 requested_fields=return_fields_param,
-                allowed_projects=allowed_project_keys(self.config),
+                **output_scope_kwargs(self),
             )
 
             # Add attachment results to the response if available
@@ -1599,7 +1601,7 @@ class IssuesMixin(
             return JiraIssue.from_api_response(
                 issue_data,
                 requested_fields=return_fields_param,
-                allowed_projects=allowed_project_keys(self.config),
+                **output_scope_kwargs(self),
             )
 
         # Get available transitions (uses TransitionsMixin's normalized implementation)
@@ -1702,7 +1704,7 @@ class IssuesMixin(
         return JiraIssue.from_api_response(
             issue_data,
             requested_fields=return_fields_param,
-            allowed_projects=allowed_project_keys(self.config),
+            **output_scope_kwargs(self),
         )
 
     def delete_issue(self, issue_key: str) -> bool:
@@ -1853,9 +1855,7 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(
-                issue_data, allowed_projects=allowed_project_keys(self.config)
-            )
+            return JiraIssue.from_api_response(issue_data, **output_scope_kwargs(self))
 
         except (ValueError, NotImplementedError, TypeError):
             raise
@@ -2153,7 +2153,7 @@ class IssuesMixin(
                                 base_url=self.config.url
                                 if hasattr(self, "config")
                                 else None,
-                                allowed_projects=allowed_project_keys(self.config),
+                                **output_scope_kwargs(self),
                             )
                         )
                     except Exception as e:
@@ -2220,9 +2220,14 @@ class IssuesMixin(
 
                 issue_changelog_results[issue_id].extend(changelogs)
 
+        allowed = allowed_project_keys(self.config)
+        if allowed:
+            kinds = output_scope_kwargs(self)["changelog_field_kinds"]()
+            for changelogs in issue_changelog_results.values():
+                restrict_changelogs(changelogs, allowed, kinds)
         issues = [
             JiraIssue(id=issue_id, changelogs=changelogs)
             for issue_id, changelogs in issue_changelog_results.items()
         ]
 
-        return issues
+        return merge_truncation(issues, paged_api_results)
