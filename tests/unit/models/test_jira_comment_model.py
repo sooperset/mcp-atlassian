@@ -2,14 +2,73 @@
 Tests for the JiraComment Pydantic model.
 """
 
+from copy import deepcopy
+from typing import Any
+
+import pytest
+
 from mcp_atlassian.models.constants import (
     EMPTY_STRING,
     JIRA_DEFAULT_ID,
 )
 from mcp_atlassian.models.jira import (
     JiraComment,
+    JiraIssue,
     JiraUser,
 )
+
+
+@pytest.mark.parametrize(
+    "visibility",
+    [
+        {"type": "group", "value": "developers", "identifier": "group-id"},
+        {"type": "role", "value": "Administrators"},
+        None,
+        {},
+        "invalid",
+    ],
+    ids=["group", "role", "unrestricted", "empty", "malformed"],
+)
+def test_comment_visibility_survives_model_serialization(visibility: Any) -> None:
+    """Serialize the stored restriction without changing the API response."""
+    data = {"id": "10001", "body": "Comment", "visibility": visibility}
+    original = deepcopy(data)
+    comment = JiraComment.from_api_response(data)
+    output = comment.to_simplified_dict()
+
+    if isinstance(visibility, dict) and visibility:
+        assert output["visibility"] == visibility
+        assert comment.visibility == visibility
+    else:
+        assert "visibility" not in output
+    assert output["body"] == "Comment"
+    assert data == original
+
+
+@pytest.mark.parametrize("use_display_names", [False, True])
+def test_issue_output_preserves_comment_visibility(use_display_names: bool) -> None:
+    """Both issue response formats retain the stored comment restriction."""
+    visibility = {"type": "group", "value": "developers", "identifier": "group-id"}
+    issue = JiraIssue.from_api_response(
+        {
+            "id": "1",
+            "key": "TEST-1",
+            "fields": {
+                "comment": {
+                    "comments": [
+                        {"id": "10001", "body": "Comment", "visibility": visibility}
+                    ]
+                }
+            },
+        },
+        requested_fields="comment",
+    )
+    output = (
+        issue.to_display_name_dict()
+        if use_display_names
+        else issue.to_simplified_dict()
+    )
+    assert output["comments"][0]["visibility"] == visibility
 
 
 class TestJiraComment:
