@@ -121,7 +121,7 @@ Delete an existing Confluence page.
 
 ### Get Page Children
 
-Get child pages and folders of a specific Confluence page.
+Get child pages, plus child folders on Confluence Cloud.
 
 **Parameters:**
 
@@ -133,7 +133,7 @@ Get child pages and folders of a specific Confluence page.
 | `include_content` | `boolean` | No | Whether to include the page content in the response |
 | `convert_to_markdown` | `boolean` | No | Whether to convert page content to markdown (true) or keep it in raw HTML format (false). Only relevant if include_content is true. |
 | `start` | `integer` | No | Starting index for pagination (0-based) |
-| `include_folders` | `boolean` | No | Whether to include child folders in addition to child pages |
+| `include_folders` | `boolean` | No | Whether to include child folders in addition to child pages. Folders are a Cloud-only content type; ignored on Server/Data Center |
 
 ---
 

@@ -1215,7 +1215,7 @@ class PagesMixin(ConfluenceClient):
         include_folders: bool = True,
     ) -> list[ConfluencePage]:
         """
-        Get child pages and folders of a specific Confluence page.
+        Get child pages, plus child folders on Confluence Cloud.
 
         Args:
             page_id: The ID of the parent page
@@ -1224,10 +1224,13 @@ class PagesMixin(ConfluenceClient):
             expand: Fields to expand in the response
             convert_to_markdown: When True, returns content in markdown format,
                 otherwise returns unchanged Confluence storage XHTML (keyword-only)
-            include_folders: When True, also returns child folders (keyword-only)
+            include_folders: When True, also returns child folders (keyword-only).
+                Folders are a Confluence Cloud content type; this flag is
+                ignored on Server/Data Center, which has no folder children.
 
         Returns:
-            List of ConfluencePage models containing the child pages and folders
+            List of ConfluencePage models containing the child pages, plus
+            child folders on Cloud when ``include_folders`` is True
         """
         try:
             limit = clamp_limit(limit, context="confluence.get_page_children")
@@ -1260,35 +1263,11 @@ class PagesMixin(ConfluenceClient):
                 else:
                     child_items = page_results or []
 
-                # Also get child folders if requested
-                if include_folders:
-                    try:
-                        folder_results = self.confluence.get_page_child_by_type(
-                            page_id=page_id,
-                            type="folder",
-                            start=start,
-                            limit=limit,
-                            expand=expand,
-                        )
-
-                        # Handle both pagination modes for folders
-                        if (
-                            isinstance(folder_results, dict)
-                            and "results" in folder_results
-                        ):
-                            child_folders = folder_results.get("results", [])
-                        else:
-                            child_folders = folder_results or []
-
-                        # Combine pages and folders
-                        child_items = child_items + child_folders
-                    except Exception as folder_err:
-                        # Log but don't fail if folder fetching fails
-                        # (e.g., older Confluence versions might not support folders)
-                        logger.debug(
-                            "Could not fetch child folders for page "
-                            f"{page_id}: {folder_err}"
-                        )
+                # Child folders are a Confluence Cloud content type: on Cloud
+                # they arrive through the v2 direct-children call above. The
+                # legacy v1 endpoint used here has no folder child type on
+                # Server/Data Center, so requesting it only produced a failing
+                # upstream call whose error was swallowed.
 
             # Get space key from the first result if available
             space_key = ""
