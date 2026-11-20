@@ -2110,6 +2110,9 @@ def test_markdown_conversion_after_a_failed_conversion_is_unchanged() -> None:
         "- [ ] task\n- [x] done\n\n> quote\n\n---\n",
         "```py\nprint(1)\n```\n\n~~del~~ ==mark== ^^ins^^ H~2~O x^2^ :smile:",
         "<div>raw <b>html</b></div>\n\n$x^2$ and https://x.example/auto",
+        "see https://x.example/a?b=1&c=(2). and www.x.example/p_(q), "
+        "http://\u00fc.example/\u00e4! ftp://a.b/c#d <https://x.example/a> "
+        "https://b- http://a.b. www.a.b-c_d a@b.example",
     ],
 )
 def test_markdown_to_html_matches_md2conf(markdown: str) -> None:

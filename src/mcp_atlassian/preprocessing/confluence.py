@@ -18,10 +18,36 @@ from md2conf.converter import (
     elements_to_string,
 )
 from md2conf.metadata import ConfluenceSiteMetadata
+from pymdownx import magiclink  # type: ignore[import-untyped]
 
 from .base import BasePreprocessor
 
 logger = logging.getLogger("mcp-atlassian")
+
+
+#: The URL host part of pymdown-extensions 12.x magiclink. Host and path
+#: both accept dots, so a short URL followed by a run of dots backtracks in
+#: quadratic time (8000 dots took a second); before 11.0.1 a nested repeat
+#: made it exponential. 13.0 rewrote the pattern without a host part.
+_MAGIC_LINK_HOST = r"[^_\W](?:[-\w]|\.(?!=$))*"
+
+
+def _linear_magic_link_re() -> re.Pattern[str] | None:
+    """Return magiclink's URL pattern with the host cut to one character.
+
+    The path part that follows accepts every host character, so the cut
+    pattern matches the same spans. Returns ``None`` when the installed
+    version has no such host part.
+    """
+    if magiclink.RE_LINK.count(_MAGIC_LINK_HOST) != 2:
+        return None
+    return re.compile(
+        magiclink.RE_LINK.replace(_MAGIC_LINK_HOST, r"[^_\W]"),
+        re.DOTALL | re.UNICODE,
+    )
+
+
+_MAGIC_LINK_RE = _linear_magic_link_re()
 
 
 def markdown_to_html(content: str) -> str:
@@ -39,6 +65,8 @@ def markdown_to_html(content: str) -> str:
         raise RuntimeError("md2conf.markdown is not importable")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if _MAGIC_LINK_RE is not None:
+        module._CONVERTER.inlinePatterns["magic-link"].compiled_re = _MAGIC_LINK_RE
     return str(module.markdown_to_html(content))
 
 
