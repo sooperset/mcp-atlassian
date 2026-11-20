@@ -15,6 +15,7 @@ from ..models.confluence.common import ConfluenceUser
 from ..models.confluence.search import get_search_result_identifier
 from ..utils.decorators import handle_atlassian_api_errors
 from ..utils.pagination import clamp_limit
+from ..utils.query_scope import and_scope_clause
 from .client import ConfluenceClient
 from .utils import quote_cql_identifier_if_needed
 
@@ -34,16 +35,9 @@ class SearchMixin(ConfluenceClient):
         space_query = " OR ".join(
             [f"space = {quote_cql_identifier_if_needed(space)}" for space in spaces]
         )
-        if not cql:
-            return space_query
-        # Extract a trailing ORDER BY so the AND does not produce invalid CQL.
-        order_match = re.search(r"\s+(ORDER\s+BY\s+.*)$", cql, re.IGNORECASE)
-        if order_match:
-            order_clause = order_match.group(1)
-            cql_without_order = cql[: order_match.start()]
-            cql = f"({cql_without_order}) AND ({space_query}) {order_clause}"
-        else:
-            cql = f"({cql}) AND ({space_query})"
+        # The caller's CQL is validated as one balanced expression first, so a
+        # stray `)` cannot close the wrapper and OR around the allowlist.
+        cql = and_scope_clause(cql, space_query, "CQL")
         logger.info(f"Applied spaces filter to query: {cql}")
         return cql
 

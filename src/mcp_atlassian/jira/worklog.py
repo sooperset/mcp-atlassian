@@ -7,9 +7,13 @@ from typing import Any
 from ..models import JiraWorklog
 from ..models.jira.adf import adf_to_text
 from ..utils import parse_date
+from ..utils.truncation import mark_truncated
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
+
+# One worklog read stops after this many pages of 100 entries.
+MAX_WORKLOG_PAGES = 50
 
 
 class WorklogMixin(JiraClient):
@@ -224,7 +228,7 @@ class WorklogMixin(JiraClient):
             start_at = 0
             worklogs = []
 
-            while True:
+            for _ in range(MAX_WORKLOG_PAGES):
                 result = self.jira.get(
                     url, params={"maxResults": page_size, "startAt": start_at}
                 )
@@ -255,6 +259,12 @@ class WorklogMixin(JiraClient):
                 start_at += len(page)
                 if start_at >= result.get("total", 0) or not page:
                     break
+            else:
+                logger.warning(
+                    "Returning the first %d worklogs of %s", len(worklogs), issue_key
+                )
+                # The reported total says more worklogs exist.
+                return mark_truncated(worklogs, certain=True)
 
             return worklogs
         except Exception as e:

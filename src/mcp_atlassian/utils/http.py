@@ -16,6 +16,7 @@ whatever adapter is mounted.
 import logging
 import threading
 import time
+from collections import OrderedDict
 from typing import Any
 
 from requests import Session
@@ -29,6 +30,7 @@ from .env import (
     is_env_extended_truthy,
     is_env_truthy,
 )
+from .urls import upstream_key
 
 logger = logging.getLogger("mcp-atlassian.http")
 
@@ -41,6 +43,7 @@ _ALL_METHODS = frozenset(["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DEL
 _THROTTLED_ATTR = "_mcp_atlassian_throttled"
 _RATE_LIMITED_ATTR = "_mcp_atlassian_rate_limited"
 _CIRCUIT_BREAKER_ATTR = "_mcp_atlassian_circuit_breaker"
+_DEFAULT_TIMEOUT_ATTR = "_mcp_atlassian_default_timeout"
 
 
 class _BoundedRetry(Retry):
@@ -145,6 +148,7 @@ class _CircuitBreaker:
         self.failures = 0
         self.opened_at: float | None = None
         self.probe_in_flight = False
+        self.in_use = 0  # requests in flight; guarded by the registry lock
         self.lock = threading.Lock()
 
     def before_send(self) -> bool:
@@ -217,8 +221,14 @@ class _CircuitBreaker:
             )
 
 
-_circuit_breaker: _CircuitBreaker | None = None
+# One breaker per upstream site (see utils.urls.upstream_key): failures from
+# one caller's upstream must not stop requests to another upstream.
+# Least recently used first. Entries whose requests are in flight are never
+# evicted, so the size stays at MAX_CIRCUIT_BREAKERS plus at most the number of
+# concurrent requests.
+_circuit_breakers: OrderedDict[str, _CircuitBreaker] = OrderedDict()
 _circuit_breaker_init_lock = threading.Lock()
+MAX_CIRCUIT_BREAKERS = 1024
 
 
 def configure_retry(session: Session, *, service: str = "atlassian") -> None:
@@ -425,48 +435,87 @@ def configure_rate_limit(session: Session, *, service: str = "atlassian") -> Non
     logger.info("%s: rate limit %.2f rps applied", service, rate)
 
 
-def _get_circuit_breaker(threshold: int, cooldown: float) -> _CircuitBreaker:
-    global _circuit_breaker
-    if _circuit_breaker is not None:
-        return _circuit_breaker
+def _checkout_circuit_breaker(
+    key: str, threshold: int, cooldown: float
+) -> _CircuitBreaker:
+    """Return the breaker for one upstream key, marked in use by the caller."""
     with _circuit_breaker_init_lock:
-        if _circuit_breaker is None:
-            _circuit_breaker = _CircuitBreaker(threshold, cooldown)
-    return _circuit_breaker
+        breaker = _circuit_breakers.get(key)
+        if breaker is None:
+            breaker = _CircuitBreaker(threshold, cooldown)
+            _circuit_breakers[key] = breaker
+        else:
+            _circuit_breakers.move_to_end(key)
+        breaker.in_use += 1
+        _evict_idle_circuit_breakers()
+        return breaker
+
+
+def _release_circuit_breaker(breaker: _CircuitBreaker) -> None:
+    with _circuit_breaker_init_lock:
+        breaker.in_use -= 1
+        _evict_idle_circuit_breakers()
+
+
+def _evict_idle_circuit_breakers() -> None:
+    """Drop least recently used idle breakers past the limit (lock held)."""
+    excess = len(_circuit_breakers) - MAX_CIRCUIT_BREAKERS
+    if excess <= 0:
+        return
+    for old_key in list(_circuit_breakers):
+        if excess <= 0:
+            break
+        if _circuit_breakers[old_key].in_use == 0:
+            del _circuit_breakers[old_key]
+            excess -= 1
 
 
 def _reset_circuit_breaker_for_tests() -> None:
-    global _circuit_breaker
     with _circuit_breaker_init_lock:
-        _circuit_breaker = None
+        _circuit_breakers.clear()
+
+
+def _request_upstream(args: tuple[object, ...], kwargs: dict[str, object]) -> str:
+    request = args[0] if args else kwargs.get("request")
+    url = getattr(request, "url", None)
+    return upstream_key(url) if isinstance(url, str) else ""
 
 
 def _wrap_adapter_circuit_breaker(
-    adapter: BaseAdapter, breaker: _CircuitBreaker
+    adapter: BaseAdapter, threshold: int, cooldown: float
 ) -> None:
     if getattr(adapter, _CIRCUIT_BREAKER_ATTR, False):
         return
     original_send = adapter.send
 
     def breaker_send(*args: object, **kwargs: object) -> object:
-        probe = breaker.before_send()
+        breaker = _checkout_circuit_breaker(
+            _request_upstream(args, kwargs), threshold, cooldown
+        )
         try:
-            response = original_send(*args, **kwargs)
-        except Exception:
-            breaker.on_exception(probe=probe)
-            raise
-        status = getattr(response, "status_code", None)
-        breaker.on_response(status if isinstance(status, int) else None, probe=probe)
-        return response
+            probe = breaker.before_send()
+            try:
+                response = original_send(*args, **kwargs)
+            except Exception:
+                breaker.on_exception(probe=probe)
+                raise
+            status = getattr(response, "status_code", None)
+            breaker.on_response(
+                status if isinstance(status, int) else None, probe=probe
+            )
+            return response
+        finally:
+            _release_circuit_breaker(breaker)
 
     adapter.send = breaker_send  # type: ignore[method-assign]
     setattr(adapter, _CIRCUIT_BREAKER_ATTR, True)
 
 
 def configure_circuit_breaker(session: Session, *, service: str = "atlassian") -> None:
-    """Trip a process-wide circuit breaker after N consecutive 429/503 responses.
+    """Trip a circuit breaker after N consecutive 429/503 responses.
 
-    Disabled by default. When tripped, in-flight Sessions raise
+    Disabled by default. Breaker state is kept per upstream site, so one
+    site's 429/503 responses do not block requests to other sites. When tripped, in-flight Sessions raise
     CircuitBreakerOpenError immediately instead of waiting on the per-request
     timeout (default 75s) for each additional doomed request.
 
@@ -481,17 +530,49 @@ def configure_circuit_breaker(session: Session, *, service: str = "atlassian") -
         logger.debug("%s: circuit breaker disabled", service)
         return
     cooldown = get_float_env("ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN", 30.0)
-    breaker = _get_circuit_breaker(threshold, cooldown)
     if not session.adapters:
         return
     for adapter in session.adapters.values():
-        _wrap_adapter_circuit_breaker(adapter, breaker)
+        _wrap_adapter_circuit_breaker(adapter, threshold, cooldown)
     logger.info(
         "%s: circuit breaker armed threshold=%d cooldown=%.1fs",
         service,
         threshold,
         cooldown,
     )
+
+
+def _wrap_adapter_default_timeout(adapter: BaseAdapter, timeout: float) -> None:
+    if getattr(adapter, _DEFAULT_TIMEOUT_ATTR, False):
+        return
+    original_send = adapter.send
+
+    def send_with_default_timeout(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = timeout
+        return original_send(*args, **kwargs)
+
+    adapter.send = send_with_default_timeout  # type: ignore[method-assign, assignment]
+    setattr(adapter, _DEFAULT_TIMEOUT_ATTR, True)
+
+
+def configure_default_timeout(
+    session: Session, timeout: float, *, service: str = "atlassian"
+) -> None:
+    """Apply the service timeout to requests sent without an explicit timeout.
+
+    ``requests`` waits forever when no timeout is given. atlassian-python-api
+    passes its configured timeout on its own calls, but direct
+    ``client._session.get/post/put`` calls (attachments, permissions,
+    analytics, ...) bypass it, so a stalled connect or read blocks the caller
+    indefinitely — and, from an async tool handler, the whole event loop.
+    Explicit per-call timeouts are kept.
+    """
+    if not session.adapters:
+        return
+    for adapter in session.adapters.values():
+        _wrap_adapter_default_timeout(adapter, timeout)
+    logger.debug("%s: default request timeout=%ss", service, timeout)
 
 
 def format_rate_limit_error(http_err: object, *, service: str) -> str:

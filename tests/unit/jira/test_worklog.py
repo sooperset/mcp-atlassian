@@ -510,3 +510,43 @@ class TestWorklogMixin:
         server_worklog_mixin.jira.resource_url.assert_called_with("issue")
         server_worklog_mixin._post_api3.assert_not_called()
         assert result["id"] == "10003"
+
+
+def test_get_worklogs_stops_when_total_never_reached(jira_client):
+    """A total that the pages never reach stops at the page limit."""
+    mixin = WorklogMixin(config=jira_client.config)
+    mixin.jira = MagicMock()
+    mixin.jira.resource_url.return_value = "https://jira.example.test/rest/api/2/issue"
+    mixin._clean_text = MagicMock(side_effect=lambda text: text or "")
+    calls = 0
+
+    def page(url, params):
+        nonlocal calls
+        calls += 1
+        if calls > 1000:
+            raise AssertionError("unbounded read")
+        return {"total": 10**9, "worklogs": [{"id": str(calls)}]}
+
+    mixin.jira.get.side_effect = page
+
+    assert len(mixin.get_worklogs("PROJ-1")) <= 50
+
+
+def test_get_worklogs_marks_truncated_read(jira_client):
+    from mcp_atlassian.utils.truncation import is_truncated
+
+    mixin = WorklogMixin(config=jira_client.config)
+    mixin.jira = MagicMock()
+    mixin.jira.resource_url.return_value = "https://jira.example.test/rest/api/2/issue"
+    mixin._clean_text = MagicMock(side_effect=lambda text: text or "")
+    mixin.jira.get.side_effect = lambda url, params: {
+        "total": 10**9,
+        "worklogs": [{"id": str(params["startAt"])}],
+    }
+    assert is_truncated(mixin.get_worklogs("PROJ-1"))
+
+    mixin.jira.get.side_effect = lambda url, params: {
+        "total": 1,
+        "worklogs": [{"id": "1"}],
+    }
+    assert not is_truncated(mixin.get_worklogs("PROJ-1"))
