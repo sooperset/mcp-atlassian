@@ -1585,6 +1585,24 @@ async def test_delete_attachment(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_delete_attachment_failure_is_a_tool_error(
+    client, mock_confluence_fetcher
+):
+    mock_confluence_fetcher.delete_attachment.return_value = {
+        "success": False,
+        "error": "403 Client Error: Forbidden for url",
+    }
+
+    with pytest.raises(ToolError) as excinfo:
+        await client.call_tool(
+            "confluence_delete_attachment", {"attachment_id": "att403"}
+        )
+
+    assert "Failed to delete attachment att403" in str(excinfo.value)
+    assert "403 Client Error" in str(excinfo.value)
+
+
+@pytest.mark.anyio
 async def test_check_content_permissions(client, mock_confluence_fetcher):
     """Test checking content permissions."""
     response = await client.call_tool(
