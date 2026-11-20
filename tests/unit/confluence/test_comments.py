@@ -416,6 +416,24 @@ class TestReplyToComment:
         assert payload["container"] == {"id": "987654321", "type": "page"}
         assert payload["ancestors"] == [{"id": "nested-comment"}]
 
+    def test_reply_to_comment_v1_passes_page_space_key(self, comments_mixin):
+        """V1 replies hand the page's space key to response processing."""
+        comments_mixin.confluence.get_page_by_id.side_effect = [
+            MOCK_PARENT_COMMENT_V1_RESPONSE,
+            {"id": "987654321", "space": {"key": "TEST"}},
+        ]
+        comments_mixin.confluence.post.return_value = MOCK_COMMENT_REPLY_V1_RESPONSE
+        comments_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>Reply</p>"
+        )
+
+        with patch.object(
+            comments_mixin, "_process_comment_response", return_value=MagicMock()
+        ) as mock_process:
+            comments_mixin.reply_to_comment("456789123", "Reply")
+
+        mock_process.assert_called_once_with(MOCK_COMMENT_REPLY_V1_RESPONSE, "TEST")
+
     def test_reply_to_comment_v1_server_dc_success(self, comments_mixin_dc):
         """V1 Server/DC replies use the parent page as the container."""
         comments_mixin_dc.confluence.get_page_by_id.side_effect = [
