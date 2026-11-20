@@ -518,6 +518,88 @@ class TestSearchMixin:
             search_mixin.get_board_issues("1000", jql="", limit=20)
         assert "API Error content" in str(e.value)
 
+    def test_get_board_backlog(self, search_mixin: SearchMixin):
+        """Test get_board_backlog method."""
+        mock_issues = {
+            "issues": [
+                {
+                    "id": "10001",
+                    "key": "TEST-123",
+                    "fields": {
+                        "summary": "Backlog issue",
+                        "issuetype": {"name": "Story"},
+                        "status": {"name": "To Do"},
+                    },
+                }
+            ],
+            "total": 1,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+        search_mixin.jira.get_agile_resource_url.return_value = (
+            "https://example.atlassian.net/rest/agile/1.0/board/1000/backlog"
+        )
+        search_mixin.jira.get.return_value = mock_issues
+
+        result = search_mixin.get_board_backlog("1000", limit=20)
+
+        search_mixin.jira.get_agile_resource_url.assert_called_once_with(
+            "board/1000/backlog"
+        )
+        search_mixin.jira.get.assert_called_once_with(
+            "https://example.atlassian.net/rest/agile/1.0/board/1000/backlog",
+            params={
+                "startAt": 0,
+                "maxResults": 20,
+                "fields": ",".join(sorted(DEFAULT_READ_JIRA_FIELDS)),
+            },
+        )
+
+        assert isinstance(result, JiraSearchResult)
+        assert len(result.issues) == 1
+        assert result.issues[0].key == "TEST-123"
+        assert result.issues[0].summary == "Backlog issue"
+
+    def test_get_board_backlog_with_jql_and_expand(self, search_mixin: SearchMixin):
+        """Test get_board_backlog forwards jql/expand as query params."""
+        search_mixin.jira.get_agile_resource_url.return_value = (
+            "https://example.atlassian.net/rest/agile/1.0/board/1000/backlog"
+        )
+        search_mixin.jira.get.return_value = {
+            "issues": [],
+            "total": 0,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+
+        search_mixin.get_board_backlog("1000", jql="status = 'To Do'", expand="version")
+
+        params = search_mixin.jira.get.call_args.kwargs["params"]
+        assert params["jql"] == "status = 'To Do'"
+        assert params["expand"] == "version"
+
+    def test_get_board_backlog_exception(self, search_mixin: SearchMixin):
+        search_mixin.jira.get_agile_resource_url.return_value = (
+            "https://example.atlassian.net/rest/agile/1.0/board/1000/backlog"
+        )
+        search_mixin.jira.get.side_effect = Exception("API Error")
+
+        with pytest.raises(Exception) as e:
+            search_mixin.get_board_backlog("1000")
+        assert "API Error" in str(e.value)
+
+    def test_get_board_backlog_http_error(self, search_mixin: SearchMixin):
+        search_mixin.jira.get_agile_resource_url.return_value = (
+            "https://example.atlassian.net/rest/agile/1.0/board/1000/backlog"
+        )
+        search_mixin.jira.get.side_effect = requests.HTTPError(
+            response=MagicMock(content="API Error content")
+        )
+
+        with pytest.raises(Exception) as e:
+            search_mixin.get_board_backlog("1000")
+        assert "API Error content" in str(e.value)
+
     def test_get_sprint_issues(self, search_mixin: SearchMixin):
         """Test get_sprint_issues method."""
         mock_issues = {
@@ -1302,6 +1384,31 @@ class TestSearchFilterAndInjectionRegression:
         )
         assert "SECPROJ" in sent_jql, (
             "board issues must be constrained to the configured projects_filter; "
+            f"outgoing JQL was {sent_jql!r}"
+        )
+
+    @pytest.mark.security_regression
+    def test_get_board_backlog_applies_projects_filter(
+        self,
+        search_mixin: SearchMixin,
+    ) -> None:
+        """Board backlog must be restricted to the configured projects_filter."""
+        search_mixin.config.projects_filter = "SECPROJ"
+        search_mixin.jira.get_agile_resource_url.return_value = (
+            "https://example.atlassian.net/rest/agile/1.0/board/123/backlog"
+        )
+        search_mixin.jira.get.return_value = {
+            "issues": [],
+            "total": 0,
+            "startAt": 0,
+            "maxResults": 50,
+        }
+
+        search_mixin.get_board_backlog("123", jql="status = Open")
+
+        sent_jql = search_mixin.jira.get.call_args.kwargs["params"].get("jql", "")
+        assert "SECPROJ" in sent_jql, (
+            "board backlog must be constrained to the configured projects_filter; "
             f"outgoing JQL was {sent_jql!r}"
         )
 
