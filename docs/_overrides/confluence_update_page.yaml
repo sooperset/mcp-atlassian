@@ -3,4 +3,4 @@ example: |
 tips: |
   Set `is_minor_edit: true` to skip notification emails. The page version is auto-incremented.
 notes: |
-  Exactly one of `content` or `content_file` must be provided.
+  Exactly one of `content`, `content_file`, or `content_base64` must be provided.
