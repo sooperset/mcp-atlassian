@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, Mock
 
 import pytest
-from requests.exceptions import HTTPError
+from requests.exceptions import HTTPError, RequestException
 
 from mcp_atlassian.jira.development import DevelopmentMixin
 
@@ -551,3 +551,361 @@ class TestDevelopmentMixin:
         assert development_mixin.jira._session.get.call_count >= 2
         for call in development_mixin.jira._session.get.call_args_list:
             assert "verify" not in call.kwargs
+
+    def test_get_issue_development_info_resolves_connect_app_by_name(
+        self, development_mixin, mock_dev_status_response
+    ):
+        """Explicit application_type='GitHub' resolves to Connect app key."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        summary_response = MagicMock(status_code=200)
+        summary_response.json.return_value = {
+            "summary": {
+                "pullrequest": {
+                    "byInstanceType": {
+                        "oAuth-com.github.integration.production": {
+                            "count": 1,
+                            "name": "GitHub",
+                        }
+                    }
+                },
+                "branch": {"byInstanceType": {}},
+                "repository": {"byInstanceType": {}},
+            }
+        }
+        pr_detail_response = MagicMock(status_code=200)
+        pr_detail_response.json.return_value = mock_dev_status_response
+        empty_detail_response = MagicMock(status_code=200)
+        empty_detail_response.json.return_value = {"detail": []}
+
+        development_mixin.jira._session.get.side_effect = [
+            summary_response,
+            pr_detail_response,
+            empty_detail_response,
+            empty_detail_response,
+        ]
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123", application_type="GitHub"
+        )
+
+        request_params = [
+            call.kwargs["params"]
+            for call in development_mixin.jira._session.get.call_args_list
+        ]
+        assert request_params == [
+            {"issueId": "12345"},
+            {
+                "issueId": "12345",
+                "applicationType": "oAuth-com.github.integration.production",
+                "dataType": "pullrequest",
+            },
+            {
+                "issueId": "12345",
+                "applicationType": "oAuth-com.github.integration.production",
+                "dataType": "branch",
+            },
+            {
+                "issueId": "12345",
+                "applicationType": "oAuth-com.github.integration.production",
+                "dataType": "repository",
+            },
+        ]
+        assert len(result["pullRequests"]) == 1
+        assert result["pullRequests"][0]["name"] == "[TEST-123] Fix bug in login"
+
+    @pytest.mark.parametrize(
+        "requested_type",
+        [
+            "oAuth-com.github.integration.production",
+            "oauth-com.github.integration.production",
+            "github",
+            "GITHUB",
+        ],
+    )
+    def test_get_issue_development_info_resolves_key_and_case_insensitive_name(
+        self, development_mixin, mock_dev_status_response, requested_type
+    ):
+        """Exact key, case-insensitive key, and case-insensitive name match."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        summary_response = MagicMock(status_code=200)
+        summary_response.json.return_value = {
+            "summary": {
+                "pullrequest": {
+                    "byInstanceType": {
+                        "oAuth-com.github.integration.production": {
+                            "count": 2,
+                            "name": "GitHub",
+                        }
+                    }
+                }
+            }
+        }
+        detail_response = MagicMock(status_code=200)
+        detail_response.json.return_value = mock_dev_status_response
+        development_mixin.jira._session.get.side_effect = [
+            summary_response,
+            detail_response,
+        ]
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123", application_type=requested_type, data_type="pullrequest"
+        )
+
+        detail_call_params = development_mixin.jira._session.get.call_args_list[
+            1
+        ].kwargs["params"]
+        assert detail_call_params == {
+            "issueId": "12345",
+            "applicationType": "oAuth-com.github.integration.production",
+            "dataType": "pullrequest",
+        }
+        assert len(result["pullRequests"]) == 1
+
+    def test_get_issue_development_info_resolves_multiple_matching_instances(
+        self, development_mixin, mock_dev_status_response
+    ):
+        """Multiple active instances sharing display name are all queried."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        summary_response = MagicMock(status_code=200)
+        summary_response.json.return_value = {
+            "summary": {
+                "pullrequest": {
+                    "byInstanceType": {
+                        "oAuth-com.github.integration.production": {
+                            "count": 1,
+                            "name": "GitHub",
+                        },
+                        "oAuth-com.github.integration.enterprise": {
+                            "count": 1,
+                            "name": "GitHub",
+                        },
+                        "oAuth-com.github.integration.unused": {
+                            "count": 0,
+                            "name": "GitHub",
+                        },
+                    }
+                }
+            }
+        }
+        detail_response = MagicMock(status_code=200)
+        detail_response.json.return_value = mock_dev_status_response
+        development_mixin.jira._session.get.side_effect = [
+            summary_response,
+            detail_response,
+            detail_response,
+        ]
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123", application_type="github", data_type="pullrequest"
+        )
+
+        request_params = [
+            call.kwargs["params"]
+            for call in development_mixin.jira._session.get.call_args_list
+        ]
+        assert request_params == [
+            {"issueId": "12345"},
+            {
+                "issueId": "12345",
+                "applicationType": "oAuth-com.github.integration.enterprise",
+                "dataType": "pullrequest",
+            },
+            {
+                "issueId": "12345",
+                "applicationType": "oAuth-com.github.integration.production",
+                "dataType": "pullrequest",
+            },
+        ]
+        assert len(result["pullRequests"]) == 2
+
+    def test_get_issue_development_info_omitted_app_type_discovers_connect_app(
+        self, development_mixin, mock_dev_status_response
+    ):
+        """Omitted application_type discovers and queries Connect app instances."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        summary_response = MagicMock(status_code=200)
+        summary_response.json.return_value = {
+            "summary": {
+                "pullrequest": {
+                    "byInstanceType": {
+                        "oAuth-com.github.integration.production": {
+                            "count": 1,
+                            "name": "GitHub",
+                        }
+                    }
+                },
+                "branch": {"byInstanceType": {}},
+                "repository": {"byInstanceType": {}},
+            }
+        }
+        detail_response = MagicMock(status_code=200)
+        detail_response.json.return_value = mock_dev_status_response
+        empty_response = MagicMock(status_code=200)
+        empty_response.json.return_value = {"detail": []}
+        development_mixin.jira._session.get.side_effect = [
+            summary_response,
+            detail_response,
+            empty_response,
+            empty_response,
+        ]
+
+        result = development_mixin.get_issue_development_info("TEST-123")
+
+        assert len(result["pullRequests"]) == 1
+        assert (
+            development_mixin.jira._session.get.call_args_list[1].kwargs["params"][
+                "applicationType"
+            ]
+            == "oAuth-com.github.integration.production"
+        )
+
+    def test_get_issue_development_info_explicit_unmatched_key_falls_back(
+        self, development_mixin, mock_dev_status_response
+    ):
+        """Explicit instance ID not in summary falls back to direct query."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        summary_response = MagicMock(status_code=200)
+        summary_response.json.return_value = {
+            "summary": {
+                "pullrequest": {
+                    "byInstanceType": {"bitbucket": {"count": 1, "name": "Bitbucket"}}
+                }
+            }
+        }
+        detail_response = MagicMock(status_code=200)
+        detail_response.json.return_value = mock_dev_status_response
+        development_mixin.jira._session.get.side_effect = [
+            summary_response,
+            detail_response,
+        ]
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123",
+            application_type="oAuth-com.github.integration.custom",
+            data_type="pullrequest",
+        )
+
+        assert development_mixin.jira._session.get.call_args_list[1].kwargs[
+            "params"
+        ] == {
+            "issueId": "12345",
+            "applicationType": "oAuth-com.github.integration.custom",
+            "dataType": "pullrequest",
+        }
+        assert len(result["pullRequests"]) == 1
+
+    @pytest.mark.parametrize("summary_status", [403, 404])
+    def test_get_issue_development_info_explicit_type_summary_http_fallback(
+        self, development_mixin, mock_dev_status_response, summary_status
+    ):
+        """Unavailable summary endpoint falls back to explicit application_type."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        summary_response = MagicMock(status_code=summary_status)
+        detail_response = MagicMock(status_code=200)
+        detail_response.json.return_value = mock_dev_status_response
+        development_mixin.jira._session.get.side_effect = [
+            summary_response,
+            detail_response,
+        ]
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123", application_type="GitHub", data_type="pullrequest"
+        )
+
+        assert development_mixin.jira._session.get.call_args_list[1].kwargs[
+            "params"
+        ] == {
+            "issueId": "12345",
+            "applicationType": "GitHub",
+            "dataType": "pullrequest",
+        }
+        assert len(result["pullRequests"]) == 1
+
+    def test_get_issue_development_info_explicit_type_summary_request_error_fallback(
+        self, development_mixin, mock_dev_status_response
+    ):
+        """RequestException from summary falls back to explicit application_type."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        detail_response = MagicMock(status_code=200)
+        detail_response.json.return_value = mock_dev_status_response
+        development_mixin.jira._session.get.side_effect = [
+            RequestException("summary timeout"),
+            detail_response,
+        ]
+
+        result = development_mixin.get_issue_development_info(
+            "TEST-123", application_type="GitHub", data_type="pullrequest"
+        )
+
+        assert development_mixin.jira._session.get.call_args_list[1].kwargs[
+            "params"
+        ] == {
+            "issueId": "12345",
+            "applicationType": "GitHub",
+            "dataType": "pullrequest",
+        }
+        assert len(result["pullRequests"]) == 1
+
+    def test_get_issue_development_info_explicit_type_detail_error_propagates(
+        self, development_mixin
+    ):
+        """HTTP error on resolved detail call raises when all detail calls fail."""
+        development_mixin.jira.get_issue.return_value = {
+            "id": "12345",
+            "key": "TEST-123",
+        }
+
+        summary_response = MagicMock(status_code=200)
+        summary_response.json.return_value = {
+            "summary": {
+                "pullrequest": {
+                    "byInstanceType": {
+                        "oAuth-com.github.integration.production": {
+                            "count": 1,
+                            "name": "GitHub",
+                        }
+                    }
+                }
+            }
+        }
+        error_response = MagicMock(status_code=500)
+        error_response.raise_for_status.side_effect = HTTPError(
+            response=Mock(status_code=500)
+        )
+        development_mixin.jira._session.get.side_effect = [
+            summary_response,
+            error_response,
+        ]
+
+        with pytest.raises(Exception, match="Error retrieving development info"):
+            development_mixin.get_issue_development_info(
+                "TEST-123", application_type="GitHub", data_type="pullrequest"
+            )
