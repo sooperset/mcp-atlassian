@@ -85,6 +85,8 @@ class DevelopmentMixin(JiraClient):
                 "commits": [],
                 "repositories": [],
             }
+            succeeded = False
+            last_exception: Exception | None = None
 
             for app_type in app_types:
                 for dt in data_types:
@@ -108,14 +110,23 @@ class DevelopmentMixin(JiraClient):
                         for repo in result.get("repositories", []):
                             if repo not in merged_result["repositories"]:
                                 merged_result["repositories"].append(repo)
+                        succeeded = True
                     except Exception as e:
                         # Log but continue trying other combinations
+                        last_exception = e
                         logger.debug(
                             f"No dev info for {issue_key} "
                             f"from {app_type}/{dt}: {str(e)}"
                         )
                 if merged_result.get("error"):
                     break
+
+            # Every fetch raised: report the failure instead of an empty success
+            if not succeeded and last_exception and not merged_result.get("error"):
+                merged_result["error"] = (
+                    f"Could not retrieve development info for {issue_key}: "
+                    f"{last_exception}"
+                )
 
             return merged_result
 
@@ -173,6 +184,24 @@ class DevelopmentMixin(JiraClient):
                 "error": (
                     "Development info is not available — the Jira dev-status plugin"
                     " may not be installed on this instance."
+                ),
+                "detail": [],
+                "pullRequests": [],
+                "branches": [],
+                "commits": [],
+                "repositories": [],
+            }
+
+        if http_response.status_code == 401:
+            logger.debug(
+                f"Dev-status plugin returned 401 for {issue_key}/{application_type}"
+                f"/{data_type} - authentication failed"
+            )
+            return {
+                "issue_key": issue_key,
+                "error": (
+                    "Authentication failed for development info (401). The"
+                    " dev-status API did not accept the configured credentials."
                 ),
                 "detail": [],
                 "pullRequests": [],
