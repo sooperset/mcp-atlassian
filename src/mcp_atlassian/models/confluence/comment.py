@@ -72,8 +72,12 @@ class ConfluenceComment(ApiModel, TimestampMixin):
         parent_comment_id: str | None = None
         if v2_parent := data.get("parentCommentId"):
             parent_comment_id = str(v2_parent)
-        elif container and container.get("type") == "comment":
-            parent_comment_id = str(container.get("id", ""))
+        elif (
+            container
+            and container.get("type") == "comment"
+            and container.get("id") is not None
+        ):
+            parent_comment_id = str(container["id"])
         elif isinstance(data.get("ancestors"), list):
             for ancestor in reversed(data["ancestors"]):
                 if (
