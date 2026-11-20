@@ -153,7 +153,10 @@ def test_clean_jira_text_smart_links(preprocessor_with_jira):
     confluence_url = (
         f"{base_url}/wiki/spaces/PROJ/pages/987654321/Example+Meeting+Notes"
     )
-    processed_url = f"{base_url}/wiki/spaces/PROJ/pages/987654321/ExampleMeetingNotes"
+    # The URL encodes the page title's spaces as "+" and must stay intact: the
+    # old inserted-text regex matched the "+...+ " pair inside it as markup and
+    # stripped the pluses as a side effect (#1894).
+    processed_url = confluence_url
     text = f"[Meeting Notes|{confluence_url}|smart-link]"
     cleaned = preprocessor_with_jira.clean_jira_text(text)
     assert cleaned == f"[Example Meeting Notes]({processed_url})"
@@ -336,6 +339,18 @@ def test_jira_to_markdown_list_markers_are_not_emphasis(
 ):
     """Preserve list depth and format emphasis within the item body (#1651)."""
     assert preprocessor_with_jira.jira_to_markdown(wiki) == expected
+
+
+def test_jira_to_markdown_keeps_plus_in_keyboard_shortcuts(preprocessor_with_jira):
+    """Keyboard shortcuts such as Ctrl+F are text, not inserted-text markup (#1894)."""
+    text = "Search the page for the job ID (Ctrl+F, or Cmd+F on a Mac)."
+    assert preprocessor_with_jira.jira_to_markdown(text) == text
+
+
+def test_jira_to_markdown_inserted_text_stays_word_bounded(preprocessor_with_jira):
+    """+text+ is inserted text only where Jira renders it: at word boundaries."""
+    assert "<ins>new</ins>" in preprocessor_with_jira.jira_to_markdown("A +new+ word")
+    assert preprocessor_with_jira.jira_to_markdown("x+not+markup") == "x+not+markup"
 
 
 def test_jira_to_markdown_citation(preprocessor_with_jira):
