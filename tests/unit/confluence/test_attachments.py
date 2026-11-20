@@ -568,12 +568,16 @@ class TestAttachmentsMixin:
             result = attachments_mixin.upload_attachments("123456", file_paths)
 
             # Assertions
-            assert result["success"] is True
+            assert result["success"] is False
             assert result["content_id"] == "123456"
             assert result["total"] == 3
             assert len(result["uploaded"]) == 2
             assert len(result["failed"]) == 1
             assert mock_upload.call_count == 3
+
+            # Verify uploaded file details are preserved for retry resolution
+            assert result["uploaded"][0]["id"] == "att1"
+            assert result["uploaded"][1]["id"] == "att3"
 
             # Verify failed file details
             assert result["failed"][0]["filename"] == "file2.pdf"
