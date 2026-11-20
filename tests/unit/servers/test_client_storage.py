@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -186,3 +187,25 @@ def test_storage_builder_does_not_mask_internal_factory_typeerror(
         build_oauth_client_storage_from_env()
 
     assert os.getenv(_TYPE_ERROR_FACTORY_CALLS_ENV) == "1"
+
+
+def test_storage_builder_reports_missing_factory_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    monkeypatch.setenv(CLIENT_STORAGE_FACTORY_ENV, "no_such_storage_module_xyz:factory")
+
+    with pytest.raises(ValueError, match="Unable to import module"):
+        build_oauth_client_storage_from_env()
+
+
+def test_storage_builder_does_not_mask_error_raised_by_factory_module(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "broken_storage_module_xyz.py").write_text("1 / 0\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    monkeypatch.setenv(CLIENT_STORAGE_FACTORY_ENV, "broken_storage_module_xyz:factory")
+
+    with pytest.raises(ZeroDivisionError):
+        build_oauth_client_storage_from_env()
