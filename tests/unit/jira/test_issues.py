@@ -1102,6 +1102,82 @@ class TestIssuesMixin:
             issue_key="TEST-123", update={"fields": {"summary": "Updated"}}
         )
 
+    def test_update_issue_with_status_matches_transition_name_without_to_status(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Regression for #1694: DC transitions without to_status match by name."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(status="On Hold")
+        issues_mixin.get_available_transitions = MagicMock(
+            return_value=[
+                {"id": "11", "name": "Start Progress"},
+                {"id": "21", "name": "Resolve Issue"},
+                {"id": "31", "name": "Close Issue"},
+                {"id": "41", "name": "On Hold"},
+                {"id": "51", "name": "Rejected"},
+            ]
+        )
+
+        issues_mixin.update_issue(issue_key="TEST-123", status="On Hold")
+
+        issues_mixin.jira.set_issue_status_by_transition_id.assert_called_once_with(
+            issue_key="TEST-123",
+            transition_id=41,
+        )
+
+    def test_update_issue_with_status_matches_transition_name_when_to_status_differs(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Transition name matches when caller passes transition name."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(status="In Progress")
+        issues_mixin.get_available_transitions = MagicMock(
+            return_value=[
+                {
+                    "id": "11",
+                    "name": "Start Progress",
+                    "to_status": "In Progress",
+                },
+                {
+                    "id": "21",
+                    "name": "Resolve Issue",
+                    "to_status": "Resolved",
+                },
+            ]
+        )
+
+        issues_mixin.update_issue(issue_key="TEST-123", status="Start Progress")
+
+        issues_mixin.jira.set_issue_status_by_transition_id.assert_called_once_with(
+            issue_key="TEST-123",
+            transition_id=11,
+        )
+
+    def test_update_issue_with_status_prefers_to_status_over_transition_name(
+        self, issues_mixin: IssuesMixin, make_issue_data
+    ):
+        """Target status name match takes precedence over transition name match."""
+        issues_mixin.jira.get_issue.return_value = make_issue_data(status="On Hold")
+        issues_mixin.get_available_transitions = MagicMock(
+            return_value=[
+                {
+                    "id": "11",
+                    "name": "On Hold",
+                    "to_status": "Waiting",
+                },
+                {
+                    "id": "41",
+                    "name": "Pause Work",
+                    "to_status": "On Hold",
+                },
+            ]
+        )
+
+        issues_mixin.update_issue(issue_key="TEST-123", status="On Hold")
+
+        issues_mixin.jira.set_issue_status_by_transition_id.assert_called_once_with(
+            issue_key="TEST-123",
+            transition_id=41,
+        )
+
     def test_update_issue_assignee_dict_passthrough_name(
         self, issues_mixin: IssuesMixin, make_issue_data
     ):

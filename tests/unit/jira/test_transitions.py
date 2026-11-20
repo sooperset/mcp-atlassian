@@ -472,6 +472,26 @@ class TestTransitionsMixin:
             }
         ]
 
+    def test_get_available_transitions_string_to_field(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Regression for #1694: plain string 'to' field populates 'to_status'."""
+        transitions_mixin.jira.get_issue_transitions_full.return_value = {
+            "transitions": [
+                {"id": "41", "name": "Put On Hold", "to": "On Hold"},
+            ]
+        }
+
+        assert transitions_mixin.get_available_transitions("TEST-123") == [
+            {
+                "id": "41",
+                "name": "Put On Hold",
+                "to_status": "On Hold",
+                "has_screen": False,
+                "is_conditional": False,
+            }
+        ]
+
     def test_get_transitions_uses_full_api(self, transitions_mixin: TransitionsMixin):
         """Test that get_transitions uses get_issue_transitions_full for complete data.
 

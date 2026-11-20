@@ -89,6 +89,8 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
                             "name": sc.get("name", ""),
                         }
                     transition_info["to"] = to_info
+                elif "to" in transition and isinstance(transition["to"], str):
+                    to_status = transition["to"]
                 elif "to_status" in transition:
                     to_status = transition.get("to_status")
                 elif "status" in transition:

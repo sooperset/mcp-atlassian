@@ -1640,11 +1640,15 @@ class IssuesMixin(
 
         # Find the appropriate transition
         transition_id = None
+        fallback_transition_id = None
         for transition in transitions:
             # TransitionsMixin returns normalized transitions with 'to_status' field
             transition_status_name = transition.get("to_status", "")
+            if not transition_status_name and isinstance(transition.get("to"), dict):
+                transition_status_name = transition["to"].get("name", "")
+            transition_name = transition.get("name", "")
 
-            # Match by name (case-insensitive)
+            # Match by target status name (case-insensitive)
             if (
                 status_name
                 and transition_status_name
@@ -1652,15 +1656,40 @@ class IssuesMixin(
             ):
                 transition_id = transition.get("id")
                 logger.info(
-                    f"Found transition ID {transition_id} matching status name '{status_name}'"
+                    f"Found transition ID {transition_id} matching "
+                    f"status name '{status_name}'"
                 )
                 break
+
+            # Fallback: match by transition name (case-insensitive)
+            if (
+                status_name
+                and fallback_transition_id is None
+                and transition_name
+                and transition_name.lower() == status_name.lower()
+            ):
+                fallback_transition_id = transition.get("id")
 
             # Direct transition ID match (if status is actually a transition ID)
             if status_id and str(transition.get("id", "")) == str(status_id):
                 transition_id = transition.get("id")
                 logger.info(f"Using direct transition ID {transition_id}")
                 break
+
+            # Fallback: match by target status ID
+            if (
+                status_id
+                and fallback_transition_id is None
+                and isinstance(transition.get("to"), dict)
+                and str(transition["to"].get("id", "")) == str(status_id)
+            ):
+                fallback_transition_id = transition.get("id")
+
+        if not transition_id and fallback_transition_id is not None:
+            transition_id = fallback_transition_id
+            logger.info(
+                f"Found transition ID {transition_id} matching transition '{status}'"
+            )
 
         if not transition_id:
             # Build list of available statuses from normalized transitions
