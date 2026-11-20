@@ -572,3 +572,49 @@ def test_storage_references_keep_conversions(base: BasePreprocessor) -> None:
 )
 def test_contains_html_tag_matches_regex_search(text: str) -> None:
     assert _contains_html_tag(text) == bool(re.search(r"<[^>]+>", text))
+
+
+_DOT_RUN_SCRIPT = """
+import sys
+from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+confluence = ConfluencePreprocessor(base_url="https://example.atlassian.net")
+confluence.markdown_to_confluence_storage(sys.argv[1] + "." * 64000)
+"""
+
+
+@pytest.mark.parametrize("prefix", ["http://a", "https://a", "ftp://a", "www.a"])
+def test_short_url_with_dot_run_converts_in_budget(prefix: str) -> None:
+    # A short URL followed by a run of dots made magiclink backtrack in
+    # exponential (before pymdown-extensions 11.0.1) or quadratic (12.x) time
+    # inside one regex call, which no signal interrupts and the converter's
+    # fallback would run again, so the call runs in a child process.
+    import subprocess
+
+    subprocess.run(
+        [sys.executable, "-c", _DOT_RUN_SCRIPT, prefix],
+        check=True,
+        timeout=30,
+    )
+
+
+def test_magic_link_pattern_matches_like_stock() -> None:
+    import random
+
+    from pymdownx import magiclink
+
+    from mcp_atlassian.preprocessing.confluence import _MAGIC_LINK_RE
+
+    if _MAGIC_LINK_RE is None:
+        pytest.skip("installed magiclink has no host part to cut")
+    stock = re.compile(magiclink.RE_LINK, re.DOTALL | re.UNICODE)
+    rng = random.Random(0)
+    alphabet = "a_-.=(/)?#w:ht\u00fc1 "
+    for _ in range(20000):
+        body = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 14)))
+        text = rng.choice(["http://", "https://", "ftp://", "www.", ""]) + body
+        for pos in range(len(text)):
+            a = stock.match(text, pos)
+            b = _MAGIC_LINK_RE.match(text, pos)
+            assert (a and (a.span(), a.group("www"))) == (
+                b and (b.span(), b.group("www"))
+            ), text
