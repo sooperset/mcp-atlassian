@@ -491,6 +491,10 @@ class TestEpicsMixin:
                 "key": "EPIC-456",
                 "fields": {"issuetype": {"name": "Epic"}},
             },
+            {  # post-update verification for customfield_10014
+                "key": "TEST-123",
+                "fields": {"customfield_10014": "EPIC-456"},
+            },
         ]
 
         # Mock get_issue to return a valid JiraIssue
@@ -538,6 +542,10 @@ class TestEpicsMixin:
             {  # epic
                 "key": "EPIC-456",
                 "fields": {"issuetype": {"name": "Epic"}},
+            },
+            {  # post-update verification for parent field
+                "key": "TEST-123",
+                "fields": {"parent": {"key": "EPIC-456"}},
             },
         ]
 
@@ -594,6 +602,10 @@ class TestEpicsMixin:
                     "issuetype": {"id": "10001", "name": "Эпик"},
                 },
             },
+            {
+                "key": "TEST-123",
+                "fields": {"parent": {"key": "EPIC-456"}},
+            },
         ]
         epics_mixin._find_epic_issue_type_id = MagicMock(return_value="10001")
         epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
@@ -627,6 +639,80 @@ class TestEpicsMixin:
             match="Could not link issue TEST-123 to epic EPIC-456.",
         ):
             epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
+
+    def test_link_issue_to_epic_silent_noop_falls_back_to_verified_field(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Verify fallback to working field when update_issue is ignored (#1578)."""
+        epics_mixin.jira.get_issue.side_effect = [
+            {"key": "TEST-123", "fields": {}},  # initial issue
+            {"key": "EPIC-456", "fields": {"issuetype": {"name": "Epic"}}},  # epic
+            {"key": "TEST-123", "fields": {}},  # parent update silently ignored
+            {
+                "key": "TEST-123",
+                "fields": {"customfield_10931": "EPIC-456"},
+            },  # discovered field persisted
+        ]
+        epics_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", id="123456")
+        )
+        epics_mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": "customfield_10931"}
+        )
+        epics_mixin.jira.update_issue.return_value = None
+
+        result = epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
+
+        assert result.key == "TEST-123"
+        assert epics_mixin.jira.update_issue.call_count == 2
+
+    def test_link_issue_to_epic_unverified_noop_raises_without_caching(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Verify ValueError and clean cache when no link persists (#1578)."""
+        epics_mixin.jira.get_issue.return_value = {"key": "TEST-123", "fields": {}}
+        epics_mixin.jira.get_issue.side_effect = [
+            {"key": "TEST-123", "fields": {}},
+            {"key": "EPIC-456", "fields": {"issuetype": {"name": "Epic"}}},
+        ] + [{"key": "TEST-123", "fields": {}}] * 10
+        epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        epics_mixin.jira.update_issue.return_value = None
+        epics_mixin.jira.create_issue_link.return_value = None
+        epics_mixin._field_ids_cache = None
+
+        with pytest.raises(
+            ValueError, match="Could not link issue TEST-123 to epic EPIC-456."
+        ):
+            epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
+
+        assert epics_mixin._field_ids_cache is None
+
+    def test_link_issue_to_epic_issue_link_fallback_verified(
+        self, epics_mixin: EpicsMixin
+    ):
+        """Fallback Relates-to link succeeds only when reflected in issuelinks."""
+        epics_mixin.jira.get_issue.side_effect = (
+            [
+                {"key": "TEST-123", "fields": {}},
+                {"key": "EPIC-456", "fields": {"issuetype": {"name": "Epic"}}},
+            ]
+            + [{"key": "TEST-123", "fields": {}}] * 6
+            + [
+                {
+                    "key": "TEST-123",
+                    "fields": {"issuelinks": [{"outwardIssue": {"key": "EPIC-456"}}]},
+                }
+            ]
+        )
+        epics_mixin.get_issue = MagicMock(
+            return_value=JiraIssue(key="TEST-123", id="123456")
+        )
+        epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
+        epics_mixin.jira.update_issue.return_value = None
+        epics_mixin.jira.create_issue_link.return_value = None
+
+        result = epics_mixin.link_issue_to_epic("TEST-123", "EPIC-456")
+        assert result.key == "TEST-123"
 
     def test_link_issue_to_epic_api_error(self, epics_mixin: EpicsMixin):
         """Test link_issue_to_epic with API error in the epic retrieval."""
@@ -1068,6 +1154,7 @@ class TestEpicsMixin:
         epics_mixin.jira.get_issue.side_effect = [
             {"key": "TEST-1"},
             {"key": "EPIC-1", "fields": {"issuetype": {"name": "Epic"}}},
+            {"key": "TEST-1", "fields": {"customfield_10014": "EPIC-1"}},
         ]
         epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
         epics_mixin.jira.update_issue.side_effect = [
@@ -1172,6 +1259,10 @@ class TestEpicFieldDynamicDetection:
             {
                 "key": "EPIC-456",
                 "fields": {"issuetype": {"name": "Epic"}},
+            },
+            {
+                "key": "TEST-123",
+                "fields": {"customfield_10001": "EPIC-456"},
             },
         ]
         epics_mixin.jira.get_all_fields.return_value = [

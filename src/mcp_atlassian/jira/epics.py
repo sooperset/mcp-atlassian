@@ -365,34 +365,42 @@ class EpicsMixin(
             field_ids = self.get_field_ids_to_epic()
 
             # Try the parent field first (if discovered or natively supported)
-            if "parent" in field_ids or "parent" not in field_ids:
-                try:
-                    fields = {"parent": {"key": epic_key}}
-                    self.jira.update_issue(
-                        issue_key=issue_key, update={"fields": fields}
-                    )
+            try:
+                fields = {"parent": {"key": epic_key}}
+                self.jira.update_issue(issue_key=issue_key, update={"fields": fields})
+                if self._verify_epic_link(issue_key, epic_key, "parent"):
                     logger.info(
                         f"Successfully linked {issue_key} to {epic_key} using parent field"
                     )
                     return self.get_issue(issue_key)
-                except Exception as e:
-                    logger.info(
-                        f"Couldn't link using parent field: {str(e)}. Trying discovered fields..."
-                    )
+                logger.info(
+                    f"Parent field update did not persist epic {epic_key} "
+                    f"on {issue_key}. Trying discovered fields..."
+                )
+            except Exception as e:
+                logger.info(
+                    f"Couldn't link using parent field: {str(e)}. Trying discovered fields..."
+                )
 
             # Try using the discovered Epic Link field
             if "epic_link" in field_ids:
+                discovered_field = field_ids["epic_link"]
                 try:
-                    epic_link_fields: dict[str, str] = {
-                        field_ids["epic_link"]: epic_key
-                    }
+                    epic_link_fields: dict[str, str] = {discovered_field: epic_key}
                     self.jira.update_issue(
                         issue_key=issue_key, update={"fields": epic_link_fields}
                     )
+                    if self._verify_epic_link(issue_key, epic_key, discovered_field):
+                        logger.info(
+                            f"Successfully linked {issue_key} to {epic_key} "
+                            f"using discovered epic_link field: {discovered_field}"
+                        )
+                        return self.get_issue(issue_key)
                     logger.info(
-                        f"Successfully linked {issue_key} to {epic_key} using discovered epic_link field: {field_ids['epic_link']}"
+                        f"Discovered epic_link field {discovered_field} did not "
+                        f"persist epic {epic_key} on {issue_key}. "
+                        "Trying fallback methods..."
                     )
-                    return self.get_issue(issue_key)
                 except Exception as e:
                     logger.info(
                         f"Couldn't link using discovered epic_link field: {str(e)}. Trying fallback methods..."
@@ -407,23 +415,33 @@ class EpicsMixin(
                 {"epic_link": epic_key},  # Sometimes used
             ]
 
-            for fields in custom_field_attempts:
+            for attempt_fields in custom_field_attempts:
                 try:
                     self.jira.update_issue(
-                        issue_key=issue_key, update={"fields": fields}
+                        issue_key=issue_key, update={"fields": attempt_fields}
                     )
-                    field_id = list(fields.keys())[0]
-                    logger.info(
-                        f"Successfully linked {issue_key} to {epic_key} using field: {field_id}"
-                    )
+                    field_id = list(attempt_fields.keys())[0]
+                    if self._verify_epic_link(issue_key, epic_key, field_id):
+                        logger.info(
+                            f"Successfully linked {issue_key} to {epic_key} "
+                            f"using field: {field_id}"
+                        )
 
-                    # If we get here, it worked - update our cached field ID
-                    if self._field_ids_cache is None:
-                        self._field_ids_cache = []
-                    self._field_ids_cache.append({"id": field_id, "name": "epic_link"})
-                    return self.get_issue(issue_key)
+                        # Verified to persist — cache the working field ID
+                        if self._field_ids_cache is None:
+                            self._field_ids_cache = []
+                        self._field_ids_cache.append(
+                            {"id": field_id, "name": "epic_link"}
+                        )
+                        return self.get_issue(issue_key)
+                    logger.info(
+                        f"Field {field_id} update was accepted but epic "
+                        f"{epic_key} did not persist on {issue_key}"
+                    )
                 except Exception as e:
-                    logger.info(f"Couldn't link using fields {fields}: {str(e)}")
+                    logger.info(
+                        f"Couldn't link using fields {attempt_fields}: {str(e)}"
+                    )
                     continue
 
             # Method 2: Try to use direct issue linking (relates to, etc.)
@@ -437,10 +455,15 @@ class EpicsMixin(
                     "outwardIssue": {"key": epic_key},
                 }
                 self.jira.create_issue_link(link_data)
+                if self._verify_epic_link(issue_key, epic_key):
+                    logger.info(
+                        f"Created relationship link between {issue_key} and {epic_key}"
+                    )
+                    return self.get_issue(issue_key)
                 logger.info(
-                    f"Created relationship link between {issue_key} and {epic_key}"
+                    "Issue link call returned without raising, but link between "
+                    f"{issue_key} and {epic_key} was not persisted"
                 )
-                return self.get_issue(issue_key)
             except Exception as link_error:
                 logger.error(f"Error creating issue link: {str(link_error)}")
 
@@ -458,6 +481,43 @@ class EpicsMixin(
             if "API error" in str(e):
                 raise Exception(f"Error linking issue to epic: {str(e)}")
             raise
+
+    def _verify_epic_link(
+        self, issue_key: str, epic_key: str, field_id: str | None = None
+    ) -> bool:
+        """Re-fetch an issue and verify that the expected epic link persisted."""
+        refreshed = self.jira.get_issue(issue_key)
+        if not isinstance(refreshed, dict):
+            return False
+        fields = refreshed.get("fields")
+        if not isinstance(fields, dict):
+            return False
+
+        if field_id == "parent":
+            parent = fields.get("parent")
+            if isinstance(parent, dict):
+                return parent.get("key") == epic_key
+            return parent == epic_key
+
+        if field_id is not None:
+            value = fields.get(field_id)
+            if isinstance(value, dict):
+                return value.get("key") == epic_key
+            return value == epic_key
+
+        links = fields.get("issuelinks")
+        if not isinstance(links, list):
+            return False
+        for link in links:
+            if not isinstance(link, dict):
+                continue
+            outward = link.get("outwardIssue")
+            inward = link.get("inwardIssue")
+            if (isinstance(outward, dict) and outward.get("key") == epic_key) or (
+                isinstance(inward, dict) and inward.get("key") == epic_key
+            ):
+                return True
+        return False
 
     def get_epic_issues(
         self, epic_key: str, start: int = 0, limit: int = 50
