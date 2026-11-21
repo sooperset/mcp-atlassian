@@ -3352,6 +3352,19 @@ async def transition_issue(
             ),
         ),
     ] = None,
+    return_fields: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Controls which fields of the transitioned issue are "
+                "returned, to reduce response size and token usage. Pass a "
+                "comma-separated list (e.g., 'status' for a minimal confirmation, "
+                "or 'status,resolution'), or '*all' for every field. The issue "
+                "'key' is always returned. Omit to keep the default response."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Transition a Jira issue to a new status.
 
@@ -3363,6 +3376,8 @@ async def transition_issue(
         comment: Optional comment for the transition in Markdown format.
         update_data: Optional JSON string of Jira update operations
             (e.g., worklog) for the transition.
+        return_fields: Fields to include in the returned issue. Comma-separated
+            list or '*all'; omit for the default field set.
 
     Returns:
         JSON string representing the updated issue object.
@@ -3390,6 +3405,15 @@ async def transition_issue(
     )
     resolved_transition_id = resolve_transition(available_transitions, transition_id)
 
+    # Only forward a selector the caller set, so the default re-fetch is unchanged.
+    return_kwargs: dict[str, str | list[str]] = {}
+    if return_fields:
+        return_kwargs["return_fields"] = (
+            return_fields
+            if return_fields == "*all"
+            else [f.strip() for f in return_fields.split(",")]
+        )
+
     issue = await run_fetcher_call(
         jira.transition_issue,
         issue_key=issue_key,
@@ -3397,6 +3421,7 @@ async def transition_issue(
         fields=update_fields,
         comment=comment,
         update_data=update_ops,
+        **return_kwargs,
     )
 
     result = {

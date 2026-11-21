@@ -2936,6 +2936,71 @@ async def test_transition_issue_resolves_name_to_id(jira_client, mock_jira_fetch
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("return_fields", "expected"),
+    [
+        ("status", ["status"]),
+        ("status, resolution", ["status", "resolution"]),
+        ("*all", "*all"),
+    ],
+)
+async def test_transition_issue_passes_return_fields(
+    jira_client, mock_jira_fetcher, return_fields, expected
+):
+    """return_fields uses the jira_update_issue contract: CSV list or '*all'."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+    mock_jira_fetcher.transition_issue.return_value.to_simplified_dict.return_value = {
+        "key": "TEST-123",
+        "status": {"name": "Done"},
+    }
+
+    response = await jira_client.call_tool(
+        "jira_transition_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition_id": "31",
+            "return_fields": return_fields,
+        },
+    )
+
+    assert mock_jira_fetcher.transition_issue.call_args[1]["return_fields"] == expected
+    result = json.loads(response.content[0].text)
+    assert result == {
+        "message": "Issue TEST-123 transitioned successfully",
+        "issue": {"key": "TEST-123", "status": {"name": "Done"}},
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("arguments", [{}, {"return_fields": ""}])
+async def test_transition_issue_without_return_fields_keeps_default_refetch(
+    jira_client, mock_jira_fetcher, arguments
+):
+    """Omitted or empty return_fields leaves the transition call unchanged."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+    mock_jira_fetcher.transition_issue.return_value.to_simplified_dict.return_value = {
+        "key": "TEST-123"
+    }
+
+    await jira_client.call_tool(
+        "jira_transition_issue",
+        {"issue_key": "TEST-123", "transition_id": "31", **arguments},
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123",
+        transition_id="31",
+        fields={},
+        comment=None,
+        update_data=None,
+    )
+
+
+@pytest.mark.anyio
 async def test_transition_issue_comment_schema_warns_about_cloud_screen():
     """The MCP schema documents Jira Cloud's transition-screen dependency."""
     import mcp_atlassian.servers.jira as jira_server

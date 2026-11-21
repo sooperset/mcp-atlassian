@@ -251,6 +251,7 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
         fields: dict[str, Any] | None = None,
         comment: str | None = None,
         update_data: dict[str, Any] | None = None,
+        return_fields: str | list[str] | tuple[str, ...] | set[str] | None = None,
     ) -> JiraIssue:
         """
         Transition a Jira issue to a new status.
@@ -278,6 +279,9 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
                 JIRA_INTERNAL_ONLY_PROJECTS restriction as comment. On
                 Jira Cloud, string comment bodies and worklog comments are
                 treated as Markdown and converted to ADF.
+            return_fields: Fields to include on the issue returned after the
+                transition (comma-separated string, collection, or ``"*all"``).
+                None keeps the default field set of ``get_issue``.
 
         Returns:
             JiraIssue model representing the transitioned issue
@@ -364,7 +368,9 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
                 self.jira.post(url, data=payload)
 
             # Return the updated issue
-            return self.get_issue(issue_key)
+            if return_fields is None:
+                return self.get_issue(issue_key)
+            return self.get_issue(issue_key, fields=return_fields)
         except ValueError as e:
             logger.error(f"Value error transitioning issue {issue_key}: {str(e)}")
             raise

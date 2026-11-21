@@ -184,6 +184,41 @@ class TestTransitionsMixin:
         assert result.summary == "Test Issue"
         assert result.description == "Issue content"
 
+    @pytest.mark.parametrize(
+        "return_fields",
+        [["status"], "status,resolution", "*all"],
+    )
+    def test_transition_issue_forwards_return_fields(
+        self, transitions_mixin: TransitionsMixin, return_fields: str | list[str]
+    ):
+        """return_fields is forwarded unchanged to the post-transition re-fetch."""
+        transitions_mixin.transition_issue(
+            "TEST-123", "10", return_fields=return_fields
+        )
+
+        transitions_mixin.get_issue.assert_called_once_with(
+            "TEST-123", fields=return_fields
+        )
+
+    def test_transition_issue_return_fields_trims_response(
+        self, transitions_mixin: TransitionsMixin, make_issue_data
+    ):
+        """Only the requested fields are returned; absent ones are omitted."""
+        del transitions_mixin.get_issue  # use the real re-fetch
+        transitions_mixin.jira.get_issue.return_value = make_issue_data(status="Done")
+
+        result = transitions_mixin.transition_issue(
+            "TEST-123", "10", return_fields=["status", "duedate"]
+        )
+
+        assert transitions_mixin.jira.get_issue.call_args[1]["fields"] == (
+            "status,duedate"
+        )
+        simplified = result.to_simplified_dict()
+        assert set(simplified) == {"id", "key", "browse_url", "status"}
+        assert simplified["key"] == "TEST-123"
+        assert simplified["status"]["name"] == "Done"
+
     def test_transition_issue_with_int_id(self, transitions_mixin: TransitionsMixin):
         """Test transition_issue with int transition ID."""
         # Call the method with int ID
