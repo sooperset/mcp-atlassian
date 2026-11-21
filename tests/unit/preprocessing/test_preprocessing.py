@@ -374,6 +374,33 @@ def test_jira_to_markdown_citation_no_redos(preprocessor_with_jira):
     assert "retry-handler" in result
 
 
+def test_jira_to_markdown_inline_code_containing_a_closing_brace(
+    preprocessor_with_jira,
+):
+    """Inline code may contain a closing brace; it used to close the span early."""
+    convert = preprocessor_with_jira.jira_to_markdown
+    assert convert('Use {{{"a": 1}}} here') == 'Use `{"a": 1}` here'
+    assert convert("Use {{a}b}} here") == "Use `a}b` here"
+    assert convert("Use {{a}}} here") == "Use `a}` here"
+    assert convert("Use {{a_b}c_d}} here") == "Use `a_b}c_d` here"
+
+
+def test_jira_to_markdown_inline_code_across_lines(preprocessor_with_jira):
+    """An inline code span may contain a newline."""
+    assert (
+        preprocessor_with_jira.jira_to_markdown("Use {{multi\nline}} here")
+        == "Use `multi\nline` here"
+    )
+
+
+def test_jira_to_markdown_inline_code_edges_unchanged(preprocessor_with_jira):
+    """The forms that already converted must keep converting the same way."""
+    convert = preprocessor_with_jira.jira_to_markdown
+    assert convert("{{a}} and {{b}}") == "`a` and `b`"
+    assert convert("plain {{x}} code") == "plain `x` code"
+    assert convert("{{}}") == "{{}}"
+
+
 def test_markdown_to_jira(preprocessor_with_jira):
     """Test conversion of Markdown to Jira markup."""
     # Test headers
