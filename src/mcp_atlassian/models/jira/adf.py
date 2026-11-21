@@ -112,6 +112,7 @@ def _parse_inline_formatting(
         r"title=(?P<status_title>[^}]+)\}"
         r"|\*\*(?P<bold_inner>.+?)\*\*"
         r"|~~(?P<strike_inner>.+?)~~"
+        r"|!\[(?P<image_alt>[^\]]*)\]\((?P<image_src>[^)\s]+)\)"
         r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
         r"|(?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)"
     )
@@ -175,6 +176,17 @@ def _parse_inline_formatting(
                 m.group("strike_inner"),
                 jira_base_url,
                 [{"type": "strike"}],
+            )
+        elif m.group("image_src") is not None:
+            # ADF has no inline node for an external image, so keep the
+            # image reachable as a link instead of losing it (#1679).
+            image_src = m.group("image_src")
+            nodes.append(
+                {
+                    "type": "text",
+                    "text": m.group("image_alt").strip() or image_src,
+                    "marks": [{"type": "link", "attrs": {"href": image_src}}],
+                }
             )
         elif m.group("link_text") is not None:
             nodes.append(

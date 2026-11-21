@@ -439,6 +439,49 @@ class TestMarkdownToAdf:
         link_mark = next(m for m in link_nodes[0]["marks"] if m["type"] == "link")
         assert link_mark["attrs"]["href"] == "https://example.com"
 
+    @pytest.mark.parametrize(
+        ("markdown", "expected_text"),
+        [
+            ("![diagram](https://example.com/d.png)", "diagram"),
+            ("![](https://example.com/d.png)", "https://example.com/d.png"),
+            ("![ ](https://example.com/d.png)", "https://example.com/d.png"),
+        ],
+    )
+    def test_image_becomes_link_without_stray_bang(
+        self, markdown: str, expected_text: str
+    ) -> None:
+        """![alt](url) is kept as a link to the image, with no stray '!'."""
+        result = markdown_to_adf(markdown)
+        assert result["content"][0]["content"] == [
+            {
+                "type": "text",
+                "text": expected_text,
+                "marks": [
+                    {"type": "link", "attrs": {"href": "https://example.com/d.png"}}
+                ],
+            }
+        ]
+
+    def test_image_inside_text_and_list(self) -> None:
+        """Images keep surrounding text and work in other blocks."""
+        result = markdown_to_adf(
+            "See ![chart](https://example.com/c.png) below.\n"
+            "- ![](https://example.com/l.png)"
+        )
+        para, bullet_list = result["content"]
+        assert [n["text"] for n in para["content"]] == ["See ", "chart", " below."]
+        item_para = bullet_list["content"][0]["content"][0]
+        assert item_para["content"][0]["text"] == "https://example.com/l.png"
+        assert not any(
+            "!" in n.get("text", "") for n in para["content"] + item_para["content"]
+        )
+
+    def test_exclamation_before_link_text_is_unchanged(self) -> None:
+        """A '!' that is not image syntax stays as text."""
+        result = markdown_to_adf("Done! [notes](https://example.com)")
+        texts = [n["text"] for n in result["content"][0]["content"]]
+        assert texts == ["Done! ", "notes"]
+
     # -- Mentions -----------------------------------------------------------
 
     def test_mention_modern_account_id(self):
