@@ -8,6 +8,7 @@ from ..models.jira import (
     JiraServiceDesk,
     JiraServiceDeskQueuesResult,
 )
+from ..utils.urls import path_segment
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -112,7 +113,7 @@ class QueuesMixin(JiraClient):
 
         try:
             response = self.jira.get(
-                f"rest/servicedeskapi/servicedesk/{service_desk_id}/queue",
+                f"rest/servicedeskapi/servicedesk/{path_segment(service_desk_id)}/queue",
                 params={
                     "start": start_at,
                     "limit": limit,
@@ -169,7 +170,8 @@ class QueuesMixin(JiraClient):
 
         try:
             queue_response = self.jira.get(
-                f"rest/servicedeskapi/servicedesk/{service_desk_id}/queue/{queue_id}",
+                "rest/servicedeskapi/servicedesk/"
+                f"{path_segment(service_desk_id)}/queue/{path_segment(queue_id)}",
                 params={"includeCount": "true"},
             )
             if isinstance(queue_response, dict):
@@ -184,7 +186,8 @@ class QueuesMixin(JiraClient):
 
         try:
             response = self.jira.get(
-                f"rest/servicedeskapi/servicedesk/{service_desk_id}/queue/{queue_id}/issue",
+                "rest/servicedeskapi/servicedesk/"
+                f"{path_segment(service_desk_id)}/queue/{path_segment(queue_id)}/issue",
                 params={"start": start_at, "limit": limit},
             )
             if not isinstance(response, dict):
