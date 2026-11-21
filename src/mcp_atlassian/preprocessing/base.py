@@ -280,9 +280,9 @@ def _restore_blocks(text: str, storage: list[str], prefix: str) -> str:
         expanded.append(block)
 
     return pattern.sub(
-        lambda m: m.group(0)
-        if (i := _index(m, len(expanded))) is None
-        else expanded[i],
+        lambda m: (
+            m.group(0) if (i := _index(m, len(expanded))) is None else expanded[i]
+        ),
         text,
     )
 
