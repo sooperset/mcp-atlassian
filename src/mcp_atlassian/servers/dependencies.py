@@ -908,6 +908,7 @@ def _create_user_config_for_fetcher(
             base_config, **common_args
         )
         user_confluence_config.spaces_filter = base_config.spaces_filter
+        user_confluence_config.spaces_blocked = base_config.spaces_blocked
         return user_confluence_config
     else:
         raise TypeError(f"Unsupported base_config type: {type(base_config)}")

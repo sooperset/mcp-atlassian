@@ -1,4 +1,7 @@
-"""Enforce JIRA_PROJECTS_FILTER and CONFLUENCE_SPACES_FILTER on every tool.
+"""Enforce JIRA_PROJECTS_FILTER and the Confluence space scope on every tool.
+
+The Confluence space scope is CONFLUENCE_SPACES_FILTER (allowlist) and
+CONFLUENCE_SPACES_BLOCKED (blocklist).
 
 The allowlists are a boundary for the whole server, not only for search. Each
 tool argument name is classified once here: either it identifies something
@@ -67,6 +70,10 @@ class ScopePolicy:
         unscoped_params: Argument names that do not identify a project/space
             object, or whose object is already checked through another
             argument of the same tool.
+        blocklist_attr: Config attribute holding the blocklist, if the
+            service has one.
+        blocklist_env_var: Environment variable holding the operator
+            blocklist, read when the server has no global config.
     """
 
     service: str
@@ -75,6 +82,8 @@ class ScopePolicy:
     env_var: str
     checks: Mapping[str, ScopeCheck]
     unscoped_params: frozenset[str]
+    blocklist_attr: str | None = None
+    blocklist_env_var: str | None = None
 
     def classify(self, param: str) -> str | None:
         """Return ``"scoped"``, ``"unscoped"`` or None for an unknown name."""
@@ -215,6 +224,8 @@ CONFLUENCE_SCOPE_POLICY = ScopePolicy(
     filter_attr="spaces_filter",
     lifespan_config_attr="full_confluence_config",
     env_var="CONFLUENCE_SPACES_FILTER",
+    blocklist_attr="spaces_blocked",
+    blocklist_env_var="CONFLUENCE_SPACES_BLOCKED",
     checks={
         "page_id": _method("ensure_content_allowed"),
         "parent_id": _method("ensure_content_allowed"),
@@ -305,6 +316,10 @@ def _filter_keys(value: Any) -> frozenset[str]:
     return frozenset(str(k).strip().upper() for k in items if str(k).strip())
 
 
+ScopeSetting = tuple[frozenset[str], frozenset[str]]
+"""An allowlist and a blocklist, each normalized by ``_filter_keys``."""
+
+
 class ToolScopeGuard:
     """Check a tool call's arguments against the configured allowlist."""
 
@@ -333,18 +348,34 @@ class ToolScopeGuard:
             return None
         return getattr(app_ctx, self.policy.lifespan_config_attr, None)
 
-    def operator_filter(self, ctx: Any) -> frozenset[str]:
-        """Return the operator allowlist, independent of the request's credentials.
+    def _config_scope(self, config: Any) -> ScopeSetting:
+        allow = _filter_keys(getattr(config, self.policy.filter_attr, None))
+        block: frozenset[str] = frozenset()
+        if self.policy.blocklist_attr:
+            block = _filter_keys(getattr(config, self.policy.blocklist_attr, None))
+        return allow, block
+
+    def operator_filter(self, ctx: Any) -> ScopeSetting:
+        """Return the operator allowlist and blocklist, independent of the request.
 
         The server's global config is the source when it exists; otherwise
         (for example a header-only deployment without ``JIRA_URL``) the
-        environment variable is read directly. The per-request fetcher config
+        environment variables are read directly. The per-request fetcher config
         is never consulted here, because it is built from caller input.
         """
         config = self._lifespan_config(ctx)
         if config is not None:
-            return _filter_keys(getattr(config, self.policy.filter_attr, None))
-        return _filter_keys(os.getenv(self.policy.env_var))
+            return self._config_scope(config)
+        allow = _filter_keys(os.getenv(self.policy.env_var))
+        block: frozenset[str] = frozenset()
+        if self.policy.blocklist_env_var:
+            block = _filter_keys(os.getenv(self.policy.blocklist_env_var))
+        return allow, block
+
+    def _scope_vars(self) -> str:
+        if self.policy.blocklist_env_var:
+            return f"{self.policy.env_var} / {self.policy.blocklist_env_var}"
+        return self.policy.env_var
 
     async def __call__(self, tool_name: str, arguments: Mapping[str, Any]) -> None:
         """Raise ScopeViolationError if an argument is outside the allowlist.
@@ -364,29 +395,28 @@ class ToolScopeGuard:
 
         ctx = arguments.get("ctx")
         operator = self.operator_filter(ctx)
-        if not operator and self._lifespan_config(ctx) is not None:
-            # The server config is known and sets no allowlist.
+        operator_set = any(operator)
+        if not operator_set and self._lifespan_config(ctx) is not None:
+            # The server config is known and sets no allowlist or blocklist.
             return
-        if not operator and not targets and not unknown:
+        if not operator_set and not targets and not unknown:
             return
 
         fetcher = await self._fetcher_getter(ctx)
-        configured = _filter_keys(
-            getattr(fetcher.config, self.policy.filter_attr, None)
-        )
-        if not operator and not configured:
+        configured = self._config_scope(fetcher.config)
+        if not operator_set and not any(configured):
             return
-        if operator and configured != operator:
+        if operator_set and configured != operator:
             # The fetcher serving this request does not carry the operator's
-            # allowlist, so its searches and checks would not be bounded.
+            # scope, so its searches and checks would not be bounded.
             logger.error(
                 f"{self.policy.service} fetcher for tool '{tool_name}' does not "
-                f"carry the operator {self.policy.env_var}; refusing."
+                f"carry the operator {self._scope_vars()}; refusing."
             )
             raise ScopeViolationError(
                 f"{self.policy.service} tool '{tool_name}' cannot be used: the "
                 f"request's configuration does not apply the configured "
-                f"{self.policy.env_var}."
+                f"{self._scope_vars()}."
             )
 
         if unknown:

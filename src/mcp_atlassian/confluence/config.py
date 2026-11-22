@@ -39,6 +39,7 @@ class ConfluenceConfig:
     oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig | None = None
     ssl_verify: bool = True  # Whether to verify SSL certificates
     spaces_filter: str | None = None  # List of space keys to filter searches
+    spaces_blocked: str | None = None  # List of space keys to exclude
     http_proxy: str | None = None  # HTTP proxy URL
     https_proxy: str | None = None  # HTTPS proxy URL
     no_proxy: str | None = None  # Comma-separated list of hosts to bypass proxy
@@ -63,7 +64,11 @@ class ConfluenceConfig:
     # Operator policy: settings that bound what any request may do, whoever's
     # credentials it carries. Per-request configs copy them from the server
     # config (or from the environment when there is none).
-    OPERATOR_POLICY_FIELDS: ClassVar[tuple[str, ...]] = ("spaces_filter", "timeout")
+    OPERATOR_POLICY_FIELDS: ClassVar[tuple[str, ...]] = (
+        "spaces_filter",
+        "spaces_blocked",
+        "timeout",
+    )
 
     @classmethod
     def operator_policy_from_env(cls) -> dict[str, Any]:
@@ -80,6 +85,7 @@ class ConfluenceConfig:
             timeout = int(os.getenv("CONFLUENCE_TIMEOUT", "75"))
         return {
             "spaces_filter": os.getenv("CONFLUENCE_SPACES_FILTER"),
+            "spaces_blocked": os.getenv("CONFLUENCE_SPACES_BLOCKED"),
             "timeout": timeout,
         }
 

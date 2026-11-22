@@ -17,14 +17,20 @@ BASE = "https://example.atlassian.net/wiki"
 
 
 def _fetcher(
-    spaces_filter: str | None = "ALLOWED", auth_type: str = "basic"
+    spaces_filter: str | None = "ALLOWED",
+    auth_type: str = "basic",
+    spaces_blocked: str | None = None,
 ) -> ConfluenceFetcher:
     kwargs: dict[str, Any] = {"username": "u", "api_token": "t"}
     if auth_type == "oauth":
         kwargs = {"oauth_config": MagicMock(cloud_id="c")}
     fetcher = ConfluenceFetcher(
         config=ConfluenceConfig(
-            url=BASE, auth_type=auth_type, spaces_filter=spaces_filter, **kwargs
+            url=BASE,
+            auth_type=auth_type,
+            spaces_filter=spaces_filter,
+            spaces_blocked=spaces_blocked,
+            **kwargs,
         )
     )
     backend = MagicMock()
@@ -173,6 +179,89 @@ def test_caller_spaces_filter_cannot_inject_cql() -> None:
     )
 
 
+# --- CONFLUENCE_SPACES_BLOCKED --------------------------------------------------
+
+
+def test_blocklist_denies_blocked_space_and_allows_others() -> None:
+    fetcher = _fetcher(None, spaces_blocked="SECRET, hr")
+    fetcher.ensure_space_allowed("OTHER")
+    with pytest.raises(ScopeViolationError, match="CONFLUENCE_SPACES_BLOCKED"):
+        fetcher.ensure_space_allowed("secret")
+    with pytest.raises(ScopeViolationError, match="CONFLUENCE_SPACES_BLOCKED"):
+        fetcher.ensure_space_allowed(" HR ")
+
+
+@pytest.mark.parametrize("value", [None, "", "  "])
+def test_blocklist_denies_missing_space_key(value: object) -> None:
+    fetcher = _fetcher(None, spaces_blocked="SECRET")
+    with pytest.raises(ScopeViolationError):
+        fetcher.ensure_space_allowed(value)
+
+
+def test_blocklist_wins_over_allowlist() -> None:
+    fetcher = _fetcher("ALLOWED,SECRET", spaces_blocked="SECRET")
+    fetcher.ensure_space_allowed("ALLOWED")
+    with pytest.raises(ScopeViolationError, match="CONFLUENCE_SPACES_BLOCKED"):
+        fetcher.ensure_space_allowed("SECRET")
+    with pytest.raises(ScopeViolationError, match="CONFLUENCE_SPACES_FILTER"):
+        fetcher.ensure_space_allowed("OTHER")
+
+
+def test_blocklist_resolves_content_space() -> None:
+    fetcher = _fetcher(None, spaces_blocked="SECRET")
+    url = f"{BASE}/rest/api/content/{{}}"
+    _route(
+        fetcher,
+        {
+            url.format("1"): {"space": {"key": "SECRET"}},
+            url.format("2"): {"space": {"key": "OTHER"}},
+        },
+    )
+    fetcher.ensure_content_allowed("2")
+    with pytest.raises(ScopeViolationError):
+        fetcher.ensure_content_allowed("1")
+
+
+def test_blocklist_content_lookup_failure_denies() -> None:
+    fetcher = _fetcher(None, spaces_blocked="SECRET")
+    _route(fetcher, {})
+    with pytest.raises(ScopeViolationError):
+        fetcher.ensure_content_allowed("404")
+
+
+def test_blocklist_resolves_v2_space_id() -> None:
+    fetcher = _fetcher(None, auth_type="oauth", spaces_blocked="SECRET")
+    _route(fetcher, {f"{BASE}/api/v2/spaces/7": {"key": "SECRET"}})
+    with pytest.raises(ScopeViolationError):
+        fetcher.ensure_space_id_allowed("7")
+
+
+def test_search_ands_blocklist_into_cql() -> None:
+    fetcher = _fetcher(None, spaces_blocked="SECRET,HR")
+    fetcher.confluence.cql.return_value = {"results": []}
+    fetcher.search("type = page")
+    cql = fetcher.confluence.cql.call_args.kwargs["cql"]
+    assert cql == "(type = page) AND (space NOT IN (SECRET, HR))"
+
+
+def test_search_blocklist_cannot_be_escaped_by_caller_cql() -> None:
+    fetcher = _fetcher(None, spaces_blocked="SECRET")
+    fetcher.confluence.cql.return_value = {"results": []}
+    fetcher.search('space = "SECRET"', spaces_filter="SECRET")
+    cql = fetcher.confluence.cql.call_args.kwargs["cql"]
+    assert cql.endswith("AND (space NOT IN (SECRET))")
+    with pytest.raises(Exception, match="CQL query rejected"):
+        fetcher.search("type = page) OR (space = SECRET")
+
+
+def test_search_applies_allowlist_and_blocklist() -> None:
+    fetcher = _fetcher("ALLOWED", spaces_blocked="SECRET")
+    fetcher.confluence.cql.return_value = {"results": []}
+    fetcher.search("type = page")
+    cql = fetcher.confluence.cql.call_args.kwargs["cql"]
+    assert cql == ("((type = page) AND (space = ALLOWED)) AND (space NOT IN (SECRET))")
+
+
 # --- comment bodies -------------------------------------------------------------
 
 _CANARY = "SECRET-CANARY-7f3a"
@@ -223,6 +312,17 @@ def test_comment_bodies_are_not_server_rendered_under_allowlist(method: str) -> 
         "body.view" not in call.kwargs["expand"]
         for call in fetcher.confluence.get_page_comments.call_args_list
     )
+
+
+def test_comment_bodies_are_not_server_rendered_under_blocklist() -> None:
+    fetcher = _fetcher(None, spaces_blocked="SECRET")
+    fetcher.config.url = "https://confluence.example.test"
+    _comment_backend(fetcher)
+
+    comments = fetcher.get_page_comments("100")
+
+    assert comments
+    assert _CANARY not in repr([c.to_simplified_dict() for c in comments])
 
 
 def test_comment_bodies_rendered_without_allowlist() -> None:

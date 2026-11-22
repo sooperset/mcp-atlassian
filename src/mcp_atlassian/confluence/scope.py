@@ -1,4 +1,8 @@
-"""Resolve Confluence identifiers to spaces and enforce CONFLUENCE_SPACES_FILTER.
+"""Resolve Confluence identifiers to spaces and enforce the space scope.
+
+The scope is CONFLUENCE_SPACES_FILTER (an allowlist) and
+CONFLUENCE_SPACES_BLOCKED (a blocklist). A space must be in the allowlist, if
+one is set, and must not be in the blocklist.
 
 Content IDs (pages, blog posts, folders, attachments, comments) are resolved
 through the API to the space that holds them. Cloud OAuth deployments use the
@@ -21,6 +25,7 @@ from .client import ConfluenceClient
 logger = logging.getLogger("mcp-atlassian")
 
 _FILTER_NAME = "CONFLUENCE_SPACES_FILTER"
+_BLOCKED_NAME = "CONFLUENCE_SPACES_BLOCKED"
 
 # v2 endpoints that can own a content ID, tried in order. Entries with a parent
 # field are attached to another piece of content rather than to a space.
@@ -39,28 +44,63 @@ _MAX_PARENT_HOPS = 3
 _MAX_TEMPLATE_PAGES = 10
 
 
-def _denied(kind: str, value: object) -> ScopeViolationError:
+def _denied(kind: str, value: object, scope: str = _FILTER_NAME) -> ScopeViolationError:
     return ScopeViolationError(
-        f"Confluence {kind} '{value}' is outside the configured {_FILTER_NAME} "
+        f"Confluence {kind} '{value}' is outside the configured {scope} "
         "or could not be verified."
     )
 
 
-def allowed_space_keys(config: object) -> frozenset[str] | None:
-    """Return the upper-cased CONFLUENCE_SPACES_FILTER keys of ``config``, or None."""
-    raw = getattr(config, "spaces_filter", None)
+def _blocked(kind: str, value: object) -> ScopeViolationError:
+    return ScopeViolationError(
+        f"Confluence {kind} '{value}' is in the configured {_BLOCKED_NAME}."
+    )
+
+
+def _space_keys(raw: object) -> frozenset[str] | None:
     if not isinstance(raw, str):
         return None
     keys = frozenset(k.strip().upper() for k in raw.split(",") if k.strip())
     return keys or None
 
 
+def allowed_space_keys(config: object) -> frozenset[str] | None:
+    """Return the upper-cased CONFLUENCE_SPACES_FILTER keys of ``config``, or None."""
+    return _space_keys(getattr(config, "spaces_filter", None))
+
+
+def blocked_space_keys(config: object) -> frozenset[str] | None:
+    """Return the upper-cased CONFLUENCE_SPACES_BLOCKED keys of ``config``, or None."""
+    return _space_keys(getattr(config, "spaces_blocked", None))
+
+
+def space_scope_configured(config: object) -> bool:
+    """Return True if ``config`` sets a space allowlist or blocklist."""
+    return bool(allowed_space_keys(config) or blocked_space_keys(config))
+
+
 class ScopeMixin(ConfluenceClient):
-    """Space-allowlist checks shared by every Confluence tool."""
+    """Space allowlist and blocklist checks shared by every Confluence tool."""
 
     def allowed_spaces(self) -> frozenset[str] | None:
         """Return the upper-cased CONFLUENCE_SPACES_FILTER keys, or None."""
         return allowed_space_keys(self.config)
+
+    def blocked_spaces(self) -> frozenset[str] | None:
+        """Return the upper-cased CONFLUENCE_SPACES_BLOCKED keys, or None."""
+        return blocked_space_keys(self.config)
+
+    def _space_scope_configured(self) -> bool:
+        return space_scope_configured(self.config)
+
+    def _scope_names(self) -> str:
+        """Name the configured scope settings, for error messages."""
+        names = []
+        if self.allowed_spaces() is not None:
+            names.append(_FILTER_NAME)
+        if self.blocked_spaces() is not None:
+            names.append(_BLOCKED_NAME)
+        return " / ".join(names) or _FILTER_NAME
 
     def _uses_v2_for_scope(self) -> bool:
         return self.config.auth_type == "oauth" and bool(self.config.is_cloud)
@@ -117,19 +157,29 @@ class ScopeMixin(ConfluenceClient):
         return key
 
     def ensure_space_allowed(self, space_key: object) -> None:
-        """Raise ScopeViolationError if ``space_key`` is not allowlisted."""
+        """Raise ScopeViolationError if ``space_key`` is outside the scope.
+
+        The space must be in the allowlist, if one is set, and must not be in
+        the blocklist.
+        """
         allowed = self.allowed_spaces()
-        if allowed is None:
+        blocked = self.blocked_spaces()
+        if allowed is None and blocked is None:
             return
-        if not isinstance(space_key, str) or space_key.strip().upper() not in allowed:
+        if not isinstance(space_key, str) or not space_key.strip():
+            raise _denied("space", space_key, self._scope_names())
+        key = space_key.strip().upper()
+        if allowed is not None and key not in allowed:
             raise _denied("space", space_key)
+        if blocked is not None and key in blocked:
+            raise _blocked("space", space_key)
 
     def ensure_content_allowed(self, content_id: object) -> None:
         """Resolve a page, blog post, attachment or comment ID and check it."""
-        if self.allowed_spaces() is None:
+        if not self._space_scope_configured():
             return
         if content_id is None or not str(content_id).strip():
-            raise _denied("content", content_id)
+            raise _denied("content", content_id, self._scope_names())
         try:
             if self._uses_v2_for_scope():
                 space_key = self._v2_content_space_key(content_id)
@@ -137,27 +187,28 @@ class ScopeMixin(ConfluenceClient):
                 space_key = self._v1_content_space_key(content_id)
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Confluence content {content_id!r}: {e}")
-            raise _denied("content", content_id) from e
+            raise _denied("content", content_id, self._scope_names()) from e
         self.ensure_space_allowed(space_key)
 
     def ensure_space_id_allowed(self, space_id: object) -> None:
         """Resolve a numeric space ID (Cloud v2) and check its key."""
-        if self.allowed_spaces() is None:
+        if not self._space_scope_configured():
             return
         try:
             space_key = self._v2_space_key(space_id)
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Confluence space {space_id!r}: {e}")
-            raise _denied("space", space_id) from e
+            raise _denied("space", space_id, self._scope_names()) from e
         self.ensure_space_allowed(space_key)
 
     def ensure_template_allowed(self, template_id: object) -> None:
         """Check a template's space; a template with no space must be global.
 
-        A template is allowed when its response names an allowlisted space,
-        or when it names no space and is listed among the global templates.
+        A template is allowed when its response names a space within the
+        scope, or when it names no space and is listed among the global
+        templates.
         """
-        if self.allowed_spaces() is None or not self.config.is_cloud:
+        if not self._space_scope_configured() or not self.config.is_cloud:
             # The template API is Cloud-only; the tool itself rejects DC.
             return
         base = f"{self._v1_rest_base_url()}/rest/api/template"
@@ -180,7 +231,7 @@ class ScopeMixin(ConfluenceClient):
             logger.warning(
                 f"Could not resolve Confluence template {template_id!r}: {e}"
             )
-            raise _denied("template", template_id) from e
+            raise _denied("template", template_id, self._scope_names()) from e
         self.ensure_space_allowed(space_key)
 
     def _is_global_template(self, base: str, template_id: str) -> bool:

@@ -295,6 +295,10 @@ def _warn_unrestricted_header_urls() -> None:
     help="Comma-separated list of Confluence space keys to filter search results",
 )
 @click.option(
+    "--confluence-spaces-blocked",
+    help="Comma-separated list of Confluence space keys to exclude",
+)
+@click.option(
     "--jira-url",
     help="Jira URL (e.g., https://your-domain.atlassian.net or https://jira.your-company.com)",
 )
@@ -390,6 +394,7 @@ def main(
     confluence_personal_token: str | None,
     confluence_ssl_verify: bool,
     confluence_spaces_filter: str | None,
+    confluence_spaces_blocked: str | None,
     jira_url: str | None,
     jira_username: str | None,
     jira_token: str | None,
@@ -661,6 +666,8 @@ def main(
         os.environ["CONFLUENCE_SSL_VERIFY"] = str(confluence_ssl_verify).lower()
     if click_ctx and was_option_provided(click_ctx, "confluence_spaces_filter"):
         os.environ["CONFLUENCE_SPACES_FILTER"] = confluence_spaces_filter
+    if click_ctx and was_option_provided(click_ctx, "confluence_spaces_blocked"):
+        os.environ["CONFLUENCE_SPACES_BLOCKED"] = confluence_spaces_blocked
     if click_ctx and was_option_provided(click_ctx, "jira_ssl_verify"):
         os.environ["JIRA_SSL_VERIFY"] = str(jira_ssl_verify).lower()
     if click_ctx and was_option_provided(click_ctx, "jira_projects_filter"):

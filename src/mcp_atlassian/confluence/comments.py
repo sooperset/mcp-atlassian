@@ -10,7 +10,7 @@ import requests
 from ..models.confluence import ConfluenceComment
 from ..utils.truncation import mark_truncated, merge_truncation
 from .client import ConfluenceClient
-from .scope import allowed_space_keys
+from .scope import space_scope_configured
 from .v2_adapter import (
     MAX_COMMENT_REQUESTS_PER_READ,
     MAX_COMMENTS_PER_READ,
@@ -38,10 +38,10 @@ class CommentsMixin(ConfluenceClient):
 
         The view representation is rendered by Confluence, so include and
         listing macros in it carry content from other spaces. While a
-        CONFLUENCE_SPACES_FILTER is set, the storage representation is read
-        instead, as page reads do.
+        CONFLUENCE_SPACES_FILTER or CONFLUENCE_SPACES_BLOCKED is set, the
+        storage representation is read instead, as page reads do.
         """
-        if allowed_space_keys(self.config):
+        if space_scope_configured(self.config):
             return "body.storage.value"
         return "body.view.value"
 
@@ -583,10 +583,10 @@ class CommentsMixin(ConfluenceClient):
         if not isinstance(body, dict):
             body = {}
 
-        # Under a space allowlist only the storage body is used: the view is
+        # Under a space scope only the storage body is used: the view is
         # rendered by Confluence and can carry content from other spaces.
         representations = (
-            ("storage",) if allowed_space_keys(self.config) else ("view", "storage")
+            ("storage",) if space_scope_configured(self.config) else ("view", "storage")
         )
         body_html = ""
         for representation in representations:
