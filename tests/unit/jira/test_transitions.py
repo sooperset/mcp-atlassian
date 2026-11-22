@@ -238,7 +238,7 @@ class TestTransitionsMixin:
         comment = "Test comment"
 
         # Define a side effect to record what's passed to _add_comment_to_transition_data
-        def add_comment_side_effect(transition_data, comment_text):
+        def add_comment_side_effect(transition_data, comment_text, visibility=None):
             transition_data["update"] = {"comment": [{"add": {"body": comment_text}}]}
 
         # Mock _add_comment_to_transition_data
@@ -350,6 +350,114 @@ class TestTransitionsMixin:
                 "update": {"comment": [{"add": {"body": "h2. Done"}}]},
             },
         )
+
+    # --- comment_visibility on transition comments (#1756) ---
+
+    def test_transition_issue_cloud_comment_visibility(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Cloud: comment_visibility is sent on the transition comment."""
+        adf_comment = {"version": 1, "type": "doc", "content": []}
+        transitions_mixin._markdown_to_jira = MagicMock(return_value=adf_comment)
+        transitions_mixin.jira.resource_url.return_value = (
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions"
+        )
+        visibility = {"type": "role", "value": "Developers"}
+
+        transitions_mixin.transition_issue(
+            "TEST-123", "10", comment="Internal note", comment_visibility=visibility
+        )
+
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://test.atlassian.net/rest/api/3/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {
+                    "comment": [
+                        {"add": {"body": adf_comment, "visibility": visibility}}
+                    ]
+                },
+            },
+            params=None,
+        )
+
+    def test_transition_issue_dc_comment_visibility(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """Server/DC: comment_visibility is sent on the transition comment."""
+        transitions_mixin.config.url = "https://jira.example.com"
+        transitions_mixin._markdown_to_jira = MagicMock(return_value="Internal note")
+        transitions_mixin.jira.resource_url.return_value = (
+            "https://jira.example.com/rest/api/2/issue"
+        )
+        visibility = {"type": "group", "value": "jira-users"}
+
+        transitions_mixin.transition_issue(
+            "TEST-123", "10", comment="Internal note", comment_visibility=visibility
+        )
+
+        transitions_mixin.jira.post.assert_called_once_with(
+            "https://jira.example.com/rest/api/2/issue/TEST-123/transitions",
+            data={
+                "transition": {"id": "10"},
+                "update": {
+                    "comment": [
+                        {"add": {"body": "Internal note", "visibility": visibility}}
+                    ]
+                },
+            },
+        )
+
+    def test_transition_issue_comment_visibility_keeps_update_data_comments(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """The restriction applies to ``comment`` only, not to comment
+        operations the caller passed in update_data."""
+        transitions_mixin._markdown_to_jira = MagicMock(side_effect=lambda text: text)
+        visibility = {"type": "role", "value": "Developers"}
+
+        transitions_mixin.transition_issue(
+            "TEST-123",
+            "10",
+            comment="Restricted",
+            update_data={"comment": [{"add": {"body": "Unrestricted"}}]},
+            comment_visibility=visibility,
+        )
+
+        payload = transitions_mixin.jira.post.call_args.kwargs["data"]
+        assert payload["update"]["comment"] == [
+            {"add": {"body": "Unrestricted"}},
+            {"add": {"body": "Restricted", "visibility": visibility}},
+        ]
+
+    def test_transition_issue_comment_visibility_without_comment_is_ignored(
+        self, transitions_mixin: TransitionsMixin
+    ):
+        """comment_visibility alone adds nothing to the request."""
+        transitions_mixin.transition_issue(
+            "TEST-123",
+            "10",
+            comment_visibility={"type": "role", "value": "Developers"},
+        )
+
+        payload = transitions_mixin.jira.post.call_args.kwargs["data"]
+        assert payload == {"transition": {"id": "10"}}
+
+    @pytest.mark.parametrize(
+        "visibility",
+        [{"type": "role"}, {"value": "Developers"}, {"type": "", "value": "x"}],
+    )
+    def test_transition_issue_malformed_comment_visibility_rejected(
+        self, transitions_mixin: TransitionsMixin, visibility: dict[str, str]
+    ):
+        """A malformed restriction is rejected before any transition request,
+        so the comment is never posted unrestricted by mistake."""
+        with pytest.raises(ValueError, match="comment_visibility"):
+            transitions_mixin.transition_issue(
+                "TEST-123", "10", comment="Internal", comment_visibility=visibility
+            )
+
+        transitions_mixin.jira.post.assert_not_called()
 
     # --- JIRA_INTERNAL_ONLY_PROJECTS guard on transition comments ---
 
@@ -1202,7 +1310,7 @@ class TestTransitionsMixin:
         """Test transition_issue with both comment and update_data."""
 
         # Setup mock for _add_comment_to_transition_data
-        def add_comment_side_effect(transition_data, comment_text):
+        def add_comment_side_effect(transition_data, comment_text, visibility=None):
             transition_data.setdefault("update", {}).setdefault("comment", []).append(
                 {"add": {"body": comment_text}}
             )

@@ -711,7 +711,61 @@ async def test_transition_issue_with_update_data(jira_client, mock_jira_fetcher)
         fields={"resolution": {"name": "Done"}},
         comment="Completed",
         update_data={"worklog": [{"add": {"timeSpent": "1h"}}]},
+        comment_visibility=None,
     )
+
+
+@pytest.mark.anyio
+async def test_transition_issue_with_comment_visibility(jira_client, mock_jira_fetcher):
+    """comment_visibility is parsed and forwarded with the transition comment."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+    mock_jira_fetcher.transition_issue.return_value.to_simplified_dict.return_value = {
+        "key": "TEST-123"
+    }
+
+    await jira_client.call_tool(
+        "jira_transition_issue",
+        {
+            "issue_key": "TEST-123",
+            "transition_id": "31",
+            "comment": "Internal resolution note",
+            "comment_visibility": '{"type": "role", "value": "Developers"}',
+        },
+    )
+
+    mock_jira_fetcher.transition_issue.assert_called_once_with(
+        issue_key="TEST-123",
+        transition_id="31",
+        fields={},
+        comment="Internal resolution note",
+        update_data=None,
+        comment_visibility={"type": "role", "value": "Developers"},
+    )
+
+
+@pytest.mark.anyio
+async def test_transition_issue_invalid_comment_visibility_json(
+    jira_client, mock_jira_fetcher
+):
+    """Invalid comment_visibility JSON fails before the issue is transitioned."""
+    mock_jira_fetcher.get_available_transitions.return_value = [
+        {"id": "31", "name": "Done"}
+    ]
+
+    with pytest.raises(ToolError, match="comment_visibility"):
+        await jira_client.call_tool(
+            "jira_transition_issue",
+            {
+                "issue_key": "TEST-123",
+                "transition_id": "31",
+                "comment": "Internal resolution note",
+                "comment_visibility": "not json",
+            },
+        )
+
+    mock_jira_fetcher.transition_issue.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -2932,6 +2986,7 @@ async def test_transition_issue_resolves_name_to_id(jira_client, mock_jira_fetch
         fields={},
         comment=None,
         update_data=None,
+        comment_visibility=None,
     )
 
 
@@ -3023,6 +3078,7 @@ async def test_transition_issue_still_accepts_numeric_id(
         fields={},
         comment=None,
         update_data=None,
+        comment_visibility=None,
     )
 
 
