@@ -41,6 +41,16 @@ class SearchMixin(ConfluenceClient):
         logger.info(f"Applied spaces filter to query: {cql}")
         return cql
 
+    def _and_spaces_blocked(self, cql: str, blocked: str) -> str:
+        """AND a comma-separated spaces blocklist into ``cql`` as ``space NOT IN``."""
+        spaces = [s.strip() for s in blocked.split(",") if s.strip()]
+        if not spaces:
+            return cql
+        quoted = ", ".join(quote_cql_identifier_if_needed(space) for space in spaces)
+        cql = and_scope_clause(cql, f"space NOT IN ({quoted})", "CQL")
+        logger.info(f"Applied spaces blocklist to query: {cql}")
+        return cql
+
     @staticmethod
     def _validate_search_response(response: Any, operation: str) -> dict[str, Any]:
         """Ensure a search API response has a list of results.
@@ -107,6 +117,10 @@ class SearchMixin(ConfluenceClient):
         for filter_str in (self.config.spaces_filter, spaces_filter):
             if filter_str:
                 cql = self._and_spaces_filter(cql, filter_str)
+        # The blocklist is an operator boundary too: always ANDed, never
+        # replaced by a tool argument.
+        if self.config.spaces_blocked:
+            cql = self._and_spaces_blocked(cql, self.config.spaces_blocked)
 
         # Execute the CQL search query. Expand content.history and
         # content.version so each result carries created/updated/author and

@@ -3259,6 +3259,7 @@ _HEADER_PAT_NOT_COPIED: dict[str, str] = {
 _POLICY_VALUES: dict[str, object] = {
     "projects_filter": "PFX",
     "spaces_filter": "SFX",
+    "spaces_blocked": "SBX",
     "internal_only_projects": frozenset({"CC"}),
     "disable_jira_markup_translation": True,
     "timeout": 12,

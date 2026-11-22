@@ -405,6 +405,65 @@ async def test_guard_refuses_fetcher_with_different_filter() -> None:
         await guard("get_issue", {"ctx": _ctx(app), "issue_key": f"{FORBIDDEN}-1"})
 
 
+def _blocklist_confluence_fetcher(spaces_blocked: str | None) -> ConfluenceFetcher:
+    fetcher = _confluence_fetcher()
+    fetcher.config.spaces_filter = None
+    fetcher.config.spaces_blocked = spaces_blocked
+    return fetcher
+
+
+def _confluence_app(**scope: str) -> MainAppContext:
+    return MainAppContext(
+        full_confluence_config=ConfluenceConfig(
+            url="https://example.atlassian.net/wiki",
+            auth_type="basic",
+            username="u",
+            api_token="t",
+            **scope,
+        )
+    )
+
+
+@pytest.mark.anyio
+async def test_guard_denies_blocked_space_with_blocklist_only() -> None:
+    fetcher = _blocklist_confluence_fetcher(FORBIDDEN)
+    guard = ToolScopeGuard(CONFLUENCE_SCOPE_POLICY, AsyncMock(return_value=fetcher))
+    app = _confluence_app(spaces_blocked=FORBIDDEN)
+    with pytest.raises(ScopeViolationError, match="CONFLUENCE_SPACES_BLOCKED"):
+        await guard("get_page", {"ctx": _ctx(app), "page_id": "1"})
+    await guard("get_space", {"ctx": _ctx(app), "space_key": "OTHER"})
+
+
+@pytest.mark.anyio
+async def test_guard_reads_blocklist_from_env_without_lifespan_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CONFLUENCE_SPACES_FILTER", raising=False)
+    monkeypatch.setenv("CONFLUENCE_SPACES_BLOCKED", FORBIDDEN)
+    fetcher = _blocklist_confluence_fetcher(None)
+    guard = ToolScopeGuard(CONFLUENCE_SCOPE_POLICY, AsyncMock(return_value=fetcher))
+    with pytest.raises(ScopeViolationError, match="cannot be used"):
+        await guard("get_page", {"ctx": _ctx(None), "page_id": "1"})
+
+
+@pytest.mark.anyio
+async def test_guard_refuses_fetcher_with_different_blocklist() -> None:
+    fetcher = _blocklist_confluence_fetcher("OTHER")
+    guard = ToolScopeGuard(CONFLUENCE_SCOPE_POLICY, AsyncMock(return_value=fetcher))
+    app = _confluence_app(spaces_blocked=FORBIDDEN)
+    with pytest.raises(ScopeViolationError, match="cannot be used"):
+        await guard("get_page", {"ctx": _ctx(app), "page_id": "1"})
+
+
+@pytest.mark.anyio
+async def test_guard_refuses_unclassified_argument_under_blocklist() -> None:
+    fetcher = _blocklist_confluence_fetcher(FORBIDDEN)
+    guard = ToolScopeGuard(CONFLUENCE_SCOPE_POLICY, AsyncMock(return_value=fetcher))
+    app = _confluence_app(spaces_blocked=FORBIDDEN)
+    with pytest.raises(ScopeViolationError, match="cannot be used"):
+        await guard("new_tool", {"ctx": _ctx(app), "mystery_id": "1"})
+
+
 # Refused by the scope guard, by the argument schema, or by the tool's own
 # input parsing before any backend call.
 _EMPTY_REFUSED = "outside the configured|String should match pattern|Invalid JSON"
