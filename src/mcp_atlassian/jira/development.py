@@ -1,6 +1,7 @@
 """Module for Jira development information operations (PRs, commits, branches)."""
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from requests import RequestException
@@ -11,6 +12,16 @@ logger = logging.getLogger("mcp-jira")
 
 _COMMON_APPLICATION_TYPES = ("stash", "bitbucket", "GitHub", "GitLab")
 _APPLICATION_TYPE_CASING = {"github": "GitHub", "gitlab": "GitLab"}
+
+
+@dataclass(frozen=True)
+class _SummaryInstance:
+    """Normalized application instance metadata from dev-status summary."""
+
+    raw_key: str
+    resolved_key: str
+    display_name: str | None
+    has_data: bool
 
 
 class DevelopmentMixin(JiraClient):
@@ -31,10 +42,12 @@ class DevelopmentMixin(JiraClient):
         Args:
             issue_key: The issue key (e.g., PROJECT-123)
             application_type: Filter by application type
-                (e.g., 'stash', 'GitHub', 'bitbucket').
-                Values are case-sensitive (the dev-status API
-                returns empty results or 500 errors on mismatch).
-                If None, discovers available types from Jira.
+                (e.g., 'stash', 'GitHub', 'bitbucket', or a Connect app
+                instance key such as 'oAuth-com.github.integration.production').
+                Resolved against discovered summary ``byInstanceType`` entries
+                by instance key or display name when available, falling back
+                to the provided value. If None, discovers available types
+                from Jira.
             data_type: Filter by data type
                 (e.g., 'pullrequest', 'branch', 'repository').
                 If None, returns all data types.
@@ -65,13 +78,20 @@ class DevelopmentMixin(JiraClient):
                 msg = f"Could not get issue ID for {issue_key}"
                 raise ValueError(msg)
 
-            # If application_type is specified, use it directly
-            if application_type:
-                return self._fetch_dev_info_for_app_type(
-                    issue_key, issue_id, application_type, data_type
+            explicit_app_type = (
+                application_type.strip()
+                if application_type and application_type.strip()
+                else None
+            )
+            if explicit_app_type is not None:
+                app_types = self._resolve_application_types(
+                    issue_key, issue_id, explicit_app_type, data_type
+                )
+            else:
+                app_types = self._discover_application_types(
+                    issue_key, issue_id, data_type
                 )
 
-            app_types = self._discover_application_types(issue_key, issue_id, data_type)
             data_types = (
                 [data_type]
                 if data_type is not None
@@ -85,6 +105,8 @@ class DevelopmentMixin(JiraClient):
                 "commits": [],
                 "repositories": [],
             }
+            last_error: Exception | None = None
+            has_success = False
 
             for app_type in app_types:
                 for dt in data_types:
@@ -92,6 +114,7 @@ class DevelopmentMixin(JiraClient):
                         result = self._fetch_dev_info_for_app_type(
                             issue_key, issue_id, app_type, dt
                         )
+                        has_success = True
                         if "error" in result:
                             # Plugin unavailable or access denied — capture the first
                             # error and stop; all subsequent calls will fail the same way
@@ -109,6 +132,7 @@ class DevelopmentMixin(JiraClient):
                             if repo not in merged_result["repositories"]:
                                 merged_result["repositories"].append(repo)
                     except Exception as e:
+                        last_error = e
                         # Log but continue trying other combinations
                         logger.debug(
                             f"No dev info for {issue_key} "
@@ -116,6 +140,13 @@ class DevelopmentMixin(JiraClient):
                         )
                 if merged_result.get("error"):
                     break
+
+            if (
+                explicit_app_type is not None
+                and not has_success
+                and last_error is not None
+            ):
+                raise last_error
 
             return merged_result
 
@@ -369,6 +400,127 @@ class DevelopmentMixin(JiraClient):
 
         return result
 
+    def _fetch_summary_instances(
+        self,
+        issue_key: str,
+        issue_id: str,
+        data_type: str | None = None,
+    ) -> list[_SummaryInstance] | None:
+        """Fetch registered application instances from the dev-status summary endpoint.
+
+        Args:
+            issue_key: The issue key used for logging.
+            issue_id: The numeric issue ID.
+            data_type: Optional data type to limit discovery to.
+
+        Returns:
+            List of normalized summary instances, or ``None`` if the summary
+            endpoint is unavailable or returns an unexpected payload.
+        """
+        url = f"{self.config.url}/rest/dev-status/1.0/issue/summary"
+        params = {"issueId": str(issue_id)}
+
+        try:
+            http_response = self.jira._session.get(url, params=params)
+            if http_response.status_code in (403, 404):
+                logger.warning(
+                    "Dev-status summary returned %s for %s; falling back to "
+                    "common application types",
+                    http_response.status_code,
+                    issue_key,
+                )
+                return None
+
+            http_response.raise_for_status()
+            response = http_response.json()
+        except RequestException as e:
+            logger.warning(
+                "Could not discover application types for %s: %s; falling back "
+                "to common application types",
+                issue_key,
+                e,
+            )
+            return None
+
+        if not isinstance(response, dict):
+            logger.warning(
+                "Unexpected dev-status summary response type for %s: %s; "
+                "falling back to common application types",
+                issue_key,
+                type(response),
+            )
+            return None
+
+        summary = response.get("summary")
+        if not isinstance(summary, dict):
+            logger.warning(
+                "Dev-status summary was missing for %s; falling back to common "
+                "application types",
+                issue_key,
+            )
+            return None
+
+        data_types = (
+            [data_type]
+            if data_type is not None
+            else ["pullrequest", "branch", "repository"]
+        )
+        instances_by_key: dict[str, _SummaryInstance] = {}
+        for current_data_type in data_types:
+            section = summary.get(current_data_type, {})
+            if not isinstance(section, dict):
+                logger.warning(
+                    "Unexpected %s dev-status summary for %s; falling back to "
+                    "common application types",
+                    current_data_type,
+                    issue_key,
+                )
+                return None
+
+            by_instance_type = section.get("byInstanceType", {})
+            if not isinstance(by_instance_type, dict):
+                logger.warning(
+                    "Unexpected %s instance summary for %s; falling back to "
+                    "common application types",
+                    current_data_type,
+                    issue_key,
+                )
+                return None
+
+            for raw_key, instance_summary in by_instance_type.items():
+                if not isinstance(raw_key, str) or not isinstance(
+                    instance_summary, dict
+                ):
+                    continue
+                count = instance_summary.get("count", 0)
+                has_data = (
+                    isinstance(count, int) and not isinstance(count, bool) and count > 0
+                )
+                raw_name = instance_summary.get("name")
+                display_name = (
+                    raw_name.strip()
+                    if isinstance(raw_name, str) and raw_name.strip()
+                    else None
+                )
+                resolved_key = _APPLICATION_TYPE_CASING.get(raw_key.lower(), raw_key)
+                existing = instances_by_key.get(raw_key)
+                if existing is None:
+                    instances_by_key[raw_key] = _SummaryInstance(
+                        raw_key=raw_key,
+                        resolved_key=resolved_key,
+                        display_name=display_name,
+                        has_data=has_data,
+                    )
+                else:
+                    instances_by_key[raw_key] = _SummaryInstance(
+                        raw_key=raw_key,
+                        resolved_key=resolved_key,
+                        display_name=existing.display_name or display_name,
+                        has_data=existing.has_data or has_data,
+                    )
+
+        return list(instances_by_key.values())
+
     def _discover_application_types(
         self,
         issue_key: str,
@@ -390,95 +542,77 @@ class DevelopmentMixin(JiraClient):
         Returns:
             A deterministic list of case-sensitive application type values.
         """
-        fallback_types = list(_COMMON_APPLICATION_TYPES)
-        url = f"{self.config.url}/rest/dev-status/1.0/issue/summary"
-        params = {"issueId": str(issue_id)}
+        instances = self._fetch_summary_instances(issue_key, issue_id, data_type)
+        if instances is None:
+            return list(_COMMON_APPLICATION_TYPES)
 
-        try:
-            http_response = self.jira._session.get(url, params=params)
-            if http_response.status_code in (403, 404):
-                logger.warning(
-                    "Dev-status summary returned %s for %s; falling back to "
-                    "common application types",
-                    http_response.status_code,
-                    issue_key,
-                )
-                return fallback_types
-
-            http_response.raise_for_status()
-            response = http_response.json()
-        except RequestException as e:
-            logger.warning(
-                "Could not discover application types for %s: %s; falling back "
-                "to common application types",
-                issue_key,
-                e,
-            )
-            return fallback_types
-
-        if not isinstance(response, dict):
-            logger.warning(
-                "Unexpected dev-status summary response type for %s: %s; "
-                "falling back to common application types",
-                issue_key,
-                type(response),
-            )
-            return fallback_types
-
-        summary = response.get("summary")
-        if not isinstance(summary, dict):
-            logger.warning(
-                "Dev-status summary was missing for %s; falling back to common "
-                "application types",
-                issue_key,
-            )
-            return fallback_types
-
-        data_types = (
-            [data_type]
-            if data_type is not None
-            else ["pullrequest", "branch", "repository"]
+        discovered_types = sorted(
+            {instance.resolved_key for instance in instances if instance.has_data}
         )
-        application_types: set[str] = set()
-        for current_data_type in data_types:
-            section = summary.get(current_data_type, {})
-            if not isinstance(section, dict):
-                logger.warning(
-                    "Unexpected %s dev-status summary for %s; falling back to "
-                    "common application types",
-                    current_data_type,
-                    issue_key,
-                )
-                return fallback_types
-
-            by_instance_type = section.get("byInstanceType", {})
-            if not isinstance(by_instance_type, dict):
-                logger.warning(
-                    "Unexpected %s instance summary for %s; falling back to "
-                    "common application types",
-                    current_data_type,
-                    issue_key,
-                )
-                return fallback_types
-
-            for application_type, instance_summary in by_instance_type.items():
-                if not isinstance(application_type, str) or not isinstance(
-                    instance_summary, dict
-                ):
-                    continue
-                count = instance_summary.get("count", 0)
-                if isinstance(count, int) and not isinstance(count, bool) and count > 0:
-                    application_types.add(
-                        _APPLICATION_TYPE_CASING.get(
-                            application_type.lower(), application_type
-                        )
-                    )
-
-        discovered_types = sorted(application_types)
         logger.debug(
             "Discovered application types for %s: %s", issue_key, discovered_types
         )
         return discovered_types
+
+    def _resolve_application_types(
+        self,
+        issue_key: str,
+        issue_id: str,
+        application_type: str,
+        data_type: str | None = None,
+    ) -> list[str]:
+        """Resolve an explicit application_type against summary entries.
+
+        Matches exact or case-insensitive instance keys as well as display
+        names (such as ``"GitHub"`` for ``oAuth-com.github.integration.production``).
+        Falls back to ``[application_type]`` when the summary endpoint is
+        unavailable or has no matching entry.
+
+        Args:
+            issue_key: The issue key used for logging.
+            issue_id: The numeric issue ID.
+            application_type: Caller-supplied application type or display name.
+            data_type: Optional data type filter.
+
+        Returns:
+            A deterministic list of application type values to query.
+        """
+        instances = self._fetch_summary_instances(issue_key, issue_id, data_type)
+        if instances is None:
+            return [application_type]
+
+        requested_lower = application_type.lower()
+        matches = [
+            instance
+            for instance in instances
+            if instance.raw_key == application_type
+            or instance.resolved_key == application_type
+            or instance.raw_key.lower() == requested_lower
+            or instance.resolved_key.lower() == requested_lower
+            or (
+                instance.display_name is not None
+                and instance.display_name.lower() == requested_lower
+            )
+        ]
+        if not matches:
+            logger.debug(
+                "No summary match for application_type=%r on %s; "
+                "using explicit value directly",
+                application_type,
+                issue_key,
+            )
+            return [application_type]
+
+        active_matches = [instance for instance in matches if instance.has_data]
+        selected = active_matches or matches
+        resolved = sorted({instance.resolved_key for instance in selected})
+        logger.debug(
+            "Resolved application_type=%r for %s to %s",
+            application_type,
+            issue_key,
+            resolved,
+        )
+        return resolved
 
     def get_issues_development_info(
         self,
