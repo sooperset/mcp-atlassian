@@ -24,6 +24,136 @@ class TestConfluenceV2Adapter:
             session=mock_session, base_url="https://example.atlassian.net/wiki"
         )
 
+    def test_get_pages_metadata_batches_ids_and_reuses_space(
+        self, v2_adapter: ConfluenceV2Adapter, mock_session: MagicMock
+    ) -> None:
+        """Batch distinct IDs, ignore unrelated results and fetch each space once."""
+        ids = [str(index) for index in range(1, 103)]
+
+        def response_for(batch: list[str]) -> Mock:
+            response = Mock()
+            response.links = {}
+            response.json.return_value = {
+                "results": [
+                    {
+                        "id": page_id,
+                        "spaceId": "42",
+                        "title": f"Page {page_id}",
+                        "body": {"storage": {"value": "not requested"}},
+                    }
+                    for page_id in [*batch, "999"]
+                ]
+            }
+            return response
+
+        space = Mock()
+        space.json.return_value = {"key": "DEMO", "name": "Demo Space"}
+        mock_session.get.side_effect = [
+            response_for(ids[:100]),
+            space,
+            response_for(ids[100:]),
+        ]
+
+        pages = v2_adapter.get_pages_metadata([*ids, "1"])
+
+        assert [page["id"] for page in pages] == ids
+        assert all("body" not in page for page in pages)
+        assert all(page["space"]["name"] == "Demo Space" for page in pages)
+        assert mock_session.get.call_count == 3
+        assert mock_session.get.call_args_list[0].kwargs["params"] == {
+            "id": ids[:100],
+            "limit": 100,
+        }
+        assert mock_session.get.call_args_list[2].kwargs["params"] == {
+            "id": ids[100:],
+            "limit": 2,
+        }
+
+    def test_get_pages_metadata_empty_ids_do_not_request(
+        self, v2_adapter: ConfluenceV2Adapter, mock_session: MagicMock
+    ) -> None:
+        """An empty selection must not turn into an unfiltered page listing."""
+        assert v2_adapter.get_pages_metadata([]) == []
+        mock_session.get.assert_not_called()
+
+    @pytest.mark.parametrize("link_source", ["json", "header"])
+    def test_get_pages_metadata_follows_cursor_with_original_id_filter(
+        self,
+        v2_adapter: ConfluenceV2Adapter,
+        mock_session: MagicMock,
+        link_source: str,
+    ) -> None:
+        """Continue a short metadata page without widening its ID filter."""
+        first, second = Mock(), Mock()
+        first.json.return_value = {"results": [{"id": "1", "title": "First"}]}
+        next_link = "/wiki/api/v2/pages?cursor=next-page"
+        if link_source == "json":
+            first.json.return_value["_links"] = {"next": next_link}
+            first.links = {}
+        else:
+            first.links = {"next": {"url": next_link}}
+        second.links = {}
+        second.json.return_value = {"results": [{"id": "2", "title": "Second"}]}
+        mock_session.get.side_effect = [first, second]
+
+        pages = v2_adapter.get_pages_metadata(["1", "2"])
+
+        assert [page["id"] for page in pages] == ["1", "2"]
+        assert mock_session.get.call_args_list[1].kwargs["params"] == {
+            "id": ["1", "2"],
+            "limit": 2,
+            "cursor": "next-page",
+        }
+
+    @pytest.mark.parametrize("next_link", ["?cursor=repeat", "?limit=1"])
+    def test_get_pages_metadata_rejects_unusable_continuation(
+        self,
+        v2_adapter: ConfluenceV2Adapter,
+        mock_session: MagicMock,
+        next_link: str,
+    ) -> None:
+        """Missing or repeating cursors cannot loop over the same metadata page."""
+        response = Mock()
+        response.links = {}
+        response.json.return_value = {"results": [], "_links": {"next": next_link}}
+        mock_session.get.return_value = response
+
+        with pytest.raises(
+            ValueError, match="Invalid or repeated page metadata cursor"
+        ):
+            v2_adapter.get_pages_metadata(["1"])
+        assert mock_session.get.call_count <= 2
+
+    def test_get_pages_metadata_bounds_nonprogressing_pagination(
+        self, v2_adapter: ConfluenceV2Adapter, mock_session: MagicMock
+    ) -> None:
+        """Even unique cursors have a finite metadata request allowance."""
+        responses = []
+        for index in range(2):
+            response = Mock()
+            response.links = {}
+            response.json.return_value = {
+                "results": [],
+                "_links": {"next": f"?cursor={index}"},
+            }
+            responses.append(response)
+        mock_session.get.side_effect = responses
+
+        with pytest.raises(ValueError, match="exceeded its request limit"):
+            v2_adapter.get_pages_metadata(["1"])
+        assert mock_session.get.call_count == 2
+
+    def test_get_pages_metadata_propagates_http_failure(
+        self, v2_adapter: ConfluenceV2Adapter, mock_session: MagicMock
+    ) -> None:
+        """Metadata failures must not be interpreted as a successful empty listing."""
+        mock_session.get.return_value.raise_for_status.side_effect = HTTPError(
+            "synthetic HTTP failure"
+        )
+        with pytest.raises(HTTPError, match="synthetic HTTP failure"):
+            v2_adapter.get_pages_metadata(["1"])
+        mock_session.get.return_value.json.assert_not_called()
+
     def test_get_page_success(self, v2_adapter, mock_session):
         """Test successful page retrieval."""
         # Mock the v2 API response
