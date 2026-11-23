@@ -195,6 +195,7 @@ Transition a Jira issue to a new status.
 | `fields` | `string` | No | (Optional) JSON string of fields to update during the transition. Some transitions require specific fields to be set (e.g., resolution). Example: '`{"resolution": {"name": "Fixed"}}`' |
 | `comment` | `string` | No | (Optional) Comment to add during the transition in Markdown format. This will be visible in the issue history. Rejected for projects listed in JIRA_INTERNAL_ONLY_PROJECTS (a transition comment may be customer-visible on JSM and cannot be forced internal): transition without a comment, then post an internal note with jira_add_comment(public=false). On Jira Cloud, the workflow transition's screen must include a Comment field; if Jira omits the comment, add it separately with jira_add_comment. |
 | `update_data` | `string` | No | (Optional) JSON string of Jira update operations to include in the transition. Use this for worklogs and other transition-time operations. On Jira Cloud, text in comment bodies and worklog comments is treated as Markdown and converted to ADF. Example: '`{"worklog": [{"add": {"timeSpent": "1h"}}]}`' |
+| `return_fields` | `string` | No | (Optional) Controls which fields of the transitioned issue are returned, to reduce response size and token usage. Pass a comma-separated list (e.g., 'status' for a minimal confirmation, or 'status,resolution'), or '*all' for every field. The issue 'key' is always returned. Omit to keep the default response. |
 **Example:**
 
 ```json
