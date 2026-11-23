@@ -3339,6 +3339,17 @@ async def transition_issue(
             ),
         ),
     ] = None,
+    comment_visibility: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Visibility settings for the transition comment as "
+                'JSON string (e.g. \'{"type":"group","value":"jira-users"}\'). '
+                "Ignored when no comment is given."
+            ),
+            default=None,
+        ),
+    ] = None,
     update_data: Annotated[
         str | None,
         Field(
@@ -3361,6 +3372,8 @@ async def transition_issue(
         transition_id: ID or name of the transition.
         fields: Optional JSON string of fields to update during transition.
         comment: Optional comment for the transition in Markdown format.
+        comment_visibility: Optional JSON string restricting the visibility
+            of the transition comment.
         update_data: Optional JSON string of Jira update operations
             (e.g., worklog) for the transition.
 
@@ -3369,8 +3382,9 @@ async def transition_issue(
 
     Raises:
         ValueError: If required fields missing, invalid input, in read-only mode,
-            Jira client unavailable, or a comment is provided for an issue whose
-            project is listed in JIRA_INTERNAL_ONLY_PROJECTS.
+            Jira client unavailable, comment_visibility is malformed, or a
+            comment is provided for an issue whose project is listed in
+            JIRA_INTERNAL_ONLY_PROJECTS.
     """
     jira = await get_jira_fetcher(ctx)
     if not issue_key or not transition_id:
@@ -3383,6 +3397,9 @@ async def transition_issue(
         _parse_additional_fields(update_data, param_name="update_data")
         if update_data
         else None
+    )
+    visibility_dict = (
+        _parse_visibility(comment_visibility, "comment_visibility") if comment else None
     )
 
     available_transitions = await run_fetcher_call(
@@ -3397,6 +3414,7 @@ async def transition_issue(
         fields=update_fields,
         comment=comment,
         update_data=update_ops,
+        comment_visibility=visibility_dict,
     )
 
     result = {

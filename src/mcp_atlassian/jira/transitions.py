@@ -251,6 +251,7 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
         fields: dict[str, Any] | None = None,
         comment: str | None = None,
         update_data: dict[str, Any] | None = None,
+        comment_visibility: dict[str, str] | None = None,
     ) -> JiraIssue:
         """
         Transition a Jira issue to a new status.
@@ -278,6 +279,9 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
                 JIRA_INTERNAL_ONLY_PROJECTS restriction as comment. On
                 Jira Cloud, string comment bodies and worklog comments are
                 treated as Markdown and converted to ADF.
+            comment_visibility: Optional visibility restriction for
+                ``comment`` (e.g. {"type": "role", "value": "Developers"}).
+                Ignored when no ``comment`` is given.
 
         Returns:
             JiraIssue model representing the transitioned issue
@@ -285,8 +289,9 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
         Raises:
             MCPAtlassianAuthenticationError: If authentication fails
                 with the Jira API (401/403)
-            ValueError: If there is an error transitioning the issue, or if
-                comment operations are provided for an internal-only project
+            ValueError: If there is an error transitioning the issue, if
+                comment operations are provided for an internal-only project,
+                or if comment_visibility lacks a "type" or "value"
         """
         try:
             if comment or (update_data is not None and "comment" in update_data):
@@ -335,7 +340,9 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
                     update_data
                 )
             if comment:
-                self._add_comment_to_transition_data(temp_transition_data, comment)
+                self._add_comment_to_transition_data(
+                    temp_transition_data, comment, visibility=comment_visibility
+                )
             update_for_api = temp_transition_data.get("update")
 
             # Log the transition request for debugging
@@ -582,7 +589,10 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
         return result
 
     def _add_comment_to_transition_data(
-        self, transition_data: dict[str, Any], comment: str | int
+        self,
+        transition_data: dict[str, Any],
+        comment: str | int,
+        visibility: dict[str, str] | None = None,
     ) -> None:
         """
         Add comment to transition data.
@@ -590,7 +600,20 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
         Args:
             transition_data: The transition data dictionary to update
             comment: The comment to add
+            visibility: Optional visibility restriction for the comment
+                (e.g. {"type": "group", "value": "jira-users"})
+
+        Raises:
+            ValueError: If visibility lacks a "type" or "value". Sending the
+                comment without the restriction would make it visible to
+                everyone who can see the issue.
         """
+        if visibility and not (visibility.get("type") and visibility.get("value")):
+            raise ValueError(
+                'comment_visibility must have a "type" and a "value", e.g. '
+                '{"type": "group", "value": "jira-users"}'
+            )
+
         # Ensure comment is a string
         if not isinstance(comment, str):
             logger.warning(
@@ -612,5 +635,8 @@ class TransitionsMixin(ScopeMixin, IssueOperationsProto, UsersOperationsProto):
         comments = (
             list(existing_comments) if isinstance(existing_comments, list) else []
         )
-        comments.append({"add": {"body": jira_formatted_comment}})
+        add_operation: dict[str, Any] = {"body": jira_formatted_comment}
+        if visibility:
+            add_operation["visibility"] = visibility
+        comments.append({"add": add_operation})
         update["comment"] = comments
