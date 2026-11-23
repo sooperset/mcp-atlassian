@@ -462,6 +462,81 @@ def test_proxy_trust_is_exact_service_origin(target, monkeypatch):
     assert send.call_args.kwargs["proxies"] == {}
 
 
+class _NoopSock:
+    """A socket that accepts the connect sequence without touching the network."""
+
+    def setsockopt(self, *a):
+        pass
+
+    def settimeout(self, *a):
+        pass
+
+    def bind(self, *a):
+        pass
+
+    def connect(self, sa):
+        pass
+
+    def close(self):
+        pass
+
+
+def _family_seen_by_adapter(*, with_deadline: bool = False) -> int:
+    """Resolve one host through the adapter and report the family it asked for.
+
+    With ``with_deadline`` the connection is made inside a call that has a
+    deadline, which resolves the host on a bounded lookup thread.
+    """
+    seen = {"family": None}
+
+    def gai(host, port, family, socktype, *args, **kwargs):
+        seen["family"] = family
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port or 443))
+        ]
+
+    with (
+        patch("mcp_atlassian.utils.ssrf_adapter.socket.getaddrinfo", side_effect=gai),
+        patch(
+            "mcp_atlassian.utils.ssrf_adapter.socket.socket", return_value=_NoopSock()
+        ),
+    ):
+        if with_deadline:
+            CallBudget(deadline=time.monotonic() + 30).run(
+                lambda: _pinned_create_connection(("example.com", 443), 5)
+            )
+        else:
+            _pinned_create_connection(("example.com", 443))
+    return seen["family"]
+
+
+def test_address_family_follows_urllib3_policy_when_ipv6_available():
+    """With IPv6 available the adapter resolves both families, as urllib3 does."""
+    with patch("urllib3.util.connection.HAS_IPV6", new=True):
+        assert _family_seen_by_adapter() == socket.AF_UNSPEC
+
+
+def test_disabling_urllib3_ipv6_switches_the_adapter_to_ipv4_only():
+    """urllib3's ``HAS_IPV6`` is the documented escape hatch for hosts whose IPv6
+    routes are advertised but unreachable: ``allowed_gai_family()`` returns
+    ``AF_INET`` and urllib3's own ``create_connection`` passes it to getaddrinfo.
+
+    This adapter replaces that connector, so hardcoding ``0`` (AF_UNSPEC) made the
+    knob silently inert — every request still resolved AAAA records first and
+    spent the full socket timeout on each unreachable IPv6 address before trying
+    IPv4 (issue #1633: ~60s versus ~0.3s).
+    """
+    with patch("urllib3.util.connection.HAS_IPV6", new=False):
+        assert _family_seen_by_adapter() == socket.AF_INET
+
+
+def test_ipv4_only_policy_also_applies_to_the_bounded_lookup():
+    """A call with a deadline (made for a request-supplied site) resolves on a
+    bounded lookup thread, which must ask for the same family."""
+    with patch("urllib3.util.connection.HAS_IPV6", new=False):
+        assert _family_seen_by_adapter(with_deadline=True) == socket.AF_INET
+
+
 # A request path is built from tool arguments. ``requests`` resolves "." and
 # ".." segments before sending, so a value such as "../../OTHER-1/comment/5"
 # would address a different resource than the one the caller was checked for.

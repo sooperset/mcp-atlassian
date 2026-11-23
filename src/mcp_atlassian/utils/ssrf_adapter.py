@@ -33,6 +33,7 @@ from urllib3.connection import HTTPConnection, HTTPSConnection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 from urllib3.exceptions import NewConnectionError
 from urllib3.poolmanager import PoolManager
+from urllib3.util.connection import allowed_gai_family  # type: ignore[attr-defined]
 
 from .http import current_call_budget, resolve_address
 from .urls import _check_ip_address, _get_domain_allowlist, _hostname_matches_allowlist
@@ -184,7 +185,15 @@ def _pinned_create_connection(
     # and Cloud hosts) resolve in their own thread, so they never wait behind
     # header hosts.
     use_bounded = budget is not None and budget.deadline is not None
-    addresses = resolve_address(host, port, timeout, bounded=use_bounded)
+    # This connector stands in for urllib3's own create_connection, so it has to
+    # honour urllib3's address-family policy too. allowed_gai_family() returns
+    # AF_INET when urllib3.util.connection.HAS_IPV6 is False — the documented way
+    # to opt out of IPv6 on hosts that advertise AAAA records they cannot route.
+    # Passing 0 (AF_UNSPEC) unconditionally made that switch inert once this
+    # adapter was mounted.
+    addresses = resolve_address(
+        host, port, timeout, bounded=use_bounded, family=allowed_gai_family()
+    )
     for af, socktype, proto, _canonname, sa in addresses:
         ip = sa[0]
         if (

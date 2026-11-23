@@ -716,7 +716,12 @@ _dns_slots = threading.BoundedSemaphore(DNS_LOOKUP_WORKERS)
 
 
 def resolve_address(
-    host: str, port: int, timeout: object = None, *, bounded: bool = True
+    host: str,
+    port: int,
+    timeout: object = None,
+    *,
+    bounded: bool = True,
+    family: int = 0,
 ) -> list[tuple[Any, ...]]:
     """``getaddrinfo`` for a stream socket that a stopped call does not wait out.
 
@@ -729,13 +734,15 @@ def resolve_address(
     behind request-supplied hosts), this is a plain ``getaddrinfo`` in the
     calling thread.
 
+    ``family`` is the address family to ask for (0, ``AF_UNSPEC``, for both).
+
     Raises:
         UpstreamCallAborted: The call was cancelled or ran past its deadline.
         TimeoutError: The lookup took longer than ``timeout``.
     """
     budget = current_call_budget()
     if budget is None or not bounded:
-        return socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+        return socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
     deadline = time.monotonic() + timeout if isinstance(timeout, int | float) else None
 
     def wait_or_stop(ready: Callable[[float], bool]) -> None:
@@ -750,7 +757,7 @@ def resolve_address(
 
     def lookup() -> None:
         try:
-            outcome.append(socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM))
+            outcome.append(socket.getaddrinfo(host, port, family, socket.SOCK_STREAM))
         except BaseException as exc:  # noqa: BLE001 - re-raised by the caller
             outcome.append(exc)
         finally:
