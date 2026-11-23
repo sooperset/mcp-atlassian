@@ -1,22 +1,26 @@
 """Main FastMCP server setup for Atlassian integration."""
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
-import anyio
 from fastmcp import FastMCP
 from fastmcp import settings as fastmcp_settings
 from fastmcp.exceptions import NotFoundError
 from fastmcp.server.event_store import EventStore
 from fastmcp.server.http import StarletteWithLifespan
 from fastmcp.tools import Tool as FastMCPTool
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+from mcp.server.auth.provider import AccessToken as SDKAccessToken
 from mcp.types import Tool as MCPTool
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -25,6 +29,11 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.servers.async_utils import (
+    URL_CHECK_BUSY_MESSAGE,
+    UrlCheckBusy,
+    run_url_check,
+)
 from mcp_atlassian.utils.credential_command import (
     deferred_pat_outranks,
     get_resolver,
@@ -47,7 +56,7 @@ from mcp_atlassian.utils.toolsets import (
     get_enabled_toolsets,
     should_include_tool_by_toolset,
 )
-from mcp_atlassian.utils.urls import is_atlassian_cloud_url, validate_url_for_ssrf
+from mcp_atlassian.utils.urls import is_atlassian_cloud_url
 
 from .client_storage import build_oauth_client_storage_from_env
 from .confluence import confluence_mcp
@@ -589,6 +598,46 @@ def _route_path(scope: Scope) -> str:
     return path
 
 
+# Keys the session-owner fingerprint of header credentials. Sessions live in
+# this process only, so a per-process key is enough.
+_PRINCIPAL_KEY = secrets.token_bytes(32)
+
+
+def _header_principal(state: dict[str, Any]) -> AuthenticatedUser | None:
+    """Return the caller that a request's header credentials identify.
+
+    The MCP SDK records ``scope["user"]`` when a transport session opens and
+    answers "session not found" to any later request whose user differs, so
+    one caller cannot end or post into another caller's session. Header
+    credentials are not checked here (the upstream checks them), so the
+    identity is a keyed fingerprint of the secrets themselves, never the
+    secrets. URLs and the cloud ID are routing, not identity, and are left out.
+    """
+    auth_type = state.get("user_atlassian_auth_type")
+    if not auth_type:
+        return None
+    service = state.get("atlassian_service_headers") or {}
+    material = json.dumps(
+        [
+            auth_type,
+            state.get("user_atlassian_token"),
+            state.get("user_atlassian_email"),
+            state.get("user_atlassian_api_token"),
+            service.get("X-Atlassian-Jira-Personal-Token"),
+            service.get("X-Atlassian-Confluence-Personal-Token"),
+        ]
+    )
+    subject = hmac.new(_PRINCIPAL_KEY, material.encode(), hashlib.sha256).hexdigest()
+    return AuthenticatedUser(
+        SDKAccessToken(
+            token="",  # noqa: S106 - no token is exposed through the user
+            client_id="mcp-atlassian-header",
+            scopes=[],
+            subject=subject,
+        )
+    )
+
+
 # Atlassian cloud IDs are UUIDs. Allow letters, digits and hyphens only, so a
 # header value cannot add path segments, a query or a fragment to the API URL.
 _CLOUD_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,127}")
@@ -680,6 +729,17 @@ class UserTokenMiddleware:
                 # Re-raise unexpected errors
                 raise
 
+        # Address-check capacity is a server limit, not an auth failure: a 401
+        # could make a client drop its stored credentials.
+        if scope_copy["state"].get("url_check_busy"):
+            await self._send_json_error_response(
+                safe_send,
+                503,
+                URL_CHECK_BUSY_MESSAGE,
+                extra_headers=[(b"retry-after", b"1")],
+            )
+            return
+
         # Check for auth errors and return 401 before calling app
         auth_error = scope_copy["state"].get("auth_validation_error")
         if auth_error:
@@ -710,6 +770,19 @@ class UserTokenMiddleware:
             )
             return  # Don't call self.app - request is rejected
 
+        # Bind transport sessions to the header credential. With an OAuth
+        # provider the user comes from its verified token only: a header
+        # identity must never stand in for a token the provider refused.
+        if (
+            not ignore_header_auth
+            and "user" not in scope_copy
+            and self.mcp_server_ref is not None
+            and getattr(self.mcp_server_ref, "auth", None) is None
+        ):
+            principal = _header_principal(scope_copy["state"])
+            if principal is not None:
+                scope_copy["user"] = principal
+
         # Call the next application with modified scope and safe send wrapper
         try:
             await self.app(scope_copy, receive, safe_send)
@@ -732,7 +805,11 @@ class UserTokenMiddleware:
                     )
 
     async def _send_json_error_response(
-        self, send: Send, status_code: int, error_message: str
+        self,
+        send: Send,
+        status_code: int,
+        error_message: str,
+        extra_headers: list[tuple[bytes, bytes]] | None = None,
     ) -> None:
         """Send a JSON error response via ASGI protocol.
 
@@ -740,6 +817,7 @@ class UserTokenMiddleware:
             send: ASGI send callable (should be safe_send wrapper).
             status_code: HTTP status code (e.g., 401).
             error_message: Error message to include in JSON body.
+            extra_headers: Additional response headers.
         """
         body = json.dumps({"error": error_message}).encode("utf-8")
         await send(
@@ -749,6 +827,7 @@ class UserTokenMiddleware:
                 "headers": [
                     (b"content-type", b"application/json"),
                     (b"content-length", str(len(body)).encode("ascii")),
+                    *(extra_headers or []),
                 ],
             }
         )
@@ -828,11 +907,15 @@ class UserTokenMiddleware:
             if not (auth_header_str or jira_token_str or confluence_token_str):
                 jira_url_str = confluence_url_str = None
 
+            # Reject a malformed Authorization header before any lookup.
+            if auth_header_str:
+                self._parse_auth_header(auth_header_str, scope)
+                if scope["state"].get("auth_validation_error"):
+                    return
+
             # Validate URLs to prevent SSRF
             if jira_url_str:
-                ssrf_error = await anyio.to_thread.run_sync(
-                    validate_url_for_ssrf, jira_url_str
-                )
+                ssrf_error = await run_url_check(jira_url_str)
                 if ssrf_error:
                     scope["state"]["auth_validation_error"] = (
                         f"Forbidden: Invalid Jira URL - {ssrf_error}"
@@ -840,9 +923,7 @@ class UserTokenMiddleware:
                     return
 
             if confluence_url_str:
-                ssrf_error = await anyio.to_thread.run_sync(
-                    validate_url_for_ssrf, confluence_url_str
-                )
+                ssrf_error = await run_url_check(confluence_url_str)
                 if ssrf_error:
                     scope["state"]["auth_validation_error"] = (
                         f"Forbidden: Invalid Confluence URL - {ssrf_error}"
@@ -895,10 +976,8 @@ class UserTokenMiddleware:
                     f"UserTokenMiddleware: Extracted cloudId: {cloud_id_str.strip()}"
                 )
 
-            # Process Authorization header
-            if auth_header_str:
-                self._parse_auth_header(auth_header_str, scope)
-            else:
+            # The Authorization header was parsed above.
+            if not auth_header_str:
                 logger.debug("UserTokenMiddleware: No Authorization header provided")
                 # If service headers are present without Authorization header, set PAT auth type
                 if service_headers and (
@@ -911,6 +990,9 @@ class UserTokenMiddleware:
                         "UserTokenMiddleware: Header-based authentication detected. Setting PAT auth type."
                     )
 
+        except UrlCheckBusy:
+            logger.warning("UserTokenMiddleware: URL header check capacity is full")
+            scope["state"]["url_check_busy"] = True
         except Exception as e:
             logger.error(f"Error processing authentication headers: {e}", exc_info=True)
             scope["state"]["auth_validation_error"] = "Authentication processing error"

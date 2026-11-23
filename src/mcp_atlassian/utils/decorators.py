@@ -13,6 +13,7 @@ from fastmcp.tools.function_tool import ToolMeta
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+from mcp_atlassian.utils.http import ResponseTooLargeError
 from mcp_atlassian.utils.toolsets import TOOLSET_TAG_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -223,6 +224,13 @@ def handle_atlassian_api_errors(service_name: str = "Atlassian API") -> Callable
                 message = (
                     f"{operation_name} returned an unexpected response from "
                     f"{service_name}: missing key {e}"
+                )
+                raise ValueError(message) from e
+            except ResponseTooLargeError as e:
+                operation_name = getattr(func, "__name__", "API operation")
+                logger.error(f"Response too large in {operation_name}: {str(e)}")
+                message = (
+                    f"{service_name} response to {operation_name} is too large: {e}"
                 )
                 raise ValueError(message) from e
             except requests.RequestException as e:

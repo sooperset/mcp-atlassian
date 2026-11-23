@@ -372,7 +372,7 @@ class TestGetFetcherExternalAuth:
                 return_value=request,
             ),
             patch(
-                "mcp_atlassian.servers.dependencies.validate_url_for_ssrf",
+                "mcp_atlassian.servers.async_utils.validate_url_for_ssrf",
                 return_value=None,  # no SSRF issue
             ),
             patch("mcp_atlassian.servers.dependencies.JiraFetcher") as mock_fetcher_cls,
@@ -421,7 +421,7 @@ class TestGetFetcherExternalAuth:
                 return_value=request,
             ),
             patch(
-                "mcp_atlassian.servers.dependencies.validate_url_for_ssrf",
+                "mcp_atlassian.servers.async_utils.validate_url_for_ssrf",
                 return_value=None,
             ),
             patch("mcp_atlassian.servers.dependencies.JiraFetcher") as mock_fetcher_cls,
@@ -467,7 +467,7 @@ class TestGetFetcherExternalAuth:
                 return_value=request,
             ),
             patch(
-                "mcp_atlassian.servers.dependencies.validate_url_for_ssrf",
+                "mcp_atlassian.servers.async_utils.validate_url_for_ssrf",
                 return_value=None,
             ),
             patch("mcp_atlassian.servers.dependencies.JiraFetcher") as mock_fetcher_cls,

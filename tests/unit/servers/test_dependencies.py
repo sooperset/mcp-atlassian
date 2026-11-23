@@ -2417,6 +2417,51 @@ class TestValidationCache:
 
         succeeding_fetcher.get_current_user_info.assert_called_once()
 
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("fetcher_class", [ConfluenceFetcher, JiraFetcher])
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    async def test_cached_validation_keeps_only_bounded_identity(
+        self, mock_get_http_request, mock_context, fetcher_class
+    ):
+        """The shared cache keeps a bounded identity, not the upstream's
+        whole user record, however large the record is."""
+        from cachetools import TTLCache
+
+        big = "x" * 100_000
+        if fetcher_class is ConfluenceFetcher:
+            headers = self._confluence_headers("shared-pat-token")
+            returned: object = {
+                "email": "user@example.com",
+                "displayName": big,
+                "details": {"blob": big},
+            }
+            get_fetcher = get_confluence_fetcher
+        else:
+            headers = {
+                "X-Atlassian-Jira-Url": "https://test.atlassian.net",
+                "X-Atlassian-Jira-Personal-Token": "shared-pat-token",
+            }
+            returned = big
+            get_fetcher = get_jira_fetcher
+        request = self._header_pat_request(headers)
+        fetcher = _create_mock_fetcher(fetcher_class, validation_return=returned)
+        cache: TTLCache = TTLCache(maxsize=10, ttl=300)
+        mock_get_http_request.return_value = request
+
+        with (
+            patch(
+                f"mcp_atlassian.servers.dependencies.{fetcher_class.__name__}",
+                return_value=fetcher,
+            ),
+            patch("mcp_atlassian.servers.dependencies._validation_cache", cache),
+        ):
+            await get_fetcher(mock_context)
+
+        assert len(cache) == 1
+        assert all(len(repr(value)) < 2048 for value in cache.values())
+        if fetcher_class is ConfluenceFetcher:
+            assert request.state.user_atlassian_email == "user@example.com"
+
 
 class TestBasicAuthMultiUser:
     """Tests for Basic Auth multi-user support (#739)."""
@@ -2995,6 +3040,74 @@ class TestUnauthenticatedGlobalFallbackRegression:
 
         get_resolver.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("service", "getter", "fetcher_path"),
+        [
+            (
+                "Jira",
+                get_jira_fetcher,
+                "mcp_atlassian.servers.dependencies.JiraFetcher",
+            ),
+            (
+                "Confluence",
+                get_confluence_fetcher,
+                "mcp_atlassian.servers.dependencies.ConfluenceFetcher",
+            ),
+        ],
+    )
+    async def test_external_auth_full_url_check_pool_says_retry(
+        self,
+        service,
+        getter,
+        fetcher_path,
+        mock_context,
+        mock_request,
+        config_factory,
+        monkeypatch,
+    ) -> None:
+        """A full URL check pool on the external auth path asks for a retry.
+
+        This path runs inside the tool call, where the HTTP status is already
+        sent, so it cannot answer 503 like the middleware. The tool error
+        carries the same text as that 503 body, so the client can tell it is
+        a capacity limit and not a bad URL.
+        """
+        from mcp_atlassian.servers.async_utils import UrlCheckBusy
+
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "corp.example.com")
+        _setup_mock_request_state(mock_request)
+        mock_request.headers = Headers(
+            {f"x-atlassian-{service.lower()}-url": "https://dc.corp.example.com"}
+        )
+        if service == "Jira":
+            config = config_factory.create_jira_config(auth_type="external", url="")
+            app_context = config_factory.create_app_context(jira_config=config)
+        else:
+            config = config_factory.create_confluence_config(
+                auth_type="external", url=""
+            )
+            app_context = config_factory.create_app_context(confluence_config=config)
+        _setup_mock_context(mock_context, app_context)
+
+        async def busy(url: str) -> str | None:
+            raise UrlCheckBusy("busy")
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                return_value=mock_request,
+            ),
+            patch("mcp_atlassian.servers.dependencies.run_url_check", busy),
+            patch(fetcher_path) as fetcher_class,
+            pytest.raises(ValueError) as excinfo,
+        ):
+            await getter(mock_context)
+
+        assert str(excinfo.value) == (
+            "Server busy checking request URLs; retry shortly."
+        )
+        fetcher_class.assert_not_called()
+
     @pytest.mark.security_regression
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
@@ -3136,6 +3249,46 @@ class TestHeaderPatSslVerifyBound:
             service, "https://victim-dc.example", mock_context, mock_request, None
         )
         assert config.ssl_verify is True
+
+    @pytest.mark.parametrize("service", ["Jira", "Confluence"])
+    async def test_other_service_origin_keeps_verification(
+        self, service, mock_context, mock_request, config_factory, monkeypatch
+    ):
+        """SSL_VERIFY=false of one service does not cover the other's origin."""
+        other = "CONFLUENCE" if service == "Jira" else "JIRA"
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        monkeypatch.setenv(f"{other}_URL", "https://other-service.example.test")
+        config = await self._header_config(
+            service,
+            "https://other-service.example.test",
+            mock_context,
+            mock_request,
+            self._app(service, config_factory),
+        )
+        assert config.ssl_verify is True
+
+    @pytest.mark.parametrize("service", ["Jira", "Confluence"])
+    @pytest.mark.parametrize(
+        ("header_url", "expected"),
+        [
+            ("https://own-service.example.test", False),
+            ("https://other-service.example.test", True),
+        ],
+    )
+    async def test_env_fallback_only_own_origin_inherits(
+        self, service, header_url, expected, mock_context, mock_request, monkeypatch
+    ):
+        prefix = service.upper()
+        other = "CONFLUENCE" if service == "Jira" else "JIRA"
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        monkeypatch.setenv(f"{prefix}_URL", "https://own-service.example.test")
+        monkeypatch.setenv(f"{other}_URL", "https://other-service.example.test")
+        monkeypatch.setenv(f"{prefix}_SSL_VERIFY", "false")
+        monkeypatch.setenv(f"{other}_SSL_VERIFY", "true")
+        config = await self._header_config(
+            service, header_url, mock_context, mock_request, None
+        )
+        assert config.ssl_verify is expected
 
 
 class TestHeaderPatMarkupTranslation:

@@ -125,6 +125,16 @@ def configure_file_root_for_transport(transport: str) -> Path:
     set_remote_transport(remote)
     root = get_file_root()
     if not remote:
+        if is_wide_directory(root):
+            # Kept for existing local setups; a tool call (possibly steered by
+            # content it read) can then upload any file the user can read.
+            logger.warning(
+                "File path inputs are confined to %s, a filesystem root or home "
+                "directory. Tools that upload files can read anything there. "
+                "Set %s to a dedicated directory to narrow it.",
+                root,
+                FILES_DIR_ENV,
+            )
         return root
 
     configured = bool(os.getenv(FILES_DIR_ENV, "").strip())

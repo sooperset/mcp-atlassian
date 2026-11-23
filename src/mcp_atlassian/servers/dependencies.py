@@ -22,7 +22,12 @@ from starlette.requests import Request
 
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
-from mcp_atlassian.servers.async_utils import run_fetcher_call
+from mcp_atlassian.servers.async_utils import (
+    URL_CHECK_BUSY_MESSAGE,
+    UrlCheckBusy,
+    run_fetcher_call,
+    run_url_check,
+)
 from mcp_atlassian.servers.context import MainAppContext
 from mcp_atlassian.utils.credential_command import get_resolver
 from mcp_atlassian.utils.env import (
@@ -33,8 +38,8 @@ from mcp_atlassian.utils.env import (
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.proxy import get_proxy_settings_from_env
 from mcp_atlassian.utils.ssrf_adapter import (
-    Origin,
     is_operator_trusted_url,
+    is_trusted_for_origins,
     url_origin,
 )
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
@@ -247,6 +252,42 @@ def _validate_with_cache(
     return validation_data
 
 
+# Validation results are kept in a process-wide cache, so only the identity
+# fields the server uses are kept, each bounded in length. A real account id,
+# email or display name is far shorter.
+_MAX_IDENTITY_CHARS = 256
+
+
+def _bounded_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value[:_MAX_IDENTITY_CHARS]
+
+
+def _jira_identity(fetcher: Any) -> str | None:
+    """Validate a Jira fetcher and return its bounded account id."""
+    return _bounded_text(fetcher.get_current_user_account_id())
+
+
+def _confluence_identity(fetcher: Any) -> dict[str, str]:
+    """Validate a Confluence fetcher and return its bounded email and name.
+
+    An email longer than the limit is dropped rather than cut, so a cut value
+    is never used as the caller's email.
+    """
+    info = fetcher.get_current_user_info()
+    identity: dict[str, str] = {}
+    if not isinstance(info, dict):
+        return identity
+    email = info.get("email")
+    if isinstance(email, str) and len(email) <= _MAX_IDENTITY_CHARS:
+        identity["email"] = email
+    display_name = _bounded_text(info.get("displayName"))
+    if display_name is not None:
+        identity["displayName"] = display_name
+    return identity
+
+
 def _jira_on_validated(
     fn_name: str,
     request: Request,
@@ -332,7 +373,7 @@ def _jira_spec() -> _ServiceSpec:
         token_header="X-Atlassian-Jira-Personal-Token",  # noqa: S106
         passthrough_env_var="JIRA_PASSTHROUGH_HEADERS",
         get_session=lambda f: f.jira._session,
-        validate_fn=lambda f: f.get_current_user_account_id(),
+        validate_fn=_jira_identity,
         on_validated=_jira_on_validated,
     )
 
@@ -353,7 +394,7 @@ def _confluence_spec() -> _ServiceSpec:
         token_header="X-Atlassian-Confluence-Personal-Token",  # noqa: S106
         passthrough_env_var="CONFLUENCE_PASSTHROUGH_HEADERS",
         get_session=lambda f: f.confluence._session,
-        validate_fn=lambda f: f.get_current_user_info(),
+        validate_fn=_confluence_identity,
         on_validated=_confluence_on_validated,
     )
 
@@ -487,8 +528,8 @@ def _get_header_pat_network_config(
     """Resolve operator-controlled network settings for header PAT requests.
 
     The operator's ``*_SSL_VERIFY=false`` is meant for the operator's own
-    instance, so it applies only when ``url`` is operator-trusted: the
-    configured service origin or a host under ``MCP_ALLOWED_URL_DOMAINS``.
+    instance, so it applies only when ``url`` has this service's configured
+    origin (not the other service's) or a host under ``MCP_ALLOWED_URL_DOMAINS``.
     Any other request-supplied host keeps certificate verification on.
 
     Args:
@@ -500,16 +541,17 @@ def _get_header_pat_network_config(
         SSL, proxy and timeout settings from the global config when available,
         otherwise from service-specific or shared environment variables.
     """
-    operator_origins: list[Origin] = []
+    env_prefix = spec.name.upper()
     try:
         global_config = _get_global_config(ctx, spec)
     except ValueError:
-        env_prefix = spec.name.upper()
+        service_url = os.environ.get(f"{env_prefix}_URL", "")
         settings: dict[str, Any] = {
             "ssl_verify": is_env_ssl_verify(f"{env_prefix}_SSL_VERIFY"),
             **get_proxy_settings_from_env(env_prefix),
         }
     else:
+        service_url = global_config.url
         settings = {
             "ssl_verify": global_config.ssl_verify,
             "http_proxy": global_config.http_proxy,
@@ -519,12 +561,10 @@ def _get_header_pat_network_config(
             "proxy_wpad_enable": global_config.proxy_wpad_enable,
             "proxy_wpad_url": global_config.proxy_wpad_url,
         }
-        origin = url_origin(global_config.url)
-        if origin is not None:
-            operator_origins.append(origin)
-    if not settings["ssl_verify"] and not is_operator_trusted_url(
-        url, operator_origins
-    ):
+    # Only this service's own origin: the other service's SSL_VERIFY may differ.
+    service_origin = url_origin(service_url)
+    own_origins = [service_origin] if service_origin is not None else []
+    if not settings["ssl_verify"] and not is_trusted_for_origins(url, own_origins):
         logger.warning(
             "%s SSL verification stays on for %s: SSL_VERIFY=false applies only "
             "to the configured URL origin or MCP_ALLOWED_URL_DOMAINS.",
@@ -1155,9 +1195,13 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                             "exfiltration."
                         )
                         raise ValueError(error_msg)
-                    ssrf_error = await run_fetcher_call(
-                        validate_url_for_ssrf, url_from_header
-                    )
+                    try:
+                        ssrf_error = await run_url_check(url_from_header)
+                    except UrlCheckBusy as exc:
+                        # This runs inside the tool call, after the HTTP
+                        # status is sent, so it cannot be the middleware's
+                        # 503; the tool error carries the same retry text.
+                        raise ValueError(URL_CHECK_BUSY_MESSAGE) from exc
                     if ssrf_error:
                         error_msg = f"Forbidden: Invalid {spec.name} URL - {ssrf_error}"
                         raise ValueError(error_msg)

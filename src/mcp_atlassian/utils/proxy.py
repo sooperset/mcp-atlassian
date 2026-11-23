@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - exercised without the wpad extra
 
 from .env import is_env_truthy
 from .logging import log_config_param
+from .ssrf_adapter import _refuse_dot_segments
 
 DEFAULT_PROXY_WPAD_URL = "http://wpad/wpad.dat"
 PAC_ALLOWED_CONTENT_TYPES = (
@@ -231,6 +232,9 @@ def _copy_session_state(source: Session, target: Session) -> None:
 
     for prefix, adapter in source.adapters.items():
         target.mount(prefix, adapter)
+    # The dot-segment refusal is a per-instance override of prepare_request.
+    if getattr(source.prepare_request, "refuses_dot_segments", False):
+        _refuse_dot_segments(target)
 
 
 def _validate_pac_for_target_url(*, pac: Any, target_url: str) -> None:
