@@ -8,6 +8,7 @@ resolution to rebind.
 """
 
 import socket
+import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +16,7 @@ import pytest
 import requests
 from requests.adapters import HTTPAdapter
 
+from mcp_atlassian.utils.http import CallBudget, UpstreamCallAborted
 from mcp_atlassian.utils.ssrf_adapter import (
     SsrfPinningAdapter,
     _pinned_create_connection,
@@ -479,8 +481,12 @@ class _NoopSock:
         pass
 
 
-def _family_seen_by_adapter() -> int:
-    """Resolve one host through the adapter and report the family it asked for."""
+def _family_seen_by_adapter(*, with_deadline: bool = False) -> int:
+    """Resolve one host through the adapter and report the family it asked for.
+
+    With ``with_deadline`` the connection is made inside a call that has a
+    deadline, which resolves the host on a bounded lookup thread.
+    """
     seen = {"family": None}
 
     def gai(host, port, family, socktype, *args, **kwargs):
@@ -495,7 +501,12 @@ def _family_seen_by_adapter() -> int:
             "mcp_atlassian.utils.ssrf_adapter.socket.socket", return_value=_NoopSock()
         ),
     ):
-        _pinned_create_connection(("example.com", 443))
+        if with_deadline:
+            CallBudget(deadline=time.monotonic() + 30).run(
+                lambda: _pinned_create_connection(("example.com", 443), 5)
+            )
+        else:
+            _pinned_create_connection(("example.com", 443))
     return seen["family"]
 
 
@@ -517,6 +528,13 @@ def test_disabling_urllib3_ipv6_switches_the_adapter_to_ipv4_only():
     """
     with patch("urllib3.util.connection.HAS_IPV6", new=False):
         assert _family_seen_by_adapter() == socket.AF_INET
+
+
+def test_ipv4_only_policy_also_applies_to_the_bounded_lookup():
+    """A call with a deadline (made for a request-supplied site) resolves on a
+    bounded lookup thread, which must ask for the same family."""
+    with patch("urllib3.util.connection.HAS_IPV6", new=False):
+        assert _family_seen_by_adapter(with_deadline=True) == socket.AF_INET
 
 
 # A request path is built from tool arguments. ``requests`` resolves "." and
@@ -767,3 +785,105 @@ class TestAttachmentOriginRule:
             assert "https://evil.example:8443" in message
             for secret in ("user", "pw", "sig", "s3cr3t", "a.bin", "frag"):
                 assert secret not in message
+
+
+_PUBLIC_IPS = ("93.184.216.34", "93.184.216.35", "93.184.216.36")
+
+
+def _gai_returning_many(*ips: str):
+    def gai(host, port, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port)) for ip in ips]
+
+    return gai
+
+
+class _FailingConnectSock:
+    """Socket whose connect fails; records each attempt and its timeout."""
+
+    def __init__(self, attempts: list[dict[str, Any]], on_connect=None):
+        self._attempts = attempts
+        self._on_connect = on_connect
+        self._timeout: Any = None
+
+    def setsockopt(self, *a):
+        pass
+
+    def settimeout(self, value):
+        self._timeout = value
+
+    def bind(self, *a):
+        pass
+
+    def connect(self, sa):
+        self._attempts.append({"addr": sa[0], "timeout": self._timeout})
+        if self._on_connect is not None:
+            self._on_connect()
+        raise OSError("connection refused")
+
+    def close(self):
+        pass
+
+
+def _connect_under(budget, attempts, timeout=10.0, on_connect=None):
+    with (
+        patch(
+            "mcp_atlassian.utils.ssrf_adapter.socket.getaddrinfo",
+            side_effect=_gai_returning_many(*_PUBLIC_IPS),
+        ),
+        patch(
+            "mcp_atlassian.utils.ssrf_adapter.socket.socket",
+            side_effect=lambda *a: _FailingConnectSock(attempts, on_connect),
+        ),
+    ):
+        return budget.run(
+            lambda: _pinned_create_connection(("multi.example.com", 443), timeout)
+        )
+
+
+class TestMultiAddressConnectStopsWithTheCall:
+    """Connecting to a name with several addresses stops when its call stops."""
+
+    def test_remaining_addresses_skipped_after_abort(self, monkeypatch):
+        for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+            monkeypatch.delenv(k, raising=False)
+        budget = CallBudget()
+        attempts: list[dict[str, Any]] = []
+
+        with pytest.raises(UpstreamCallAborted):
+            _connect_under(budget, attempts, on_connect=budget.abort)
+
+        assert [a["addr"] for a in attempts] == [_PUBLIC_IPS[0]]
+
+    def test_no_attempt_once_the_deadline_passed(self, monkeypatch):
+        for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+            monkeypatch.delenv(k, raising=False)
+        budget = CallBudget(deadline=time.monotonic() - 1)
+        attempts: list[dict[str, Any]] = []
+
+        with pytest.raises(TimeoutError):
+            _connect_under(budget, attempts)
+
+        assert attempts == []
+
+    def test_each_attempt_waits_at_most_until_the_deadline(self, monkeypatch):
+        for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+            monkeypatch.delenv(k, raising=False)
+        budget = CallBudget(deadline=time.monotonic() + 2.0)
+        attempts: list[dict[str, Any]] = []
+
+        with pytest.raises(OSError):
+            _connect_under(budget, attempts, timeout=10.0)
+
+        assert len(attempts) == len(_PUBLIC_IPS)
+        assert all(0 < a["timeout"] <= 2.0 for a in attempts)
+
+    def test_connect_timeout_kept_when_the_deadline_is_further(self, monkeypatch):
+        for k in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+            monkeypatch.delenv(k, raising=False)
+        budget = CallBudget(deadline=time.monotonic() + 60.0)
+        attempts: list[dict[str, Any]] = []
+
+        with pytest.raises(OSError):
+            _connect_under(budget, attempts, timeout=3.0)
+
+        assert [a["timeout"] for a in attempts] == [3.0] * len(_PUBLIC_IPS)

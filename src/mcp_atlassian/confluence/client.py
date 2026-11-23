@@ -1,5 +1,6 @@
 """Base client module for Confluence API interactions."""
 
+import inspect
 import logging
 import os
 
@@ -8,6 +9,7 @@ from requests import Session
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from ..exceptions import MCPAtlassianAuthenticationError
+from ..preprocessing.base import user_lookup_scope
 from ..utils.http import (
     configure_circuit_breaker,
     configure_concurrency,
@@ -30,6 +32,20 @@ logger = logging.getLogger("mcp-atlassian")
 
 class ConfluenceClient:
     """Base client for Confluence API interactions."""
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Give every public method of a mixin one user lookup budget per call.
+
+        A tool call runs one fetcher method; the documents it converts share
+        that call's budget, however many helpers the method calls.
+        """
+        super().__init_subclass__(**kwargs)
+        for name, value in list(vars(cls).items()):
+            if name.startswith("_") or not inspect.isfunction(value):
+                continue
+            if inspect.isgeneratorfunction(value) or inspect.iscoroutinefunction(value):
+                continue
+            setattr(cls, name, user_lookup_scope(value))
 
     def __init__(self, config: ConfluenceConfig | None = None) -> None:
         """Initialize the Confluence client with given or environment config.

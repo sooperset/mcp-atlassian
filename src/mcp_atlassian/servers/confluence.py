@@ -1347,14 +1347,32 @@ async def add_comment(
     page_id: Annotated[
         str, Field(description="The ID of the page to add a comment to")
     ],
-    body: Annotated[str, Field(description="The comment content in Markdown format")],
+    body: Annotated[
+        str,
+        Field(
+            description="The comment content. Markdown unless content_format says otherwise"
+        ),
+    ],
+    content_format: Annotated[
+        str,
+        Field(
+            description=(
+                "(Optional) Format of body. "
+                "Options: 'markdown' (default) or 'storage' "
+                "(raw Confluence storage XML). Use 'storage' to insert "
+                "macros or elements that markdown cannot express."
+            ),
+            default="markdown",
+        ),
+    ] = "markdown",
 ) -> str:
     """Add a comment to a Confluence page.
 
     Args:
         ctx: The FastMCP context.
         page_id: The ID of the page to add a comment to.
-        body: The comment content in Markdown format.
+        body: The comment content (format depends on content_format).
+        content_format: Format of body ('markdown' or 'storage').
 
     Returns:
         JSON string representing the created comment.
@@ -1365,7 +1383,10 @@ async def add_comment(
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
         comment = await run_fetcher_call(
-            confluence_fetcher.add_comment, page_id=page_id, content=body
+            confluence_fetcher.add_comment,
+            page_id=page_id,
+            content=body,
+            content_format=content_format,
         )
         if comment:
             comment_data = comment.to_simplified_dict()
@@ -1400,14 +1421,32 @@ async def reply_to_comment(
     comment_id: Annotated[
         str, Field(description="The ID of the parent comment to reply to")
     ],
-    body: Annotated[str, Field(description="The reply content in Markdown format")],
+    body: Annotated[
+        str,
+        Field(
+            description="The reply content. Markdown unless content_format says otherwise"
+        ),
+    ],
+    content_format: Annotated[
+        str,
+        Field(
+            description=(
+                "(Optional) Format of body. "
+                "Options: 'markdown' (default) or 'storage' "
+                "(raw Confluence storage XML). Use 'storage' to insert "
+                "macros or elements that markdown cannot express."
+            ),
+            default="markdown",
+        ),
+    ] = "markdown",
 ) -> str:
     """Reply to an existing comment thread on a Confluence page.
 
     Args:
         ctx: The FastMCP context.
         comment_id: The ID of the parent comment to reply to.
-        body: The reply content in Markdown format.
+        body: The reply content (format depends on content_format).
+        content_format: Format of body ('markdown' or 'storage').
 
     Returns:
         JSON string representing the created reply comment.
@@ -1418,7 +1457,10 @@ async def reply_to_comment(
     confluence_fetcher = await get_confluence_fetcher(ctx)
     try:
         comment = await run_fetcher_call(
-            confluence_fetcher.reply_to_comment, comment_id=comment_id, content=body
+            confluence_fetcher.reply_to_comment,
+            comment_id=comment_id,
+            content=body,
+            content_format=content_format,
         )
         if comment:
             comment_data = comment.to_simplified_dict()
@@ -1505,7 +1547,12 @@ async def add_inline_comment(
     page_id: Annotated[
         str, Field(description="The ID of the page to add the inline comment to")
     ],
-    body: Annotated[str, Field(description="The comment content in Markdown format")],
+    body: Annotated[
+        str,
+        Field(
+            description="The comment content. Markdown unless content_format says otherwise"
+        ),
+    ],
     text_selection: Annotated[
         str,
         Field(
@@ -1535,18 +1582,31 @@ async def add_inline_comment(
             ge=0,
         ),
     ] = 0,
+    content_format: Annotated[
+        str,
+        Field(
+            description=(
+                "(Optional) Format of body. "
+                "Options: 'markdown' (default) or 'storage' "
+                "(raw Confluence storage XML). Use 'storage' to insert "
+                "macros or elements that markdown cannot express."
+            ),
+            default="markdown",
+        ),
+    ] = "markdown",
 ) -> str:
     """Add an inline comment anchored to a text selection on a page.
 
     Args:
         ctx: The FastMCP context.
         page_id: The ID of the page to add the inline comment to.
-        body: The comment content in Markdown format.
+        body: The comment content (format depends on content_format).
         text_selection: The exact text on the page to anchor the comment to.
         text_selection_match_count: Total occurrences of the selected text on the
             page.
         text_selection_match_index: Zero-based index of which occurrence to anchor
             to.
+        content_format: Format of body ('markdown' or 'storage').
 
     Returns:
         JSON string representing the created inline comment.
@@ -1563,6 +1623,7 @@ async def add_inline_comment(
             text_selection=text_selection,
             text_selection_match_count=text_selection_match_count,
             text_selection_match_index=text_selection_match_index,
+            content_format=content_format,
         )
         if comment:
             response = {

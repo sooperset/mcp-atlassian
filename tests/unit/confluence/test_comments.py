@@ -2,7 +2,7 @@
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 import requests
@@ -261,7 +261,7 @@ class TestCommentsMixin:
         assert result.body == "This is a test comment"
 
     def test_add_comment_with_html_content(self, comments_mixin):
-        """Test adding a comment with HTML content."""
+        """Test adding a comment with storage-format content."""
         # Setup
         page_id = "12345"
         content = "<p>This is an <strong>HTML</strong> comment</p>"
@@ -288,9 +288,9 @@ class TestCommentsMixin:
         )
 
         # Call the method
-        result = comments_mixin.add_comment(page_id, content)
+        result = comments_mixin.add_comment(page_id, content, content_format="storage")
 
-        # Verify - should not call markdown conversion since content is already HTML
+        # Verify - storage format is sent as is
         comments_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
         comments_mixin.confluence.add_comment.assert_called_once_with(page_id, content)
         assert result is not None
@@ -479,7 +479,7 @@ class TestReplyToComment:
         )
 
     def test_reply_with_html_content(self, comments_mixin):
-        """Reply with HTML content skips markdown conversion."""
+        """Reply with content_format='storage' skips markdown conversion."""
         comments_mixin.confluence.get_page_by_id.side_effect = [
             MOCK_PARENT_COMMENT_V1_RESPONSE,
             {"id": "987654321", "space": {"key": "TEST"}},
@@ -490,7 +490,9 @@ class TestReplyToComment:
             "HTML reply",
         )
 
-        result = comments_mixin.reply_to_comment("456789123", "<p>HTML reply</p>")
+        result = comments_mixin.reply_to_comment(
+            "456789123", "<p>HTML reply</p>", content_format="storage"
+        )
 
         assert result is not None
         comments_mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
@@ -1098,7 +1100,7 @@ class TestAddInlineComment:
         comments_mixin.confluence.post.assert_not_called()
 
     def test_add_inline_comment_with_html_content(self, comments_mixin_dc):
-        """add_inline_comment skips markdown conversion for HTML content (Server/DC)."""
+        """add_inline_comment sends storage content as is (Server/DC)."""
         html_content = "<p>Already <strong>HTML</strong></p>"
         comments_mixin_dc.confluence.get_page_by_id.return_value = {
             "space": {"key": "TEST"}
@@ -1110,7 +1112,7 @@ class TestAddInlineComment:
         )
 
         result = comments_mixin_dc.add_inline_comment(
-            "12345", html_content, "some text"
+            "12345", html_content, "some text", content_format="storage"
         )
 
         markdown_to_storage = (
@@ -1253,7 +1255,7 @@ class TestCommentsMixinCloudOAuthRead:
         oauth_comments_mixin.preprocessor.process_html_content.assert_any_call(
             "<p>Footer</p>",
             space_key="FDE",
-            confluence_client=oauth_comments_mixin.confluence,
+            confluence_client=ANY,
         )
 
     def test_get_page_comments_v2_failure_returns_empty(self, oauth_comments_mixin):
@@ -1556,3 +1558,138 @@ async def test_get_comments_tool_certain_truncation_says_more():
     assert comments[-1]["truncated"] is True
     assert "may" not in comments[-1]["message"]
     assert "has more" in comments[-1]["message"]
+
+
+def _mentions_body(users: range) -> dict[str, Any]:
+    links = "".join(
+        f'<ac:link><ri:user ri:account-id="acct-{i}" /></ac:link> ' for i in users
+    )
+    return {"storage": {"value": f"<p>{links}</p>"}}
+
+
+def _counting_dc_comments_mixin(comments: list[dict[str, Any]]) -> CommentsMixin:
+    with patch(
+        "mcp_atlassian.confluence.comments.ConfluenceClient.__init__",
+        return_value=None,
+    ):
+        mixin = CommentsMixin()
+    mixin.config = ConfluenceConfig(
+        url="https://confluence.example.com",
+        auth_type="pat",
+        personal_token="dummy",
+    )
+    client = MagicMock(
+        spec_set=[
+            "get_page_by_id",
+            "get_page_comments",
+            "get_user_details_by_accountid",
+            "get_user_details_by_userkey",
+            "get_user_details_by_username",
+        ]
+    )
+    client.get_page_by_id.return_value = {"space": {"key": "TEST"}}
+    client.get_page_comments.return_value = {"results": comments}
+    client.get_user_details_by_accountid.side_effect = lambda ident: {
+        "displayName": f"Name {ident}"
+    }
+    mixin.confluence = client
+    mixin.preprocessor = ConfluencePreprocessor(base_url=mixin.config.url)
+    return mixin
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize("method", ["get_page_comments", "get_inline_comments"])
+def test_user_lookups_are_capped_per_call_across_comments(method):
+    """All comments of one call share one lookup budget and one cache."""
+    from mcp_atlassian.preprocessing.base import MAX_USER_LOOKUPS_PER_CALL
+
+    comments = [
+        {
+            "id": str(n),
+            "type": "comment",
+            "body": _mentions_body(range(n * 40, n * 40 + 40)),
+            "extensions": {"location": "inline"},
+        }
+        for n in range(10)
+    ]
+    # Every comment also mentions acct-0, which must be looked up only once.
+    for comment in comments:
+        comment["body"]["storage"]["value"] += (
+            '<p><ac:link><ri:user ri:account-id="acct-0" /></ac:link></p>'
+        )
+    mixin = _counting_dc_comments_mixin(comments)
+
+    result = getattr(mixin, method)("12345")
+
+    lookups = mixin.confluence.get_user_details_by_accountid
+    assert lookups.call_count == MAX_USER_LOOKUPS_PER_CALL
+    assert [c.args for c in lookups.call_args_list].count(("acct-0",)) == 1
+    assert len(result) == 10
+    assert all("@Name acct-0" in c.body for c in result)
+    assert "@user\\_acct-399" in result[-1].body
+
+
+class TestCommentContentFormat:
+    """Comment bodies are Markdown unless the caller says storage."""
+
+    MARKDOWN_BODY = "<b>bold</b> and **more**"
+
+    @pytest.fixture
+    def mixin(self, comments_mixin_dc):
+        mixin = comments_mixin_dc
+        mixin.confluence.get_page_by_id.side_effect = None
+        mixin.confluence.get_page_by_id.return_value = {
+            "id": "12345",
+            "space": {"key": "TEST"},
+            "container": {"id": "12345", "type": "page"},
+        }
+        mixin._resolve_page_id_for_parent_comment = MagicMock(return_value="12345")
+        mixin.confluence.add_comment.return_value = {"id": "1"}
+        mixin.confluence.post.return_value = {"id": "1"}
+        mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>converted</p>"
+        )
+        mixin.preprocessor.process_html_content.return_value = ("<p/>", "")
+        return mixin
+
+    @staticmethod
+    def _call(mixin, tool, body, **kwargs):
+        if tool == "add_comment":
+            return mixin.add_comment("12345", body, **kwargs)
+        if tool == "reply_to_comment":
+            return mixin.reply_to_comment("999", body, **kwargs)
+        return mixin.add_inline_comment("12345", body, "some text", **kwargs)
+
+    @staticmethod
+    def _sent_body(mixin, tool):
+        if tool == "add_comment":
+            return mixin.confluence.add_comment.call_args.args[1]
+        data = (
+            mixin.confluence.post.call_args.kwargs.get("data")
+            or (mixin.confluence.post.call_args.args[1])
+        )
+        return data["body"]["storage"]["value"]
+
+    TOOLS = ["add_comment", "reply_to_comment", "add_inline_comment"]
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_markdown_starting_with_angle_bracket_is_converted(self, mixin, tool):
+        assert self._call(mixin, tool, self.MARKDOWN_BODY) is not None
+        mixin.preprocessor.markdown_to_confluence_storage.assert_called_once_with(
+            self.MARKDOWN_BODY
+        )
+        assert self._sent_body(mixin, tool) == "<p>converted</p>"
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_storage_is_sent_unchanged(self, mixin, tool):
+        body = '<ac:structured-macro ac:name="info"/>'
+        assert self._call(mixin, tool, body, content_format="storage") is not None
+        mixin.preprocessor.markdown_to_confluence_storage.assert_not_called()
+        assert self._sent_body(mixin, tool) == body
+
+    @pytest.mark.parametrize("tool", TOOLS)
+    def test_unknown_format_is_rejected(self, mixin, tool):
+        with pytest.raises(ValueError, match="Invalid content_format 'wiki'"):
+            self._call(mixin, tool, "x", content_format="wiki")
+        mixin.confluence.add_comment.assert_not_called()
+        mixin.confluence.post.assert_not_called()

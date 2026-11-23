@@ -1983,9 +1983,9 @@ def test_repeated_user_mentions_are_looked_up_once():
 
 def test_distinct_user_lookups_per_document_are_capped():
     """Past the cap, mentions keep their stored identifier and cost nothing."""
-    from mcp_atlassian.preprocessing.base import MAX_USER_LOOKUPS_PER_DOCUMENT
+    from mcp_atlassian.preprocessing.base import MAX_USER_LOOKUPS_PER_CALL
 
-    count = MAX_USER_LOOKUPS_PER_DOCUMENT + 25
+    count = MAX_USER_LOOKUPS_PER_CALL + 25
     html = (
         "<p>"
         + "".join(
@@ -2001,7 +2001,7 @@ def test_distinct_user_lookups_per_document_are_capped():
     ).process_html_content(html, confluence_client=client)
 
     assert client.get_user_details_by_accountid.call_count == (
-        MAX_USER_LOOKUPS_PER_DOCUMENT
+        MAX_USER_LOOKUPS_PER_CALL
     )
     assert "@Name acct-0" in markdown
     assert f"@user\\_acct-{count - 1}" in markdown
@@ -2110,6 +2110,9 @@ def test_markdown_conversion_after_a_failed_conversion_is_unchanged() -> None:
         "- [ ] task\n- [x] done\n\n> quote\n\n---\n",
         "```py\nprint(1)\n```\n\n~~del~~ ==mark== ^^ins^^ H~2~O x^2^ :smile:",
         "<div>raw <b>html</b></div>\n\n$x^2$ and https://x.example/auto",
+        "see https://x.example/a?b=1&c=(2). and www.x.example/p_(q), "
+        "http://\u00fc.example/\u00e4! ftp://a.b/c#d <https://x.example/a> "
+        "https://b- http://a.b. www.a.b-c_d a@b.example",
     ],
 )
 def test_markdown_to_html_matches_md2conf(markdown: str) -> None:

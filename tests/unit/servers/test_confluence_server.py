@@ -233,6 +233,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     # Import and register tool functions (as they are in confluence.py)
     from src.mcp_atlassian.servers.confluence import (
         add_comment,
+        add_inline_comment,
         add_label,
         check_content_permissions,
         create_page,
@@ -255,6 +256,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_space_permissions,
         list_page_templates,
         move_page,
+        reply_to_comment,
         search,
         search_user,
         update_page,
@@ -289,6 +291,8 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(get_comments)
     confluence_sub_mcp.add_tool(get_inline_comments)
     confluence_sub_mcp.add_tool(add_comment)
+    confluence_sub_mcp.add_tool(reply_to_comment)
+    confluence_sub_mcp.add_tool(add_inline_comment)
     confluence_sub_mcp.add_tool(get_labels)
     confluence_sub_mcp.add_tool(add_label)
     confluence_sub_mcp.add_tool(create_page)
@@ -804,7 +808,7 @@ async def test_add_comment(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.add_comment.assert_called_once_with(
-        page_id="123456", content="Test comment content"
+        page_id="123456", content="Test comment content", content_format="markdown"
     )
 
     result_data = json.loads(response.content[0].text)
@@ -1952,3 +1956,166 @@ async def test_multi_attachment_tools_stop_at_the_per_call_byte_limit(
     assert "for one call" in summary["failed"][0]["error"]
     assert len(response.content) == 3
     assert mock_confluence_fetcher.fetch_attachment_content.call_count == 2
+
+
+# --- one user lookup budget per tool call ---------------------------------------
+
+_MENTIONED_USERS = 150
+
+
+def _mentions_body() -> str:
+    links = "".join(
+        f'<ac:link><ri:user ri:account-id="acct-{i}" /></ac:link> '
+        for i in range(_MENTIONED_USERS)
+    )
+    return f"<p>{links}</p>"
+
+
+class _MentionBackend:
+    """Fake Confluence API whose every document mentions the same 150 users."""
+
+    url = "https://confluence.example.test"
+
+    def __init__(self) -> None:
+        self.lookups: list[str] = []
+
+    def _page(self, page_id: object = "1", **_: object) -> dict:
+        return {
+            "id": str(page_id),
+            "type": "page",
+            "title": f"Page {page_id}",
+            "space": {"key": "TEST"},
+            "version": {"number": 2},
+            "body": {"storage": {"value": _mentions_body()}},
+            "excerpt": _mentions_body(),
+        }
+
+    def get_page_by_id(self, page_id: object = "1", **kwargs: object) -> dict:
+        return self._page(page_id)
+
+    def get_page_by_title(self, *args: object, **kwargs: object) -> dict:
+        return self._page("2")
+
+    def get_page_child_by_type(self, *args: object, **kwargs: object) -> dict:
+        if kwargs.get("type") == "folder":
+            return {"results": []}
+        return {"results": [self._page(i) for i in range(3, 8)]}
+
+    def get_page_comments(self, *args: object, **kwargs: object) -> dict:
+        return {
+            "results": [
+                {**self._page(i), "type": "comment", "extensions": {"location": loc}}
+                for i, loc in ((10, "inline"), (11, "footer"), (12, "inline"))
+            ]
+        }
+
+    def cql(self, *args: object, **kwargs: object) -> dict:
+        return {
+            "results": [
+                {"content": self._page(i), "excerpt": _mentions_body()}
+                for i in range(20, 25)
+            ],
+            "size": 5,
+            "totalSize": 5,
+        }
+
+    def get_user_details_by_accountid(self, account_id: str, *a: object) -> dict:
+        self.lookups.append(account_id)
+        return {"displayName": f"Name {account_id}"}
+
+    def get_user_details_by_userkey(self, key: str, *a: object) -> dict:
+        self.lookups.append(key)
+        return {}
+
+    def get_user_details_by_username(self, name: str, *a: object) -> dict:
+        self.lookups.append(name)
+        return {}
+
+
+_CONVERTING_TOOLS = [
+    ("search", {"query": "type=page"}),
+    ("get_page", {"page_id": "1"}),
+    ("get_page", {"title": "Page", "space_key": "TEST"}),
+    ("get_page_children", {"parent_id": "1", "include_content": True}),
+    ("get_comments", {"page_id": "1"}),
+    ("get_inline_comments", {"page_id": "1"}),
+    ("get_page_history", {"page_id": "1", "version": 1}),
+    ("get_page_diff", {"page_id": "1", "from_version": 1, "to_version": 2}),
+]
+
+
+@pytest.mark.anyio
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    _CONVERTING_TOOLS,
+    ids=[f"{t}-{'-'.join(a)}" for t, a in _CONVERTING_TOOLS],
+)
+async def test_each_tool_call_has_one_user_lookup_budget(tool, args) -> None:
+    from fastmcp import Client
+    from fastmcp.client import FastMCPTransport
+
+    from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
+    from mcp_atlassian.servers.confluence import confluence_mcp
+
+    fetcher = ConfluenceFetcher(
+        config=ConfluenceConfig(
+            url=_MentionBackend.url, auth_type="pat", personal_token="dummy"
+        )
+    )
+    backend = _MentionBackend()
+    fetcher.confluence = backend
+    with patch(
+        "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+        AsyncMock(return_value=fetcher),
+    ):
+        async with Client(transport=FastMCPTransport(confluence_mcp)) as client:
+            await client.call_tool(tool, args)
+
+    assert 0 < len(backend.lookups) <= 100
+    assert len(backend.lookups) == len(set(backend.lookups))
+
+
+_COMMENT_TOOLS = {
+    "confluence_add_comment": ("add_comment", {"page_id": "123456"}),
+    "confluence_reply_to_comment": ("reply_to_comment", {"comment_id": "999"}),
+    "confluence_add_inline_comment": (
+        "add_inline_comment",
+        {"page_id": "123456", "text_selection": "some text"},
+    ),
+}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("tool_name", sorted(_COMMENT_TOOLS))
+@pytest.mark.parametrize("content_format", [None, "markdown", "storage"])
+async def test_comment_tools_pass_content_format(
+    client, mock_confluence_fetcher, tool_name, content_format
+):
+    """Comment tools default to Markdown and pass the caller's format through."""
+    method_name, args = _COMMENT_TOOLS[tool_name]
+    method = getattr(mock_confluence_fetcher, method_name)
+    method.return_value.to_simplified_dict.return_value = {"id": "1"}
+    arguments = {**args, "body": "<b>bold</b> text"}
+    if content_format is not None:
+        arguments["content_format"] = content_format
+
+    response = await client.call_tool(tool_name, arguments)
+
+    assert json.loads(response.content[0].text)["success"] is True
+    assert method.call_args.kwargs["content"] == "<b>bold</b> text"
+    assert method.call_args.kwargs["content_format"] == (content_format or "markdown")
+
+
+@pytest.mark.anyio
+async def test_comment_tools_declare_content_format():
+    """Each comment tool's schema offers content_format, defaulting to markdown."""
+    from mcp_atlassian.servers.main import main_mcp
+
+    tools = {tool.name: tool for tool in await main_mcp.list_tools()}
+    for tool_name in _COMMENT_TOOLS:
+        schema = tools[tool_name].parameters
+        prop = schema["properties"]["content_format"]
+        assert prop["default"] == "markdown"
+        assert "'storage'" in prop["description"]
+        assert "content_format" not in schema.get("required", [])

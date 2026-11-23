@@ -35,6 +35,7 @@ from urllib3.exceptions import NewConnectionError
 from urllib3.poolmanager import PoolManager
 from urllib3.util.connection import allowed_gai_family  # type: ignore[attr-defined]
 
+from .http import current_call_budget, resolve_address
 from .urls import _check_ip_address, _get_domain_allowlist, _hostname_matches_allowlist
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -92,10 +93,19 @@ def is_operator_trusted_url(url: object, extra_origins: Iterable[Origin] = ()) -
     documented for that variable). Subdomains, other schemes and other ports
     of a configured service host are not trusted through the service URL.
     """
+    return is_trusted_for_origins(url, {*_configured_service_origins(), *extra_origins})
+
+
+def is_trusted_for_origins(url: object, origins: Iterable[Origin]) -> bool:
+    """Return True when ``url`` has one of ``origins`` or an allowlisted host.
+
+    Unlike :func:`is_operator_trusted_url`, the configured service URLs are
+    not added, so a caller can limit trust to one service's own origin.
+    """
     origin = url_origin(url)
     if origin is None:
         return False
-    if origin in _configured_service_origins() or origin in set(extra_origins):
+    if origin in set(origins):
         return True
     return _hostname_matches_allowlist(origin[1], _get_domain_allowlist() or [])
 
@@ -161,20 +171,30 @@ def _pinned_create_connection(
     A single ``getaddrinfo`` result is both validated and connected to, so a
     rebinding name cannot return a public IP to the check and a private IP to the
     connection.
+
+    Inside a fetcher call, each address is tried only while the call is still
+    running, and for no longer than the time left before its deadline.
     """
     host, port = address
+    budget = current_call_budget()
     host_trusted = _is_configured_service_endpoint(host, port)
     host_allowlisted = _hostname_matches_allowlist(host, _get_domain_allowlist() or [])
     err: Exception | None = None
+    # Only calls with a deadline (made for a request-supplied site) use the
+    # bounded lookup threads. Calls without one (operator sites, allowlisted
+    # and Cloud hosts) resolve in their own thread, so they never wait behind
+    # header hosts.
+    use_bounded = budget is not None and budget.deadline is not None
     # This connector stands in for urllib3's own create_connection, so it has to
     # honour urllib3's address-family policy too. allowed_gai_family() returns
     # AF_INET when urllib3.util.connection.HAS_IPV6 is False — the documented way
     # to opt out of IPv6 on hosts that advertise AAAA records they cannot route.
     # Passing 0 (AF_UNSPEC) unconditionally made that switch inert once this
     # adapter was mounted.
-    for af, socktype, proto, _canonname, sa in socket.getaddrinfo(
-        host, port, allowed_gai_family(), socket.SOCK_STREAM
-    ):
+    addresses = resolve_address(
+        host, port, timeout, bounded=use_bounded, family=allowed_gai_family()
+    )
+    for af, socktype, proto, _canonname, sa in addresses:
         ip = sa[0]
         if (
             not host_trusted
@@ -182,14 +202,21 @@ def _pinned_create_connection(
         ):
             msg = f"SSRF blocked: {host} resolves to non-global address {ip}"
             raise OSError(msg)
+        attempt_timeout = timeout
+        if budget is not None:
+            left = budget.remaining()
+            if left is not None and not (
+                isinstance(timeout, int | float) and timeout <= left
+            ):
+                attempt_timeout = left
         sock = None
         try:
             sock = socket.socket(af, socktype, proto)
             if socket_options:
                 for opt in socket_options:
                     sock.setsockopt(*opt)
-            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:  # type: ignore[attr-defined]  # noqa: SLF001
-                sock.settimeout(timeout)
+            if attempt_timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:  # type: ignore[attr-defined]  # noqa: SLF001
+                sock.settimeout(attempt_timeout)
             if source_address:
                 sock.bind(source_address)
             sock.connect(sa)
@@ -198,6 +225,8 @@ def _pinned_create_connection(
             err = e
             if sock is not None:
                 sock.close()
+            if budget is not None:
+                budget.check()
     if err is not None:
         raise err
     msg = f"getaddrinfo returned no addresses for {host}"

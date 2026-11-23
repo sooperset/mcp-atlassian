@@ -221,6 +221,29 @@ class TestFileRoot:
         # /etc is a symlink on macOS, and validate_safe_path resolves symlinks.
         assert validate_safe_path("/etc/hostname") == Path("/etc/hostname").resolve()
 
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("wide", ["root", "home"])
+    def test_stdio_warns_about_wide_root(
+        self, reset_file_root, tmp_path, monkeypatch, caplog, wide
+    ):
+        """stdio keeps a wide root (no behaviour change) but says so at start."""
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.chdir("/" if wide == "root" else home)
+        with caplog.at_level("WARNING"):
+            root = reset_file_root.configure_file_root_for_transport("stdio")
+        assert root == (Path("/") if wide == "root" else home.resolve())
+        assert reset_file_root.FILES_DIR_ENV in caplog.text
+
+    def test_stdio_narrow_root_does_not_warn(
+        self, reset_file_root, tmp_path, monkeypatch, caplog
+    ):
+        monkeypatch.chdir(tmp_path)
+        with caplog.at_level("WARNING"):
+            reset_file_root.configure_file_root_for_transport("stdio")
+        assert reset_file_root.FILES_DIR_ENV not in caplog.text
+
     def test_is_in_cwd_root(self, reset_file_root, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         assert reset_file_root.is_in_cwd_root("victim.py")
