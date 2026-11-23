@@ -12,6 +12,7 @@ from key_value.aio.stores.memory import MemoryStore
 from mcp_atlassian.servers.main import AtlassianMCP, UserTokenMiddleware, main_mcp
 from mcp_atlassian.servers.oauth_proxy import HardenedOAuthProxy
 from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
+from tests.utils.timing import budget
 
 
 @pytest.mark.anyio
@@ -1260,7 +1261,7 @@ class TestUserTokenMiddlewareUrlHeaderDns:
         def fake_getaddrinfo(host, port, *args, **kwargs):
             record["thread"] = threading.get_ident()
             entered.set()
-            record["released"] = release.wait(5.0)
+            record["released"] = release.wait(budget(5.0))
             return [(2, 1, 6, "", ("93.184.216.34", 0))]
 
         monkeypatch.setattr(urls.socket, "getaddrinfo", fake_getaddrinfo)
@@ -1314,3 +1315,219 @@ class TestUserTokenMiddlewareUrlHeaderDns:
         assert lookups == []
         start = send.call_args_list[0].args[0]
         assert start["status"] == 401
+
+    @pytest.mark.anyio
+    async def test_unsupported_authorization_triggers_no_lookup(
+        self, middleware, monkeypatch
+    ):
+        from mcp_atlassian.utils import urls
+
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        lookups: list[str] = []
+        monkeypatch.setattr(
+            urls.socket,
+            "getaddrinfo",
+            lambda host, *a, **k: lookups.append(host) or [],
+        )
+        send = AsyncMock()
+        scope = self._scope(
+            [
+                (b"authorization", b"Foo junk"),
+                (b"x-atlassian-jira-url", b"https://jira.example.test"),
+            ]
+        )
+
+        await middleware(scope, AsyncMock(), send)
+
+        assert lookups == []
+        assert send.call_args_list[0].args[0]["status"] == 401
+
+    @staticmethod
+    def _blocking_lookup(monkeypatch, release):
+        import threading
+
+        from mcp_atlassian.utils import urls
+
+        entered = threading.Event()
+
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            entered.set()
+            release.wait(budget(5.0))
+            return [(2, 1, 6, "", ("93.184.216.34", 0))]
+
+        monkeypatch.setattr(urls.socket, "getaddrinfo", fake_getaddrinfo)
+        return entered
+
+    @pytest.mark.anyio
+    async def test_url_check_does_not_use_tool_call_threads(
+        self, middleware, monkeypatch
+    ):
+        """A pending lookup leaves tool calls free to start."""
+        import threading
+
+        import anyio
+
+        from mcp_atlassian.servers.async_utils import run_fetcher_call
+
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        monkeypatch.setattr(
+            anyio.to_thread.current_default_thread_limiter(), "total_tokens", 1
+        )
+        release = threading.Event()
+        entered = self._blocking_lookup(monkeypatch, release)
+        scope = self._scope(
+            [
+                (b"authorization", b"Bearer dummy-token"),
+                (b"x-atlassian-jira-url", b"https://jira.example.test"),
+            ]
+        )
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(middleware, scope, AsyncMock(), AsyncMock())
+            assert await anyio.to_thread.run_sync(
+                entered.wait, budget(5.0), limiter=anyio.CapacityLimiter(1)
+            )
+            try:
+                with anyio.fail_after(budget(1)):
+                    assert await run_fetcher_call(lambda: "ran") == "ran"
+            finally:
+                release.set()
+
+    @pytest.mark.anyio
+    async def test_url_check_has_a_deadline(self, middleware, monkeypatch):
+        """A lookup past the deadline gets the answer of a failed lookup."""
+        import threading
+        import time
+
+        from mcp_atlassian.servers import async_utils
+
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        monkeypatch.setattr(async_utils, "URL_CHECK_TIMEOUT", 0.3, raising=False)
+        release = threading.Event()
+        self._blocking_lookup(monkeypatch, release)
+        send = AsyncMock()
+        scope = self._scope(
+            [
+                (b"authorization", b"Bearer dummy-token"),
+                (b"x-atlassian-jira-url", b"https://jira.example.test"),
+            ]
+        )
+        start = time.monotonic()
+        try:
+            await middleware(scope, AsyncMock(), send)
+            elapsed = time.monotonic() - start
+        finally:
+            release.set()
+        assert elapsed < budget(2)
+        assert send.call_args_list[0].args[0]["status"] == 401
+        body = json.loads(send.call_args_list[1].args[0]["body"])
+        assert body["error"].endswith("DNS resolution failed for jira.example.test")
+
+    @staticmethod
+    def _bearer_scope(url: bytes):
+        return {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [
+                (b"authorization", b"Bearer dummy-token"),
+                (b"x-atlassian-jira-url", url),
+            ],
+            "state": {},
+        }
+
+    @pytest.mark.anyio
+    async def test_full_url_check_pool_answers_503_and_spares_trusted_sites(
+        self, middleware, monkeypatch
+    ):
+        """Pending lookups of request-supplied hosts do not hold up others.
+
+        A full pool is a server capacity limit, answered with 503 and
+        Retry-After, not 401 (which could make a client drop credentials).
+        """
+        import threading
+
+        import anyio
+
+        from mcp_atlassian.servers import async_utils
+        from mcp_atlassian.utils import urls
+
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        monkeypatch.setenv("JIRA_URL", "https://jira.corp.example")
+        monkeypatch.setattr(async_utils, "URL_CHECK_WORKERS", 1, raising=False)
+        release = threading.Event()
+        entered = threading.Event()
+        trusted_lookups: list[str] = []
+
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            if host.startswith("slow"):
+                entered.set()
+                release.wait(budget(5.0))
+            else:
+                trusted_lookups.append(host)
+            return [(2, 1, 6, "", ("93.184.216.34", 0))]
+
+        monkeypatch.setattr(urls.socket, "getaddrinfo", fake_getaddrinfo)
+        trusted_apps = [AsyncMock(), AsyncMock()]
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(
+                middleware,
+                self._bearer_scope(b"https://slow.example.test"),
+                AsyncMock(),
+                AsyncMock(),
+            )
+            assert await anyio.to_thread.run_sync(
+                entered.wait, budget(5.0), limiter=anyio.CapacityLimiter(1)
+            )
+            try:
+                with anyio.fail_after(budget(1)):
+                    busy = AsyncMock()
+                    await middleware(
+                        self._bearer_scope(b"https://slow2.example.test"),
+                        AsyncMock(),
+                        busy,
+                    )
+                    for app, url in zip(
+                        trusted_apps,
+                        (b"https://victim.atlassian.net", b"https://jira.corp.example"),
+                        strict=True,
+                    ):
+                        trusted = UserTokenMiddleware(
+                            app, mcp_server_ref=middleware.mcp_server_ref
+                        )
+                        await trusted(self._bearer_scope(url), AsyncMock(), AsyncMock())
+            finally:
+                release.set()
+
+        busy_start = busy.call_args_list[0].args[0]
+        assert busy_start["status"] == 503
+        assert (b"retry-after", b"1") in busy_start["headers"]
+        assert trusted_lookups == ["victim.atlassian.net", "jira.corp.example"]
+        for app in trusted_apps:
+            app.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_allowlisted_host_is_checked_while_header_pool_is_full(
+        self, monkeypatch
+    ):
+        from mcp_atlassian.servers import async_utils
+        from mcp_atlassian.utils import urls
+
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "corp.example")
+        monkeypatch.setattr(async_utils, "URL_CHECK_WORKERS", 1, raising=False)
+        lookups: list[str] = []
+        monkeypatch.setattr(
+            urls.socket,
+            "getaddrinfo",
+            lambda host, *a, **k: (
+                lookups.append(host) or [(2, 1, 6, "", ("10.0.0.5", 0))]
+            ),
+        )
+        header_pool = async_utils._url_check_semaphore(trusted=False)
+        assert header_pool.acquire(blocking=False)
+        try:
+            assert await async_utils.run_url_check("https://jira.corp.example") is None
+            with pytest.raises(async_utils.UrlCheckBusy):
+                await async_utils.run_url_check("https://other.example.test")
+        finally:
+            header_pool.release()
+        assert lookups == ["jira.corp.example"]

@@ -828,3 +828,601 @@ def test_changelog_unfiltered_without_allowlist_when_metadata_fails() -> None:
     ).to_simplified_dict()
 
     assert len(_changed_fields(result["changelogs"])) == len(_metadata_history_items())
+
+
+# --- output: rendered HTML, current custom values, unknown changelog types ----
+
+_SECRET_ANCHOR = (
+    '<p>See <a href="https://jira.example.test/browse/SECRET-7" '
+    'title="SECRET-SUMMARY-seven" class="issue-link" '
+    'data-issue-key="SECRET-7">SECRET-7</a> and '
+    '<a href="https://jira.example.test/browse/ALLOWED-2" title="Allowed two" '
+    'class="issue-link" data-issue-key="ALLOWED-2">ALLOWED-2</a></p>'
+)
+_OUTPUT_FIELD_META = [
+    {
+        "id": "customfield_10020",
+        "name": "Sprint",
+        "schema": {"custom": "com.pyxis.greenhopper.jira:gh-sprint"},
+    },
+    {
+        "id": "customfield_10600",
+        "name": "Parent Link",
+        "schema": {"custom": "com.atlassian.jpo:jpo-custom-field-parent"},
+    },
+    {
+        "id": "customfield_10500",
+        "name": "Related Ticket",
+        "schema": {"type": "array", "custom": "com.example.app:issue-picker"},
+    },
+    {"id": "customfield_10700", "name": "Notes", "schema": {"type": "string"}},
+]
+
+
+def _output_scope_issue() -> dict:
+    items = [
+        {
+            "field": "Related Ticket",
+            "fieldtype": "custom",
+            "fieldId": "customfield_10500",
+            "to": "77",
+            "toString": "SECRET-8",
+        },
+        {
+            "field": "Related Ticket",
+            "fieldtype": "custom",
+            "fieldId": "customfield_10500",
+            "to": "78",
+            "toString": "ALLOWED-3",
+        },
+        {
+            "field": "status",
+            "fieldtype": "jira",
+            "fieldId": "status",
+            "fromString": "Open",
+            "toString": "Done",
+        },
+    ]
+    return {
+        "id": "10001",
+        "key": "ALLOWED-1",
+        "fields": {
+            "project": {"key": "ALLOWED", "name": "Allowed"},
+            "summary": "allowed issue",
+            "description": "See SECRET-7",
+            "comment": {
+                "comments": [{"id": "500", "body": "see SECRET-7", "author": {}}]
+            },
+            "customfield_10600": {
+                "showField": True,
+                "data": {"id": 1, "key": "SECRET-9", "summary": "SECRET-SUMMARY-9"},
+            },
+            "customfield_10500": ["SECRET-8"],
+            "customfield_10020": [{"id": 9, "name": "SECRET sprint 9"}],
+            "customfield_10700": "free text about SECRET-7",
+        },
+        "names": {
+            "customfield_10600": "Parent Link",
+            "customfield_10500": "Related Ticket",
+            "customfield_10020": "Sprint",
+            "customfield_10700": "Notes",
+        },
+        "renderedFields": {
+            "description": _SECRET_ANCHOR,
+            "comment": {"comments": [{"id": "500", "body": _SECRET_ANCHOR}]},
+        },
+        "changelog": {
+            "histories": [
+                {
+                    "id": "1",
+                    "author": {"displayName": "dummy"},
+                    "created": "2026-01-01T00:00:00.000+0000",
+                    "items": items,
+                }
+            ]
+        },
+    }
+
+
+def _output_scope_result(projects_filter: str | None) -> dict:
+    from mcp_atlassian.jira import JiraFetcher
+    from mcp_atlassian.jira.config import JiraConfig
+
+    fetcher = JiraFetcher(
+        config=JiraConfig(
+            url="https://jira.example.test",
+            auth_type="pat",
+            personal_token="dummy",
+            projects_filter=projects_filter,
+        )
+    )
+    raw = _output_scope_issue()
+    fake = MagicMock(
+        spec_set=["get_issue", "issue_get_comments", "get_all_fields", "issue"]
+    )
+    fake.get_issue.return_value = raw
+    fake.issue.return_value = raw
+    fake.issue_get_comments.return_value = raw["fields"]["comment"]
+    fake.get_all_fields.return_value = _OUTPUT_FIELD_META
+    fetcher.jira = fake
+    issue = fetcher.get_issue(
+        "ALLOWED-1", fields="*all", expand="renderedFields,changelog"
+    )
+    return issue.to_simplified_dict()
+
+
+@pytest.mark.security_regression
+def test_output_drops_server_derived_references_out_of_scope() -> None:
+    import json
+
+    result = _output_scope_result("ALLOWED")
+    text = json.dumps(result)
+
+    for leaked in ("SECRET-SUMMARY", "SECRET-9", "SECRET-8", "SECRET sprint"):
+        assert leaked not in text, leaked
+    # User-written text and in-scope references stay.
+    assert "free text about SECRET-7" in text
+    assert "See SECRET-7" in text
+    assert "Allowed two" in text
+    items = [i for c in result["changelogs"] for i in c["items"]]
+    assert {i.get("to_string") for i in items} >= {"ALLOWED-3", "Done"}
+
+
+def test_output_without_filter_is_unchanged() -> None:
+    import json
+
+    text = json.dumps(_output_scope_result(None))
+
+    for kept in ("SECRET-SUMMARY-seven", "SECRET-SUMMARY-9", "SECRET sprint 9"):
+        assert kept in text, kept
+
+
+_JQL_FIELD_META = [
+    {
+        "id": "customfield_10014",
+        "name": "Renamed Epic Link",
+        "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+    },
+    {
+        "id": "customfield_10600",
+        "name": "Parent Link",
+        "schema": {"custom": "com.atlassian.jpo:jpo-custom-field-parent"},
+    },
+    {
+        "id": "customfield_10700",
+        "name": "Release Notes",
+        "schema": {
+            "type": "string",
+            "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textfield",
+        },
+    },
+]
+
+
+def _jql_fetcher(*, metadata: bool = True) -> JiraFetcher:
+    fetcher = _fetcher("ALLOWED")
+    fetcher.jira = MagicMock(spec_set=["post", "get", "jql", "get_all_fields"])
+    if metadata:
+        fetcher.jira.get_all_fields.return_value = _JQL_FIELD_META
+    else:
+        fetcher.jira.get_all_fields.side_effect = HTTPError("metadata unavailable")
+    return fetcher
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    "jql",
+    [
+        'issue in linkedIssues("SECRET-1")',
+        'issue in linkedIssues(SECRET-1, "blocks")',
+        "parent = SECRET-1",
+        "key = secret-999",
+        "project = ALLOWED AND issuekey in (ALLOWED-1, SECRET-2)",
+        'issuekey in ("ALLOWED-1", "SECRET-2")',
+        'cf[10014] = "SECRET-3"',
+        '"Renamed Epic Link" = SECRET-3',
+        "customfield_10600 in (SECRET-4)",
+        "key in linkedIssues(SECRET-5)",
+        "project = ALLOWED AND (parent = SECRET-1)",
+        "NOT (parent = SECRET-1)",
+        "project = ALLOWED AND NOT (key in (ALLOWED-1, SECRET-2))",
+        'issue in (linkedIssues("SECRET-1"))',
+        'key = "SECRET\\u002D1"',
+        "key\n=\tSECRET-1",
+    ],
+)
+def test_search_refuses_predicates_naming_issues_outside_allowlist(jql) -> None:
+    fetcher = _jql_fetcher()
+
+    with pytest.raises(Exception, match="outside the configured"):
+        fetcher.search_issues(jql)
+
+    assert [c[0] for c in fetcher.jira.method_calls] in ([], ["get_all_fields"])
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    "jql",
+    [
+        "key = 10001",
+        "issue in linkedIssues(10001)",
+        "project = ALLOWED OR (key = 10001)",
+        "id = 10001",
+    ],
+)
+def test_search_refuses_issue_ids_in_issue_positions(jql) -> None:
+    fetcher = _jql_fetcher()
+
+    with pytest.raises(Exception, match="Use issue keys"):
+        fetcher.search_issues(jql)
+
+    fetcher.jira.post.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "jql",
+    [
+        "parent = ALLOWED-1",
+        'text ~ "UTF-8 SECRET-1"',
+        'summary !~ "ABC-12"',
+        'fixVersion = "v1-2" AND sprint in ("Sprint-5", "S-6")',
+        "labels = release-2 AND fixVersion = v2-1 AND assignee = jsmith-2",
+        'component in (core-1, "ui-2")',
+        'issue in linkedIssues("ALLOWED-2")',
+        'issue in linkedIssues("ALLOWED-1", "blocks-2")',
+        '"Release Notes" ~ "SECRET-7"',
+        'cf[10700] = "SECRET-7"',
+        "created >= -7d ORDER BY key ASC",
+        'key in (linkedIssues("ALLOWED-1", "blocks-2"))',
+        'status was "X-1" AND assignee changed',
+        "project = ALLOWED AND (labels = release-2 OR fixVersion = v2-1)",
+        "NOT (assignee = jsmith-2)",
+    ],
+)
+def test_search_keeps_in_scope_keys_and_non_issue_values(jql) -> None:
+    from mcp_atlassian.jira.scope import (
+        output_scope_kwargs,
+        refuse_out_of_scope_jql_references,
+    )
+
+    fetcher = _jql_fetcher()
+
+    refuse_out_of_scope_jql_references(
+        jql,
+        frozenset({"ALLOWED"}),
+        output_scope_kwargs(fetcher)["changelog_field_kinds"],
+    )
+
+
+def test_jql_check_without_metadata() -> None:
+    """Standard fields are still checked; custom fields refuse key-shaped values."""
+    from mcp_atlassian.jira.scope import (
+        output_scope_kwargs,
+        refuse_out_of_scope_jql_references,
+    )
+
+    fetcher = _jql_fetcher(metadata=False)
+    with pytest.raises(Exception, match="outside the configured"):
+        fetcher.search_issues("parent = SECRET-1")
+    kinds = output_scope_kwargs(fetcher)["changelog_field_kinds"]
+    for jql in ("cf[10014] = SECRET-1", '"Renamed Epic Link" = 10001'):
+        with pytest.raises(ScopeViolationError, match="metadata"):
+            refuse_out_of_scope_jql_references(jql, frozenset({"ALLOWED"}), kinds)
+    refuse_out_of_scope_jql_references(
+        'cf[1] = "free text" AND "Team Name" = ALLOWED-1 AND labels = x-2',
+        frozenset({"ALLOWED"}),
+        kinds,
+    )
+    assert fetcher.jira.get_all_fields.call_count <= 2
+
+
+def test_jql_check_is_linear() -> None:
+    from mcp_atlassian.jira.scope import refuse_out_of_scope_jql_references
+
+    def check(jql: str) -> None:
+        refuse_out_of_scope_jql_references(jql, frozenset({"ALLOWED"}))
+
+    def lists(n: int) -> str:
+        return "labels in (" + ", ".join(f'"v{i}"' for i in range(n)) + ")"
+
+    def groups(n: int) -> str:
+        return "(" * n + "labels = x" + ")" * n
+
+    for shape in (lists, groups):
+        assert _growth_ratio(check, shape(20000), shape(40000)) < 2.5
+
+
+_HTML_CASES = (
+    '<p><A HREF="https://jira.example.test/browse/secret-7" TITLE="SECRET-SUMMARY-a">'
+    "secret-7</A> "
+    '<a href="https://jira.example.test/browse/%53ECRET-8" title="SECRET-SUMMARY-b">'
+    "SECRET-8</a> "
+    '<a href="https://jira.example.test/secure/ViewIssue.jspa?id=10001" '
+    'title="SECRET-SUMMARY-c">link</a> '
+    '<a href="https://example.org/UTF-8">Encoding notes</a> '
+    '<a href="https://jira.example.test/browse/ALLOWED-2" title="Allowed two">'
+    "ALLOWED-2</a></p>"
+)
+
+
+@pytest.mark.security_regression
+def test_rendered_links_are_judged_as_jira_issue_links_only() -> None:
+    import json
+
+    raw = _output_scope_issue()
+    raw["renderedFields"] = {"description": _HTML_CASES}
+    raw["fields"]["customfield_10700"] = "SECRET-7"
+    raw["changelog"]["histories"][0]["items"] = [
+        {
+            "field": "Related Ticket",
+            "fieldtype": "custom",
+            "fieldId": "customfield_10500",
+            "toString": "SECRET-8 - confidential summary",
+        },
+        {
+            "field": "Notes",
+            "fieldtype": "custom",
+            "fieldId": "customfield_10700",
+            "toString": "SECRET-7",
+        },
+    ]
+    meta = [
+        *_OUTPUT_FIELD_META[:3],
+        {
+            "id": "customfield_10700",
+            "name": "Notes",
+            "schema": {
+                "type": "string",
+                "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textfield",
+            },
+        },
+    ]
+    from mcp_atlassian.jira import JiraFetcher
+    from mcp_atlassian.jira.config import JiraConfig
+
+    fetcher = JiraFetcher(
+        config=JiraConfig(
+            url="https://jira.example.test",
+            auth_type="pat",
+            personal_token="dummy",
+            projects_filter="ALLOWED",
+        )
+    )
+    fake = MagicMock(
+        spec_set=["get_issue", "issue_get_comments", "get_all_fields", "issue"]
+    )
+    fake.get_issue.return_value = raw
+    fake.issue.return_value = raw
+    fake.issue_get_comments.return_value = raw["fields"]["comment"]
+    fake.get_all_fields.return_value = meta
+    fetcher.jira = fake
+
+    result = fetcher.get_issue(
+        "ALLOWED-1", fields="*all", expand="renderedFields,changelog"
+    ).to_simplified_dict()
+    text = json.dumps(result)
+
+    assert "SECRET-SUMMARY" not in text
+    assert "confidential summary" not in text
+    assert "https://example.org/UTF-8" in text and "Encoding notes" in text
+    assert "Allowed two" in text
+    # A text field and its change keep a key-shaped value.
+    assert result["customfield_10700"]["value"] == "SECRET-7"
+    items = [i for c in result["changelogs"] for i in c["items"]]
+    assert [i.get("to_string") for i in items] == ["SECRET-7"]
+
+
+def _growth_ratio(run: Any, small: Any, large: Any) -> float:
+    """Best-of-five time on ``large`` over ``small`` (inputs twice as big)."""
+    import gc
+    import time
+
+    def best(arg: Any) -> float:
+        times = []
+        for _ in range(5):
+            started = time.perf_counter()
+            run(arg)
+            times.append(time.perf_counter() - started)
+        return min(times)
+
+    best(small)  # warm up
+    gc.disable()
+    try:
+        return best(large) / max(best(small), 1e-6)
+    finally:
+        gc.enable()
+
+
+_ORIGIN = ("https", "jira.example.test", 443)
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        '<p><a href="http://[">ordinary link</a></p>',
+        '<p><a href="https://jira.example.test:99999/browse/SECRET-1">x</a></p>',
+    ],
+)
+def test_rendered_filter_leaves_unparseable_links_alone(html) -> None:
+    from mcp_atlassian.models.jira.issue import _restrict_rendered_html
+
+    assert _restrict_rendered_html(html, {"ALLOWED"}, _ORIGIN) == html
+
+
+@pytest.mark.security_regression
+def test_rendered_filter_changes_only_the_blocked_anchors() -> None:
+    from mcp_atlassian.models.jira.issue import _restrict_rendered_html
+
+    before = '<DIV z="1" a="2">&nbsp; &#65; <B>x</B> '
+    blocked = (
+        '<a href="/secure/ViewIssue.jspa?id=10001" title="secret title" '
+        'data-summary="secret attribute">confidential &amp; summary</a>'
+    )
+    middle = ' <A HREF="https://jira.example.test/browse/ALLOWED-2" TITLE="t">A</A> '
+    blocked2 = '<a class="issue-link" data-issue-key="SECRET-7" title="s">SECRET-7</a>'
+    after = "</DIV>"
+    html = before + blocked + middle + blocked2 + after
+
+    result = _restrict_rendered_html(html, {"ALLOWED"}, _ORIGIN)
+
+    assert result == (
+        before + "confidential &amp; summary" + middle + "SECRET-7" + after
+    )
+
+
+def test_rendered_filter_is_linear() -> None:
+    from mcp_atlassian.models.jira.issue import _restrict_rendered_html
+
+    link = '<a class="issue-link" data-issue-key="SECRET-7" title="s">SECRET-7</a> '
+
+    def doc(n: int) -> str:
+        return "<p>" + link * n + "</p>"
+
+    ratio = _growth_ratio(
+        lambda h: _restrict_rendered_html(h, {"ALLOWED"}, _ORIGIN),
+        doc(4000),
+        doc(8000),
+    )
+    assert ratio < 2.5
+
+
+def _kinds_fetcher(raw: dict) -> JiraFetcher:
+    from mcp_atlassian.jira.config import JiraConfig
+
+    fetcher = JiraFetcher(
+        config=JiraConfig(
+            url="https://jira.example.test",
+            auth_type="pat",
+            personal_token="dummy",
+            projects_filter="ALLOWED",
+        )
+    )
+    fake = MagicMock(
+        spec_set=["get_issue", "issue_get_comments", "get_all_fields", "issue"]
+    )
+    fake.get_issue.return_value = raw
+    fake.issue.return_value = raw
+    fake.issue_get_comments.return_value = {"comments": []}
+    fake.get_all_fields.return_value = [
+        *_OUTPUT_FIELD_META,
+        {
+            "id": "customfield_10014",
+            "name": "Epic Link",
+            "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+        },
+        {
+            "id": "customfield_10800",
+            "name": "Notes",
+            "schema": {
+                "type": "string",
+                "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textfield",
+            },
+        },
+    ]
+    fetcher.jira = fake
+    return fetcher
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    ("parent_link", "kept"),
+    [
+        ({"data": {"id": 10001, "summary": "confidential"}}, False),
+        ("secret-9", False),
+        ({"data": {"key": "SECRET-9", "summary": "confidential"}}, False),
+        ({"data": {"key": "ALLOWED-9", "summary": "fine"}}, True),
+    ],
+)
+def test_reference_fields_keep_only_confirmed_values(parent_link, kept) -> None:
+    raw = {
+        "id": "1",
+        "key": "ALLOWED-1",
+        "fields": {
+            "project": {"key": "ALLOWED"},
+            "summary": "s",
+            "customfield_10600": parent_link,
+        },
+        "names": {"customfield_10600": "Parent Link"},
+    }
+    issue = _kinds_fetcher(raw).get_issue("ALLOWED-1", fields="*all")
+    assert ("customfield_10600" in issue.custom_fields) is kept
+
+
+@pytest.mark.security_regression
+def test_text_field_survives_a_dropped_epic_link() -> None:
+    raw = {
+        "id": "1",
+        "key": "ALLOWED-1",
+        "fields": {
+            "project": {"key": "ALLOWED"},
+            "summary": "s",
+            "customfield_10014": "SECRET-1",
+            "customfield_10800": "SECRET-1",
+        },
+        "names": {"customfield_10014": "Epic Link", "customfield_10800": "Notes"},
+    }
+    issue = _kinds_fetcher(raw).get_issue("ALLOWED-1", fields="*all")
+
+    assert issue.epic_key is None
+    assert "customfield_10014" not in issue.custom_fields
+    assert issue.custom_fields["customfield_10800"]["value"] == "SECRET-1"
+
+
+@pytest.mark.security_regression
+def test_jql_field_names_match_metadata_with_repeated_spaces() -> None:
+    from mcp_atlassian.jira.scope import (
+        output_scope_kwargs,
+        refuse_out_of_scope_jql_references,
+    )
+
+    fetcher = _jql_fetcher()
+    fetcher.jira.get_all_fields.return_value = [
+        {
+            "id": "customfield_10014",
+            "name": "Renamed  Epic Link",
+            "schema": {"custom": "com.pyxis.greenhopper.jira:gh-epic-link"},
+        }
+    ]
+    kinds = output_scope_kwargs(fetcher)["changelog_field_kinds"]
+
+    with pytest.raises(ScopeViolationError, match="outside the configured"):
+        refuse_out_of_scope_jql_references(
+            '"Renamed  Epic Link" = SECRET-3', frozenset({"ALLOWED"}), kinds
+        )
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        (
+            '<p><a href="/browse/SECRET-1" title="secret">x</p>',
+            "<p>x</p>",
+        ),
+        (
+            '<p><a href="/browse/SECRET-1" title="secret">'
+            '<a href="/browse/ALLOWED-1">ok</a></a> tail</p>',
+            '<p><a href="/browse/ALLOWED-1">ok</a></a> tail</p>',
+        ),
+        (
+            '<P>a <a href="/browse/SECRET-1" title="secret">',
+            "<P>a ",
+        ),
+    ],
+    ids=["unclosed", "nested", "at-end"],
+)
+def test_rendered_filter_handles_open_anchors(html, expected) -> None:
+    from mcp_atlassian.models.jira.issue import _restrict_rendered_html
+
+    assert _restrict_rendered_html(html, {"ALLOWED"}, _ORIGIN) == expected
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    ("field_id", "kept"), [("customfield_10600", False), ("customfield_10900", True)]
+)
+def test_integer_values_follow_the_field_type(field_id, kept) -> None:
+    from mcp_atlassian.models.jira.issue import custom_value_allowed
+
+    kinds = {"customfield_10600": "issue", "customfield_10900": "plain"}
+    assert custom_value_allowed(field_id, "", 10001, kinds, {"ALLOWED"}) is kept

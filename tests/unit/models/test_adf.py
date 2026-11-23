@@ -6,6 +6,7 @@ including handling of various inline and block node types,
 and the reverse conversion from Markdown to ADF.
 """
 
+import re
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -1168,3 +1169,215 @@ class TestMarkdownToJiraDispatch:
         """Server/DC path with empty string returns empty string."""
         result = server_client._markdown_to_jira("")
         assert result == ""
+
+
+# --- Linear-time inline scan, explicit stacks -----------------------------
+
+#: The inline regex ``_parse_inline_formatting`` used before its scanner.
+_STOCK_INLINE_RE = re.compile(
+    r"\[~accountid:(?P<wiki_mention_id>[^\]]+)\]"
+    r"|@\[(?P<display_mention_text>[^\]]+)\]"
+    r"\(accountid:(?P<display_mention_id>[^)]+)\)"
+    r"|`(?P<code_inner>[^`]+)`"
+    r"|\{status:(?:color=(?P<status_color>\w+)\|)?"
+    r"title=(?P<status_title>[^}]+)\}"
+    r"|\*\*(?P<bold_inner>.+?)\*\*"
+    r"|~~(?P<strike_inner>.+?)~~"
+    r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
+    r"|(?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)"
+)
+
+_INLINE_TOKENS = [
+    *"[]()`{}*~@|\n aé_",
+    "[~accountid:",
+    "(accountid:",
+    "{status:",
+    "color=",
+    "title=",
+    "**",
+    "~~",
+    "@[",
+]
+
+
+def test_inline_matches_like_stock_regex() -> None:
+    import random
+
+    from src.mcp_atlassian.models.jira.adf import _inline_matches
+
+    rng = random.Random(0)
+    for _ in range(30000):
+        text = "".join(rng.choice(_INLINE_TOKENS) for _ in range(rng.randint(0, 24)))
+        stock = [
+            (m.span(), {k: v for k, v in m.groupdict().items() if v is not None})
+            for m in _STOCK_INLINE_RE.finditer(text)
+        ]
+        scanned = [
+            ((m.start, m.end), {k: v for k, v in m.groups.items() if v is not None})
+            for m in _inline_matches(text)
+        ]
+        assert scanned == stock, text
+
+
+def _recursive_adf_to_text(node: Any) -> str | None:
+    """The recursive ``adf_to_text`` for text, hardBreak and codeBlock nodes."""
+    if node is None or isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        texts = [text for item in node if (text := _recursive_adf_to_text(item))]
+        return "\n".join(texts) if texts else None
+    if node.get("type") == "text":
+        return node.get("text", "")
+    if node.get("type") == "hardBreak":
+        return "\n"
+    if node.get("type") == "codeBlock":
+        code = _recursive_adf_to_text(node.get("content", [])) or ""
+        return f"```\n{code}\n```"
+    content = node.get("content")
+    return _recursive_adf_to_text(content) if content else None
+
+
+def test_adf_to_text_joins_like_recursive_walk() -> None:
+    import random
+
+    rng = random.Random(0)
+
+    def tree(depth: int) -> Any:
+        roll = rng.random()
+        if depth == 0 or roll < 0.3:
+            return rng.choice(
+                [
+                    {"type": "text", "text": rng.choice(["", "a", "\n"])},
+                    {"type": "hardBreak"},
+                    {"type": "paragraph"},
+                    rng.choice(["", "s", None]),
+                ]
+            )
+        if roll < 0.55:
+            return [tree(depth - 1) for _ in range(rng.randint(0, 4))]
+        if roll < 0.7:
+            return {"type": "codeBlock", "content": tree(depth - 1)}
+        return {"type": "paragraph", "content": tree(depth - 1)}
+
+    for _ in range(20000):
+        node = tree(rng.randint(0, 6))
+        assert adf_to_text(node) == _recursive_adf_to_text(node), node
+
+
+def test_deeply_nested_adf_converts_to_text() -> None:
+    node: dict[str, Any] = {"type": "text", "text": "deep"}
+    for _ in range(5000):
+        node = {
+            "type": "bulletList",
+            "content": [{"type": "listItem", "content": [node]}],
+        }
+    assert adf_to_text({"type": "doc", "version": 1, "content": [node]}) == "deep"
+
+
+def test_adf_to_text_keeps_little_memory_on_deep_branching_lists() -> None:
+    import tracemalloc
+
+    node: dict[str, Any] = {"type": "text", "text": "a" * 32}
+    for _ in range(1000):
+        paragraph = {
+            "type": "paragraph",
+            "content": [{"type": "text", "text": "b" * 32}],
+        }
+        node = {
+            "type": "bulletList",
+            "content": [{"type": "listItem", "content": [paragraph, node]}],
+        }
+    tracemalloc.start()
+    try:
+        text = adf_to_text({"type": "doc", "content": [node]})
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert text is not None and len(text) == 1001 * 33 - 1
+    # The text is 33 KB; keeping every level's text took 16 MiB.
+    assert peak < 2 * 1024 * 1024
+
+
+def test_nested_expands_and_panels_close_at_the_first_closing_line() -> None:
+    md = "\n".join(
+        [
+            "{expand:outer}",
+            ":::info",
+            "{expand:inner}",
+            "a",
+            "{expand}",
+            "b",
+            ":::",
+            "{expand}",
+            "{expand}",
+        ]
+    )
+    content = markdown_to_adf(md)["content"]
+    # The outer expand ends at the first "{expand}" line; the panel and the
+    # inner expand inside it end there with it.
+    outer, *rest = content
+    panel = outer["content"][0]
+    inner = panel["content"][0]
+    assert (outer["attrs"], panel["attrs"], inner["attrs"]) == (
+        {"title": "outer"},
+        {"panelType": "info"},
+        {"title": "inner"},
+    )
+    assert len(outer["content"]) == len(panel["content"]) == 1
+    assert inner["content"] == [
+        {"type": "paragraph", "content": [{"type": "text", "text": "a"}]}
+    ]
+    # A lone "{expand}" line opens an untitled expand.
+    assert rest == [
+        {"type": "paragraph", "content": [{"type": "text", "text": "b"}]},
+        {"type": "paragraph", "content": [{"type": "text", "text": ":::"}]},
+        {
+            "type": "expand",
+            "attrs": {"title": ""},
+            "content": [{"type": "paragraph", "content": []}],
+        },
+    ]
+
+
+def test_empty_and_unclosed_containers_hold_an_empty_paragraph() -> None:
+    empty = [{"type": "paragraph", "content": []}]
+    assert markdown_to_adf("{expand:x}\n{expand}")["content"][0]["content"] == empty
+    assert markdown_to_adf("{expand:x}")["content"][0]["content"] == empty
+    assert markdown_to_adf(":::note\n\n\n:::")["content"][0]["content"] == empty
+
+
+def test_deeply_nested_expands_convert() -> None:
+    md = "{expand:x}\n" * 3000 + "a\n" + "{expand}\n" * 3000
+    node = markdown_to_adf(md)["content"][0]
+    depth = 0
+    while node["type"] == "expand":
+        node = node["content"][-1]
+        depth += 1
+    assert depth == 3000
+    assert node["content"][0]["text"] == "a"
+
+
+@pytest.mark.parametrize(
+    ("node", "expected"),
+    [
+        ({"type": []}, None),
+        ({"type": {"a": 1}, "content": [{"type": "text", "text": "x"}]}, "x"),
+        (
+            [[{"type": "text", "text": 42}], {"type": "mention", "attrs": None}],
+            TypeError,
+        ),
+        (
+            [{"type": "mention", "attrs": None}, [{"type": "text", "text": 42}]],
+            AttributeError,
+        ),
+    ],
+)
+def test_adf_to_text_keeps_results_and_errors_on_malformed_nodes(
+    node: Any, expected: Any
+) -> None:
+    # The recursive walk returned these, or raised these error types.
+    if isinstance(expected, type) and issubclass(expected, Exception):
+        with pytest.raises(expected):
+            adf_to_text(node)
+    else:
+        assert adf_to_text(node) == expected

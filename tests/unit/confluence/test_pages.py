@@ -1,6 +1,6 @@
 """Unit tests for the PagesMixin class."""
 
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import ANY, MagicMock, PropertyMock, patch
 
 import pytest
 from atlassian.errors import ApiError
@@ -978,7 +978,7 @@ class TestPagesMixin:
         pages_mixin.preprocessor.process_html_content.assert_called_once_with(
             "<p>This is some content</p>",
             space_key="DEMO",
-            confluence_client=pages_mixin.confluence,
+            confluence_client=ANY,
             content_id="789012",
         )
 
@@ -1247,7 +1247,7 @@ class TestPagesMixin:
         pages_mixin.preprocessor.process_html_content.assert_called_once_with(
             "<p>Cloud content</p>",
             space_key="TEST",
-            confluence_client=pages_mixin.confluence,
+            confluence_client=ANY,
             content_id="789012",
         )
 
@@ -2860,8 +2860,8 @@ class TestMovePage:
     @staticmethod
     def _serve_pages(pages_mixin, pages):
         """Answer get_page_by_id from a {page_id: page_dict} map."""
-        pages_mixin.confluence.get_page_by_id.side_effect = (
-            lambda page_id, **kwargs: pages[str(page_id)]
+        pages_mixin.confluence.get_page_by_id.side_effect = lambda page_id, **kwargs: (
+            pages[str(page_id)]
         )
 
     def test_move_page_to_new_parent_same_space(self, pages_mixin):
@@ -4391,3 +4391,109 @@ class TestGetSpacePageTreeCloudOAuth:
             "has_more": False,
             "pages": [],
         }
+
+
+@pytest.mark.security_regression
+def test_page_children_share_one_user_lookup_budget():
+    """Child bodies converted in one call share the lookup budget and cache."""
+    from mcp_atlassian.confluence.config import ConfluenceConfig
+    from mcp_atlassian.preprocessing.base import MAX_USER_LOOKUPS_PER_CALL
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    def body(n: int) -> str:
+        links = "".join(
+            f'<ac:link><ri:user ri:account-id="acct-{i}" /></ac:link> '
+            for i in [0, *range(n * 40 + 1, n * 40 + 40)]
+        )
+        return f"<p>{links}</p>"
+
+    children = [
+        {
+            "id": str(n),
+            "type": "page",
+            "title": f"Child {n}",
+            "body": {"storage": {"value": body(n)}},
+        }
+        for n in range(10)
+    ]
+    with patch(
+        "mcp_atlassian.confluence.pages.ConfluenceClient.__init__", return_value=None
+    ):
+        mixin = PagesMixin()
+    mixin.config = ConfluenceConfig(
+        url="https://confluence.example.com", auth_type="pat", personal_token="x"
+    )
+    client = MagicMock(
+        spec_set=[
+            "get_page_child_by_type",
+            "get_user_details_by_accountid",
+            "get_user_details_by_userkey",
+            "get_user_details_by_username",
+        ]
+    )
+    client.get_page_child_by_type.side_effect = lambda **kw: (
+        {"results": children} if kw["type"] == "page" else {"results": []}
+    )
+    client.get_user_details_by_accountid.side_effect = lambda ident: {
+        "displayName": f"Name {ident}"
+    }
+    mixin.confluence = client
+    mixin.preprocessor = ConfluencePreprocessor(base_url=mixin.config.url)
+
+    pages = mixin.get_page_children("1", limit=50, expand="body.storage")
+
+    lookups = client.get_user_details_by_accountid
+    assert lookups.call_count == MAX_USER_LOOKUPS_PER_CALL
+    assert [c.args for c in lookups.call_args_list].count(("acct-0",)) == 1
+    assert len(pages) == 10
+    assert all("@Name acct-0" in p.content for p in pages)
+
+
+@pytest.mark.security_regression
+def test_single_page_read_uses_the_call_lookup_cap():
+    """A one-page call has the same per-call cap and looks each user up once."""
+    from mcp_atlassian.confluence.config import ConfluenceConfig
+    from mcp_atlassian.preprocessing.base import MAX_USER_LOOKUPS_PER_CALL
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    ids = [*range(MAX_USER_LOOKUPS_PER_CALL + 30), 0, 1, 2]
+    body = (
+        "<p>"
+        + "".join(
+            f'<ac:link><ri:user ri:account-id="acct-{i}" /></ac:link> ' for i in ids
+        )
+        + "</p>"
+    )
+    with patch(
+        "mcp_atlassian.confluence.pages.ConfluenceClient.__init__", return_value=None
+    ):
+        mixin = PagesMixin()
+    mixin.config = ConfluenceConfig(
+        url="https://confluence.example.com", auth_type="pat", personal_token="x"
+    )
+    client = MagicMock(
+        spec_set=[
+            "get_page_by_id",
+            "get_user_details_by_accountid",
+            "get_user_details_by_userkey",
+            "get_user_details_by_username",
+        ]
+    )
+    client.get_page_by_id.return_value = {
+        "id": "1",
+        "title": "Page",
+        "space": {"key": "TEST"},
+        "body": {"storage": {"value": body}},
+    }
+    client.get_user_details_by_accountid.side_effect = lambda ident: {
+        "displayName": f"Name {ident}"
+    }
+    mixin.confluence = client
+    mixin.preprocessor = ConfluencePreprocessor(base_url=mixin.config.url)
+
+    page = mixin.get_page_content("1")
+
+    lookups = client.get_user_details_by_accountid
+    assert lookups.call_count == MAX_USER_LOOKUPS_PER_CALL
+    assert len({c.args for c in lookups.call_args_list}) == lookups.call_count
+    assert "@Name acct-0" in page.content

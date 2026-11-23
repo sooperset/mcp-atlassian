@@ -10,6 +10,7 @@ from ..models.jira import (
 )
 from ..utils.urls import path_segment
 from .client import JiraClient
+from .scope import allowed_project_keys, output_scope_kwargs
 
 logger = logging.getLogger("mcp-jira")
 
@@ -128,7 +129,9 @@ class QueuesMixin(JiraClient):
                 return JiraServiceDeskQueuesResult(service_desk_id=service_desk_id)
 
             return JiraServiceDeskQueuesResult.from_api_response(
-                response, service_desk_id=service_desk_id
+                response,
+                service_desk_id=service_desk_id,
+                allowed_projects=allowed_project_keys(self.config),
             )
         except Exception as e:
             logger.error(
@@ -184,6 +187,15 @@ class QueuesMixin(JiraClient):
                 str(e),
             )
 
+        scope = output_scope_kwargs(self)
+        if scope["allowed_projects"] and queue_model is not None:
+            # A queue's JQL is set in JSM and can select issues of any project:
+            # its total and JQL describe issues the caller cannot see. Every
+            # return path below uses this cleaned model.
+            queue_model = queue_model.model_copy(
+                update={"issue_count": None, "jql": None}
+            )
+
         try:
             response = self.jira.get(
                 "rest/servicedeskapi/servicedesk/"
@@ -206,6 +218,7 @@ class QueuesMixin(JiraClient):
                 service_desk_id=service_desk_id,
                 queue_id=queue_id,
                 queue=queue_model,
+                **scope,
             )
         except Exception as e:
             logger.error(

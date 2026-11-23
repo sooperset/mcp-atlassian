@@ -24,6 +24,7 @@ from mcp_atlassian.preprocessing.base import (
     _restore_code_macro_blocks,
 )
 from mcp_atlassian.preprocessing.jira import JiraPreprocessor
+from tests.utils.timing import budget
 
 BUDGET_SECONDS = 1.5
 
@@ -31,19 +32,6 @@ BUDGET_SECONDS = 1.5
 #: the suite under one. The inputs here took far longer than this before the
 #: fix, so the wider budget still catches a return to the old behavior.
 TRACED_BUDGET_FACTOR = 20
-
-
-def _budget_seconds() -> float:
-    """Return the wall-clock budget for one call in this test run."""
-    try:
-        import coverage
-
-        traced = coverage.Coverage.current() is not None
-    except ImportError:
-        traced = False
-    if traced or sys.gettrace() is not None:
-        return BUDGET_SECONDS * TRACED_BUDGET_FACTOR
-    return BUDGET_SECONDS
 
 
 _CODE_MACRO = (
@@ -79,7 +67,7 @@ def _time_budget(seconds: float) -> Iterator[None]:
 
 
 def _finishes_in_budget(call: Callable[[], object]) -> None:
-    with _time_budget(_budget_seconds()):
+    with _time_budget(budget(BUDGET_SECONDS, TRACED_BUDGET_FACTOR)):
         call()
 
 
@@ -618,3 +606,358 @@ def test_magic_link_pattern_matches_like_stock() -> None:
             assert (a and (a.span(), a.group("www"))) == (
                 b and (b.span(), b.group("www"))
             ), text
+
+
+# --- Growth at twice the size, in a child process -------------------------
+
+#: Inputs whose time grew with the square of their size (or that raised
+#: RecursionError) on 62e2953. Each entry is (entry point, input built from
+#: ``k``, ``k``); ``k`` and ``2 * k`` make complete documents of about 64
+#: and 128 KiB, or nesting depths, that took seconds or minutes before.
+_GROWTH_CASES = {
+    "md_open_brackets": ("conf_write", "'[' * k", 32768),
+    "md_open_bracket_before_link": ("conf_write", "'[ [a](b) ' * k", 7000),
+    "md_links": ("conf_write", "'[a](b) ' * k", 4500),
+    "md_open_link_targets": ("conf_write", "'[a](' * k", 8192),
+    "md_tilde_after_punctuation": ("conf_write", "'.~a ' * k", 8192),
+    "md_open_footnote_refs": ("conf_write", "'[^a ' * k", 8192),
+    "md_heading_lines": ("conf_write", "'# a\\n' * k", 16384),
+    "md_rule_lines": ("conf_write", "'---\\n' * k", 16384),
+    "md_fenced_blocks": ("conf_write", "'```\\nx\\n```\\n' * k", 5461),
+    "md_open_tags": ("conf_write", "'<a b' * k", 16384),
+    "md_inline_html": ("conf_write", "'<b>' * k", 21845),
+    "md_code_spans": ("conf_write", "'`c` ' * k", 16384),
+    "md_emphases": ("conf_write", "'*e* ' * k", 16384),
+    "md_quoted_headings": ("conf_write", "'> a\\n# b\\n' * k", 8192),
+    "md_headings_after_pipes": ("conf_write", "'|a\\n# h\\n' * k", 9362),
+    "md_admonitions": ("conf_write", "'!!! note\\n# h\\n' * k", 4681),
+    "md_deep_indentation": (
+        "conf_write",
+        "''.join('  ' * i + '- a\\n' for i in range(k))",
+        256,
+    ),
+    "md_paragraphs": ("conf_write", "'a\\n\\n' * k", 10900),
+    "jira_fence_runs": ("jira_read", "'```' * k", 21000),
+    "jira_unclosed_fences": ("jira_read", "'x```\\n' * k", 13000),
+    "adf_open_brackets": ("adf_write", "'[' * k", 65536),
+    "adf_open_display_mentions": ("adf_write", "'@[' * k", 32768),
+    "adf_open_link_targets": ("adf_write", "'[a](' * k", 16384),
+    "adf_open_statuses": ("adf_write", "'{status:title=' * k", 4600),
+    "adf_open_wiki_mentions": ("adf_write", "'[~accountid:' * k", 5400),
+    "adf_nested_expands": (
+        "adf_write",
+        "'{expand:x}\\n' * k + 'a\\n' + '{expand}\\n' * k",
+        3000,
+    ),
+    "adf_nested_panels": (
+        "adf_write",
+        "':::info\\n' * k + 'a\\n' + ':::\\n' * k",
+        3000,
+    ),
+    "adf_read_nested_lists": (
+        "adf_read",
+        "{'type': 'doc', 'content': [functools.reduce(lambda node, _: "
+        "{'type': 'bulletList', 'content': [{'type': 'listItem', 'content': "
+        "[{'type': 'paragraph', 'content': [{'type': 'text', 'text': 'b' * 32}]}, "
+        "node]}]}, range(k), {'type': 'text', 'text': 'a'})]}",
+        2000,
+    ),
+}
+
+_GROWTH_SCRIPT = """
+import functools, logging, sys, time
+logging.disable(logging.CRITICAL)
+from mcp_atlassian.models.jira.adf import adf_to_text, markdown_to_adf
+from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+from mcp_atlassian.preprocessing.jira import JiraPreprocessor
+
+confluence = ConfluencePreprocessor(base_url="https://example.invalid/wiki")
+jira = JiraPreprocessor(base_url="https://jira.example.invalid")
+call = {
+    "conf_write": confluence.markdown_to_confluence_storage,
+    "jira_read": jira.clean_jira_text,
+    "adf_write": lambda text: markdown_to_adf(text, "https://jira.example.invalid"),
+    "adf_read": adf_to_text,
+}[sys.argv[1]]
+make = eval("lambda k: " + sys.argv[2])
+
+def best(k):
+    value = make(k)
+    times = []
+    for _ in range(3):
+        start = time.perf_counter()
+        call(value)
+        times.append(time.perf_counter() - start)
+    return min(times)
+
+print(best(int(sys.argv[3])), best(2 * int(sys.argv[3])))
+"""
+
+#: Linear work takes about twice as long at twice the size, quadratic work
+#: four times as long. Times this short are mostly noise.
+GROWTH_RATIO_LIMIT = 2.5
+GROWTH_NOISE_SECONDS = 0.1
+GROWTH_MAX_SECONDS = 2.0
+
+
+@pytest.mark.parametrize(
+    ("entry", "expression", "k"),
+    list(_GROWTH_CASES.values()),
+    ids=list(_GROWTH_CASES),
+)
+def test_conversion_time_grows_linearly(entry: str, expression: str, k: int) -> None:
+    # A child process: no signal interrupts a long regex call, the Confluence
+    # converter's fallback would run a slow conversion again, and a coverage
+    # tracer would slow the pure-Python scans unevenly.
+    import subprocess
+
+    result = subprocess.run(
+        [sys.executable, "-c", _GROWTH_SCRIPT, entry, expression, str(k)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    small, large = map(float, result.stdout.split())
+    assert large < GROWTH_MAX_SECONDS, (small, large)
+    assert large < GROWTH_NOISE_SECONDS or large < GROWTH_RATIO_LIMIT * small, (
+        small,
+        large,
+    )
+
+
+# --- Link text scan (Confluence Markdown) ---------------------------------
+
+
+def _stock_markdown_to_html(content: str) -> str:
+    """``markdown_to_html`` with Python-Markdown's own ``getText``."""
+    import importlib.util
+
+    from mcp_atlassian.preprocessing import confluence
+
+    spec = importlib.util.find_spec("md2conf.markdown")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if confluence._MAGIC_LINK_RE is not None:
+        module._CONVERTER.inlinePatterns[
+            "magic-link"
+        ].compiled_re = confluence._MAGIC_LINK_RE
+    return str(module.markdown_to_html(content))
+
+
+_LINK_TOKENS = [
+    *"[]()!a ^:*`<>\\\n~='\".",
+    "[^1]",
+    "[^1]: n",
+    "[x]: http://u",
+    "![",
+    "](",
+    "[ref]",
+    '\n\n[ref]: /u "t"\n',
+    "[a](b)",
+    "](c)",
+    "\n\n",
+    "http://e.x",
+    "[[",
+    "]]",
+    "<a>",
+    "\n# h\n",
+    "\n---\n",
+    "\n```\nx\n```\n",
+    "\n~~~\ny\n",
+    "\n    - i",
+]
+
+
+def test_storage_conversion_matches_stock(monkeypatch: pytest.MonkeyPatch) -> None:
+    import random
+
+    from md2conf.converter import ConfluenceStorageFormatConverter
+
+    from mcp_atlassian.preprocessing import confluence
+
+    preprocessor = confluence.ConfluencePreprocessor(
+        base_url="https://example.invalid/wiki"
+    )
+    rng = random.Random(0)
+    texts = [
+        "".join(rng.choice(_LINK_TOKENS) for _ in range(rng.randint(0, 30)))
+        for _ in range(400)
+    ]
+    texts += [
+        "# T\n\n- [ ] a\n- [x] b\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n"
+        "```py\nx\n```\n\n> q [^1]\n\n[^1]: note\n\n<b>raw</b> ![i](a.png)",
+        "[a](b) " * 300 + "\n\n" + "`c` *e* " * 300,
+        # Normal documents near and past the old document-wide budgets.
+        '[a](b "t") ' * 2000,
+        "file~backup " * 2000 + "\n\n~ok~ ^yes^ ==mark==",
+        "approx ~5 and ^2 " * 400 + "\n\n~ok~",
+        "# a\n" * 1500 + "text\n---",
+        "    x\n" + " " * 260 + "y",
+        "<b>x</b> " * 2000 + "\n\n<i>y</i>",
+        "x<y and a<b " * 500 + "\n\n> q\n\n<b>z</b>",
+        # A long paragraph with few matches, and a list item continued by
+        # a line of many spaces.
+        "a " * 16384 + "*x*",
+        "- x\n" + " " * 260 + "y",
+        # Adjacent delimiter spans, paired again after the first one.
+        "x^2^^3^ a~b~~c~ ==a====b== *a**b*",
+    ]
+    # Random documents longer than the work floors. Some hold URLs that
+    # md2conf rejects, so only the HTML is compared.
+    for _ in range(5):
+        text = "".join(rng.choice(_LINK_TOKENS) for _ in range(3000))
+        assert confluence.markdown_to_html(text) == _stock_markdown_to_html(text)
+    for text in texts:
+        assert confluence.markdown_to_html(text) == _stock_markdown_to_html(text), text
+        new = preprocessor.markdown_to_confluence_storage(text)
+        with monkeypatch.context() as patched:
+            patched.setattr(confluence, "markdown_to_html", _stock_markdown_to_html)
+            patched.setattr(
+                confluence, "_STORAGE_CONVERTER", ConfluenceStorageFormatConverter
+            )
+            stock = preprocessor.markdown_to_confluence_storage(text)
+        assert _without_task_uuids(new) == _without_task_uuids(stock), text
+
+
+@pytest.mark.parametrize(
+    ("limits", "markdown", "converted"),
+    [
+        (("_TEXT_WORK_PER_CHAR", "_TEXT_WORK_FLOOR"), "x ~a~ y ^b^", "<sub>a</sub>"),
+        (("_TEXT_WORK_PER_CHAR", "_TEXT_WORK_FLOOR"), '[a](b "t")', 'title="t"'),
+        (("_INLINE_COPY_PER_CHAR", "_INLINE_COPY_FLOOR"), "a *e* b", "<em>"),
+        (("_MAX_NESTING_MARKERS",), "- a", "<li>"),
+    ],
+)
+def test_work_limits_reach_the_installed_converter(
+    monkeypatch: pytest.MonkeyPatch,
+    limits: tuple[str, ...],
+    markdown: str,
+    converted: str,
+) -> None:
+    # The limits sit inside Python-Markdown and pymdown-extensions; at zero
+    # the syntax they bound must change, or they no longer apply.
+    from mcp_atlassian.preprocessing import confluence
+
+    assert converted in confluence.markdown_to_html(markdown)
+    for limit in limits:
+        monkeypatch.setattr(confluence, limit, 0)
+    assert converted not in confluence.markdown_to_html(markdown)
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    ["- " * 4000 + "a <b>", "".join("  " * i + "- a <b>\n" for i in range(300))],
+    ids=["markers", "indentation"],
+)
+def test_deeply_nested_markdown_list_keeps_its_text(markdown: str) -> None:
+    from mcp_atlassian.preprocessing.confluence import ConfluencePreprocessor
+
+    confluence = ConfluencePreprocessor(base_url="https://example.invalid/wiki")
+    storage = confluence.markdown_to_confluence_storage(markdown + "\n\n# after")
+    assert "a &lt;b&gt;" in storage
+    assert "<h1>after</h1>" in storage
+
+
+def test_hooks_need_the_parameter_kinds_they_were_written_for() -> None:
+    from mcp_atlassian.preprocessing import confluence
+
+    def positional(self: object, lines: list[str]) -> None: ...
+
+    def keyword_only(self: object, *, lines: list[str]) -> None: ...
+
+    assert confluence._has_parameters(positional, ["self", "lines"])
+    assert not confluence._has_parameters(keyword_only, ["self", "lines"])
+
+
+def _converter_hooks() -> dict[str, bool]:
+    """Install the hooks on a fresh md2conf converter; report which took."""
+    import importlib.util
+
+    from mcp_atlassian.preprocessing import confluence
+
+    spec = importlib.util.find_spec("md2conf.markdown")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    converter = module._CONVERTER
+    work = confluence._TextWork()
+    confluence._use_linear_link_scans(converter, work)
+    confluence._linear_fence_reassembly(converter)
+    confluence._linear_start_tags(converter)
+    confluence._bound_inline_pass(converter, work)
+    return {
+        "link": "getLink" in vars(converter.inlinePatterns["link"]),
+        "fences": "reassemble" in vars(converter.preprocessors["fenced_code_block"]),
+        "tags": "run" in vars(converter.preprocessors["html_block"]),
+        "inline": "_InlineProcessor__handleInline"
+        in vars(converter.treeprocessors["inline"]),
+    }
+
+
+@pytest.mark.parametrize(
+    ("hook", "target", "attribute", "replacement"),
+    [
+        (
+            "link",
+            "markdown.inlinepatterns.LinkInlineProcessor",
+            "getLink",
+            lambda self, data, index, extra=None: ("", None, index, False),
+        ),
+        (
+            "fences",
+            "pymdownx.superfences.SuperFencesBlockPreprocessor",
+            "reassemble",
+            lambda self, lines, required: lines,
+        ),
+        ("tags", "markdown.htmlparser.htmlparser", "locatetagend", re.compile(">")),
+        (
+            "inline",
+            "markdown.treeprocessors.InlineProcessor",
+            "_InlineProcessor__handleInline",
+            lambda self, data: data,
+        ),
+    ],
+)
+def test_hooks_stay_off_when_the_library_shape_differs(
+    monkeypatch: pytest.MonkeyPatch,
+    hook: str,
+    target: str,
+    attribute: str,
+    replacement: Any,
+) -> None:
+    import importlib
+
+    assert _converter_hooks()[hook]
+    module_name, _, name = target.rpartition(".")
+    owner = getattr(importlib.import_module(module_name), name)
+    monkeypatch.setattr(owner, attribute, replacement)
+    assert not _converter_hooks()[hook]
+
+
+def _without_task_uuids(storage: str) -> str:
+    """Drop the random task UUIDs that make two conversions differ."""
+    return re.sub(r"<ac:task-uuid>[^<]*</ac:task-uuid>", "", storage)
+
+
+# --- Fenced blocks and deep HTML (Jira and Confluence reads) --------------
+
+
+def test_fenced_blocks_are_kept_from_html_conversion(base: BasePreprocessor) -> None:
+    text = "<b>x</b>\n```html\n<b>y</b>\n```\n```\nno close <i>z</i>"
+    assert base._convert_html_to_markdown(text) == (
+        "**x**\n```html\n<b>y</b>\n```\n```\nno close *z*"
+    )
+
+
+@pytest.mark.parametrize("tag", ["b", "div", "span", "ul><li"])
+def test_deeply_nested_html_converts_to_text(base: BasePreprocessor, tag: str) -> None:
+    _, markdown = base.process_html_content(f"<{tag}>" * 3000 + "deep")
+    assert "deep" in markdown
+
+
+def test_deeply_nested_html_in_jira_text_converts_to_text(
+    jira: JiraPreprocessor,
+) -> None:
+    assert jira.clean_jira_text("<span>" * 3000 + "deep") == "deep"
