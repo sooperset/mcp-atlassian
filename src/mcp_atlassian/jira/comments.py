@@ -29,6 +29,7 @@ from typing import Any
 from requests.exceptions import HTTPError
 
 from ..models.jira.adf import adf_to_text, merge_adf_with_preserved_media
+from ..models.jira.comment import parse_comment_visibility
 from ..utils import parse_date
 from ..utils.urls import path_segment
 from .client import JiraClient
@@ -163,6 +164,8 @@ class CommentsMixin(JiraClient):
                     "updated": str(parse_date(comment.get("updated"))),
                     "author": comment.get("author", {}).get("displayName", "Unknown"),
                 }
+                if visibility := parse_comment_visibility(comment.get("visibility")):
+                    processed_comment["visibility"] = visibility
                 processed_comments.append(processed_comment)
 
             return processed_comments
@@ -502,12 +505,15 @@ class CommentsMixin(JiraClient):
             body_text = (
                 adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
             )
-            return {
+            processed_comment = {
                 "id": result.get("id"),
                 "body": self._clean_text(body_text or ""),
                 "created": str(parse_date(result.get("created"))),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }
+            if stored_visibility := parse_comment_visibility(result.get("visibility")):
+                processed_comment["visibility"] = stored_visibility
+            return processed_comment
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {str(e)}")
             raise Exception(f"Error adding comment: {str(e)}") from e
@@ -709,12 +715,15 @@ class CommentsMixin(JiraClient):
             body_text = (
                 adf_to_text(body_raw) if isinstance(body_raw, dict) else body_raw
             )
-            return {
+            processed_comment = {
                 "id": result.get("id"),
                 "body": self._clean_text(body_text or ""),
                 "updated": str(parse_date(result.get("updated"))),
                 "author": result.get("author", {}).get("displayName", "Unknown"),
             }
+            if stored_visibility := parse_comment_visibility(result.get("visibility")):
+                processed_comment["visibility"] = stored_visibility
+            return processed_comment
         except Exception as e:
             logger.error(
                 f"Error editing comment {comment_id} on issue {issue_key}: {str(e)}"
