@@ -27,6 +27,20 @@ from .protocols import AttachmentsOperationsProto
 logger = logging.getLogger("mcp-jira")
 
 
+def _attachment_id(response: Any) -> str | None:
+    """Return the created attachment's id from Jira's response.
+
+    The attachment endpoint answers with a JSON array of created attachments
+    (one entry per uploaded file); a single object is also accepted defensively.
+    """
+    if isinstance(response, dict):
+        return response.get("id")
+    if isinstance(response, list) and response:
+        first = response[0]
+        return first.get("id") if isinstance(first, dict) else None
+    return None
+
+
 class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
     """Mixin for Jira attachment operations."""
 
@@ -480,9 +494,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                     "issue_key": issue_key,
                     "filename": filename,
                     "size": file_size,
-                    "id": attachment.get("id")
-                    if isinstance(attachment, dict)
-                    else None,
+                    "id": _attachment_id(attachment),
                 }
             else:
                 logger.error(f"Failed to upload attachment {filename} to {issue_key}")
@@ -609,9 +621,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                     "issue_key": issue_key,
                     "filename": filename,
                     "size": len(content),
-                    "id": attachment.get("id")
-                    if isinstance(attachment, dict)
-                    else None,
+                    "id": _attachment_id(attachment),
                 }
 
             logger.error(f"Failed to upload attachment {filename} to {issue_key}")

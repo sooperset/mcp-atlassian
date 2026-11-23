@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 
 from mcp_atlassian.jira import JiraFetcher
-from mcp_atlassian.jira.attachments import AttachmentsMixin
+from mcp_atlassian.jira.attachments import AttachmentsMixin, _attachment_id
 from mcp_atlassian.utils.media import AttachmentTooLargeError
 
 # Test scenarios for AttachmentsMixin
@@ -47,6 +47,22 @@ from mcp_atlassian.utils.media import AttachmentTooLargeError
 #    - Error cases:
 #      - Empty list of file paths
 #      - No issue key provided
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ({"id": "10001"}, "10001"),
+        ([{"id": "10001"}], "10001"),
+        ([], None),
+        (None, None),
+        (["oops"], None),
+        ([{"filename": "no-id.txt"}], None),
+    ],
+)
+def test_attachment_id(response, expected):
+    """The created attachment id is read from the array Jira returns."""
+    assert _attachment_id(response) == expected
 
 
 class TestAttachmentsMixin:
@@ -527,6 +543,99 @@ class TestAttachmentsMixin:
             attachments_mixin.jira.add_attachment_object.assert_called_once()
             args = attachments_mixin.jira.add_attachment_object.call_args.args
             assert args[0] == "TEST-123"
+
+    def test_upload_attachment_list_response_keeps_first_id(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """Jira answers with a JSON array; the first entry carries the id."""
+        attachments_mixin.jira.add_attachment_object.return_value = [
+            {"id": "164325", "filename": "test_file.txt", "size": 100}
+        ]
+
+        with (
+            patch("os.getcwd", return_value="/absolute/path"),
+            patch("os.path.exists") as mock_exists,
+            patch("os.path.getsize") as mock_getsize,
+            patch("os.path.isabs") as mock_isabs,
+            patch("os.path.abspath") as mock_abspath,
+            patch("os.path.basename") as mock_basename,
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
+        ):
+            mock_exists.return_value = True
+            mock_getsize.return_value = 100
+            mock_isabs.return_value = True
+            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_basename.return_value = "test_file.txt"
+
+            result = attachments_mixin.upload_attachment(
+                "TEST-123", "/absolute/path/test_file.txt"
+            )
+
+        assert result["success"] is True
+        assert result["id"] == "164325"
+
+    def test_upload_attachment_empty_list_response_is_failure(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """An empty array means nothing was created, so the call must fail."""
+        attachments_mixin.jira.add_attachment_object.return_value = []
+
+        with (
+            patch("os.getcwd", return_value="/absolute/path"),
+            patch("os.path.exists") as mock_exists,
+            patch("os.path.isabs") as mock_isabs,
+            patch("os.path.abspath") as mock_abspath,
+            patch("os.path.basename") as mock_basename,
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
+        ):
+            mock_exists.return_value = True
+            mock_isabs.return_value = True
+            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_basename.return_value = "test_file.txt"
+
+            result = attachments_mixin.upload_attachment(
+                "TEST-123", "/absolute/path/test_file.txt"
+            )
+
+        assert result["success"] is False
+        assert "Failed to upload attachment" in result["error"]
+
+    def test_upload_attachments_propagates_id_from_list_response(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """The batch result exposes the id Jira returned for each file."""
+        attachments_mixin.jira.add_attachment_object.return_value = [{"id": "164325"}]
+
+        with (
+            patch("os.getcwd", return_value="/absolute/path"),
+            patch("os.path.exists") as mock_exists,
+            patch("os.path.getsize") as mock_getsize,
+            patch("os.path.isabs") as mock_isabs,
+            patch("os.path.abspath") as mock_abspath,
+            patch("os.path.basename") as mock_basename,
+            patch(
+                "mcp_atlassian.jira.attachments.open_confined",
+                mock_open(read_data=b"test content"),
+            ),
+        ):
+            mock_exists.return_value = True
+            mock_getsize.return_value = 100
+            mock_isabs.return_value = True
+            mock_abspath.return_value = "/absolute/path/test_file.txt"
+            mock_basename.return_value = "test_file.txt"
+
+            result = attachments_mixin.upload_attachments(
+                "TEST-123", ["/absolute/path/test_file.txt"]
+            )
+
+        assert result["success"] is True
+        assert result["uploaded"][0]["id"] == "164325"
 
     def test_upload_attachment_relative_path(
         self, attachments_mixin: AttachmentsMixin, tmp_path: Path
