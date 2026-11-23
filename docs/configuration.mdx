@@ -15,6 +15,7 @@ This guide covers IDE integration, environment variables, and advanced configura
 | Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Claude Desktop (Linux) | `~/.config/Claude/claude_desktop_config.json` |
 | Cursor | Settings → MCP → + Add new global MCP server |
+| VS Code with GitHub Copilot | `~/.copilot/mcp-config.json` or `.mcp.json` in a workspace root. See [Installation](/docs/installation#github-copilot). |
 
 ### Basic Configuration (uvx)
 
@@ -245,6 +246,18 @@ arguments follow `shlex` rules.
 | `ENABLED_TOOLS` | Enable only specific tools | `confluence_search,jira_get_issue` |
 | `TOOLSETS` | Enable tool groups (see [Toolset Filtering](#toolset-filtering)) | `default`, `legacy`, `all`, `default,jira_agile` |
 
+With `JIRA_PROJECTS_FILTER` set, search results are limited to the listed projects,
+and a JQL query is refused when it names an issue of another project where JQL
+expects an issue: the value of `key`, `issuekey`, `issue`, `id`, `parent` or an
+Epic Link or Parent Link field (by name, ID or `cf[N]`), and the issue argument of
+`linkedIssues()` and similar functions. An issue ID in those places is refused as
+well; use issue keys. When the field list cannot be read, a key-shaped or numeric
+value of a custom field is refused too. Jira itself still evaluates saved filters
+(`filter = 123`), JQL functions added by apps, `CHANGED FROM/TO` values, functions
+nested inside function arguments, and project names in the query, so the filter
+does not stop those from selecting in-scope issues by their relation to other
+projects. Use Jira permissions for that.
+
 ### Jira Key Validation
 
 Jira tools validate their `issue_key` / `project_key` arguments before calling the
@@ -317,10 +330,11 @@ never retried. Set `ATLASSIAN_RETRY_TOTAL=0` to turn retries off.
 | `ATLASSIAN_RETRY_INCLUDE_WRITES` | Also retry write methods (`POST`/`PUT`/`PATCH`/`DELETE`). Use only when writes are known to be idempotent. |
 | `ATLASSIAN_RETRY_IGNORE_RETRY_AFTER` | Ignore the server's `Retry-After` header and use exponential backoff only. |
 | `ATLASSIAN_RETRY_MAX_RETRY_AFTER` | Longest wait in seconds taken from a `Retry-After` header; longer values are capped (default: `60`). |
-| `ATLASSIAN_MAX_CONCURRENT_REQUESTS` | Process-wide cap for concurrent Jira and Confluence requests. `0` or unset disables the cap. |
-| `ATLASSIAN_REQUESTS_PER_SECOND` | Process-wide outbound request rate limit. `0` or unset disables the limit. |
+| `ATLASSIAN_MAX_CONCURRENT_REQUESTS` | Cap for concurrent Jira and Confluence requests to each upstream site. Each site has its own cap, so a slow site does not hold back requests to another. `0` or unset disables the cap. |
+| `ATLASSIAN_REQUESTS_PER_SECOND` | Outbound request rate limit for each upstream site. `0` or unset disables the limit. |
+| `ATLASSIAN_MAX_RESPONSE_BYTES` | Largest Jira or Confluence response body read into memory, counted after decompression (default: `67108864`, 64 MiB). A larger response fails the call. Streamed attachment downloads are not counted here; they keep the attachment size limit. `0` disables the limit. |
 | `ATLASSIAN_MAX_PAGINATION_LIMIT` | Clamp user-supplied page sizes for high-fanout list/search calls. `0` or unset disables clamping. |
-| `ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD` | Open a process-wide circuit breaker after this many consecutive `429/503` responses. `0` or unset disables it. |
+| `ATLASSIAN_CIRCUIT_BREAKER_THRESHOLD` | Open a circuit breaker for an upstream site after this many consecutive `429/503` responses from that site. Each site and credential has its own breaker, so one user's rate limit does not block other users of the same site. `0` or unset disables it. |
 | `ATLASSIAN_CIRCUIT_BREAKER_COOLDOWN` | Circuit breaker cooldown in seconds before allowing a probe request (default: `30.0`). |
 
 ## Proxy Configuration

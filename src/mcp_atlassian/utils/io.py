@@ -1,5 +1,6 @@
 """I/O utility functions for MCP Atlassian."""
 
+import errno
 import logging
 import os
 import stat
@@ -124,6 +125,16 @@ def configure_file_root_for_transport(transport: str) -> Path:
     set_remote_transport(remote)
     root = get_file_root()
     if not remote:
+        if is_wide_directory(root):
+            # Kept for existing local setups; a tool call (possibly steered by
+            # content it read) can then upload any file the user can read.
+            logger.warning(
+                "File path inputs are confined to %s, a filesystem root or home "
+                "directory. Tools that upload files can read anything there. "
+                "Set %s to a dedicated directory to narrow it.",
+                root,
+                FILES_DIR_ENV,
+            )
         return root
 
     configured = bool(os.getenv(FILES_DIR_ENV, "").strip())
@@ -210,6 +221,37 @@ _O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _O_BINARY = getattr(os, "O_BINARY", 0)
 
 
+def _open_dir_beneath(base: Path, directory: Path, path: str | os.PathLike[str]) -> int:
+    """Open *directory* by walking down from *base* without following links.
+
+    Each component is opened relative to the descriptor of the one above it
+    with ``O_NOFOLLOW | O_DIRECTORY``, so the returned descriptor is a
+    directory reached from *base* through real directories only, even if a
+    component is swapped for a symlink while the walk runs.
+
+    Raises:
+        ValueError: If a component is a symlink or not a directory.
+        OSError: If a component cannot be opened for another reason.
+    """
+    flags = os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW | _O_CLOEXEC
+    fd = os.open(base, flags)
+    try:
+        for part in directory.relative_to(base).parts:
+            try:
+                next_fd = os.open(part, flags, dir_fd=fd)
+            except OSError as e:
+                if e.errno in (errno.ELOOP, errno.ENOTDIR):
+                    msg = f"Path {path} resolves outside {base}"
+                    raise ValueError(msg) from e
+                raise
+            os.close(fd)
+            fd = next_fd
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 def open_confined(
     path: str | os.PathLike[str],
     mode: Literal["rb", "wb"],
@@ -220,11 +262,10 @@ def open_confined(
     :func:`validate_safe_path` checks a path, but a symlink swapped in after
     that check (on the file or on any parent directory) would make a plain
     ``open`` reach a file outside the boundary. This opens the parent
-    directory first, confirms that the opened directory is inside the
-    boundary (the directory inode is compared with the resolved path, so the
-    check holds for the descriptor actually used), and opens the file
-    relative to that directory with ``O_NOFOLLOW``. The result must be a
-    regular file.
+    directory by walking down from the boundary one component at a time
+    without following symlinks, so the directory descriptor actually used is
+    inside the boundary, and opens the file relative to that directory with
+    ``O_NOFOLLOW``. The result must be a regular file.
 
     Args:
         path: The file to open.
@@ -258,18 +299,17 @@ def open_confined(
     # PermissionError), so it opens the file by path below. On other platforms
     # a failure to open the directory is a real error and is not downgraded.
     if os.open in os.supports_dir_fd:
-        dir_fd = os.open(parent, os.O_RDONLY | _O_DIRECTORY | _O_CLOEXEC)
+        dir_fd = _open_dir_beneath(resolved_base, parent, path)
     else:
         dir_fd = -1
     fd = -1
     try:
-        real_parent = Path(os.path.realpath(parent))
-        outside = not real_parent.is_relative_to(resolved_base)
-        if not outside and dir_fd >= 0:
-            outside = not os.path.samestat(os.fstat(dir_fd), os.stat(real_parent))
-        if outside:
-            msg = f"Path {path} resolves outside {resolved_base}"
-            raise ValueError(msg)
+        real_parent = parent
+        if dir_fd < 0:
+            real_parent = Path(os.path.realpath(parent))
+            if not real_parent.is_relative_to(resolved_base):
+                msg = f"Path {path} resolves outside {resolved_base}"
+                raise ValueError(msg)
 
         flags = _O_NOFOLLOW | _O_CLOEXEC | _O_BINARY
         if mode == "rb":

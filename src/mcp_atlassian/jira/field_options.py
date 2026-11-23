@@ -3,6 +3,7 @@
 import logging
 
 from ..models.jira.field_option import FieldContext, FieldOption
+from ..utils.urls import path_segment
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -35,7 +36,7 @@ class FieldOptionsMixin(JiraClient):
 
         try:
             response = self.jira.get(
-                f"rest/api/3/field/{field_id}/context",
+                f"rest/api/3/field/{path_segment(field_id)}/context",
                 params={"maxResults": 100},
             )
 
@@ -117,7 +118,8 @@ class FieldOptionsMixin(JiraClient):
         while True:
             try:
                 response = self.jira.get(
-                    f"rest/api/3/field/{field_id}/context/{context_id}/option",
+                    f"rest/api/3/field/{path_segment(field_id)}"
+                    f"/context/{path_segment(context_id)}/option",
                     params={"startAt": start_at, "maxResults": max_results},
                 )
 

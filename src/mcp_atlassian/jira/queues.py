@@ -8,7 +8,9 @@ from ..models.jira import (
     JiraServiceDesk,
     JiraServiceDeskQueuesResult,
 )
+from ..utils.urls import path_segment
 from .client import JiraClient
+from .scope import allowed_project_keys, output_scope_kwargs
 
 logger = logging.getLogger("mcp-jira")
 
@@ -112,7 +114,7 @@ class QueuesMixin(JiraClient):
 
         try:
             response = self.jira.get(
-                f"rest/servicedeskapi/servicedesk/{service_desk_id}/queue",
+                f"rest/servicedeskapi/servicedesk/{path_segment(service_desk_id)}/queue",
                 params={
                     "start": start_at,
                     "limit": limit,
@@ -127,7 +129,9 @@ class QueuesMixin(JiraClient):
                 return JiraServiceDeskQueuesResult(service_desk_id=service_desk_id)
 
             return JiraServiceDeskQueuesResult.from_api_response(
-                response, service_desk_id=service_desk_id
+                response,
+                service_desk_id=service_desk_id,
+                allowed_projects=allowed_project_keys(self.config),
             )
         except Exception as e:
             logger.error(
@@ -169,7 +173,8 @@ class QueuesMixin(JiraClient):
 
         try:
             queue_response = self.jira.get(
-                f"rest/servicedeskapi/servicedesk/{service_desk_id}/queue/{queue_id}",
+                "rest/servicedeskapi/servicedesk/"
+                f"{path_segment(service_desk_id)}/queue/{path_segment(queue_id)}",
                 params={"includeCount": "true"},
             )
             if isinstance(queue_response, dict):
@@ -182,9 +187,19 @@ class QueuesMixin(JiraClient):
                 str(e),
             )
 
+        scope = output_scope_kwargs(self)
+        if scope["allowed_projects"] and queue_model is not None:
+            # A queue's JQL is set in JSM and can select issues of any project:
+            # its total and JQL describe issues the caller cannot see. Every
+            # return path below uses this cleaned model.
+            queue_model = queue_model.model_copy(
+                update={"issue_count": None, "jql": None}
+            )
+
         try:
             response = self.jira.get(
-                f"rest/servicedeskapi/servicedesk/{service_desk_id}/queue/{queue_id}/issue",
+                "rest/servicedeskapi/servicedesk/"
+                f"{path_segment(service_desk_id)}/queue/{path_segment(queue_id)}/issue",
                 params={"start": start_at, "limit": limit},
             )
             if not isinstance(response, dict):
@@ -203,6 +218,7 @@ class QueuesMixin(JiraClient):
                 service_desk_id=service_desk_id,
                 queue_id=queue_id,
                 queue=queue_model,
+                **scope,
             )
         except Exception as e:
             logger.error(

@@ -141,6 +141,28 @@ listener, so the options are ignored with a warning.
 </Note>
 
 
+## Host and Origin checks
+
+When header-less requests are served with the operator's global credentials
+(`ALLOW_GLOBAL_CRED_FALLBACK=true` or `IGNORE_HEADER_AUTH=true`), the server
+checks two headers. A request with an `Origin` header gets `403` unless the
+origin is on this machine (`localhost`, `127.0.0.1`, `[::1]`) or listed in
+`FASTMCP_HTTP_ALLOWED_ORIGINS`, whatever address it arrives on. Requests
+without `Origin`, such as MCP clients and proxies, pass. A request that
+arrives on a loopback address also gets `421` unless its `Host` is local.
+This stops a web page in a browser from acting with the credentials the
+listener holds. Other deployments keep FastMCP's default, which does not
+check these headers.
+
+| Variable | Effect |
+| --- | --- |
+| `FASTMCP_HTTP_HOST_ORIGIN_PROTECTION` | Setting it replaces the default above with FastMCP's own behaviour. `true` checks `Host` and `Origin` on every address. `auto` checks loopback requests. `false` turns the checks off. |
+| `FASTMCP_HTTP_ALLOWED_HOSTS` | JSON list of extra hostnames to accept, for example `["mcp.example.com"]`. While the check is on, setting it also checks requests on non-loopback addresses. |
+| `FASTMCP_HTTP_ALLOWED_ORIGINS` | JSON list of extra browser origins, for example `["https://mcp.example.com"]`. A browser client served from the proxy's hostname needs it. |
+
+A reverse proxy on the same host that forwards to `127.0.0.1` and passes the
+public hostname in `Host` needs that hostname in `FASTMCP_HTTP_ALLOWED_HOSTS`.
+
 ## Server-side file paths
 
 Some tools accept a path on the **server's** filesystem: `confluence_upload_attachment(s)`
@@ -161,6 +183,10 @@ directory. In multi-user deployments every caller shares it, so prefer the base6
 
 On `stdio` (a local client) the boundary stays the working directory unless
 `MCP_ATLASSIAN_FILES_DIR` is set, so existing local setups keep working.
+Many desktop clients start the server in your home directory or in `/`. The server
+then logs a warning at start, because a tool call, possibly steered by instructions in
+a page or issue it read, can upload any file you can read. Set
+`MCP_ATLASSIAN_FILES_DIR` to a dedicated directory to narrow it.
 
 ### systemd
 
@@ -263,6 +289,39 @@ Without it, any public host is accepted and the server logs a warning at
 startup. The allowlist will be required for HTTP transports with header-based
 URLs in v0.25.
 
+Worker threads for upstream calls come from three kinds of pools:
+
+| Sites | Threads | Time limit |
+| --- | --- | --- |
+| `JIRA_URL`, `CONFLUENCE_URL`, and with Cloud OAuth the `api.atlassian.com` paths of `ATLASSIAN_OAUTH_CLOUD_ID` | `JIRA_FETCHER_MAX_WORKERS` (default 8) per site, not shared | None |
+| `MCP_ALLOWED_URL_DOMAINS` hosts and Atlassian Cloud | 32 shared, at most 16 per site | None |
+| Other request-supplied hosts | 8 shared | 120 seconds per call |
+
+The 120 seconds include the time a call waits for a free thread, and the call
+stops at that limit even when the upstream closes the connection after its
+response. Add your users' self-hosted domains to the allowlist so their calls
+use the larger pool without that time limit.
+
+Address checks of request-supplied URLs have 8 threads of their own (4 for
+allowlisted and Atlassian Cloud hosts, 4 for other hosts). DNS lookups made
+during a call have 8 more. Only calls with the 120-second limit (calls to
+hosts named only in a request header) use those 8; every other call looks up
+its address in its own thread, whatever host it connects to. In total the server runs at most 56 threads for calls,
+checks and lookups (32 + 8 + 8 + 8), plus `JIRA_FETCHER_MAX_WORKERS` for each
+site in the first row of the table.
+
+While the address check threads are all busy, a request gets `503` with
+`Retry-After`; retry it shortly. In external auth mode the URL header is
+checked when a tool runs, so the same case gives a tool error with the same
+text as the `503` body: `Server busy checking request URLs; retry shortly.`
+Retry the tool call.
+
+A streamable-http or SSE session can be used only with the credential that
+opened it. A request with other credentials on that session gets
+`404 Session not found`, which tells MCP clients to open a new session. With
+header credentials this includes a new Bearer token after a refresh. With the
+built-in OAuth proxy a refreshed login keeps its sessions.
+
 ### Server Setup for Multi-User
 
 <Steps>
@@ -325,6 +384,19 @@ The DCR client's `redirect_uri` must be different from the OAuth proxy's own IdP
 callback. If a client tries to register the proxy callback as its redirect URI,
 registration is rejected with `invalid_redirect_uri` to prevent a callback loop.
 </Warning>
+
+`/register` and `/authorize` answer before any authentication. The proxy bounds
+what they store: `/authorize` rejects a `state` or `redirect_uri` longer than
+2048 characters, a `code_challenge` outside 43 to 128 characters, and a body
+over 16 KiB. With the default storage, pending logins are kept in memory and
+dropped after 15 minutes, so a restart cancels logins in progress. A
+registration that never completes a login expires after 24 hours. A client that
+has logged in keeps its registration for 90 days, renewed by every login or token
+refresh. A removed client gets `invalid_client` and registers again. The default
+file storage deletes expired records at start and, at most once an hour, when a
+client registers. The number of registrations has no cap, only these lifetimes,
+so put a request rate limit for `/register` and `/authorize` on your ingress or
+reverse proxy.
 
 ### Multi-Cloud Support
 

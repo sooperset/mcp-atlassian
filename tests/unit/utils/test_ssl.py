@@ -80,29 +80,29 @@ def test_ssl_ignore_adapter_init_poolmanager():
             assert kwargs["ssl_context"] == mock_context
 
 
-def test_configure_ssl_verification_disabled():
-    """Test configure_ssl_verification when SSL verification is disabled."""
-    # Arrange
-    service_name = "TestService"
-    url = "https://test.example.com/path"
-    session = MagicMock()  # Use MagicMock instead of actual Session
-    ssl_verify = False
+@pytest.mark.parametrize(
+    ("request_url", "verification_off"),
+    [
+        ("https://test.example.com/rest/api/2/myself", True),
+        ("https://TEST.example.com:443/rest", True),
+        ("https://other.example.com/rest", False),
+        ("https://test.example.com.evil.example/rest", False),
+        ("https://sub.test.example.com/rest", False),
+        ("https://test.example.com:8443/rest", False),
+    ],
+)
+def test_configure_ssl_verification_disabled_only_for_its_origin(
+    request_url, verification_off
+):
+    """SSL_VERIFY=false turns verification off for the configured origin only."""
+    session = Session()
 
-    # Mock the logger to avoid issues with real logging
-    with patch("mcp_atlassian.utils.ssl.logger") as mock_logger:
-        with patch("mcp_atlassian.utils.ssl.SSLIgnoreAdapter") as mock_adapter_class:
-            mock_adapter = MagicMock()
-            mock_adapter_class.return_value = mock_adapter
+    configure_ssl_verification(
+        "TestService", "https://test.example.com/path", session, ssl_verify=False
+    )
 
-            # Act
-            configure_ssl_verification(service_name, url, session, ssl_verify)
-
-            # Assert
-            mock_adapter_class.assert_called_once()
-            # Verify the adapter is mounted for both http and https
-            assert session.mount.call_count == 2
-            session.mount.assert_any_call("https://test.example.com", mock_adapter)
-            session.mount.assert_any_call("http://test.example.com", mock_adapter)
+    adapter = session.get_adapter(request_url)
+    assert isinstance(adapter, SSLIgnoreAdapter) is verification_off
 
 
 def test_configure_ssl_verification_enabled(monkeypatch):
@@ -159,11 +159,11 @@ def test_configure_ssl_verification_disabled_with_real_session():
         )
 
         # Should add custom adapters for http and https protocols
-        assert len(session.adapters) == original_adapters_count + 2
-        assert "https://example.com" in session.adapters
-        assert "http://example.com" in session.adapters
-        assert isinstance(session.adapters["https://example.com"], SSLIgnoreAdapter)
-        assert isinstance(session.adapters["http://example.com"], SSLIgnoreAdapter)
+        assert len(session.adapters) == original_adapters_count + 4
+        assert "https://example.com/" in session.adapters
+        assert "http://example.com/" in session.adapters
+        assert isinstance(session.adapters["https://example.com/"], SSLIgnoreAdapter)
+        assert isinstance(session.adapters["http://example.com/"], SSLIgnoreAdapter)
 
 
 def test_ssl_ignore_adapter():
@@ -310,7 +310,7 @@ def test_configure_ssl_disabled_with_client_cert():
             # Assert - Both client cert and SSL adapter should be configured
             assert session.cert == ("/path/to/cert.pem", "/path/to/key.pem")
             mock_adapter_class.assert_called_once()
-            assert session.mount.call_count == 2
+            assert session.mount.call_count == 4
 
 
 def test_ssl_ignore_adapter_is_subclass_of_no_proxy_adapter():
@@ -438,7 +438,7 @@ def test_configure_ssl_verification_captures_no_proxy_on_adapter(monkeypatch):
         no_proxy="explicit.example.com",
     )
 
-    adapter = session.get_adapter("https://test.example.com")
+    adapter = session.get_adapter("https://test.example.com/")
     assert isinstance(adapter, NoProxyAdapter)
     assert adapter._no_proxy == "explicit.example.com"
 
@@ -456,9 +456,9 @@ def test_configure_ssl_verification_enabled_with_no_proxy_mounts_adapter(monkeyp
         ssl_verify=True,
     )
 
-    assert len(session.adapters) == original_adapters_count + 2
-    assert isinstance(session.get_adapter("https://test.example.com"), NoProxyAdapter)
-    assert isinstance(session.get_adapter("http://test.example.com"), NoProxyAdapter)
+    assert len(session.adapters) == original_adapters_count + 4
+    assert isinstance(session.get_adapter("https://test.example.com/"), NoProxyAdapter)
+    assert isinstance(session.get_adapter("http://test.example.com/"), NoProxyAdapter)
     # Must not be the stricter SSLIgnoreAdapter — SSL verification stays enabled
     assert not isinstance(
         session.get_adapter("https://test.example.com"), SSLIgnoreAdapter

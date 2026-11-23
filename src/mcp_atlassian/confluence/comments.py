@@ -8,19 +8,52 @@ from typing import Any
 import requests
 
 from ..models.confluence import ConfluenceComment
+from ..utils.truncation import mark_truncated, merge_truncation
 from .client import ConfluenceClient
-from .v2_adapter import ConfluenceV2Adapter
+from .scope import allowed_space_keys
+from .v2_adapter import (
+    MAX_COMMENT_REQUESTS_PER_READ,
+    MAX_COMMENTS_PER_READ,
+    ConfluenceV2Adapter,
+)
 
 logger = logging.getLogger("mcp-atlassian")
+
+
+def _comment_body_html(comment: dict[str, Any]) -> str:
+    """Return a comment's view body, or its storage body when no view was read."""
+    body = comment.get("body") or {}
+    for representation in ("view", "storage"):
+        value = (body.get(representation) or {}).get("value")
+        if value:
+            return str(value)
+    return ""
 
 
 class CommentsMixin(ConfluenceClient):
     """Mixin for Confluence comment operations."""
 
+    def _v1_comment_body_expand(self) -> str:
+        """Return the v1 body representation to read for comments.
+
+        The view representation is rendered by Confluence, so include and
+        listing macros in it carry content from other spaces. While a
+        CONFLUENCE_SPACES_FILTER is set, the storage representation is read
+        instead, as page reads do.
+        """
+        if allowed_space_keys(self.config):
+            return "body.storage.value"
+        return "body.view.value"
+
     def _get_all_v1_page_comments(
-        self, page_id: str, *, expand: str
+        self,
+        page_id: str,
+        *,
+        expand: str,
+        max_items: int = MAX_COMMENTS_PER_READ,
+        max_pages: int = MAX_COMMENT_REQUESTS_PER_READ,
     ) -> list[dict[str, Any]]:
-        """Fetch every page of comments from the Confluence v1 API."""
+        """Fetch comment pages from the Confluence v1 API, up to the read limits."""
         response = self.confluence.get_page_comments(
             content_id=page_id,
             expand=expand,
@@ -28,13 +61,21 @@ class CommentsMixin(ConfluenceClient):
         )
         results = list(response.get("results", []))
         start = int(response.get("start", 0))
+        pages = 1
 
-        while response.get("_links", {}).get("next"):
+        while response.get("_links", {}).get("next") and len(results) < max_items:
+            if pages >= max_pages:
+                logger.warning(
+                    "Stopping comment pagination for page %s at the read limit",
+                    page_id,
+                )
+                break
             page_size = int(response.get("size", len(response.get("results", []))))
             if page_size <= 0:
                 break
             start += page_size
             limit = int(response.get("limit", 25))
+            pages += 1
             response = self.confluence.get_page_comments(
                 content_id=page_id,
                 expand=expand,
@@ -44,6 +85,16 @@ class CommentsMixin(ConfluenceClient):
             )
             results.extend(response.get("results", []))
 
+        more_upstream = bool(response.get("_links", {}).get("next"))
+        if len(results) > max_items or more_upstream:
+            logger.warning(
+                "Returning the first %d comments of page %s",
+                min(len(results), max_items),
+                page_id,
+            )
+            # Comments beyond the limit were seen only if a page overshot it;
+            # a next link alone may lead to an empty page.
+            return mark_truncated(results[:max_items], certain=len(results) > max_items)
         return results
 
     @property
@@ -80,7 +131,11 @@ class CommentsMixin(ConfluenceClient):
         self, page_id: str, *, return_markdown: bool = True
     ) -> list[ConfluenceComment]:
         """
-        Get all comments for a specific page.
+        Get the comments for a specific page.
+
+        Each comment collection read (footer, inline, or the v1 listing)
+        returns at most ``MAX_COMMENTS_PER_READ`` comments, roots and replies
+        together, and sends a bounded number of requests.
 
         Args:
             page_id: The ID of the page to get comments from
@@ -99,8 +154,11 @@ class CommentsMixin(ConfluenceClient):
                 # together; keep that.
                 page = v2_adapter.get_page(page_id)
                 space_key = page.get("space", {}).get("key", "")
-                raw_comments = v2_adapter.get_footer_comments(page_id)
-                raw_comments.extend(v2_adapter.get_inline_comments(page_id))
+                # Each collection read is bounded (ReadBudget defaults).
+                footer = v2_adapter.get_footer_comments(page_id)
+                inline = v2_adapter.get_inline_comments(page_id)
+                read_parts: tuple[Any, ...] = (footer, inline)
+                raw_comments = [*footer, *inline]
             else:
                 # Get page info to extract space details
                 page = self.confluence.get_page_by_id(page_id=page_id, expand="space")
@@ -110,16 +168,18 @@ class CommentsMixin(ConfluenceClient):
                 raw_comments = self._get_all_v1_page_comments(
                     page_id,
                     expand=(
-                        "body.view.value,version,container,ancestors,"
-                        "extensions.inlineProperties,extensions.resolution"
+                        f"{self._v1_comment_body_expand()},version,container,"
+                        "ancestors,extensions.inlineProperties,"
+                        "extensions.resolution"
                     ),
                 )
+                read_parts = (raw_comments,)
 
             # Process each comment
             comment_models = []
             for comment_data in raw_comments:
                 # Get the content based on format
-                body = comment_data["body"]["view"]["value"]
+                body = _comment_body_html(comment_data)
                 processed_html, processed_markdown = (
                     self.preprocessor.process_html_content(
                         body, space_key=space_key, confluence_client=self.confluence
@@ -154,7 +214,7 @@ class CommentsMixin(ConfluenceClient):
 
                 comment_models.append(comment_model)
 
-            return comment_models
+            return merge_truncation(comment_models, *read_parts)
 
         except KeyError as e:
             logger.error(f"Missing key in comment data: {str(e)}")
@@ -170,22 +230,54 @@ class CommentsMixin(ConfluenceClient):
             logger.debug("Full exception details for comments:", exc_info=True)
             return []
 
-    def add_comment(self, page_id: str, content: str) -> ConfluenceComment | None:
+    def _comment_body_to_storage(self, content: str, content_format: str) -> str:
+        """Return a comment body in storage format.
+
+        The format is what the caller says it is, never inferred from the
+        content: Markdown is always converted, even when it starts with ``<``.
+
+        Args:
+            content: The comment body.
+            content_format: ``'markdown'`` or ``'storage'``.
+
+        Returns:
+            The body in Confluence storage format.
+
+        Raises:
+            ValueError: If ``content_format`` is not ``'markdown'`` or
+                ``'storage'``.
+        """
+        if content_format == "storage":
+            return content
+        if content_format == "markdown":
+            return self.preprocessor.markdown_to_confluence_storage(content)
+        error_msg = (
+            f"Invalid content_format '{content_format}'. Must be "
+            "'markdown' or 'storage'."
+        )
+        raise ValueError(error_msg)
+
+    def add_comment(
+        self, page_id: str, content: str, content_format: str = "markdown"
+    ) -> ConfluenceComment | None:
         """
         Add a comment to a Confluence page.
 
         Args:
             page_id: The ID of the page to add the comment to
-            content: The content of the comment (in Confluence storage format)
+            content: The content of the comment
+            content_format: Format of content, ``'markdown'`` (default,
+                converted to storage format) or ``'storage'`` (sent as is)
 
         Returns:
             ConfluenceComment object if comment was added successfully, None otherwise
-        """
-        try:
-            # Convert markdown to Confluence storage format if needed
-            if not content.strip().startswith("<"):
-                content = self.preprocessor.markdown_to_confluence_storage(content)
 
+        Raises:
+            ValueError: If ``content_format`` is not ``'markdown'`` or
+                ``'storage'``.
+        """
+        content = self._comment_body_to_storage(content, content_format)
+        try:
             # Route through v2 API for OAuth Cloud
             v2_adapter = self._v2_adapter
             if v2_adapter:
@@ -217,23 +309,26 @@ class CommentsMixin(ConfluenceClient):
             return None
 
     def reply_to_comment(
-        self, comment_id: str, content: str
+        self, comment_id: str, content: str, content_format: str = "markdown"
     ) -> ConfluenceComment | None:
         """
         Reply to an existing comment thread.
 
         Args:
             comment_id: The ID of the parent comment to reply to
-            content: The reply content (markdown or HTML/storage format)
+            content: The reply content
+            content_format: Format of content, ``'markdown'`` (default,
+                converted to storage format) or ``'storage'`` (sent as is)
 
         Returns:
             ConfluenceComment object if reply was added successfully, None otherwise
-        """
-        try:
-            # Convert markdown to Confluence storage format if needed
-            if not content.strip().startswith("<"):
-                content = self.preprocessor.markdown_to_confluence_storage(content)
 
+        Raises:
+            ValueError: If ``content_format`` is not ``'markdown'`` or
+                ``'storage'``.
+        """
+        content = self._comment_body_to_storage(content, content_format)
+        try:
             v2_adapter = self._v2_adapter
             if v2_adapter:
                 response = v2_adapter.create_footer_comment(
@@ -335,6 +430,7 @@ class CommentsMixin(ConfluenceClient):
             v2_adapter = self._inline_v2_adapter
             if v2_adapter:
                 raw_comments = v2_adapter.get_inline_comments(page_id)
+                read_parts: tuple[Any, ...] = (raw_comments,)
                 space_key = ""
             else:
                 # v1: fetch all child comments then filter by location=inline
@@ -343,10 +439,12 @@ class CommentsMixin(ConfluenceClient):
                 all_comments = self._get_all_v1_page_comments(
                     page_id,
                     expand=(
-                        "body.view.value,version,container,ancestors,"
-                        "extensions.inlineProperties,extensions.resolution"
+                        f"{self._v1_comment_body_expand()},version,container,"
+                        "ancestors,extensions.inlineProperties,"
+                        "extensions.resolution"
                     ),
                 )
+                read_parts = (all_comments,)
                 raw_comments = [
                     c
                     for c in all_comments
@@ -355,7 +453,7 @@ class CommentsMixin(ConfluenceClient):
 
             comment_models = []
             for comment_data in raw_comments:
-                body = comment_data.get("body", {}).get("view", {}).get("value", "")
+                body = _comment_body_html(comment_data)
                 processed_html, processed_markdown = (
                     self.preprocessor.process_html_content(
                         body, space_key=space_key, confluence_client=self.confluence
@@ -384,7 +482,7 @@ class CommentsMixin(ConfluenceClient):
                     )
                 )
 
-            return comment_models
+            return merge_truncation(comment_models, *read_parts)
 
         except KeyError as e:
             logger.error(f"Missing key in inline comment data: {str(e)}")
@@ -407,6 +505,7 @@ class CommentsMixin(ConfluenceClient):
         text_selection: str,
         text_selection_match_count: int = 1,
         text_selection_match_index: int = 0,
+        content_format: str = "markdown",
     ) -> ConfluenceComment | None:
         """Add an inline comment anchored to a text selection on a page.
 
@@ -415,21 +514,24 @@ class CommentsMixin(ConfluenceClient):
 
         Args:
             page_id: The ID of the page to add the inline comment to
-            content: The comment content (Markdown or HTML/storage format)
+            content: The comment content
             text_selection: The text on the page to anchor the comment to
             text_selection_match_count: How many times the text appears
                 on the page
             text_selection_match_index: Zero-based index of which occurrence
                 to anchor to
+            content_format: Format of content, ``'markdown'`` (default,
+                converted to storage format) or ``'storage'`` (sent as is)
 
         Returns:
             ConfluenceComment object if successful, None otherwise
-        """
-        try:
-            # Convert markdown to Confluence storage format if needed
-            if not content.strip().startswith("<"):
-                content = self.preprocessor.markdown_to_confluence_storage(content)
 
+        Raises:
+            ValueError: If ``content_format`` is not ``'markdown'`` or
+                ``'storage'``.
+        """
+        content = self._comment_body_to_storage(content, content_format)
+        try:
             v2_adapter = self._inline_v2_adapter
             if v2_adapter:
                 response = v2_adapter.create_inline_comment(
@@ -520,15 +622,17 @@ class CommentsMixin(ConfluenceClient):
         if not isinstance(body, dict):
             body = {}
 
-        view = body.get("view") or {}
-        if not isinstance(view, dict):
-            view = {}
-
-        body_html = view.get("value") or ""
-        if not body_html:
-            storage = body.get("storage") or {}
-            if isinstance(storage, dict):
-                body_html = storage.get("value") or ""
+        # Under a space allowlist only the storage body is used: the view is
+        # rendered by Confluence and can carry content from other spaces.
+        representations = (
+            ("storage",) if allowed_space_keys(self.config) else ("view", "storage")
+        )
+        body_html = ""
+        for representation in representations:
+            part = body.get(representation) or {}
+            if isinstance(part, dict) and part.get("value"):
+                body_html = str(part["value"])
+                break
 
         _, processed_markdown = self.preprocessor.process_html_content(
             body_html,

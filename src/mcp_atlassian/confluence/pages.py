@@ -2,6 +2,7 @@
 
 import difflib
 import logging
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -18,6 +19,16 @@ from .utils import emoji_to_hex_id, extract_emoji_from_property
 from .v2_adapter import ConfluenceV2Adapter
 
 logger = logging.getLogger("mcp-atlassian")
+
+# Move positions in movepage.action's words. "before"/"after" are the REST
+# move endpoint's names for the same sibling moves; the v2 adapter maps back.
+_MOVE_POSITIONS = {
+    "append": "append",
+    "above": "above",
+    "before": "above",
+    "below": "below",
+    "after": "below",
+}
 
 _HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 _STRUCTURAL_MACRO_NAMES = frozenset({"excerpt", "expand", "layout"})
@@ -68,6 +79,28 @@ def _is_section_boundary(
     for descendant in node.find_all(heading_tags):
         if int(descendant.name[1]) <= section_level:
             return True
+    return False
+
+
+_READ_BACK_ATTEMPTS = 3
+_READ_BACK_DELAY_SECONDS = 1.0
+
+
+def _is_not_found(error: BaseException) -> bool:
+    """Whether an error, or one of the errors behind it, is an HTTP 404.
+
+    The HTTP error can be the cause, the context, or the ``reason`` of an
+    ``ApiError``, depending on which client raised it.
+    """
+    current: BaseException | None = error
+    for _ in range(10):
+        if current is None:
+            return False
+        for candidate in (current, getattr(current, "reason", None)):
+            response = getattr(candidate, "response", None)
+            if isinstance(candidate, HTTPError) and response is not None:
+                return response.status_code == 404
+        current = current.__cause__ or current.__context__
     return False
 
 
@@ -705,7 +738,7 @@ class PagesMixin(ConfluenceClient):
             start: The starting index for pagination
             limit: Maximum number of pages to return
             convert_to_markdown: When True, returns content in markdown format,
-                               otherwise returns raw HTML (keyword-only)
+                otherwise returns unchanged Confluence storage XHTML (keyword-only)
 
         Returns:
             List of ConfluencePage models containing page content and metadata
@@ -723,15 +756,15 @@ class PagesMixin(ConfluenceClient):
                     f"Page {page.get('id', 'unknown')} missing body.storage.value: {e}"
                 )
                 content = ""
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=str(page.get("id", "")),
-            )
-
-            # Use the appropriate content format based on the convert_to_markdown flag
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            if convert_to_markdown:
+                _, page_content = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=str(page.get("id", "")),
+                )
+            else:
+                page_content = content
 
             # Ensure space information is included
             if "space" not in page:
@@ -867,7 +900,7 @@ class PagesMixin(ConfluenceClient):
                     )
                     raise RuntimeError(error_message)
 
-            return self.get_page_content(page_id)
+            return self._read_back_created_page(page_id)
         except Exception as e:
             logger.error(
                 f"Error creating page '{title}' in space {space_key}: {str(e)}"
@@ -875,6 +908,28 @@ class PagesMixin(ConfluenceClient):
             raise Exception(
                 f"Failed to create page '{title}' in space {space_key}: {str(e)}"
             ) from e
+
+    def _read_back_created_page(self, page_id: str) -> ConfluencePage:
+        """Read a page that was just created.
+
+        Confluence Cloud can answer 404 for a page ID for a moment after
+        the create call returned it. That read is tried again a few times.
+        Any other error is raised at once.
+        """
+        for attempt in range(1, _READ_BACK_ATTEMPTS + 1):
+            try:
+                return self.get_page_content(page_id)
+            except Exception as e:
+                if not _is_not_found(e):
+                    raise
+                if attempt == _READ_BACK_ATTEMPTS:
+                    msg = (
+                        f"Page was created (ID {page_id}), but reading it back "
+                        f"failed: {e}"
+                    )
+                    raise RuntimeError(msg) from e
+                time.sleep(_READ_BACK_DELAY_SECONDS)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def update_page(
         self,
@@ -1168,7 +1223,7 @@ class PagesMixin(ConfluenceClient):
             limit: Maximum number of child items to return
             expand: Fields to expand in the response
             convert_to_markdown: When True, returns content in markdown format,
-                               otherwise returns raw HTML (keyword-only)
+                otherwise returns unchanged Confluence storage XHTML (keyword-only)
             include_folders: When True, also returns child folders (keyword-only)
 
         Returns:
@@ -1528,8 +1583,8 @@ class PagesMixin(ConfluenceClient):
         Args:
             page_id: The ID of the page to get history for
             version: The version to get history for
-            convert_to_markdown: When True, returns content in
-                markdown format
+            convert_to_markdown: When True, returns markdown; otherwise returns
+                unchanged Confluence storage XHTML.
 
         Returns:
             ConfluencePage model containing the page history
@@ -1581,15 +1636,16 @@ class PagesMixin(ConfluenceClient):
             page_attachments = (
                 page.get("children", {}).get("attachment", {}).get("results", [])
             )
-            processed_html, processed_markdown = self.preprocessor.process_html_content(
-                content,
-                space_key=space_key,
-                confluence_client=self.confluence,
-                content_id=str(page.get("id", "")),
-                attachments=page_attachments,
-            )
-
-            page_content = processed_markdown if convert_to_markdown else processed_html
+            if convert_to_markdown:
+                _, page_content = self.preprocessor.process_html_content(
+                    content,
+                    space_key=space_key,
+                    confluence_client=self.confluence,
+                    content_id=str(page.get("id", "")),
+                    attachments=page_attachments,
+                )
+            else:
+                page_content = content
 
             emoji = self._get_page_emoji(page_id)
             return ConfluencePage.from_api_response(
@@ -1622,8 +1678,8 @@ class PagesMixin(ConfluenceClient):
             target_parent_id: Target parent page ID. If omitted with
                 target_space_key, moves page to root of target space.
             target_space_key: Target space key for cross-space moves.
-            position: Position relative to target ("append", "above",
-                or "below").
+            position: Position relative to target: "append", "above" (or
+                "before") or "below" (or "after").
 
         Returns:
             Updated ConfluencePage after move.
@@ -1636,6 +1692,11 @@ class PagesMixin(ConfluenceClient):
         if not target_parent_id and not target_space_key:
             raise ValueError(
                 "At least one of target_parent_id or target_space_key must be provided."
+            )
+        position = _MOVE_POSITIONS.get(position, "")
+        if not position:
+            raise ValueError(
+                "position must be 'append', 'above', 'below', 'before' or 'after'."
             )
 
         try:

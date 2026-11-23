@@ -1,16 +1,22 @@
 """Base preprocessing module."""
 
+import bisect
+import contextvars
+import functools
 import logging
 import re
 import urllib.parse
 import warnings
-from collections.abc import Callable
-from typing import Any, Protocol
+from collections.abc import Callable, Iterator
+from typing import Any, ParamSpec, Protocol, TypeVar
 
-from bs4 import BeautifulSoup, NavigableString, Tag
-from markdownify import markdownify as md
+from bs4 import BeautifulSoup, NavigableString, PageElement, Tag
+from markdownify import MarkdownConverter
 
 logger = logging.getLogger("mcp-atlassian")
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 # Every substring shaped like a code-macro placeholder. The lookahead keeps
 # matches that share a NUL boundary with their neighbour.
@@ -23,6 +29,195 @@ _RESOURCE_ATTRS = (
     ("ri:url", "ri:value"),
     ("ri:space", "ri:space-key"),
 )
+
+
+#: Elements nested deeper than this are converted as their plain text.
+#: markdownify converts nested elements recursively, two Python frames per
+#: level, so deeper HTML raised RecursionError and failed the whole read.
+_MAX_MARKDOWN_DEPTH = 100
+
+
+def _flatten_deep_elements(root: Tag, max_depth: int = _MAX_MARKDOWN_DEPTH) -> None:
+    """Replace the children of each element at ``max_depth`` with their text."""
+    stack: list[tuple[Tag, int]] = [(root, 0)]
+    while stack:
+        tag, depth = stack.pop()
+        if depth < max_depth:
+            stack.extend(
+                (child, depth + 1) for child in tag.contents if isinstance(child, Tag)
+            )
+        elif any(isinstance(child, Tag) for child in tag.contents):
+            text = tag.get_text()
+            tag.clear()
+            tag.append(text)
+
+
+class _MarkdownConverter(MarkdownConverter):
+    """markdownify converter whose list and table numbering stays linear.
+
+    markdownify numbers each ordered-list item by counting its previous
+    siblings and checks every header row by listing all rows of its
+    ``thead``. Both scans repeat for every item, so long lists and tables
+    took quadratic time. This converter computes each count once per parent
+    element; the output is the same.
+    """
+
+    options: dict[str, Any]
+
+    def __init__(self, **options: Any) -> None:
+        super().__init__(**options)
+        self._li_positions: dict[int, dict[int, int]] = {}
+        self._tr_counts: dict[int, int] = {}
+
+    def convert_soup(self, soup: BeautifulSoup) -> str:
+        _flatten_deep_elements(soup)
+        return str(super().convert_soup(soup))
+
+    def _li_position(self, parent: Tag, item: Tag) -> int:
+        positions = self._li_positions.get(id(parent))
+        if positions is None:
+            positions = {}
+            for child in parent.children:
+                if isinstance(child, Tag) and child.name == "li":
+                    positions[id(child)] = len(positions)
+            self._li_positions[id(parent)] = positions
+        return positions[id(item)]
+
+    def _tr_count(self, parent: Tag) -> int:
+        count = self._tr_counts.get(id(parent))
+        if count is None:
+            count = len(parent.find_all("tr"))
+            self._tr_counts[id(parent)] = count
+        return count
+
+    def convert_li(self, el: Tag, text: str, parent_tags: set[str]) -> str:
+        parent = el.parent
+        if parent is None or parent.name != "ol":
+            return str(super().convert_li(el, text, parent_tags))
+
+        text = (text or "").strip()
+        if not text:
+            return "\n"
+        start_attr = parent.get("start")
+        if start_attr and str(start_attr).isnumeric():
+            start = int(str(start_attr))
+        else:
+            start = 1
+        bullet = f"{start + self._li_position(parent, el)}. "
+        bullet_width = len(bullet)
+        bullet_indent = " " * bullet_width
+
+        def _indent_for_li(match: re.Match[str]) -> str:
+            line_content = match.group(1)
+            return bullet_indent + line_content if line_content else ""
+
+        text = re.sub(r"^(.*)", _indent_for_li, text, flags=re.MULTILINE)
+        return f"{bullet}{text[bullet_width:]}\n"
+
+    def convert_tr(self, el: Tag, text: str, parent_tags: set[str]) -> str:
+        parent = el.parent
+        cells = el.find_all(["td", "th"])
+        is_first_row = el.find_previous_sibling() is None
+        is_headrow = all(cell.name == "th" for cell in cells) or (
+            parent is not None
+            and parent.name == "thead"
+            and self._tr_count(parent) == 1
+        )
+        parent_name = parent.name if parent is not None else None
+        grandparent = parent.parent if parent is not None else None
+        is_head_row_missing = (is_first_row and parent_name != "tbody") or (
+            is_first_row
+            and parent_name == "tbody"
+            and grandparent is not None
+            and len(grandparent.find_all(["thead"])) < 1
+        )
+        overline = ""
+        underline = ""
+        full_colspan = 0
+        for cell in cells:
+            colspan = cell.attrs.get("colspan")
+            if isinstance(colspan, str) and colspan.isdigit():
+                full_colspan += max(1, min(1000, int(colspan)))
+            else:
+                full_colspan += 1
+        if (
+            is_headrow or (is_head_row_missing and self.options["table_infer_header"])
+        ) and is_first_row:
+            underline += "| " + " | ".join(["---"] * full_colspan) + " |" + "\n"
+        elif (is_head_row_missing and not self.options["table_infer_header"]) or (
+            is_first_row
+            and (
+                parent_name == "table"
+                or (
+                    parent_name == "tbody"
+                    and parent is not None
+                    and not parent.find_previous_sibling()
+                )
+            )
+        ):
+            overline += "| " + " | ".join([""] * full_colspan) + " |" + "\n"
+            overline += "| " + " | ".join(["---"] * full_colspan) + " |" + "\n"
+        return overline + "|" + text + "\n" + underline
+
+
+def md(html: str, **options: Any) -> str:
+    """Convert HTML to Markdown with markdownify options."""
+    return str(_MarkdownConverter(**options).convert(html))
+
+
+# Child positions per parent, kept while a soup pass replaces elements.
+_SIBLING_POSITIONS: contextvars.ContextVar[
+    dict[int, tuple[Tag, dict[int, int]]] | None
+] = contextvars.ContextVar("mcp_atlassian_sibling_positions", default=None)
+
+
+def _replace_with(element: PageElement, *nodes: PageElement | str) -> None:
+    """Replace ``element`` like ``element.replace_with(*nodes)``.
+
+    bs4 finds the element's position by scanning its parent's children, so
+    replacing many siblings one after another was quadratic. While
+    process_html_content runs, positions are computed once per parent and
+    reused; a position that no longer holds the element is recomputed. The
+    passes replace one element with one node, or go from the last sibling to
+    the first, so earlier positions stay valid. Outside a pass marked with
+    ``_keeps_sibling_positions`` this is plain ``replace_with``.
+    """
+    positions = _SIBLING_POSITIONS.get()
+    parent = element.parent
+    if positions is None or parent is None:
+        element.replace_with(*nodes)
+        return
+    index: int | None = None
+    entry = positions.get(id(parent))
+    if entry is not None and entry[0] is parent:
+        index = entry[1].get(id(element))
+        if index is not None and (
+            index >= len(parent.contents) or parent.contents[index] is not element
+        ):
+            index = None
+    if index is None:
+        mapping = {id(child): i for i, child in enumerate(parent.contents)}
+        positions[id(parent)] = (parent, mapping)
+        index = mapping[id(element)]
+    element.extract(_self_index=index)
+    for offset, node in enumerate(nodes):
+        parent.insert(index + offset, node)
+
+
+def _keeps_sibling_positions(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Let ``_replace_with`` reuse child positions while ``function`` runs."""
+
+    @functools.wraps(function)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        if _SIBLING_POSITIONS.get() is not None:
+            return function(*args, **kwargs)
+        token = _SIBLING_POSITIONS.set({})
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _SIBLING_POSITIONS.reset(token)
+
+    return wrapper
 
 
 def _macro_placeholder(name: str, macro: Tag, params: dict[str, str]) -> str:
@@ -69,6 +264,35 @@ def _extract_blocks(
     return re.sub(pattern, _replacer, text, flags=flags)
 
 
+def _extract_fenced_blocks(text: str, storage: list[str], prefix: str) -> str:
+    r"""Store fenced code blocks and replace them with placeholders.
+
+    Same result as ``_extract_blocks`` with the lazy pattern
+    ``"`{3}[^\n]*\n[\s\S]*?\n`{3}"``, in linear time. A block is an opening
+    fence, the rest of its line, and everything up to the next line that
+    starts with a fence. When the first opening fence left has no such
+    closing line, no later one has either, so the scan stops there.
+    """
+    parts: list[str] = []
+    pos = 0
+    while (start := text.find("```", pos)) >= 0:
+        line_end = text.find("\n", start + 3)
+        if line_end < 0:
+            break
+        close = text.find("\n```", line_end + 1)
+        if close < 0:
+            break
+        end = close + 4
+        parts.append(text[pos:start])
+        parts.append(f"\x00{prefix}{len(storage)}\x00")
+        storage.append(text[start:end])
+        pos = end
+    if not parts:
+        return text
+    parts.append(text[pos:])
+    return "".join(parts)
+
+
 def _restore_blocks(text: str, storage: list[str], prefix: str) -> str:
     """Restore blocks from placeholders.
 
@@ -83,9 +307,110 @@ def _restore_blocks(text: str, storage: list[str], prefix: str) -> str:
     Returns:
         Text with placeholders replaced by stored blocks.
     """
-    for i in range(len(storage) - 1, -1, -1):
-        text = text.replace(f"\x00{prefix}{i}\x00", storage[i])
-    return text
+    if not storage:
+        return text
+    pattern = re.compile(f"\x00{re.escape(prefix)}([0-9]+)\x00")
+    max_digits = len(str(len(storage) - 1))
+    expanded: list[str] = []
+
+    def _index(match: re.Match[str], limit: int) -> int | None:
+        digits = match.group(1)
+        if len(digits) > max_digits or digits != str(int(digits)):
+            return None
+        index = int(digits)
+        return index if index < limit else None
+
+    # Restoring from the highest index down let a block take in the blocks
+    # stored before it; expanding each block once in storage order keeps that,
+    # and the text is then restored in a single pass instead of once per block.
+    for limit, block in enumerate(storage):
+        if "\x00" in block:
+            block = pattern.sub(
+                lambda m, limit=limit: (
+                    m.group(0) if (i := _index(m, limit)) is None else expanded[i]
+                ),
+                block,
+            )
+        expanded.append(block)
+
+    return pattern.sub(
+        lambda m: (
+            m.group(0) if (i := _index(m, len(expanded))) is None else expanded[i]
+        ),
+        text,
+    )
+
+
+class _TreeIndex:
+    """Document-order positions of the tags under ``root``, from one walk.
+
+    ``first(element, kind)`` returns what ``element.find(...)`` returned for
+    that kind of tag on the tree as it was when the index was built, by a
+    binary search instead of a walk over the element's subtree; nested
+    elements made those walks quadratic. ``inside(element)`` tells whether
+    an element lies inside the subtree of an element passed to ``skip``.
+    """
+
+    def __init__(self, root: Tag, kinds: dict[str, Callable[[Tag], bool]]) -> None:
+        self._span: dict[int, tuple[int, int]] = {}
+        self._kinds: dict[str, tuple[list[int], list[Tag]]] = {
+            kind: ([], []) for kind in kinds
+        }
+        self._skip_until = -1
+        counter = 0
+        enter = {id(root): 0}
+        stack = [(root, iter(root.contents))]
+        while stack:
+            node, children = stack[-1]
+            for child in children:
+                if isinstance(child, Tag):
+                    counter += 1
+                    enter[id(child)] = counter
+                    for kind, matches in kinds.items():
+                        if matches(child):
+                            positions, tags = self._kinds[kind]
+                            positions.append(counter)
+                            tags.append(child)
+                    stack.append((child, iter(child.contents)))
+                    break
+            else:
+                self._span[id(node)] = (enter[id(node)], counter)
+                stack.pop()
+
+    def first(self, element: Tag, kind: str) -> Tag | None:
+        """Return the first ``kind`` tag below ``element`` in document order."""
+        start, end = self._span[id(element)]
+        positions, tags = self._kinds[kind]
+        index = bisect.bisect_right(positions, start)
+        if index < len(positions) and positions[index] <= end:
+            return tags[index]
+        return None
+
+    def skip(self, element: Tag) -> None:
+        """Mark ``element``'s subtree as replaced."""
+        self._skip_until = max(self._skip_until, self._span[id(element)][1])
+
+    def inside(self, element: Tag) -> bool:
+        """Return whether ``element`` lies in a subtree marked by ``skip``."""
+        return self._span[id(element)][0] <= self._skip_until
+
+
+def _named(name: str, **attrs: str) -> Callable[[Tag], bool]:
+    def matches(tag: Tag) -> bool:
+        return tag.name == name and all(tag.get(k) == v for k, v in attrs.items())
+
+    return matches
+
+
+def _contains_html_tag(text: str) -> bool:
+    """Return whether ``re.search(r"<[^>]+>", text)`` would match.
+
+    That search rescans the rest of the text from every "<" that is never
+    closed, which is quadratic. A match needs a "<" before a ">" with at
+    least one character between them and no ">" in between, so it is enough
+    to look inside each piece that a ">" ends.
+    """
+    return any("<" in piece[:-1] for piece in text.split(">")[:-1])
 
 
 def _code_language_from_element(el: Tag) -> str:
@@ -120,125 +445,280 @@ def _prefix_code_block(code_block: str, prefix: str) -> str:
     )
 
 
-def _restore_inline_code_macro(
-    text: str, start: int, placeholder: str, code_block: str
-) -> str | None:
-    """Restore a code macro that markdownify collapsed into an inline span.
+_LINE_TEXT = re.compile(r"\S|\n")
+_SPACES_AND_BACKTICKS = re.compile(r"[ \t`]*")
+_SPAN_CLOSING = re.compile(r"[ \t]*`+")
 
-    Inside a table cell markdownify flattens the pre/code wrapper onto the
-    row's line as a backtick span, where a multi-line fence would split the
-    row. Mirror markdownify's own handling of pre/code in that position:
-    collapse the body onto one line inside a span wide enough for any
-    backtick run it contains.
+
+class _RightToLeftText:
+    """Text rewritten from right to left without copying it per edit.
+
+    The current text is the untouched original up to ``head_end`` followed by
+    the rewritten tail, kept as pieces. Every edit starts inside the
+    untouched part, so positions there stay original positions. Reads walk
+    only as far as they need into the tail.
     """
-    line_start = text.rfind("\n", 0, start) + 1
-    line_end = text.find("\n", start)
-    if line_end == -1:
-        line_end = len(text)
 
-    line_before = text[line_start:start]
-    line_after = text[start + len(placeholder) : line_end]
-    opening = re.search(r"`+[^`\r\n]*$", line_before)
-    closing = re.match(r"[ \t]*`+", line_after)
-    stored_opening = re.match(r"(?P<fence>`+)[^\r\n]*\n", code_block)
-    if not opening or not closing or not stored_opening:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.head_end = len(text)
+        # Tail pieces, leftmost last, each with the offset where it starts.
+        self._pieces: list[tuple[str, int]] = []
+        self._tail_length = 0
+
+    def __len__(self) -> int:
+        return self.head_end + self._tail_length
+
+    def _chunks(self, pos: int) -> Iterator[tuple[str, int, int, int]]:
+        """Yield ``(string, start, end, position)`` pieces from ``pos`` on."""
+        if pos < self.head_end:
+            yield self.text, pos, self.head_end, pos
+            skip = 0
+        else:
+            skip = pos - self.head_end
+        position = max(pos, self.head_end)
+        for piece, offset in reversed(self._pieces):
+            size = len(piece) - offset
+            if skip >= size:
+                skip -= size
+                continue
+            yield piece, offset + skip, len(piece), position
+            position += size - skip
+            skip = 0
+
+    def find_newline(self, pos: int) -> int:
+        """Return the position of the first newline at or after ``pos``."""
+        for chunk, start, end, position in self._chunks(pos):
+            index = chunk.find("\n", start, end)
+            if index != -1:
+                return position + index - start
+        return -1
+
+    def slice(self, start: int, end: int) -> str:
+        """Return the current text from ``start`` to ``end``."""
+        parts: list[str] = []
+        remaining = end - start
+        for chunk, chunk_start, chunk_end, _ in self._chunks(start):
+            if remaining <= 0:
+                break
+            take = min(remaining, chunk_end - chunk_start)
+            parts.append(chunk[chunk_start : chunk_start + take])
+            remaining -= take
+        return "".join(parts)
+
+    def line_has_text(self, pos: int) -> bool:
+        """Return whether the line holds non-whitespace from ``pos`` on."""
+        for chunk, start, end, _ in self._chunks(pos):
+            match = _LINE_TEXT.search(chunk, start, end)
+            if match:
+                return match.group() != "\n"
+        return False
+
+    def span_closing_length(self, pos: int) -> int | None:
+        """Return the length of ``[ \\t]*`+`` matched at ``pos``, if any."""
+        parts: list[str] = []
+        for chunk, start, end, _ in self._chunks(pos):
+            # The pattern matches the empty string, so it always matches.
+            match = _SPACES_AND_BACKTICKS.match(chunk, start, end)
+            run_end = match.end() if match else start
+            parts.append(chunk[start:run_end])
+            if run_end < end:
+                break
+        closing = _SPAN_CLOSING.match("".join(parts))
+        return closing.end() if closing else None
+
+    def replace(self, start: int, end: int, replacement: str) -> None:
+        """Replace the current text from ``start`` (untouched) to ``end``."""
+        if end <= self.head_end:
+            if end < self.head_end:
+                self._push(self.text[end : self.head_end])
+        else:
+            self._drop(end - self.head_end)
+        self.head_end = start
+        self._push(replacement)
+
+    def _push(self, piece: str) -> None:
+        if piece:
+            self._pieces.append((piece, 0))
+            self._tail_length += len(piece)
+
+    def _drop(self, count: int) -> None:
+        self._tail_length -= count
+        while count:
+            piece, offset = self._pieces.pop()
+            size = len(piece) - offset
+            if count < size:
+                self._pieces.append((piece, offset + count))
+                return
+            count -= size
+
+    def result(self) -> str:
+        """Return the whole current text."""
+        tail = [piece[offset:] for piece, offset in reversed(self._pieces)]
+        return self.text[: self.head_end] + "".join(tail)
+
+
+class _CodeMacroRestorer:
+    """Replace code-macro placeholders in markdownify output, right to left.
+
+    Each placeholder is restored from the fence context markdownify left
+    around it: a block fence on the lines before and after, or an inline
+    backtick span inside a table cell. Placeholders are handled from the last
+    one to the first, as the placeholder-by-placeholder version did, but the
+    text is rewritten in place and line and backtick positions are looked up
+    in indexes built once, so each placeholder costs only its own context.
+    """
+
+    def __init__(self, markdown_text: str) -> None:
+        self.doc = _RightToLeftText(markdown_text)
+        self.newlines = [m.start() for m in re.finditer("\n", markdown_text)]
+        self.carriage_returns = [m.start() for m in re.finditer("\r", markdown_text)]
+        runs = [m.span() for m in re.finditer("`+", markdown_text)]
+        self.run_starts = [run[0] for run in runs]
+        self.run_ends = [run[1] for run in runs]
+
+    def _line_start(self, pos: int) -> int:
+        index = bisect.bisect_left(self.newlines, pos)
+        return self.newlines[index - 1] + 1 if index else 0
+
+    def restore(self, start: int, placeholder: str, code_block: str) -> None:
+        """Restore one placeholder found at original position ``start``."""
+        doc = self.doc
+        end = start + len(placeholder)
+        line_start = self._line_start(start)
+        stored = _stored_fence(code_block)
+
+        if doc.line_has_text(end):
+            if stored is not None and self._restore_inline(
+                start, end, line_start, code_block, *stored
+            ):
+                return
+            doc.replace(start, end, code_block)
+            return
+
+        if stored is None or line_start == 0:
+            doc.replace(start, end, code_block)
+            return
+        line_end = doc.find_newline(end)
+        if line_end == -1:
+            doc.replace(start, end, code_block)
+            return
+        opening_line_start = self._line_start(line_start - 1)
+        opening_line = doc.text[opening_line_start : line_start - 1]
+        closing_line_start = line_end + 1
+        closing_line_end = doc.find_newline(closing_line_start)
+        if closing_line_end == -1:
+            closing_line_end = len(doc)
+        closing_line = doc.slice(closing_line_start, closing_line_end)
+
+        # Same as re.search(r"`{3,}[^\r\n]*$", opening_line).start() and
+        # re.search(r"`{3,}[ \t]*$", closing_line).start(), without the
+        # backtracking those patterns do inside a long backtick run.
+        opening_fence = opening_line.find("```", opening_line.rfind("\r") + 1)
+        closing_text = closing_line.rstrip(" \t")
+        closing_fence = len(closing_text.rstrip("`"))
+        if opening_fence == -1 or len(closing_text) - closing_fence < 3:
+            doc.replace(start, end, code_block)
+            return
+
+        fence, opening_end = stored
+        body = code_block[opening_end : -len(fence)]
+        # The closing line contains only markdownify's continuation prefix and
+        # the fence, making it the reliable prefix for every restored body
+        # line. The placeholder line can also carry list or quote context, but
+        # unlike the closing line it may be adjacent to content in malformed
+        # HTML.
+        continuation_prefix = closing_line[:closing_fence]
+        stored_opening_line = code_block[:opening_end].rstrip("\n")
+        restored = (
+            f"{stored_opening_line}\n"
+            f"{continuation_prefix}{_prefix_code_block(body, continuation_prefix)}"
+            f"{fence}"
+        )
+        # The container prefix before the opening fence stays as it is.
+        doc.replace(opening_line_start + opening_fence, closing_line_end, restored)
+
+    def _restore_inline(
+        self,
+        start: int,
+        end: int,
+        line_start: int,
+        code_block: str,
+        fence: str,
+        opening_end: int,
+    ) -> bool:
+        """Restore a code macro that markdownify collapsed into an inline span.
+
+        Inside a table cell markdownify flattens the pre/code wrapper onto the
+        row's line as a backtick span, where a multi-line fence would split
+        the row. Mirror markdownify's own handling of pre/code in that
+        position: collapse the body onto one line inside a span wide enough
+        for any backtick run it contains.
+        """
+        # The opening is the last backtick run on the line before the
+        # placeholder, with no line break after it.
+        run = bisect.bisect_left(self.run_starts, start) - 1
+        if run < 0 or self.run_starts[run] < line_start:
+            return False
+        returns = bisect.bisect_left(self.carriage_returns, self.run_ends[run])
+        if (
+            returns < len(self.carriage_returns)
+            and self.carriage_returns[returns] < start
+        ):
+            return False
+        closing = self.doc.span_closing_length(end)
+        if closing is None:
+            return False
+
+        collapsed = code_block[opening_end : -len(fence)].strip("\n").replace("\n", " ")
+        longest_backtick_run = max(
+            (len(run) for run in re.findall(r"`+", collapsed)),
+            default=0,
+        )
+        delimiter = "`" * max(3, longest_backtick_run + 1)
+        self.doc.replace(
+            self.run_starts[run],
+            end + closing,
+            f"{delimiter} {collapsed} {delimiter}",
+        )
+        return True
+
+
+def _stored_fence(code_block: str) -> tuple[str, int] | None:
+    """Return a stored block's fence and where its opening line ends.
+
+    Same as ``re.match(r"(`+)[^\\r\\n]*\\n", code_block)`` followed by a check
+    that the block ends with that fence, without the backtracking.
+    """
+    fence = code_block[: len(code_block) - len(code_block.lstrip("`"))]
+    newline = code_block.find("\n")
+    carriage_return = code_block.find("\r", 0, newline)
+    if not fence or newline == -1 or carriage_return != -1:
         return None
-
-    stored_fence = stored_opening.group("fence")
-    if not code_block.endswith(stored_fence):
+    if not code_block.endswith(fence):
         return None
-
-    body = code_block[stored_opening.end() : -len(stored_fence)]
-    collapsed = body.strip("\n").replace("\n", " ")
-    longest_backtick_run = max(
-        (len(run) for run in re.findall(r"`+", collapsed)),
-        default=0,
-    )
-    delimiter = "`" * max(3, longest_backtick_run + 1)
-
-    span_start = line_start + opening.start()
-    span_end = start + len(placeholder) + closing.end()
-    return f"{text[:span_start]}{delimiter} {collapsed} {delimiter}{text[span_end:]}"
-
-
-def _restore_code_macro_block(
-    text: str, start: int, placeholder: str, code_block: str
-) -> str:
-    """Restore one code block using the fence context from markdownify."""
-    line_start = text.rfind("\n", 0, start) + 1
-    line_end = text.find("\n", start)
-    if line_end == -1:
-        line_end = len(text)
-
-    line_before = text[line_start:start]
-    line_after = text[start + len(placeholder) : line_end]
-    if line_after.strip():
-        inline = _restore_inline_code_macro(text, start, placeholder, code_block)
-        if inline is not None:
-            return inline
-        return text.replace(placeholder, code_block, 1)
-
-    opening_line_end = line_start - 1
-    if opening_line_end < 0:
-        return text.replace(placeholder, code_block, 1)
-    opening_line_start = text.rfind("\n", 0, opening_line_end) + 1
-    opening_line = text[opening_line_start:opening_line_end]
-
-    closing_line_start = line_end + 1
-    if closing_line_start > len(text):
-        return text.replace(placeholder, code_block, 1)
-    closing_line_end = text.find("\n", closing_line_start)
-    if closing_line_end == -1:
-        closing_line_end = len(text)
-    closing_line = text[closing_line_start:closing_line_end]
-
-    opening_match = re.search(r"(?P<fence>`{3,})(?P<info>[^\r\n]*)$", opening_line)
-    closing_match = re.search(r"(?P<fence>`{3,})[ \t]*$", closing_line)
-    stored_opening = re.match(r"(?P<fence>`+)[^\r\n]*\n", code_block)
-    if not opening_match or not closing_match or not stored_opening:
-        return text.replace(placeholder, code_block, 1)
-
-    stored_fence = stored_opening.group("fence")
-    stored_opening_end = stored_opening.end()
-    if not code_block.endswith(stored_fence):
-        return text.replace(placeholder, code_block, 1)
-
-    body = code_block[stored_opening_end : -len(stored_fence)]
-    # The closing line contains only markdownify's continuation prefix and
-    # the fence, making it the reliable prefix for every restored body line.
-    # The placeholder line can also carry list or quote context, but unlike
-    # the closing line it may be adjacent to content in malformed HTML.
-    continuation_prefix = closing_line[: closing_match.start()]
-    container_prefix = opening_line[: opening_match.start()]
-    stored_opening_line = code_block[:stored_opening_end].rstrip("\n")
-    restored = (
-        f"{container_prefix}{stored_opening_line}\n"
-        f"{continuation_prefix}{_prefix_code_block(body, continuation_prefix)}"
-        f"{stored_fence}"
-    )
-
-    suffix_start = closing_line_end
-    return text[:opening_line_start] + restored + text[suffix_start:]
+    return fence, newline + 1
 
 
 def _restore_code_macro_blocks(markdown_text: str, code_blocks: dict[str, str]) -> str:
     """Replace code-macro placeholders with fenced blocks in Markdown context."""
-    for placeholder, code_block in sorted(
-        code_blocks.items(),
-        key=lambda item: markdown_text.rfind(item[0]),
-        reverse=True,
-    ):
-        placeholder_start = markdown_text.rfind(placeholder)
-        if placeholder_start == -1:
-            continue
-        markdown_text = _restore_code_macro_block(
-            markdown_text,
-            placeholder_start,
-            placeholder,
-            code_block,
-        )
+    if not code_blocks:
+        return markdown_text
+    last_position: dict[str, int] = {}
+    for match in _PLACEHOLDER_SHAPED.finditer(markdown_text):
+        if match.group(1) in code_blocks:
+            last_position[match.group(1)] = match.start()
 
-    return markdown_text
+    restorer = _CodeMacroRestorer(markdown_text)
+    for placeholder, start in sorted(
+        last_position.items(), key=lambda item: item[1], reverse=True
+    ):
+        # A later placeholder's context can take in text before it; a
+        # placeholder in that text was replaced along with it.
+        if start + len(placeholder) > restorer.doc.head_end:
+            continue
+        restorer.restore(start, placeholder, code_blocks[placeholder])
+    return restorer.doc.result()
 
 
 class ConfluenceClient(Protocol):
@@ -255,6 +735,92 @@ class ConfluenceClient(Protocol):
     def get_user_details_by_userkey(self, userkey: str) -> dict[str, Any]:
         """Get user details by userkey (for Server/DC compatibility)."""
         ...
+
+
+MAX_USER_LOOKUPS_PER_CALL = 100
+
+
+class UserLookups:
+    """User lookups for one tool call: one request per distinct user, capped.
+
+    Content can mention the same user many times, or many users, and one call
+    can convert many documents (comments, child pages, search results). Each
+    distinct identifier is looked up once; after ``MAX_USER_LOOKUPS_PER_CALL``
+    distinct lookups the rest get no display name and fall back to the stored
+    identifier. Every fetcher call opens one budget (:func:`user_lookup_scope`)
+    that all its ``process_html_content`` calls share.
+    """
+
+    def __init__(self, client: ConfluenceClient) -> None:
+        self._client = client
+        self._results: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _lookup(
+        self, kind: str, identifier: str, fetch: Callable[[str], dict[str, Any]]
+    ) -> dict[str, Any]:
+        key = (kind, identifier)
+        if key in self._results:
+            return self._results[key]
+        if len(self._results) >= MAX_USER_LOOKUPS_PER_CALL:
+            return {}
+        try:
+            details = fetch(identifier)
+        except Exception as e:  # noqa: BLE001 - a failed lookup falls back
+            logger.warning(f"Error fetching user details ({kind}): {e}")
+            details = {}
+        self._results[key] = details if isinstance(details, dict) else {}
+        return self._results[key]
+
+    def get_user_details_by_accountid(self, account_id: str) -> dict[str, Any]:
+        return self._lookup(
+            "accountid", account_id, self._client.get_user_details_by_accountid
+        )
+
+    def get_user_details_by_username(self, username: str) -> dict[str, Any]:
+        return self._lookup(
+            "username", username, self._client.get_user_details_by_username
+        )
+
+    def get_user_details_by_userkey(self, userkey: str) -> dict[str, Any]:
+        return self._lookup(
+            "userkey", userkey, self._client.get_user_details_by_userkey
+        )
+
+
+# The user lookups of the fetcher call in progress, keyed by client. A tool
+# call runs one fetcher call, so every document it converts (comments, child
+# pages, both sides of a diff) shares one budget and one cache.
+_CALL_USER_LOOKUPS: contextvars.ContextVar[dict[int, UserLookups] | None] = (
+    contextvars.ContextVar("mcp_atlassian_call_user_lookups", default=None)
+)
+
+
+def user_lookup_scope(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Run ``function`` with one user lookup budget; nested calls share it."""
+
+    @functools.wraps(function)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        if _CALL_USER_LOOKUPS.get() is not None:
+            return function(*args, **kwargs)
+        token = _CALL_USER_LOOKUPS.set({})
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _CALL_USER_LOOKUPS.reset(token)
+
+    return wrapper
+
+
+def _user_lookups_for(client: ConfluenceClient) -> UserLookups:
+    if isinstance(client, UserLookups):
+        return client
+    scope = _CALL_USER_LOOKUPS.get()
+    if scope is None:
+        return UserLookups(client)
+    lookups = scope.get(id(client))
+    if lookups is None:
+        lookups = scope[id(client)] = UserLookups(client)
+    return lookups
 
 
 class BasePreprocessor:
@@ -295,10 +861,19 @@ class BasePreprocessor:
         try:
             # Parse the HTML content
             soup = BeautifulSoup(html_content, "html.parser")
+            # Before the passes below: moving an element walks everything
+            # under it, so each pass was quadratic in the nesting depth.
+            _flatten_deep_elements(soup)
 
-            # Process user mentions
-            self._process_user_mentions_in_soup(soup, confluence_client)
-            self._process_user_profile_macros_in_soup(soup, confluence_client)
+            # Process user mentions (one lookup per distinct user, capped).
+            # A shared UserLookups keeps one budget across a call's documents.
+            lookups = (
+                _user_lookups_for(confluence_client)
+                if confluence_client is not None
+                else None
+            )
+            self._process_user_mentions_in_soup(soup, lookups)
+            self._process_user_profile_macros_in_soup(soup, lookups)
 
             # Preserve Confluence date lozenges, whose value is stored only in
             # the datetime attribute and would otherwise be dropped by markdownify.
@@ -353,10 +928,20 @@ class BasePreprocessor:
         # is scanned once for such text instead of being serialized again for
         # every macro, which made pages with many code macros quadratic.
         taken = set(_PLACEHOLDER_SHAPED.findall(str(soup)))
+        index = _TreeIndex(
+            soup,
+            {
+                "body": _named("ac:plain-text-body"),
+                "language": _named("ac:parameter", **{"ac:name": "language"}),
+            },
+        )
         for macro in soup.find_all(
             "ac:structured-macro", attrs={"ac:name": ["code", "noformat"]}
         ):
-            body = macro.find("ac:plain-text-body")
+            # A macro inside a converted one was dropped with its body.
+            if index.inside(macro):
+                continue
+            body = index.first(macro, "body")
             if body is None:
                 # Without a plain-text body, the macro's child text consists
                 # of parameters rather than code. Leave it untouched so
@@ -369,7 +954,7 @@ class BasePreprocessor:
             # once markdownify strips the unknown tags.
             code_text = body.get_text()
 
-            language_param = macro.find("ac:parameter", attrs={"ac:name": "language"})
+            language_param = index.first(macro, "language")
             language = language_param.get_text(strip=True) if language_param else ""
 
             placeholder = f"\x00MCPCODEMACRO{len(code_blocks)}\x00"
@@ -382,17 +967,24 @@ class BasePreprocessor:
             taken.add(placeholder)
             code_blocks[placeholder] = _fenced_code_block(code_text, language)
 
-            pre_tag = soup.new_tag("pre")
             code_tag = soup.new_tag("code")
             if language:
                 code_tag["class"] = f"language-{language}"
             code_tag.string = placeholder
-            pre_tag.append(code_tag)
-            macro.replace_with(pre_tag)
+            # Turn the macro itself into the pre wrapper. replace_with looks
+            # the element up among its siblings, which made many sibling
+            # macros quadratic. Its children are detached as a whole, as
+            # replace_with detached the macro with them.
+            index.skip(macro)
+            macro.name = "pre"
+            macro.attrs = {}
+            macro.clear()
+            macro.append(code_tag)
 
         return code_blocks
 
     @staticmethod
+    @_keeps_sibling_positions
     def _process_remaining_macros_in_soup(soup: BeautifulSoup) -> None:
         """Replace macros without a dedicated handler with their visible text.
 
@@ -414,7 +1006,7 @@ class BasePreprocessor:
             title = params.get("title", "")
 
             if name == "status":
-                macro.replace_with(f"[{title or 'status'}]")
+                _replace_with(macro, f"[{title or 'status'}]")
                 continue
 
             body = macro.find(
@@ -428,7 +1020,7 @@ class BasePreprocessor:
                 content = list(body.contents)
 
             if not title and not content:
-                macro.replace_with(_macro_placeholder(name, macro, params))
+                _replace_with(macro, _macro_placeholder(name, macro, params))
                 continue
 
             if title:
@@ -442,10 +1034,9 @@ class BasePreprocessor:
                 quote = soup.new_tag("blockquote")
                 for node in content:
                     quote.append(node)
-                macro.replace_with(quote)
+                _replace_with(macro, quote)
             else:
-                for node in content:
-                    macro.insert_before(node)
+                _replace_with(macro, *content)
                 macro.decompose()
 
     @staticmethod
@@ -460,6 +1051,7 @@ class BasePreprocessor:
             ):
                 date_element.string = datetime_value
 
+    @_keeps_sibling_positions
     def _process_user_mentions_in_soup(
         self, soup: BeautifulSoup, confluence_client: ConfluenceClient | None = None
     ) -> None:
@@ -475,9 +1067,13 @@ class BasePreprocessor:
         """
         # Find all ac:link elements that might contain user mentions
         user_mentions = soup.find_all("ac:link")
+        index = _TreeIndex(soup, {"user": _named("ri:user")})
 
         for user_element in user_mentions:
-            user_ref = user_element.find("ri:user")
+            # A link inside a replaced one left the page with it.
+            if index.inside(user_element):
+                continue
+            user_ref = index.first(user_element, "user")
             if not user_ref:
                 continue
 
@@ -498,7 +1094,10 @@ class BasePreprocessor:
                 self._replace_user_mention_by_username(
                     user_element, username, confluence_client
                 )
+            if user_element.parent is None:
+                index.skip(user_element)
 
+    @_keeps_sibling_positions
     def _process_user_profile_macros_in_soup(
         self, soup: BeautifulSoup, confluence_client: ConfluenceClient | None = None
     ) -> None:
@@ -521,7 +1120,7 @@ class BasePreprocessor:
                 logger.debug(
                     "User profile macro found without a 'user' parameter. Replacing with placeholder."
                 )
-                macro_element.replace_with("[User Profile Macro (Malformed)]")
+                _replace_with(macro_element, "[User Profile Macro (Malformed)]")
                 continue
 
             user_ref = user_param.find("ri:user")
@@ -529,7 +1128,7 @@ class BasePreprocessor:
                 logger.debug(
                     "User profile macro's 'user' parameter found without 'ri:user' tag. Replacing with placeholder."
                 )
-                macro_element.replace_with("[User Profile Macro (Malformed)]")
+                _replace_with(macro_element, "[User Profile Macro (Malformed)]")
                 continue
 
             account_id = user_ref.get("ri:account-id")
@@ -569,7 +1168,7 @@ class BasePreprocessor:
 
             if display_name:
                 replacement_text = f"@{display_name}"
-                macro_element.replace_with(replacement_text)
+                _replace_with(macro_element, replacement_text)
             else:
                 fallback_identifier = (
                     user_identifier_for_log
@@ -577,7 +1176,7 @@ class BasePreprocessor:
                     else "unknown_user"
                 )
                 fallback_text = f"[User Profile: {fallback_identifier}]"
-                macro_element.replace_with(fallback_text)
+                _replace_with(macro_element, fallback_text)
                 logger.debug(f"Using fallback for user profile macro: {fallback_text}")
 
     def _replace_user_mention(
@@ -603,7 +1202,7 @@ class BasePreprocessor:
                 display_name = user_details.get("displayName", "")
                 if display_name:
                     new_text = f"@{display_name}"
-                    user_element.replace_with(new_text)
+                    _replace_with(user_element, new_text)
                     return
             # If we don't have a confluence client or couldn't get user details,
             # use fallback
@@ -622,7 +1221,7 @@ class BasePreprocessor:
         """
         # Fallback: just use the account ID
         new_text = f"@user_{account_id}"
-        user_element.replace_with(new_text)
+        _replace_with(user_element, new_text)
 
     def _replace_user_mention_by_userkey(
         self,
@@ -645,12 +1244,12 @@ class BasePreprocessor:
                 user_details = confluence_client.get_user_details_by_userkey(userkey)
                 display_name = user_details.get("displayName", "")
                 if display_name:
-                    user_element.replace_with(f"@{display_name}")
+                    _replace_with(user_element, f"@{display_name}")
                     return
-            user_element.replace_with(f"@user_{userkey}")
+            _replace_with(user_element, f"@user_{userkey}")
         except Exception as e:
             logger.warning(f"Error processing user mention by userkey: {str(e)}")
-            user_element.replace_with(f"@user_{userkey}")
+            _replace_with(user_element, f"@user_{userkey}")
 
     def _replace_user_mention_by_username(
         self,
@@ -671,13 +1270,13 @@ class BasePreprocessor:
                 user_details = confluence_client.get_user_details_by_username(username)
                 display_name = user_details.get("displayName", "")
                 if display_name:
-                    user_element.replace_with(f"@{display_name}")
+                    _replace_with(user_element, f"@{display_name}")
                     return
             # Fallback: use the username directly
-            user_element.replace_with(f"@{username}")
+            _replace_with(user_element, f"@{username}")
         except Exception as e:
             logger.warning(f"Error processing user mention by username: {str(e)}")
-            user_element.replace_with(f"@{username}")
+            _replace_with(user_element, f"@{username}")
 
     def _find_attachment_url(
         self,
@@ -702,6 +1301,7 @@ class BasePreprocessor:
                     return str(download)
         return None
 
+    @_keeps_sibling_positions
     def _process_images_in_soup(
         self,
         soup: BeautifulSoup,
@@ -715,12 +1315,20 @@ class BasePreprocessor:
             content_id: Optional page/content ID for fallback URL
             attachments: Optional attachment list for URL lookup
         """
+        index = _TreeIndex(
+            soup,
+            {"attachment": _named("ri:attachment"), "url": _named("ri:url")},
+        )
         for ac_image in soup.find_all("ac:image"):
+            # An image inside a replaced one left the page with it.
+            if index.inside(ac_image):
+                continue
+            index.skip(ac_image)
             src = ""
             alt = ""
 
             # Case 1: ri:attachment (file attached to the page)
-            ri_att = ac_image.find("ri:attachment")
+            ri_att = index.first(ac_image, "attachment")
             if ri_att:
                 filename = ri_att.get("ri:filename", "")
                 alt = filename
@@ -743,7 +1351,7 @@ class BasePreprocessor:
                     src = filename
             else:
                 # Case 2: ri:url (external URL)
-                ri_url = ac_image.find("ri:url")
+                ri_url = index.first(ac_image, "url")
                 if ri_url:
                     src = ri_url.get("ri:value", "")
                     # Extract filename from URL path for alt text
@@ -751,11 +1359,13 @@ class BasePreprocessor:
                     alt = path.rsplit("/", 1)[-1] if "/" in path else src
                 else:
                     # Unknown inner element
+                    # Log child names only: serializing the element made
+                    # nested images quadratic.
                     logger.warning(
-                        "ac:image tag with unsupported child: %s",
-                        ac_image,
+                        "ac:image tag with unsupported children: %s",
+                        [child.name for child in ac_image.find_all(recursive=False)],
                     )
-                    ac_image.replace_with("[unsupported image]")
+                    _replace_with(ac_image, "[unsupported image]")
                     continue
 
             # Build a standard <img> tag
@@ -769,7 +1379,7 @@ class BasePreprocessor:
             if height:
                 img_tag["height"] = height
 
-            ac_image.replace_with(img_tag)
+            _replace_with(ac_image, img_tag)
 
     def _convert_html_to_markdown(self, text: str) -> str:
         """Convert HTML content to markdown if needed.
@@ -781,13 +1391,7 @@ class BasePreprocessor:
         code_blocks: list[str] = []
         inline_codes: list[str] = []
 
-        text = _extract_blocks(
-            text,
-            r"```[^\n]*\n[\s\S]*?\n```",
-            lambda m: m.group(0),
-            code_blocks,
-            "HTMLCVTBLOCK",
-        )
+        text = _extract_fenced_blocks(text, code_blocks, "HTMLCVTBLOCK")
         text = _extract_blocks(
             text,
             r"`[^`]+`",
@@ -796,7 +1400,7 @@ class BasePreprocessor:
             "HTMLCVTINLINE",
         )
 
-        if re.search(r"<[^>]+>", text):
+        if _contains_html_tag(text):
             try:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=UserWarning)

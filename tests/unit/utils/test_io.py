@@ -221,6 +221,29 @@ class TestFileRoot:
         # /etc is a symlink on macOS, and validate_safe_path resolves symlinks.
         assert validate_safe_path("/etc/hostname") == Path("/etc/hostname").resolve()
 
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("wide", ["root", "home"])
+    def test_stdio_warns_about_wide_root(
+        self, reset_file_root, tmp_path, monkeypatch, caplog, wide
+    ):
+        """stdio keeps a wide root (no behaviour change) but says so at start."""
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.chdir("/" if wide == "root" else home)
+        with caplog.at_level("WARNING"):
+            root = reset_file_root.configure_file_root_for_transport("stdio")
+        assert root == (Path("/") if wide == "root" else home.resolve())
+        assert reset_file_root.FILES_DIR_ENV in caplog.text
+
+    def test_stdio_narrow_root_does_not_warn(
+        self, reset_file_root, tmp_path, monkeypatch, caplog
+    ):
+        monkeypatch.chdir(tmp_path)
+        with caplog.at_level("WARNING"):
+            reset_file_root.configure_file_root_for_transport("stdio")
+        assert reset_file_root.FILES_DIR_ENV not in caplog.text
+
     def test_is_in_cwd_root(self, reset_file_root, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         assert reset_file_root.is_in_cwd_root("victim.py")
@@ -386,3 +409,57 @@ class TestOpenConfined:
         )
         with pytest.raises(PermissionError):
             io_mod.open_confined(base / "sub" / "in.txt", "rb", base_dir=base)
+
+    @pytest.mark.security_regression
+    @pytest.mark.skipif(
+        os.open not in os.supports_dir_fd, reason="needs dir_fd support"
+    )
+    @pytest.mark.parametrize("mode", ["rb", "wb"])
+    def test_parent_swapped_back_during_the_check_is_refused(
+        self, boundary, monkeypatch, mode
+    ):
+        """A parent that is a symlink when opened and a directory when checked
+        does not let the open reach the symlink's target."""
+        base, outside = boundary
+        from mcp_atlassian.utils import io as io_mod
+
+        sub, saved = base / "sub", base / "sub-saved"
+
+        def to_link():
+            sub.rename(saved)
+            sub.symlink_to(outside, target_is_directory=True)
+
+        def to_dir():
+            sub.unlink()
+            saved.rename(sub)
+
+        real_realpath = os.path.realpath
+        armed = {"on": False}
+
+        def swapping_realpath(path, *args, **kwargs):
+            if not armed["on"]:
+                return real_realpath(path, *args, **kwargs)
+            armed["on"] = False
+            to_dir()
+            try:
+                return real_realpath(path, *args, **kwargs)
+            finally:
+                to_link()
+
+        def arm():
+            to_link()
+            armed["on"] = True
+
+        _swap_after_validation(monkeypatch, arm)
+        monkeypatch.setattr(io_mod.os.path, "realpath", swapping_realpath)
+        try:
+            with pytest.raises(ValueError):
+                with io_mod.open_confined(sub / "in.txt", mode, base_dir=base) as f:
+                    if mode == "rb":
+                        f.read()
+                    else:
+                        f.write(b"overwritten")
+        finally:
+            if sub.is_symlink():
+                to_dir()
+        assert (outside / "in.txt").read_text() == "SECRET"

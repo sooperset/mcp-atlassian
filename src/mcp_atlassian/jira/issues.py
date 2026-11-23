@@ -13,7 +13,9 @@ from ..exceptions import MCPAtlassianAuthenticationError, ScopeViolationError
 from ..models.jira import JiraIssue
 from ..models.jira.adf import merge_adf_with_preserved_media
 from ..models.jira.common import JiraChangelog
+from ..models.jira.issue import restrict_changelogs
 from ..utils import parse_date
+from ..utils.truncation import merge_truncation
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import (
     AttachmentsOperationsProto,
@@ -24,7 +26,7 @@ from .protocols import (
     ProjectsOperationsProto,
     UsersOperationsProto,
 )
-from .scope import ScopeMixin, allowed_project_keys
+from .scope import ScopeMixin, allowed_project_keys, output_scope_kwargs
 
 logger = logging.getLogger("mcp-jira")
 
@@ -287,7 +289,7 @@ class IssuesMixin(
                 issue,
                 base_url=self.config.url if hasattr(self, "config") else None,
                 requested_fields=model_fields,
-                allowed_projects=allowed_project_keys(self.config),
+                **output_scope_kwargs(self),
             )
         except HTTPError as http_err:
             status_code = (
@@ -802,9 +804,7 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(
-                issue_data, allowed_projects=allowed_project_keys(self.config)
-            )
+            return JiraIssue.from_api_response(issue_data, **output_scope_kwargs(self))
 
         except Exception as e:
             self._handle_create_issue_error(e, issue_type)
@@ -1478,7 +1478,7 @@ class IssuesMixin(
             issue = JiraIssue.from_api_response(
                 issue_data,
                 requested_fields=return_fields_param,
-                allowed_projects=allowed_project_keys(self.config),
+                **output_scope_kwargs(self),
             )
 
             # Add attachment results to the response if available
@@ -1601,7 +1601,7 @@ class IssuesMixin(
             return JiraIssue.from_api_response(
                 issue_data,
                 requested_fields=return_fields_param,
-                allowed_projects=allowed_project_keys(self.config),
+                **output_scope_kwargs(self),
             )
 
         # Get available transitions (uses TransitionsMixin's normalized implementation)
@@ -1704,7 +1704,7 @@ class IssuesMixin(
         return JiraIssue.from_api_response(
             issue_data,
             requested_fields=return_fields_param,
-            allowed_projects=allowed_project_keys(self.config),
+            **output_scope_kwargs(self),
         )
 
     def delete_issue(self, issue_key: str) -> bool:
@@ -1855,9 +1855,7 @@ class IssuesMixin(
                 msg = f"Unexpected return value type from `jira.get_issue`: {type(issue_data)}"
                 logger.error(msg)
                 raise TypeError(msg)
-            return JiraIssue.from_api_response(
-                issue_data, allowed_projects=allowed_project_keys(self.config)
-            )
+            return JiraIssue.from_api_response(issue_data, **output_scope_kwargs(self))
 
         except (ValueError, NotImplementedError, TypeError):
             raise
@@ -2155,7 +2153,7 @@ class IssuesMixin(
                                 base_url=self.config.url
                                 if hasattr(self, "config")
                                 else None,
-                                allowed_projects=allowed_project_keys(self.config),
+                                **output_scope_kwargs(self),
                             )
                         )
                     except Exception as e:
@@ -2222,9 +2220,14 @@ class IssuesMixin(
 
                 issue_changelog_results[issue_id].extend(changelogs)
 
+        allowed = allowed_project_keys(self.config)
+        if allowed:
+            kinds = output_scope_kwargs(self)["changelog_field_kinds"]()
+            for changelogs in issue_changelog_results.values():
+                restrict_changelogs(changelogs, allowed, kinds)
         issues = [
             JiraIssue(id=issue_id, changelogs=changelogs)
             for issue_id, changelogs in issue_changelog_results.items()
         ]
 
-        return issues
+        return merge_truncation(issues, paged_api_results)

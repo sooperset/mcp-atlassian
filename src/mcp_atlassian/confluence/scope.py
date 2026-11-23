@@ -10,12 +10,14 @@ resolve the identifier denies it.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
-from urllib.parse import quote
 
 from requests.exceptions import HTTPError
 
 from ..exceptions import ScopeViolationError
+from ..utils.urls import path_segment
 from .client import ConfluenceClient
 
 logger = logging.getLogger("mcp-atlassian")
@@ -36,6 +38,7 @@ _V2_CONTENT_ENDPOINTS: tuple[str, ...] = (
 )
 _V2_PARENT_FIELDS: tuple[str, ...] = ("pageId", "blogPostId", "parentId")
 _MAX_PARENT_HOPS = 3
+_MAX_TEMPLATE_PAGES = 10
 
 
 def _denied(kind: str, value: object) -> ScopeViolationError:
@@ -45,8 +48,26 @@ def _denied(kind: str, value: object) -> ScopeViolationError:
     )
 
 
-def _path_segment(value: object) -> str:
-    return quote(str(value).strip(), safe="")
+@contextmanager
+def _denied_as(kind: str, value: object) -> Iterator[None]:
+    """Report a denial of a resolved parent as a denial of the caller's value.
+
+    The denial text names only what the caller passed, so it reads the same
+    whether the object is missing or resolves outside the allowlist.
+    """
+    try:
+        yield
+    except ScopeViolationError:
+        raise _denied(kind, value) from None
+
+
+def allowed_space_keys(config: object) -> frozenset[str] | None:
+    """Return the upper-cased CONFLUENCE_SPACES_FILTER keys of ``config``, or None."""
+    raw = getattr(config, "spaces_filter", None)
+    if not isinstance(raw, str):
+        return None
+    keys = frozenset(k.strip().upper() for k in raw.split(",") if k.strip())
+    return keys or None
 
 
 class ScopeMixin(ConfluenceClient):
@@ -54,11 +75,7 @@ class ScopeMixin(ConfluenceClient):
 
     def allowed_spaces(self) -> frozenset[str] | None:
         """Return the upper-cased CONFLUENCE_SPACES_FILTER keys, or None."""
-        raw = getattr(self.config, "spaces_filter", None)
-        if not isinstance(raw, str):
-            return None
-        keys = frozenset(k.strip().upper() for k in raw.split(",") if k.strip())
-        return keys or None
+        return allowed_space_keys(self.config)
 
     def _uses_v2_for_scope(self) -> bool:
         return self.config.auth_type == "oauth" and bool(self.config.is_cloud)
@@ -70,7 +87,7 @@ class ScopeMixin(ConfluenceClient):
 
     def _v2_space_key(self, space_id: object) -> str:
         data = self._scope_get(
-            f"{self.confluence.url.rstrip('/')}/api/v2/spaces/{_path_segment(space_id)}"
+            f"{self.confluence.url.rstrip('/')}/api/v2/spaces/{path_segment(space_id)}"
         )
         key = data.get("key") if isinstance(data, dict) else None
         if not isinstance(key, str) or not key:
@@ -80,7 +97,7 @@ class ScopeMixin(ConfluenceClient):
 
     def _v2_content_space_key(self, content_id: object, hops: int = 0) -> str:
         base = self.confluence.url.rstrip("/")
-        segment = _path_segment(content_id)
+        segment = path_segment(content_id)
         for endpoint in _V2_CONTENT_ENDPOINTS:
             try:
                 data = self._scope_get(f"{base}/api/v2/{endpoint}/{segment}")
@@ -105,7 +122,7 @@ class ScopeMixin(ConfluenceClient):
 
     def _v1_content_space_key(self, content_id: object) -> str:
         data = self._scope_get(
-            f"{self._v1_rest_base_url()}/rest/api/content/{_path_segment(content_id)}",
+            f"{self._v1_rest_base_url()}/rest/api/content/{path_segment(content_id)}",
             params={"expand": "space"},
         )
         key = ((data or {}).get("space") or {}).get("key")
@@ -136,7 +153,8 @@ class ScopeMixin(ConfluenceClient):
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Confluence content {content_id!r}: {e}")
             raise _denied("content", content_id) from e
-        self.ensure_space_allowed(space_key)
+        with _denied_as("content", content_id):
+            self.ensure_space_allowed(space_key)
 
     def ensure_space_id_allowed(self, space_id: object) -> None:
         """Resolve a numeric space ID (Cloud v2) and check its key."""
@@ -147,23 +165,58 @@ class ScopeMixin(ConfluenceClient):
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Confluence space {space_id!r}: {e}")
             raise _denied("space", space_id) from e
-        self.ensure_space_allowed(space_key)
+        with _denied_as("space", space_id):
+            self.ensure_space_allowed(space_key)
 
     def ensure_template_allowed(self, template_id: object) -> None:
-        """Check a space template's space. Global templates have no space."""
+        """Check a template's space; a template with no space must be global.
+
+        A template is allowed when its response names an allowlisted space,
+        or when it names no space and is listed among the global templates.
+        """
         if self.allowed_spaces() is None or not self.config.is_cloud:
             # The template API is Cloud-only; the tool itself rejects DC.
             return
+        base = f"{self._v1_rest_base_url()}/rest/api/template"
         try:
             data = self._scope_get(
-                f"{self._v1_rest_base_url()}/rest/api/template/"
-                f"{_path_segment(template_id)}"
+                f"{base}/{path_segment(template_id)}", params={"expand": "space"}
             )
+            if not isinstance(data, dict):
+                raise ValueError("template response is not an object")
+            space = data.get("space")
+            if isinstance(space, dict) and space.get("key"):
+                space_key = space["key"]
+            elif space is None and "space" not in (data.get("_expandable") or {}):
+                if not self._is_global_template(base, str(template_id).strip()):
+                    raise ValueError("template has no space and is not global")
+                return
+            else:
+                raise ValueError("template space could not be read")
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(
                 f"Could not resolve Confluence template {template_id!r}: {e}"
             )
             raise _denied("template", template_id) from e
-        space = data.get("space") if isinstance(data, dict) else None
-        if space:
-            self.ensure_space_allowed((space or {}).get("key"))
+        with _denied_as("template", template_id):
+            self.ensure_space_allowed(space_key)
+
+    def _is_global_template(self, base: str, template_id: str) -> bool:
+        """Return True if ``template_id`` is in the global page template list."""
+        page_size = 100
+        for page in range(_MAX_TEMPLATE_PAGES):
+            data = self._scope_get(
+                f"{base}/page",
+                params={"start": str(page * page_size), "limit": str(page_size)},
+            )
+            results = data.get("results") if isinstance(data, dict) else None
+            if not isinstance(results, list):
+                return False
+            if any(
+                isinstance(item, dict) and str(item.get("templateId")) == template_id
+                for item in results
+            ):
+                return True
+            if len(results) < page_size:
+                return False
+        return False

@@ -209,6 +209,7 @@ class FakeUpstreamIssuer:
     authorization_code: str = "upstream-authorization-code"
     access_token: str = "upstream-access-token"
     refresh_token: str = "upstream-refresh-token"
+    refreshed_access_token: str = "upstream-access-token-refreshed"
     authorize_requests: list[dict[str, str]] = field(default_factory=list)
     token_requests: list[dict[str, str]] = field(default_factory=list)
 
@@ -236,7 +237,10 @@ class FakeUpstreamIssuer:
         form = await request.form()
         request_data = {key: str(value) for key, value in form.items()}
         self.token_requests.append(request_data)
-        if request_data.get("code") != self.authorization_code:
+        if request_data.get("grant_type") == "refresh_token":
+            if request_data.get("refresh_token") != self.refresh_token:
+                return JSONResponse({"error": "invalid_grant"}, status_code=400)
+        elif request_data.get("code") != self.authorization_code:
             return JSONResponse({"error": "invalid_grant"}, status_code=400)
         return JSONResponse(
             {
@@ -305,13 +309,23 @@ class LocalTLSOAuthIssuer:
                     ).items()
                 }
                 issuer.token_requests.append(form)
-                if form.get("code") != issuer.authorization_code:
+                refreshing = form.get("grant_type") == "refresh_token"
+                if refreshing:
+                    accepted = form.get("refresh_token") == issuer.refresh_token
+                else:
+                    accepted = form.get("code") == issuer.authorization_code
+                if not accepted:
                     body = b'{"error":"invalid_grant"}'
                     self.send_response(400)
                 else:
+                    access_token = (
+                        issuer.refreshed_access_token
+                        if refreshing
+                        else issuer.access_token
+                    )
                     body = (
                         "{"
-                        f'"access_token":"{issuer.access_token}",'
+                        f'"access_token":"{access_token}",'
                         f'"refresh_token":"{issuer.refresh_token}",'
                         '"token_type":"Bearer","expires_in":3600'
                         "}"

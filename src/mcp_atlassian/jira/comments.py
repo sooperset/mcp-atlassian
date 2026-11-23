@@ -31,8 +31,10 @@ from requests.exceptions import HTTPError
 from ..models.jira.adf import adf_to_text, merge_adf_with_preserved_media
 from ..models.jira.comment import parse_comment_visibility
 from ..utils import parse_date
+from ..utils.urls import path_segment
 from .client import JiraClient
 from .config import normalize_project_key
+from .scope import allowed_project_keys
 
 logger = logging.getLogger("mcp-jira")
 
@@ -301,7 +303,10 @@ class CommentsMixin(JiraClient):
                 cannot be verified is refused rather than allowed through.
         """
         try:
-            url = f"rest/servicedeskapi/request/{issue_key}/comment/{comment_id}"
+            url = (
+                "rest/servicedeskapi/request/"
+                f"{path_segment(issue_key)}/comment/{path_segment(comment_id)}"
+            )
             headers = {
                 **self.jira.default_headers,
                 "X-ExperimentalApi": "opt-in",
@@ -326,6 +331,34 @@ class CommentsMixin(JiraClient):
                 f"{issue_key} is in an internal-only project): {e}"
             ) from e
 
+    def _ensure_comment_on_issue(self, issue_key: str, comment_id: str) -> None:
+        """Refuse a comment ID that belongs to another issue.
+
+        The project checks (JIRA_PROJECTS_FILTER, JIRA_INTERNAL_ONLY_PROJECTS)
+        look at ``issue_key``; they hold only if the comment is on that issue.
+        The comment's ``self`` URL names the issue that owns it. The refusal
+        reads the same whether the comment is missing or on another issue.
+        """
+        if not self.config.internal_only_projects and not allowed_project_keys(
+            self.config
+        ):
+            return
+        not_found = ValueError(
+            f"Comment {comment_id} was not found on issue {issue_key}."
+        )
+        try:
+            issue = self.jira.issue(issue_key, fields="project")
+            comment = self.jira.issue_get_comment(
+                path_segment(issue_key), path_segment(comment_id)
+            )
+            owner = re.search(r"/issue/([^/]+)/comment/", str(comment["self"]))
+            issue_refs = {str(issue.get("id")), str(issue.get("key"))}
+        except Exception as e:  # noqa: BLE001 - any failure refuses the edit
+            logger.warning(f"Could not resolve comment {comment_id!r}: {e}")
+            raise not_found from None
+        if owner is None or owner.group(1) not in issue_refs:
+            raise not_found
+
     def _enforce_internal_only_edit(self, issue_key: str, comment_id: str) -> None:
         """Reject edit_comment calls that would modify a public comment on a
         project listed in JIRA_INTERNAL_ONLY_PROJECTS.
@@ -343,9 +376,10 @@ class CommentsMixin(JiraClient):
             ValueError: If the project is internal-only and the target
                 comment is currently public
         """
-        if not self._is_internal_only_project(issue_key):
+        guarded_key = self._internal_only_issue_key(issue_key)
+        if guarded_key is None:
             return
-        if self._fetch_servicedesk_comment_is_public(issue_key, comment_id):
+        if self._fetch_servicedesk_comment_is_public(guarded_key, comment_id):
             raise ValueError(
                 f"Comment {comment_id} on issue {issue_key} is PUBLIC "
                 f"(customer-visible). {issue_key}'s project is configured "
@@ -412,9 +446,10 @@ class CommentsMixin(JiraClient):
         # matcher accounts for URL normalization before classifying the key);
         # elsewhere a non-canonical key simply skips the probe and keeps the
         # existing ServiceDesk routing.
-        guarded = self._is_internal_only_project(issue_key)
-        if guarded:
-            issue_key = self._require_canonical_guarded_issue_key(issue_key)
+        guarded_key = self._internal_only_issue_key(issue_key)
+        guarded = guarded_key is not None
+        if guarded_key is not None:
+            issue_key = self._require_canonical_guarded_issue_key(guarded_key)
         if (
             (guarded or public is not None)
             and self._is_canonical_issue_key(issue_key)
@@ -454,7 +489,9 @@ class CommentsMixin(JiraClient):
                 data: dict[str, Any] = {"body": jira_formatted_comment}
                 if visibility:
                     data["visibility"] = visibility
-                result = self._post_api3(f"issue/{issue_key}/comment", data)
+                result = self._post_api3(
+                    f"issue/{path_segment(issue_key)}/comment", data
+                )
             else:
                 result = self.jira.issue_add_comment(
                     issue_key, jira_formatted_comment, visibility
@@ -590,7 +627,8 @@ class CommentsMixin(JiraClient):
         """
         try:
             current = self.jira.get(
-                f"rest/api/3/issue/{issue_key}/comment/{comment_id}"
+                f"rest/api/3/issue/{path_segment(issue_key)}"
+                f"/comment/{path_segment(comment_id)}"
             )
             if not isinstance(current, dict):
                 return comment_adf
@@ -637,6 +675,7 @@ class CommentsMixin(JiraClient):
                 the target comment's visibility cannot be verified for
                 an internal-only project
         """
+        self._ensure_comment_on_issue(issue_key, comment_id)
         self._enforce_internal_only_edit(issue_key, comment_id)
 
         try:
@@ -655,10 +694,17 @@ class CommentsMixin(JiraClient):
                 }
                 if visibility:
                     data["visibility"] = visibility
-                result = self._put_api3(f"issue/{issue_key}/comment/{comment_id}", data)
+                result = self._put_api3(
+                    f"issue/{path_segment(issue_key)}"
+                    f"/comment/{path_segment(comment_id)}",
+                    data,
+                )
             else:
                 result = self.jira.issue_edit_comment(
-                    issue_key, comment_id, jira_formatted_comment, visibility
+                    path_segment(issue_key),
+                    path_segment(comment_id),
+                    jira_formatted_comment,
+                    visibility,
                 )
             if not isinstance(result, dict):
                 msg = f"Unexpected return value type from `jira.issue_edit_comment`: {type(result)}"

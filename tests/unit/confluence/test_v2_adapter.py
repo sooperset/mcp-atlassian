@@ -1,6 +1,6 @@
 """Unit tests for ConfluenceV2Adapter class."""
 
-from unittest.mock import MagicMock, Mock, call
+from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
 import requests
@@ -127,7 +127,9 @@ class TestConfluenceV2Adapter:
     def test_create_page_with_live_subtype(self, v2_adapter, mock_session):
         """Test creating a Live Doc page passes subtype to the v2 API."""
         space_response = Mock()
-        space_response.json.return_value = {"results": [{"id": "space-123"}]}
+        space_response.json.return_value = {
+            "results": [{"id": "space-123", "key": "TEAM"}]
+        }
         create_response = Mock()
         create_response.json.return_value = {
             "id": "page-123",
@@ -1179,3 +1181,151 @@ class TestConfluenceV2AdapterLabels:
 
         with pytest.raises(ValueError, match="Failed to get labels for page '1'"):
             v2_adapter.get_page_labels("1")
+
+
+class TestConfluenceV2AdapterSpaceIdLookup:
+    """The space ID lookup returns only the space whose key was requested."""
+
+    @staticmethod
+    def _adapter(results: list[dict[str, str]]) -> ConfluenceV2Adapter:
+        session = MagicMock(spec=requests.Session)
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"results": results}
+        session.get.return_value = response
+        return ConfluenceV2Adapter(
+            session=session, base_url="https://example.atlassian.net/wiki"
+        )
+
+    def test_returns_id_of_matching_key(self) -> None:
+        adapter = self._adapter(
+            [{"id": "77", "key": "SECRET"}, {"id": "12", "key": "ALLOWED"}]
+        )
+        assert adapter._get_space_id("ALLOWED") == "12"
+
+    @pytest.mark.parametrize("space_key", ["", "  ", "ALLOWED"])
+    def test_rejects_when_no_result_has_the_key(self, space_key: str) -> None:
+        adapter = self._adapter([{"id": "77", "key": "SECRET"}])
+        with pytest.raises(ValueError):
+            adapter._get_space_id(space_key)
+
+
+def _endless_cursor_session(*, repeat: bool = False) -> MagicMock:
+    """Session whose every page is empty and points to a new (or same) cursor."""
+    session = MagicMock(spec=requests.Session)
+    calls = {"n": 0}
+
+    def get(url, params=None, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 1000:
+            raise AssertionError("unbounded read")
+        response = MagicMock()
+        response.links = {}
+        cursor = "same" if repeat else f"c{calls['n']}"
+        response.json.return_value = {
+            "results": [],
+            "_links": {"next": f"{url}?cursor={cursor}"},
+        }
+        return response
+
+    session.get.side_effect = get
+    session.calls = calls
+    return session
+
+
+@pytest.mark.parametrize("repeat", [False, True])
+def test_get_spaces_stops_endless_cursor(repeat: bool) -> None:
+    from mcp_atlassian.confluence.v2_adapter import MAX_CURSOR_PAGES
+
+    session = _endless_cursor_session(repeat=repeat)
+    adapter = ConfluenceV2Adapter(session=session, base_url="https://x.test/wiki")
+
+    result = adapter.get_spaces(limit=10)
+
+    assert session.calls["n"] <= MAX_CURSOR_PAGES
+    assert result["results"] == []
+    # No next link that would repeat the same start; the reason is reported.
+    assert "next" not in result["_links"]
+    assert result["truncated"] is True
+    assert result["hint"]
+
+
+@pytest.mark.parametrize("repeat", [False, True])
+def test_get_space_pages_for_tree_stops_endless_cursor(repeat: bool) -> None:
+    from mcp_atlassian.confluence.v2_adapter import MAX_CURSOR_PAGES
+
+    session = _endless_cursor_session(repeat=repeat)
+    adapter = ConfluenceV2Adapter(session=session, base_url="https://x.test/wiki")
+
+    with patch.object(adapter, "_get_space_id", return_value="9"):
+        result = adapter.get_space_pages_for_tree("SP", limit=10)
+
+    assert session.calls["n"] <= MAX_CURSOR_PAGES
+    assert result == {"pages": [], "has_more": True}
+
+
+def test_cursor_read_marks_repeated_cursor_as_unverified() -> None:
+    from mcp_atlassian.confluence.v2_adapter import ReadBudget
+    from mcp_atlassian.utils.truncation import is_truncated, more_certainly_exist
+
+    session = _endless_cursor_session(repeat=True)
+    adapter = ConfluenceV2Adapter(session=session, base_url="https://x.test/wiki")
+    budget = ReadBudget()
+
+    results = adapter._get_all_cursor_results(
+        "https://x.test/wiki/api/v2/pages/1/footer-comments", params={}, budget=budget
+    )
+
+    assert session.calls["n"] == 2
+    assert is_truncated(results) and not more_certainly_exist(results)
+    assert budget.unverified and not budget.truncated
+
+
+def _single_page_session(count: int, *, next_page: bool = False) -> MagicMock:
+    session = MagicMock(spec=requests.Session)
+
+    def get(url, params=None, **kwargs):
+        response = MagicMock()
+        response.links = {}
+        cursor = (params or {}).get("cursor")
+        if cursor:
+            items = [{"id": "extra"}]
+            data: dict = {"results": items}
+        else:
+            data = {"results": [{"id": str(i)} for i in range(count)]}
+            if next_page:
+                data["_links"] = {"next": f"{url}?cursor=2"}
+        response.json.return_value = data
+        return response
+
+    session.get.side_effect = get
+    return session
+
+
+@pytest.mark.parametrize(
+    ("count", "next_page", "truncated", "certain"),
+    [
+        (200, False, False, False),
+        (199, False, False, False),
+        (200, True, True, True),
+        (201, False, True, True),
+    ],
+)
+def test_cursor_read_marks_only_real_truncation(
+    count: int, next_page: bool, truncated: bool, certain: bool
+) -> None:
+    """Exactly the limit with no next page is not truncation."""
+    from mcp_atlassian.confluence.v2_adapter import ReadBudget
+    from mcp_atlassian.utils.truncation import is_truncated, more_certainly_exist
+
+    adapter = ConfluenceV2Adapter(
+        session=_single_page_session(count, next_page=next_page),
+        base_url="https://x.test/wiki",
+    )
+    results = adapter._get_all_cursor_results(
+        "https://x.test/wiki/api/v2/x", params={}, budget=ReadBudget()
+    )
+
+    assert len(results) == min(count, 200)
+    assert is_truncated(results) is truncated
+    assert more_certainly_exist(results) is certain

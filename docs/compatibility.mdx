@@ -12,7 +12,7 @@ MCP Atlassian works with any MCP-compatible client. This page documents platform
 | Claude Desktop | Fully supported | stdio | Primary development target |
 | Cursor | Fully supported | stdio | |
 | Windsurf | Fully supported | stdio | |
-| VS Code (Copilot) | Supported | stdio | See [Copilot setup](#github-copilot) |
+| GitHub Copilot | Supported | stdio | See [Copilot setup](#github-copilot) |
 | Vertex AI / Google ADK | Supported | stdio / HTTP | Schema sanitization applied automatically |
 | Amazon Bedrock | Compatible | stdio / HTTP | Not explicitly tested |
 | LiteLLM | Compatible | stdio / HTTP | Passes schemas to underlying provider |
@@ -115,24 +115,8 @@ These constraints are enforced by CI tests across all tools.
 GitHub Copilot's coding agent supports MCP servers via stdio transport. Key configuration notes:
 
 <Steps>
-  <Step title="Use stdio transport">
-    Copilot's agent mode uses stdio, not HTTP. Configure as a standard MCP server:
-
-    ```json
-    {
-      "mcpServers": {
-        "mcp-atlassian": {
-          "command": "uvx",
-          "args": ["mcp-atlassian"],
-          "env": {
-            "JIRA_URL": "https://your-instance.atlassian.net",
-            "JIRA_USERNAME": "your-email@example.com",
-            "JIRA_API_TOKEN": "your-api-token"
-          }
-        }
-      }
-    }
-    ```
+  <Step title="Configure the MCP">
+    Follow the [installation docs for GitHub Copilot](/docs/installation#github-copilot).
   </Step>
 
   <Step title="Verify tool discovery">

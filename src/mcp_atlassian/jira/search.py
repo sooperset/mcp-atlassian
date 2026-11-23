@@ -13,7 +13,11 @@ from ..utils.query_scope import and_scope_clause
 from .client import JiraClient
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import IssueOperationsProto
-from .scope import allowed_project_keys
+from .scope import (
+    allowed_project_keys,
+    output_scope_kwargs,
+    refuse_out_of_scope_jql_references,
+)
 from .utils import quote_jql_identifier_if_needed, sanitize_jql_reserved_words
 
 logger = logging.getLogger("mcp-jira")
@@ -33,9 +37,17 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         (both are ANDed), never replace it — otherwise the tool argument would
         defeat the operator's allowlist in shared-credential deployments.
         """
+        scoped = jql
         for filter_str in (self.config.projects_filter, projects_filter):
             if filter_str:
-                jql = self._and_projects_filter(jql, filter_str)
+                scoped = self._and_projects_filter(scoped, filter_str)
+        # After the balance check above, so a malformed query gets that error.
+        allowed = allowed_project_keys(self.config)
+        if allowed:
+            refuse_out_of_scope_jql_references(
+                jql, allowed, output_scope_kwargs(self)["changelog_field_kinds"]
+            )
+        jql = scoped
         return jql
 
     def _and_projects_filter(self, jql: str, filter_to_use: str) -> str:
@@ -179,7 +191,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     response_dict,
                     base_url=self.config.url,
                     requested_fields=fields_param,
-                    allowed_projects=allowed_project_keys(self.config),
+                    **output_scope_kwargs(self),
                 )
 
                 return search_result
@@ -198,7 +210,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     response,
                     base_url=self.config.url,
                     requested_fields=fields_param,
-                    allowed_projects=allowed_project_keys(self.config),
+                    **output_scope_kwargs(self),
                 )
 
                 # Return the full search result object
@@ -268,7 +280,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 response,
                 base_url=self.config.url,
                 requested_fields=fields_param,
-                allowed_projects=allowed_project_keys(self.config),
+                **output_scope_kwargs(self),
             )
             return search_result
         except requests.HTTPError as e:
