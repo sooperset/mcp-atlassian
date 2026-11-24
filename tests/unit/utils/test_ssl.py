@@ -1,5 +1,6 @@
 """Tests for the SSL utilities module."""
 
+import os
 import ssl
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +14,15 @@ from mcp_atlassian.utils.ssl import (
     configure_ssl_verification,
 )
 from mcp_atlassian.utils.ssrf_adapter import SsrfPinningAdapter
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ca_bundle_env(monkeypatch):
+    """Keep ambient CA-bundle env vars (common in corporate shells) from
+    changing what these tests prove; tests that need them set them
+    explicitly."""
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
 
 
 def test_ssl_ignore_adapter_cert_verify():
@@ -70,29 +80,29 @@ def test_ssl_ignore_adapter_init_poolmanager():
             assert kwargs["ssl_context"] == mock_context
 
 
-def test_configure_ssl_verification_disabled():
-    """Test configure_ssl_verification when SSL verification is disabled."""
-    # Arrange
-    service_name = "TestService"
-    url = "https://test.example.com/path"
-    session = MagicMock()  # Use MagicMock instead of actual Session
-    ssl_verify = False
+@pytest.mark.parametrize(
+    ("request_url", "verification_off"),
+    [
+        ("https://test.example.com/rest/api/2/myself", True),
+        ("https://TEST.example.com:443/rest", True),
+        ("https://other.example.com/rest", False),
+        ("https://test.example.com.evil.example/rest", False),
+        ("https://sub.test.example.com/rest", False),
+        ("https://test.example.com:8443/rest", False),
+    ],
+)
+def test_configure_ssl_verification_disabled_only_for_its_origin(
+    request_url, verification_off
+):
+    """SSL_VERIFY=false turns verification off for the configured origin only."""
+    session = Session()
 
-    # Mock the logger to avoid issues with real logging
-    with patch("mcp_atlassian.utils.ssl.logger") as mock_logger:
-        with patch("mcp_atlassian.utils.ssl.SSLIgnoreAdapter") as mock_adapter_class:
-            mock_adapter = MagicMock()
-            mock_adapter_class.return_value = mock_adapter
+    configure_ssl_verification(
+        "TestService", "https://test.example.com/path", session, ssl_verify=False
+    )
 
-            # Act
-            configure_ssl_verification(service_name, url, session, ssl_verify)
-
-            # Assert
-            mock_adapter_class.assert_called_once()
-            # Verify the adapter is mounted for both http and https
-            assert session.mount.call_count == 2
-            session.mount.assert_any_call("https://test.example.com", mock_adapter)
-            session.mount.assert_any_call("http://test.example.com", mock_adapter)
+    adapter = session.get_adapter(request_url)
+    assert isinstance(adapter, SSLIgnoreAdapter) is verification_off
 
 
 def test_configure_ssl_verification_enabled(monkeypatch):
@@ -149,11 +159,11 @@ def test_configure_ssl_verification_disabled_with_real_session():
         )
 
         # Should add custom adapters for http and https protocols
-        assert len(session.adapters) == original_adapters_count + 2
-        assert "https://example.com" in session.adapters
-        assert "http://example.com" in session.adapters
-        assert isinstance(session.adapters["https://example.com"], SSLIgnoreAdapter)
-        assert isinstance(session.adapters["http://example.com"], SSLIgnoreAdapter)
+        assert len(session.adapters) == original_adapters_count + 4
+        assert "https://example.com/" in session.adapters
+        assert "http://example.com/" in session.adapters
+        assert isinstance(session.adapters["https://example.com/"], SSLIgnoreAdapter)
+        assert isinstance(session.adapters["http://example.com/"], SSLIgnoreAdapter)
 
 
 def test_ssl_ignore_adapter():
@@ -300,7 +310,7 @@ def test_configure_ssl_disabled_with_client_cert():
             # Assert - Both client cert and SSL adapter should be configured
             assert session.cert == ("/path/to/cert.pem", "/path/to/key.pem")
             mock_adapter_class.assert_called_once()
-            assert session.mount.call_count == 2
+            assert session.mount.call_count == 4
 
 
 def test_ssl_ignore_adapter_is_subclass_of_no_proxy_adapter():
@@ -428,7 +438,7 @@ def test_configure_ssl_verification_captures_no_proxy_on_adapter(monkeypatch):
         no_proxy="explicit.example.com",
     )
 
-    adapter = session.get_adapter("https://test.example.com")
+    adapter = session.get_adapter("https://test.example.com/")
     assert isinstance(adapter, NoProxyAdapter)
     assert adapter._no_proxy == "explicit.example.com"
 
@@ -446,10 +456,260 @@ def test_configure_ssl_verification_enabled_with_no_proxy_mounts_adapter(monkeyp
         ssl_verify=True,
     )
 
-    assert len(session.adapters) == original_adapters_count + 2
-    assert isinstance(session.get_adapter("https://test.example.com"), NoProxyAdapter)
-    assert isinstance(session.get_adapter("http://test.example.com"), NoProxyAdapter)
+    assert len(session.adapters) == original_adapters_count + 4
+    assert isinstance(session.get_adapter("https://test.example.com/"), NoProxyAdapter)
+    assert isinstance(session.get_adapter("http://test.example.com/"), NoProxyAdapter)
     # Must not be the stricter SSLIgnoreAdapter — SSL verification stays enabled
     assert not isinstance(
         session.get_adapter("https://test.example.com"), SSLIgnoreAdapter
     )
+
+
+def test_configure_ssl_verification_applies_requests_ca_bundle(monkeypatch, tmp_path):
+    """A REQUESTS_CA_BUNDLE path is applied to session.verify explicitly, so it
+    works on the PAT/OAuth sessions that run with trust_env=False (where
+    requests itself ignores the variable)."""
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text("dummy bundle")
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(bundle))
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
+    session = Session()
+    session.trust_env = False
+
+    configure_ssl_verification(
+        service_name="TestService",
+        url="https://test.example.com",
+        session=session,
+        ssl_verify=True,
+    )
+
+    assert session.verify == str(bundle)
+
+
+def test_configure_ssl_verification_falls_back_to_curl_ca_bundle(monkeypatch, tmp_path):
+    """CURL_CA_BUNDLE is honored when REQUESTS_CA_BUNDLE is unset, mirroring
+    requests' own env-var precedence."""
+    bundle = tmp_path / "curl-ca.pem"
+    bundle.write_text("dummy bundle")
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.setenv("CURL_CA_BUNDLE", str(bundle))
+    session = Session()
+
+    configure_ssl_verification(
+        service_name="TestService",
+        url="https://test.example.com",
+        session=session,
+        ssl_verify=True,
+    )
+
+    assert session.verify == str(bundle)
+
+
+def test_configure_ssl_verification_missing_ca_bundle_raises(monkeypatch, tmp_path):
+    """A configured bundle path that is not a regular file fails fast instead
+    of surfacing later as an opaque requests error."""
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(tmp_path / "missing.pem"))
+    session = Session()
+
+    with pytest.raises(ValueError, match="CA bundle"):
+        configure_ssl_verification(
+            service_name="TestService",
+            url="https://test.example.com",
+            session=session,
+            ssl_verify=True,
+        )
+
+
+def test_configure_ssl_verification_no_bundle_keeps_default_verify(monkeypatch):
+    """Without a bundle env var, session verification stays at the default."""
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
+    session = Session()
+
+    configure_ssl_verification(
+        service_name="TestService",
+        url="https://test.example.com",
+        session=session,
+        ssl_verify=True,
+    )
+
+    assert session.verify is True
+
+
+def test_configure_ssl_verification_disabled_ignores_ca_bundle(monkeypatch, tmp_path):
+    """With ssl_verify=False the ignore adapter governs; the bundle is not
+    applied to session.verify."""
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text("dummy bundle")
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(bundle))
+    session = Session()
+
+    configure_ssl_verification(
+        service_name="TestService",
+        url="https://test.example.com",
+        session=session,
+        ssl_verify=False,
+    )
+
+    assert session.verify is True  # untouched; SSLIgnoreAdapter handles the bypass
+
+
+def test_configure_ssl_verification_accepts_ca_directory(monkeypatch, tmp_path):
+    """requests supports OpenSSL-style hashed CA directories as verify paths;
+    the fail-fast check must not reject them."""
+    ca_dir = tmp_path / "hashed-cas"
+    ca_dir.mkdir()
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(ca_dir))
+    session = Session()
+
+    effective = configure_ssl_verification(
+        service_name="TestService",
+        url="https://test.example.com",
+        session=session,
+        ssl_verify=True,
+    )
+
+    assert session.verify == str(ca_dir)
+    assert effective == str(ca_dir)
+
+
+def test_configure_ssl_verification_returns_effective_value(monkeypatch, tmp_path):
+    """The return value is the effective requests verify value, for callers
+    that must propagate it to per-request verify= wrappers."""
+    session = Session()
+    assert (
+        configure_ssl_verification(
+            service_name="TestService",
+            url="https://test.example.com",
+            session=session,
+            ssl_verify=True,
+        )
+        is True
+    )
+    assert (
+        configure_ssl_verification(
+            service_name="TestService",
+            url="https://test.example.com",
+            session=Session(),
+            ssl_verify=False,
+        )
+        is False
+    )
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text("dummy bundle")
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(bundle))
+    assert configure_ssl_verification(
+        service_name="TestService",
+        url="https://test.example.com",
+        session=Session(),
+        ssl_verify=True,
+    ) == str(bundle)
+
+
+def test_atlassian_wrapper_request_uses_ca_bundle(monkeypatch, tmp_path):
+    """The atlassian-python-api wrapper passes verify=self.verify_ssl on every
+    request, overriding session.verify — so the effective value must reach the
+    wrapper attribute for a private CA to apply to normal API calls."""
+    from atlassian import Jira as AtlassianJira
+
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text("dummy bundle")
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(bundle))
+
+    jira = AtlassianJira(
+        url="https://jira.example.com", token="dummy-pat", verify_ssl=True
+    )
+    jira._session.trust_env = False
+    effective = configure_ssl_verification(
+        service_name="Jira",
+        url="https://jira.example.com",
+        session=jira._session,
+        ssl_verify=True,
+    )
+    jira.verify_ssl = effective  # what JiraClient/ConfluenceClient now do
+
+    mock_response = MagicMock(status_code=200)
+    mock_response.headers = {}
+    with patch.object(
+        jira._session, "request", return_value=mock_response
+    ) as mock_request:
+        jira.get("rest/api/2/myself")
+
+    assert mock_request.call_args.kwargs["verify"] == str(bundle)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires POSIX mkfifo")
+def test_configure_ssl_verification_rejects_special_file(monkeypatch, tmp_path):
+    """A FIFO (or other special node) as the CA path must fail fast — the TLS
+    layer would block reading it instead of erroring."""
+    fifo = tmp_path / "ca.fifo"
+    os.mkfifo(fifo)
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(fifo))
+
+    with pytest.raises(ValueError, match="CA bundle"):
+        configure_ssl_verification(
+            service_name="TestService",
+            url="https://test.example.com",
+            session=Session(),
+            ssl_verify=True,
+        )
+
+
+def test_jira_client_wrapper_request_carries_ca_bundle(monkeypatch, tmp_path):
+    """Production-seam regression: a real JiraClient must leave the wrapper
+    sending the configured CA path as verify= on ordinary API requests —
+    removing the client's verify_ssl sync would fail this test."""
+    from mcp_atlassian.jira.client import JiraClient
+    from mcp_atlassian.jira.config import JiraConfig
+
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text("dummy bundle")
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(bundle))
+
+    client = JiraClient(
+        config=JiraConfig(
+            url="https://jira.example.com",
+            auth_type="pat",
+            personal_token="dummy-pat",
+            ssl_verify=True,
+        )
+    )
+    assert client.jira._session.trust_env is False  # the PAT session shape
+
+    mock_response = MagicMock(status_code=200)
+    mock_response.headers = {}
+    with patch.object(
+        client.jira._session, "request", return_value=mock_response
+    ) as mock_request:
+        client.jira.get("rest/api/2/myself")
+
+    assert mock_request.call_args.kwargs["verify"] == str(bundle)
+
+
+def test_confluence_client_wrapper_request_carries_ca_bundle(monkeypatch, tmp_path):
+    """Same production-seam regression for ConfluenceClient."""
+    from mcp_atlassian.confluence.client import ConfluenceClient
+    from mcp_atlassian.confluence.config import ConfluenceConfig
+
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text("dummy bundle")
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(bundle))
+
+    client = ConfluenceClient(
+        config=ConfluenceConfig(
+            url="https://confluence.example.com",
+            auth_type="pat",
+            personal_token="dummy-pat",
+            ssl_verify=True,
+        )
+    )
+    assert client.confluence._session.trust_env is False
+
+    mock_response = MagicMock(status_code=200)
+    mock_response.headers = {}
+    with patch.object(
+        client.confluence._session, "request", return_value=mock_response
+    ) as mock_request:
+        client.confluence.get("rest/api/space")
+
+    assert mock_request.call_args.kwargs["verify"] == str(bundle)

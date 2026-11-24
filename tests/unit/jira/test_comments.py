@@ -1,11 +1,21 @@
 """Tests for the Jira Comments mixin."""
 
-from unittest.mock import Mock
+from typing import Any
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.jira.comments import CommentsMixin
+
+
+def _issue_in_own_project(issue_key: str, fields: str | None = None) -> dict:
+    """Answer the internal-only project lookup with the key's own project."""
+    return {
+        "id": "10",
+        "key": issue_key,
+        "fields": {"project": {"key": issue_key.split("-")[0]}},
+    }
 
 
 class TestCommentsMixin:
@@ -483,6 +493,68 @@ class TestCommentsMixin:
         with pytest.raises(Exception, match="Error editing comment"):
             comments_mixin.edit_comment("TEST-123", "10001", "Updated comment")
 
+    def test_edit_comment_preserves_existing_media(self, comments_mixin):
+        """Editing a comment keeps the images it already had."""
+        media_node = {
+            "type": "mediaSingle",
+            "attrs": {"layout": "center"},
+            "content": [
+                {
+                    "type": "media",
+                    "attrs": {"id": "uuid-1", "type": "file", "collection": "jira"},
+                }
+            ],
+        }
+        comments_mixin.jira.get = Mock(
+            return_value={
+                "id": "10001",
+                "body": {
+                    "version": 1,
+                    "type": "doc",
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [{"type": "text", "text": "old"}],
+                        },
+                        media_node,
+                    ],
+                },
+            }
+        )
+        comments_mixin._put_api3 = Mock(
+            return_value={
+                "id": "10001",
+                "body": "new text",
+                "updated": "2024-01-01T12:00:00.000+0000",
+                "author": {"displayName": "John Doe"},
+            }
+        )
+
+        comments_mixin.edit_comment("TEST-123", "10001", "new text")
+
+        sent_body = comments_mixin._put_api3.call_args[0][1]["body"]
+        assert media_node in sent_body["content"]
+        comments_mixin.jira.get.assert_called_once_with(
+            "rest/api/3/issue/TEST-123/comment/10001"
+        )
+
+    def test_edit_comment_media_lookup_failure_still_edits(self, comments_mixin):
+        """A failed lookup does not block the edit."""
+        comments_mixin.jira.get = Mock(side_effect=ValueError("boom"))
+        comments_mixin._put_api3 = Mock(
+            return_value={
+                "id": "10001",
+                "body": "new text",
+                "updated": "2024-01-01T12:00:00.000+0000",
+                "author": {"displayName": "John Doe"},
+            }
+        )
+
+        result = comments_mixin.edit_comment("TEST-123", "10001", "new text")
+
+        assert result["id"] == "10001"
+        comments_mixin._put_api3.assert_called_once()
+
     def test_markdown_to_jira_cloud(self, comments_mixin):
         """Test _markdown_to_jira returns ADF dict on Cloud."""
         result = comments_mixin._markdown_to_jira("Markdown text")
@@ -794,6 +866,10 @@ class TestInternalOnlyProjectsGuard:
         config = jira_config_factory(internal_only_projects=frozenset({"CC"}))
         mixin = CommentsMixin(config=config)
         mixin.jira = Mock()
+        mixin.jira.issue.side_effect = _issue_in_own_project
+        mixin.jira.issue_get_comment.side_effect = lambda key, cid: {
+            "self": f"https://jira.example.test/rest/api/2/issue/10/comment/{cid}"
+        }
         mixin.jira.default_headers = {}
         mixin.preprocessor = Mock()
         mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
@@ -923,7 +999,12 @@ class TestInternalOnlyProjectsGuard:
             }
         )
         result = guarded_mixin.edit_comment("TEST-1", "1", "updated")
-        guarded_mixin.jira.get.assert_not_called()
+        # The media-preservation read is expected; the ServiceDesk lookup is not.
+        assert not [
+            call
+            for call in guarded_mixin.jira.get.call_args_list
+            if "servicedeskapi" in str(call)
+        ]
         guarded_mixin._put_api3.assert_called_once()
         assert result["id"] == "1"
 
@@ -948,7 +1029,12 @@ class TestInternalOnlyProjectsGuard:
             }
         )
         result = guarded_mixin.edit_comment("CC-1", "5", "Updated text")
-        guarded_mixin.jira.get.assert_called_once()
+        servicedesk_calls = [
+            call
+            for call in guarded_mixin.jira.get.call_args_list
+            if "servicedeskapi" in str(call)
+        ]
+        assert len(servicedesk_calls) == 1
         guarded_mixin._put_api3.assert_called_once()
         assert result["id"] == "5"
 
@@ -990,6 +1076,10 @@ class TestInternalOnlyNonRequestIssues:
         config = jira_config_factory(internal_only_projects=frozenset({"CC"}))
         mixin = CommentsMixin(config=config)
         mixin.jira = Mock()
+        mixin.jira.issue.side_effect = _issue_in_own_project
+        mixin.jira.issue_get_comment.side_effect = lambda key, cid: {
+            "self": f"https://jira.example.test/rest/api/2/issue/10/comment/{cid}"
+        }
         mixin.jira.default_headers = {}
         mixin.preprocessor = Mock()
         mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
@@ -1108,6 +1198,167 @@ class TestInternalOnlyNonRequestIssues:
         """Projects outside the setting never pay the extra round-trip."""
         guarded_mixin.add_comment("TEST-1", "note")
         guarded_mixin.jira.get.assert_not_called()
+
+
+class TestPublicOnUnlistedProjects:
+    """`public` on a project outside JIRA_INTERNAL_ONLY_PROJECTS.
+
+    Since #1748 an explicit `public` always routed to the ServiceDesk API,
+    so on an issue that is not a JSM customer request the call errored where
+    it used to post an ordinary comment. A definite non-request has no
+    portal audience, so `public` is ignored there; anything else keeps the
+    ServiceDesk path with no fallback.
+    """
+
+    ORDINARY_RESPONSE = {
+        "id": "1",
+        "body": "note",
+        "created": "2024-01-01T10:00:00.000+0000",
+        "author": {"displayName": "A"},
+    }
+
+    @pytest.fixture
+    def mixin(self, jira_config_factory):
+        mixin = CommentsMixin(config=jira_config_factory())
+        mixin.jira = Mock()
+        mixin.jira.default_headers = {}
+        mixin.jira.issue_add_comment = Mock()
+        mixin.preprocessor = Mock()
+        mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
+        mixin._clean_text = Mock(side_effect=lambda x: x)
+        mixin._post_api3 = Mock(return_value=self.ORDINARY_RESPONSE)
+        return mixin
+
+    @staticmethod
+    def _lookup_url(mixin) -> str:
+        return mixin.jira.get.call_args.args[0]
+
+    @pytest.mark.parametrize("public", [True, False])
+    def test_non_request_posts_ordinary_comment(self, mixin, public):
+        """A definite 404 drops `public` and uses the ordinary path."""
+        mixin.jira.get.side_effect = HTTPError(response=Mock(status_code=404))
+
+        result = mixin.add_comment("TEST-1", "note", public=public)
+
+        mixin.jira.get.assert_called_once()
+        assert self._lookup_url(mixin) == "rest/servicedeskapi/request/TEST-1"
+        mixin._post_api3.assert_called_once()
+        mixin.jira.post.assert_not_called()
+        assert result["id"] == "1"
+
+    def test_non_request_applies_visibility(self, mixin):
+        """With `public` dropped, `visibility` restricts the ordinary comment."""
+        mixin.jira.get.side_effect = HTTPError(response=Mock(status_code=404))
+        visibility = {"type": "role", "value": "Developers"}
+
+        mixin.add_comment("TEST-1", "note", visibility=visibility, public=False)
+
+        mixin._post_api3.assert_called_once()
+        assert mixin._post_api3.call_args.args[1]["visibility"] == visibility
+        mixin.jira.post.assert_not_called()
+
+    def test_request_public_false_uses_servicedesk(self, mixin):
+        """A confirmed request keeps the ServiceDesk path."""
+        mixin.jira.get.return_value = {"issueId": "10001"}
+        mixin.jira.post.return_value = {
+            "id": 7,
+            "body": "Internal note",
+            "public": False,
+            "created": {"iso8601": "2024-01-01T10:00:00.000+0000"},
+            "author": {"displayName": "A"},
+        }
+
+        result = mixin.add_comment("TEST-1", "Internal note", public=False)
+
+        mixin.jira.post.assert_called_once()
+        assert mixin.jira.post.call_args.args[0] == (
+            "rest/servicedeskapi/request/TEST-1/comment"
+        )
+        assert mixin.jira.post.call_args.kwargs["data"] == {
+            "body": "Internal note",
+            "public": False,
+        }
+        mixin._post_api3.assert_not_called()
+        assert result["public"] is False
+
+    @pytest.mark.parametrize("status_code", [403, 404, 500])
+    def test_request_servicedesk_failure_never_falls_back(self, mixin, status_code):
+        """A failed ServiceDesk call on a request never becomes ordinary."""
+        mixin.jira.get.return_value = {"issueId": "10001"}
+        mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=status_code))
+
+        with pytest.raises(Exception, match="ServiceDesk|JSM service desk"):
+            mixin.add_comment("TEST-1", "Internal note", public=False)
+
+        mixin._post_api3.assert_not_called()
+        mixin.jira.issue_add_comment.assert_not_called()
+
+    def test_request_public_with_visibility_still_raises(self, mixin):
+        """The public + visibility conflict is unchanged for real requests."""
+        mixin.jira.get.return_value = {"issueId": "10001"}
+        with pytest.raises(ValueError, match="Cannot use both"):
+            mixin.add_comment(
+                "TEST-1",
+                "note",
+                visibility={"type": "group", "value": "jira-users"},
+                public=False,
+            )
+        mixin.jira.post.assert_not_called()
+        mixin._post_api3.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "lookup_error",
+        [
+            HTTPError(response=Mock(status_code=403)),
+            HTTPError(response=Mock(status_code=500)),
+            Exception("connection reset"),
+        ],
+    )
+    def test_inconclusive_lookup_fails_closed(self, mixin, lookup_error):
+        """Anything short of a definite 404 keeps the ServiceDesk path."""
+        mixin.jira.get.side_effect = lookup_error
+        mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=404))
+
+        with pytest.raises(Exception, match="ServiceDesk|JSM service desk"):
+            mixin.add_comment("TEST-1", "Internal note", public=False)
+
+        mixin.jira.post.assert_called_once()
+        mixin._post_api3.assert_not_called()
+        mixin.jira.issue_add_comment.assert_not_called()
+
+    @pytest.mark.parametrize("response", [{}, {"issueId": None}, "not a dict", None])
+    def test_unexpected_lookup_body_fails_closed(self, mixin, response):
+        """An unrecognisable lookup response is not proof of a non-request."""
+        mixin.jira.get.return_value = response
+        mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=404))
+
+        with pytest.raises(Exception, match="ServiceDesk|JSM service desk"):
+            mixin.add_comment("TEST-1", "Internal note", public=False)
+
+        mixin._post_api3.assert_not_called()
+
+    @pytest.mark.parametrize("issue_key", ["test-1", " TEST-1", "TEST%2D1"])
+    def test_noncanonical_key_skips_lookup_and_keeps_servicedesk(
+        self, mixin, issue_key
+    ):
+        """A 404 for a non-canonical spelling would not prove a non-request,
+        so such keys are not probed and keep the ServiceDesk routing."""
+        mixin.jira.post.side_effect = HTTPError(response=Mock(status_code=404))
+
+        with pytest.raises(Exception, match="ServiceDesk|JSM service desk"):
+            mixin.add_comment(issue_key, "Internal note", public=False)
+
+        mixin.jira.get.assert_not_called()
+        mixin._post_api3.assert_not_called()
+
+    def test_public_none_pays_no_lookup(self, mixin):
+        """An ordinary comment never makes the extra request lookup."""
+        result = mixin.add_comment("TEST-1", "note")
+
+        mixin.jira.get.assert_not_called()
+        mixin.jira.post.assert_not_called()
+        mixin._post_api3.assert_called_once()
+        assert result["id"] == "1"
 
 
 class TestServiceDeskErrorStatusDetection:
@@ -1277,3 +1528,144 @@ def _node_types_with_marks(adf: dict) -> list[list[str]]:
 
     walk(adf)
     return out
+
+
+class TestInternalOnlyKeyAlias:
+    """An old or moved key resolves to the guarded project's current issue."""
+
+    @pytest.fixture
+    def mixin(self, jira_config_factory):
+        config = jira_config_factory(internal_only_projects=frozenset({"CC"}))
+        mixin = CommentsMixin(config=config)
+        mixin.jira = Mock()
+        mixin.jira.default_headers = {}
+        mixin.jira.issue.return_value = {
+            "key": "CC-5",
+            "fields": {"project": {"key": "CC"}},
+        }
+        mixin.preprocessor = Mock()
+        mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
+        mixin._clean_text = Mock(side_effect=lambda x: x)
+        return mixin
+
+    @pytest.mark.parametrize("public", [None, True])
+    def test_add_comment_on_alias_is_refused(self, mixin, public) -> None:
+        with pytest.raises(ValueError, match="internal-only"):
+            mixin.add_comment("OLD-12", "note", public=public)
+        mixin.jira.issue.assert_called_with("OLD-12", fields="project")
+        assert not mixin.jira.post.called
+        assert not mixin.jira.issue_add_comment.called
+
+    def test_alias_internal_note_posts_to_current_request(self, mixin) -> None:
+        """public=False on an alias probes and writes the current key's request."""
+        mixin.jira.get.return_value = {"issueKey": "CC-5"}
+        mixin.jira.post.return_value = {
+            "id": "77",
+            "body": "note",
+            "public": False,
+            "author": {"displayName": "Agent"},
+        }
+
+        result = mixin.add_comment("OLD-12", "note", public=False)
+
+        probe_path = mixin.jira.get.call_args.args[0]
+        assert probe_path == "rest/servicedeskapi/request/CC-5"
+        mixin.jira.post.assert_called_once()
+        assert (
+            mixin.jira.post.call_args.args[0]
+            == "rest/servicedeskapi/request/CC-5/comment"
+        )
+        assert mixin.jira.post.call_args.kwargs["data"]["public"] is False
+        assert result["id"] == "77"
+        assert result["public"] is False
+        mixin.jira.issue_add_comment.assert_not_called()
+
+    def test_alias_non_request_posts_ordinary_comment_on_current_key(
+        self, mixin
+    ) -> None:
+        """A 404 probe for the current key posts an ordinary comment on it."""
+        mixin.jira.get.side_effect = HTTPError(response=Mock(status_code=404))
+        # Cloud posts ordinary comments through the v3 API.
+        mixin._post_api3 = Mock(
+            return_value={
+                "id": "78",
+                "body": "note",
+                "created": "2024-01-01T10:00:00.000+0000",
+                "author": {"displayName": "Agent"},
+            }
+        )
+
+        result = mixin.add_comment("OLD-12", "note", public=False)
+
+        assert mixin.jira.get.call_args.args[0] == "rest/servicedeskapi/request/CC-5"
+        mixin._post_api3.assert_called_once()
+        assert mixin._post_api3.call_args.args[0] == "issue/CC-5/comment"
+        mixin.jira.post.assert_not_called()
+        assert result["id"] == "78"
+
+    def test_unresolvable_key_fails_closed(self, mixin) -> None:
+        mixin.jira.issue.side_effect = HTTPError(response=Mock(status_code=500))
+        assert mixin._is_internal_only_project("OLD-12") is True
+
+    def test_unlisted_project_still_unguarded(self, mixin) -> None:
+        mixin.jira.issue.return_value = {
+            "key": "PROJ-1",
+            "fields": {"project": {"key": "PROJ"}},
+        }
+        assert mixin._is_internal_only_project("PROJ-1") is False
+
+
+def _comment_binding_fetcher(**config: Any) -> Any:
+    from mcp_atlassian.jira import JiraConfig, JiraFetcher
+
+    fetcher = JiraFetcher(
+        config=JiraConfig(
+            url="https://jira.example.test",
+            auth_type="pat",
+            personal_token="dummy",
+            **config,
+        )
+    )
+    backend = MagicMock(spec_set=["issue", "issue_get_comment", "issue_edit_comment"])
+    backend.issue.side_effect = lambda key, fields=None: {
+        "id": {"A-1": "100", "OTH-1": "300"}.get(key, "999"),
+        "key": key,
+        "fields": {"project": {"key": key.split("-")[0]}},
+    }
+    backend.issue_get_comment.return_value = {
+        "id": "900",
+        "self": "https://jira.example.test/rest/api/2/issue/200/comment/900",
+    }
+    backend.issue_edit_comment.return_value = {"id": "900", "body": "x"}
+    fetcher.jira = backend
+    return fetcher
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    ("config", "issue_key"),
+    [
+        ({"projects_filter": "A"}, "A-1"),
+        ({"internal_only_projects": frozenset({"CC"})}, "OTH-1"),
+    ],
+    ids=["projects-filter", "internal-only"],
+)
+def test_edit_comment_refuses_a_comment_of_another_issue(config, issue_key) -> None:
+    fetcher = _comment_binding_fetcher(**config)
+
+    with pytest.raises(Exception, match="not found on issue"):
+        fetcher.edit_comment(issue_key, "900", "new text")
+
+    fetcher.jira.issue_edit_comment.assert_not_called()
+
+
+def test_edit_comment_on_its_own_issue_still_works() -> None:
+    fetcher = _comment_binding_fetcher(projects_filter="A")
+    fetcher.jira.issue_get_comment.return_value = {
+        "id": "900",
+        "self": "https://jira.example.test/rest/api/2/issue/100/comment/900",
+    }
+
+    fetcher.edit_comment("A-1", "900", "new text")
+
+    fetcher.jira.issue_edit_comment.assert_called_once()

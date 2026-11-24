@@ -3,7 +3,7 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, ClassVar, Literal
 
 from ..utils.env import (
     get_custom_headers,
@@ -59,6 +59,29 @@ class ConfluenceConfig:
     #   True  -> always v1
     #   False -> always the legacy link
     attachment_download_use_v1: bool | None = None
+
+    # Operator policy: settings that bound what any request may do, whoever's
+    # credentials it carries. Per-request configs copy them from the server
+    # config (or from the environment when there is none).
+    OPERATOR_POLICY_FIELDS: ClassVar[tuple[str, ...]] = ("spaces_filter", "timeout")
+
+    @classmethod
+    def operator_policy_from_env(cls) -> dict[str, Any]:
+        """Read the OPERATOR_POLICY_FIELDS values from the environment.
+
+        Returns:
+            Keyword arguments for the constructor, one per policy field.
+        """
+        timeout = 75  # Default timeout
+        if (
+            os.getenv("CONFLUENCE_TIMEOUT")
+            and os.getenv("CONFLUENCE_TIMEOUT", "").isdigit()
+        ):
+            timeout = int(os.getenv("CONFLUENCE_TIMEOUT", "75"))
+        return {
+            "spaces_filter": os.getenv("CONFLUENCE_SPACES_FILTER"),
+            "timeout": timeout,
+        }
 
     @property
     def is_cloud(self) -> bool:
@@ -198,9 +221,6 @@ class ConfluenceConfig:
         # SSL verification (for Server/DC)
         ssl_verify = is_env_ssl_verify("CONFLUENCE_SSL_VERIFY")
 
-        # Get the spaces filter if provided
-        spaces_filter = os.getenv("CONFLUENCE_SPACES_FILTER")
-
         # Proxy settings
         proxy_settings = get_proxy_settings_from_env("CONFLUENCE")
 
@@ -212,14 +232,6 @@ class ConfluenceConfig:
         client_cert = os.getenv("CONFLUENCE_CLIENT_CERT")
         client_key = os.getenv("CONFLUENCE_CLIENT_KEY")
         client_key_password = os.getenv("CONFLUENCE_CLIENT_KEY_PASSWORD")
-
-        # Timeout setting
-        timeout = 75  # Default timeout
-        if (
-            os.getenv("CONFLUENCE_TIMEOUT")
-            and os.getenv("CONFLUENCE_TIMEOUT", "").isdigit()
-        ):
-            timeout = int(os.getenv("CONFLUENCE_TIMEOUT", "75"))
 
         # Unset or empty/whitespace -> None (auto); only an explicit value forces.
         _use_v1_raw = os.getenv("CONFLUENCE_ATTACHMENT_DOWNLOAD_USE_V1")
@@ -237,7 +249,6 @@ class ConfluenceConfig:
             personal_token=personal_token,
             oauth_config=oauth_config,
             ssl_verify=ssl_verify,
-            spaces_filter=spaces_filter,
             http_proxy=proxy_settings["http_proxy"],
             https_proxy=proxy_settings["https_proxy"],
             no_proxy=proxy_settings["no_proxy"],
@@ -249,8 +260,8 @@ class ConfluenceConfig:
             client_cert=client_cert,
             client_key=client_key,
             client_key_password=client_key_password,
-            timeout=timeout,
             attachment_download_use_v1=attachment_download_use_v1,
+            **cls.operator_policy_from_env(),
         )
 
     def is_auth_configured(self) -> bool:

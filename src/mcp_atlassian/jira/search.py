@@ -1,7 +1,6 @@
 """Module for Jira search operations."""
 
 import logging
-import re
 from typing import Any
 
 import requests
@@ -10,9 +9,15 @@ from requests.exceptions import HTTPError
 from ..models.jira import JiraSearchResult
 from ..utils.decorators import handle_auth_errors
 from ..utils.pagination import clamp_limit
+from ..utils.query_scope import and_scope_clause
 from .client import JiraClient
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import IssueOperationsProto
+from .scope import (
+    allowed_project_keys,
+    output_scope_kwargs,
+    refuse_out_of_scope_jql_references,
+)
 from .utils import quote_jql_identifier_if_needed, sanitize_jql_reserved_words
 
 logger = logging.getLogger("mcp-jira")
@@ -32,9 +37,17 @@ class SearchMixin(JiraClient, IssueOperationsProto):
         (both are ANDed), never replace it — otherwise the tool argument would
         defeat the operator's allowlist in shared-credential deployments.
         """
+        scoped = jql
         for filter_str in (self.config.projects_filter, projects_filter):
             if filter_str:
-                jql = self._and_projects_filter(jql, filter_str)
+                scoped = self._and_projects_filter(scoped, filter_str)
+        # After the balance check above, so a malformed query gets that error.
+        allowed = allowed_project_keys(self.config)
+        if allowed:
+            refuse_out_of_scope_jql_references(
+                jql, allowed, output_scope_kwargs(self)["changelog_field_kinds"]
+            )
+        jql = scoped
         return jql
 
     def _and_projects_filter(self, jql: str, filter_to_use: str) -> str:
@@ -48,27 +61,12 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             quoted_projects = [quote_jql_identifier_if_needed(p) for p in projects]
             projects_list = ", ".join(quoted_projects)
             project_query = f"project IN ({projects_list})"
-        grouped_project_query = f"({project_query})"
-
-        if not jql:
-            jql = project_query
-        elif jql.strip().upper().startswith("ORDER BY"):
-            jql = f"{project_query} {jql}"
-        else:
-            # Always AND the allowlist, even when the caller's query already names a
-            # project: a caller-supplied `project = X` must not be able to escape the
-            # configured allowlist (out-of-allowlist queries then return empty).
-            # Extract a trailing ORDER BY so the AND does not produce invalid JQL.
-            order_match = re.search(r"\s+(ORDER\s+BY\s+.*)$", jql, re.IGNORECASE)
-            if order_match:
-                order_clause = order_match.group(1)
-                jql_without_order = jql[: order_match.start()]
-                jql = (
-                    f"({jql_without_order}) AND {grouped_project_query} {order_clause}"
-                )
-            else:
-                jql = f"({jql}) AND {grouped_project_query}"
-
+        # Always AND the allowlist, even when the caller's query already names a
+        # project: a caller-supplied `project = X` must not be able to escape the
+        # configured allowlist (out-of-allowlist queries then return empty).
+        # The caller's JQL is validated as one balanced expression first, so a
+        # stray `)` cannot close the wrapper and OR around the allowlist.
+        jql = and_scope_clause(jql, project_query, "JQL")
         logger.info(f"Applied projects filter to query: {jql}")
         return jql
 
@@ -119,7 +117,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             # Convert fields to proper format if it's a list/tuple/set
             fields_param: str | None
             if fields is None:  # Use default if None
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+                fields_param = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS))
             elif isinstance(fields, list | tuple | set):
                 fields_param = ",".join(fields)
             else:
@@ -193,6 +191,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     response_dict,
                     base_url=self.config.url,
                     requested_fields=fields_param,
+                    **output_scope_kwargs(self),
                 )
 
                 return search_result
@@ -208,7 +207,10 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
                 # Convert the response to a search result model
                 search_result = JiraSearchResult.from_api_response(
-                    response, base_url=self.config.url, requested_fields=fields_param
+                    response,
+                    base_url=self.config.url,
+                    requested_fields=fields_param,
+                    **output_scope_kwargs(self),
                 )
 
                 # Return the full search result object
@@ -258,7 +260,7 @@ class SearchMixin(JiraClient, IssueOperationsProto):
             # Determine fields_param
             fields_param = fields
             if fields_param is None:
-                fields_param = ",".join(DEFAULT_READ_JIRA_FIELDS)
+                fields_param = ",".join(sorted(DEFAULT_READ_JIRA_FIELDS))
 
             response = self.jira.get_issues_for_board(
                 board_id=board_id,
@@ -275,7 +277,10 @@ class SearchMixin(JiraClient, IssueOperationsProto):
 
             # Convert the response to a search result model
             search_result = JiraSearchResult.from_api_response(
-                response, base_url=self.config.url, requested_fields=fields_param
+                response,
+                base_url=self.config.url,
+                requested_fields=fields_param,
+                **output_scope_kwargs(self),
             )
             return search_result
         except requests.HTTPError as e:

@@ -545,6 +545,29 @@ class TestMCPProtocolIntegration:
             # Assert no tools are available when services not configured
             assert len(tools) == 0
 
+    async def test_deferred_credentials_keep_service_tools_listed(
+        self, atlassian_mcp_server
+    ) -> None:
+        """A viable deferred credential makes that service available for listing."""
+        app_context = MainAppContext(
+            full_jira_config=None,
+            full_confluence_config=None,
+            has_deferred_jira_auth=True,
+        )
+        tool = MagicMock(spec=FastMCPTool)
+        tool.tags = {"jira", "read"}
+        filter_context = {
+            "read_only": False,
+            "enabled_tools_filter": None,
+            "enabled_toolsets_filter": None,
+            "app_lifespan_state": app_context,
+            "header_based_services": {"jira": False, "confluence": False},
+        }
+
+        assert atlassian_mcp_server._is_tool_enabled(
+            "jira_get_issue", tool, filter_context
+        )
+
     async def test_middleware_oauth_token_processing(self):
         """Test UserTokenMiddleware OAuth token extraction and processing."""
         # Create mock mcp_server with get_streamable_http_path
@@ -599,6 +622,70 @@ class TestMCPProtocolIntegration:
         assert captured_state.get("user_atlassian_auth_type") == "oauth"
         assert captured_state.get("user_atlassian_email") is None
         assert response_started["status"] == 200
+
+    def test_middleware_closes_fetcher_cached_on_request_state(self):
+        """A fetcher cached on request.state is closed after the response."""
+        fetcher = MagicMock()
+        seen = {}
+
+        async def endpoint(request):
+            # Mirrors get_jira_fetcher() caching the per-request fetcher.
+            request.state.jira_fetcher = fetcher
+            seen["fetcher"] = request.state.jira_fetcher
+            return PlainTextResponse("ok")
+
+        app = Starlette(routes=[Route("/mcp", endpoint, methods=["POST"])])
+        client = TestClient(UserTokenMiddleware(app, mcp_server_ref=None))
+
+        response = client.post("/mcp")
+
+        assert response.status_code == 200
+        assert seen["fetcher"] is fetcher
+        fetcher.close.assert_called_once()
+
+    async def test_middleware_closes_request_fetchers(self):
+        """UserTokenMiddleware closes request-scoped fetchers after the response."""
+        mcp_server = MagicMock(spec=AtlassianMCP)
+        mcp_server.get_streamable_http_path.return_value = "/mcp"
+
+        jira_fetcher = MagicMock()
+        confluence_fetcher = MagicMock()
+
+        async def mock_app(scope, receive, send):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b'{"status":"ok"}'})
+
+        middleware = UserTokenMiddleware(mock_app, mcp_server_ref=mcp_server)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [(b"authorization", b"Bearer test-oauth-token-12345")],
+            "state": {
+                "jira_fetcher": jira_fetcher,
+                "confluence_fetcher": confluence_fetcher,
+            },
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            del message
+
+        await middleware(scope, receive, send)
+
+        jira_fetcher.close.assert_called_once()
+        confluence_fetcher.close.assert_called_once()
+        assert "jira_fetcher" not in scope["state"]
+        assert "confluence_fetcher" not in scope["state"]
 
     async def test_middleware_pat_token_processing(self):
         """Test UserTokenMiddleware PAT token extraction and processing."""
@@ -929,6 +1016,120 @@ class TestMCPProtocolIntegration:
                     assert app_context.full_confluence_config == conf_config
                     assert app_context.read_only is False
                     assert app_context.enabled_tools is None
+
+    async def test_lifespan_defers_command_without_executing_it(self) -> None:
+        """Startup exposes Jira tools but leaves the secret command untouched."""
+        env = {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test@example.com",
+            "JIRA_API_TOKEN_COMMAND": "get-jira-token",
+        }
+        with (
+            MockEnvironment.clean_env(),
+            patch.dict(os.environ, env),
+            patch(
+                "mcp_atlassian.utils.credential_command.subprocess.run"
+            ) as run_command,
+        ):
+            app = MagicMock()
+            async with main_lifespan(app) as context:
+                app_context = context["app_lifespan_context"]
+                assert app_context.full_jira_config is None
+                assert app_context.has_deferred_jira_auth is True
+                assert app_context.has_deferred_confluence_auth is False
+
+        run_command.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("service", "url_var", "username_var", "api_token_var", "command_var"),
+        [
+            (
+                "jira",
+                "JIRA_URL",
+                "JIRA_USERNAME",
+                "JIRA_API_TOKEN",
+                "JIRA_PERSONAL_TOKEN_COMMAND",
+            ),
+            (
+                "confluence",
+                "CONFLUENCE_URL",
+                "CONFLUENCE_USERNAME",
+                "CONFLUENCE_API_TOKEN",
+                "CONFLUENCE_PERSONAL_TOKEN_COMMAND",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("loaded_auth_type", ["basic", "oauth"])
+    async def test_lifespan_deferred_pat_priority(
+        self,
+        service: str,
+        url_var: str,
+        username_var: str,
+        api_token_var: str,
+        command_var: str,
+        loaded_auth_type: str,
+    ) -> None:
+        """A deferred Server/DC PAT keeps the precedence a static one would have."""
+        env = {
+            url_var: f"https://{service}.example.com",
+            username_var: "test@example.com",
+            api_token_var: "static-basic-token",
+            command_var: f"get-{service}-pat",
+        }
+        if loaded_auth_type == "oauth":
+            env.update(
+                {
+                    "ATLASSIAN_OAUTH_CLIENT_ID": "client-id",
+                    "ATLASSIAN_OAUTH_CLIENT_SECRET": "client-secret",
+                    "ATLASSIAN_OAUTH_REDIRECT_URI": "http://localhost/callback",
+                    "ATLASSIAN_OAUTH_SCOPE": "read",
+                }
+            )
+        with (
+            MockEnvironment.clean_env(),
+            patch.dict(os.environ, env),
+            patch(
+                "mcp_atlassian.utils.credential_command.subprocess.run"
+            ) as run_command,
+        ):
+            app = MagicMock()
+            async with main_lifespan(app) as context:
+                app_context = context["app_lifespan_context"]
+                # The eager config stays available for URL/SSL inheritance.
+                loaded_config = getattr(app_context, f"full_{service}_config")
+                assert loaded_config is not None
+                assert loaded_config.auth_type == loaded_auth_type
+                assert getattr(app_context, f"has_deferred_{service}_auth") is True
+
+        run_command.assert_not_called()
+
+    async def test_lifespan_cloud_oauth_ignores_api_token_command(self) -> None:
+        """Cloud OAuth outranks a deferred API token, so no command is queued."""
+        env = {
+            "JIRA_URL": "https://test.atlassian.net",
+            "JIRA_USERNAME": "test@example.com",
+            "JIRA_API_TOKEN_COMMAND": "get-jira-token",
+            "ATLASSIAN_OAUTH_CLIENT_ID": "client-id",
+            "ATLASSIAN_OAUTH_CLIENT_SECRET": "client-secret",
+            "ATLASSIAN_OAUTH_REDIRECT_URI": "http://localhost:8080/callback",
+            "ATLASSIAN_OAUTH_SCOPE": "read:jira-work",
+            "ATLASSIAN_OAUTH_CLOUD_ID": "cloud-id",
+        }
+        with (
+            MockEnvironment.clean_env(),
+            patch.dict(os.environ, env),
+            patch(
+                "mcp_atlassian.utils.credential_command.subprocess.run"
+            ) as run_command,
+        ):
+            app = MagicMock()
+            async with main_lifespan(app) as context:
+                app_context = context["app_lifespan_context"]
+                assert app_context.full_jira_config is not None
+                assert app_context.full_jira_config.auth_type == "oauth"
+                assert app_context.has_deferred_jira_auth is False
+
+        run_command.assert_not_called()
 
     async def test_lifespan_with_partial_configuration(self):
         """Test lifespan with only Jira configured."""

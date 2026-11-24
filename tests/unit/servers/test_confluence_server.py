@@ -13,6 +13,7 @@ from fastmcp.client import FastMCPTransport
 from fastmcp.exceptions import ToolError
 from starlette.requests import Request
 
+from mcp_atlassian.utils.media import AttachmentTooLargeError
 from src.mcp_atlassian.confluence import ConfluenceFetcher
 from src.mcp_atlassian.confluence.config import ConfluenceConfig
 from src.mcp_atlassian.models.confluence.page import ConfluencePage
@@ -232,6 +233,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     # Import and register tool functions (as they are in confluence.py)
     from src.mcp_atlassian.servers.confluence import (
         add_comment,
+        add_inline_comment,
         add_label,
         check_content_permissions,
         create_page,
@@ -246,11 +248,15 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_diff,
+        get_page_history,
         get_page_images,
         get_page_template,
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
+        move_page,
+        reply_to_comment,
         search,
         search_user,
         update_page,
@@ -279,16 +285,21 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_page_diff)
+    confluence_sub_mcp.add_tool(get_page_history)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
     confluence_sub_mcp.add_tool(get_inline_comments)
     confluence_sub_mcp.add_tool(add_comment)
+    confluence_sub_mcp.add_tool(reply_to_comment)
+    confluence_sub_mcp.add_tool(add_inline_comment)
     confluence_sub_mcp.add_tool(get_labels)
     confluence_sub_mcp.add_tool(add_label)
     confluence_sub_mcp.add_tool(create_page)
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(move_page)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
@@ -329,11 +340,14 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_labels,
         get_page,
         get_page_children,
+        get_page_diff,
+        get_page_history,
         get_page_images,
         get_page_template,
         get_space_page_tree,
         get_space_permissions,
         list_page_templates,
+        move_page,
         search,
         search_user,
         update_page,
@@ -364,6 +378,8 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(search)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
+    confluence_sub_mcp.add_tool(get_page_diff)
+    confluence_sub_mcp.add_tool(get_page_history)
     confluence_sub_mcp.add_tool(get_space_page_tree)
     confluence_sub_mcp.add_tool(get_comments)
     confluence_sub_mcp.add_tool(get_inline_comments)
@@ -374,6 +390,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     confluence_sub_mcp.add_tool(update_page)
     confluence_sub_mcp.add_tool(update_page_section)
     confluence_sub_mcp.add_tool(delete_page)
+    confluence_sub_mcp.add_tool(move_page)
     confluence_sub_mcp.add_tool(search_user)
     confluence_sub_mcp.add_tool(upload_attachment)
     confluence_sub_mcp.add_tool(upload_attachments)
@@ -525,6 +542,22 @@ async def test_search_returns_error_details(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_move_page_failure_is_a_tool_error(client, mock_confluence_fetcher):
+    """A refused move must reach the client as an error, not as a JSON body."""
+    mock_confluence_fetcher.move_page.side_effect = Exception(
+        "Failed to move page 111: Confluence did not move page 111"
+    )
+
+    with pytest.raises(ToolError) as excinfo:
+        await client.call_tool(
+            "confluence_move_page",
+            {"page_id": "111", "target_space_key": "NEWSPACE"},
+        )
+
+    assert "Confluence did not move page 111" in str(excinfo.value)
+
+
+@pytest.mark.anyio
 async def test_get_page(client, mock_confluence_fetcher):
     """Test the get_page tool with default parameters."""
     response = await client.call_tool("confluence_get_page", {"page_id": "123456"})
@@ -617,6 +650,26 @@ async def test_get_page_no_markdown(client, mock_confluence_fetcher):
     assert result_data["metadata"]["title"] == "Test Page HTML"
     assert result_data["metadata"]["content"] == "<p>HTML Content</p>"
     assert result_data["metadata"]["content_format"] == "storage"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("tool", ["confluence_get_page", "confluence_get_page_history"])
+async def test_raw_storage_survives_mcp_serialization(
+    client, mock_confluence_fetcher, tool
+):
+    storage = '<ac:link><ri:user ri:userkey="alice" /></ac:link>'
+    page = ConfluencePage(
+        id="123456", title="Owners", content=storage, content_format="storage"
+    )
+    mock_confluence_fetcher.get_page_content.return_value = page
+    mock_confluence_fetcher.get_page_history.return_value = page
+    arguments = {"page_id": "123456", "convert_to_markdown": False}
+    if tool.endswith("history"):
+        arguments["version"] = 3
+    response = await client.call_tool(tool, arguments)
+    result = json.loads(response.content[0].text)
+    returned = result.get("metadata", result)
+    assert returned["content"] == {"value": storage, "format": "storage"}
 
 
 @pytest.mark.anyio
@@ -755,7 +808,7 @@ async def test_add_comment(client, mock_confluence_fetcher):
     )
 
     mock_confluence_fetcher.add_comment.assert_called_once_with(
-        page_id="123456", content="Test comment content"
+        page_id="123456", content="Test comment content", content_format="markdown"
     )
 
     result_data = json.loads(response.content[0].text)
@@ -1365,6 +1418,90 @@ async def test_upload_attachment_base64(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_upload_attachment_failure_message(client, mock_confluence_fetcher):
+    """A failed upload does not report success."""
+    mock_confluence_fetcher.upload_attachment.return_value = {
+        "success": False,
+        "error": "410 Client Error: Gone",
+    }
+
+    response = await client.call_tool(
+        "confluence_upload_attachment",
+        {"content_id": "123456", "file_path": "/path/to/test-file.txt"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == "Attachment upload failed"
+    assert result_data["attachment"]["error"] == "410 Client Error: Gone"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "fetcher_result,expected_message",
+    [
+        pytest.param(
+            {
+                "success": True,
+                "content_id": "123456",
+                "total": 2,
+                "uploaded": [
+                    {"filename": "a.txt", "id": "att1"},
+                    {"filename": "b.txt", "id": "att2"},
+                ],
+                "failed": [],
+            },
+            "Uploaded 2 attachment(s) successfully",
+            id="all-uploaded",
+        ),
+        pytest.param(
+            {
+                "success": True,
+                "content_id": "123456",
+                "total": 2,
+                "uploaded": [{"filename": "a.txt", "id": "att1"}],
+                "failed": [{"filename": "b.txt", "error": "400 Client Error"}],
+            },
+            "Uploaded 1 of 2 attachment(s); 1 failed",
+            id="one-failed",
+        ),
+        pytest.param(
+            {
+                "success": False,
+                "content_id": "123456",
+                "total": 2,
+                "uploaded": [],
+                "failed": [
+                    {"filename": "a.txt", "error": "403 Client Error"},
+                    {"filename": "b.txt", "error": "403 Client Error"},
+                ],
+            },
+            "Uploaded 0 of 2 attachment(s); 2 failed",
+            id="all-failed",
+        ),
+        pytest.param(
+            {"success": False, "error": "No content ID provided"},
+            "Attachment upload failed",
+            id="rejected",
+        ),
+    ],
+)
+async def test_upload_attachments_message_counts_files(
+    client, mock_confluence_fetcher, fetcher_result, expected_message
+):
+    """The summary counts uploaded and failed files, not result keys."""
+    mock_confluence_fetcher.upload_attachments.return_value = fetcher_result
+
+    response = await client.call_tool(
+        "confluence_upload_attachments",
+        {"content_id": "123456", "file_paths": "a.txt,b.txt"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["message"] == expected_message
+    assert result_data["attachments"] == fetcher_result
+
+
+@pytest.mark.anyio
 async def test_upload_attachment_base64_allows_empty_content(
     client, mock_confluence_fetcher
 ):
@@ -1704,6 +1841,35 @@ async def test_get_page_images_size_limit(client, mock_confluence_fetcher):
 
 
 @pytest.mark.anyio
+async def test_download_attachment_stopped_at_limit_reports_bytes_read(
+    client, mock_confluence_fetcher
+):
+    """A download stopped at the limit is reported as too large, without a total size."""
+    mock_confluence_fetcher._v2_adapter = MagicMock()
+    mock_confluence_fetcher._v2_adapter.get_attachment_by_id.return_value = {
+        "title": "big.bin",
+        "extensions": {"mediaType": "application/octet-stream", "fileSize": 10},
+        "_links": {"download": "/download/attachments/123/big.bin"},
+    }
+    mock_confluence_fetcher._resolve_attachment_download_url.return_value = (
+        "https://example.atlassian.net/wiki/download/attachments/123/big.bin"
+    )
+    mock_confluence_fetcher.fetch_attachment_content.side_effect = (
+        AttachmentTooLargeError(30, 25)
+    )
+
+    response = await client.call_tool(
+        "confluence_download_attachment", {"attachment_id": "att123456789"}
+    )
+
+    result = json.loads(response.content[0].text)
+    assert result["success"] is False
+    assert result["bytes_read"] == 30
+    assert "file_size" not in result
+    assert "larger than the 50 MB inline limit" in result["error"]
+
+
+@pytest.mark.anyio
 async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     """Test graceful handling when fetch_attachment_content returns None."""
     mock_confluence_fetcher.get_content_attachments.return_value = {
@@ -1732,3 +1898,224 @@ async def test_get_page_images_fetch_failure(client, mock_confluence_fetcher):
     summary = json.loads(response.content[0].text)
     assert summary["downloaded"] == 0
     assert len(summary["failed"]) == 1
+
+
+def _three_small_attachments(media_type: str, suffix: str) -> dict:
+    return {
+        "success": True,
+        "content_id": "123",
+        "attachments": [
+            {
+                "id": f"att{i}",
+                "title": f"f{i}.{suffix}",
+                "type": "attachment",
+                "metadata": {"mediaType": media_type},
+                "extensions": {"mediaType": media_type, "fileSize": 400},
+                "_links": {"download": f"/download/attachments/123/f{i}.{suffix}"},
+            }
+            for i in range(3)
+        ],
+        "total": 3,
+        "start": 0,
+        "limit": 50,
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    ("tool", "media_type", "suffix"),
+    [
+        ("confluence_get_page_images", "image/png", "png"),
+        ("confluence_download_content_attachments", "application/pdf", "pdf"),
+    ],
+)
+async def test_multi_attachment_tools_stop_at_the_per_call_byte_limit(
+    client, mock_confluence_fetcher, monkeypatch, tool, media_type, suffix
+):
+    """Attachments past the per-call byte limit are reported, not downloaded."""
+    import sys
+
+    from src.mcp_atlassian.servers import confluence as confluence_server
+
+    media = sys.modules[confluence_server.fetch_and_encode_attachment.__module__]
+    monkeypatch.setattr(media, "ATTACHMENT_CALL_MAX_BYTES", 1000, raising=False)
+    mock_confluence_fetcher.get_content_attachments.return_value = (
+        _three_small_attachments(media_type, suffix)
+    )
+    mock_confluence_fetcher._resolve_attachment_download_url.side_effect = (
+        lambda url, **kwargs: url
+    )
+    mock_confluence_fetcher.fetch_attachment_content.return_value = b"x" * 400
+
+    response = await client.call_tool(tool, {"content_id": "123"})
+
+    summary = json.loads(response.content[0].text)
+    assert summary["downloaded"] == 2
+    assert [f["filename"] for f in summary["failed"]] == [f"f2.{suffix}"]
+    assert "for one call" in summary["failed"][0]["error"]
+    assert len(response.content) == 3
+    assert mock_confluence_fetcher.fetch_attachment_content.call_count == 2
+
+
+# --- one user lookup budget per tool call ---------------------------------------
+
+_MENTIONED_USERS = 150
+
+
+def _mentions_body() -> str:
+    links = "".join(
+        f'<ac:link><ri:user ri:account-id="acct-{i}" /></ac:link> '
+        for i in range(_MENTIONED_USERS)
+    )
+    return f"<p>{links}</p>"
+
+
+class _MentionBackend:
+    """Fake Confluence API whose every document mentions the same 150 users."""
+
+    url = "https://confluence.example.test"
+
+    def __init__(self) -> None:
+        self.lookups: list[str] = []
+
+    def _page(self, page_id: object = "1", **_: object) -> dict:
+        return {
+            "id": str(page_id),
+            "type": "page",
+            "title": f"Page {page_id}",
+            "space": {"key": "TEST"},
+            "version": {"number": 2},
+            "body": {"storage": {"value": _mentions_body()}},
+            "excerpt": _mentions_body(),
+        }
+
+    def get_page_by_id(self, page_id: object = "1", **kwargs: object) -> dict:
+        return self._page(page_id)
+
+    def get_page_by_title(self, *args: object, **kwargs: object) -> dict:
+        return self._page("2")
+
+    def get_page_child_by_type(self, *args: object, **kwargs: object) -> dict:
+        if kwargs.get("type") == "folder":
+            return {"results": []}
+        return {"results": [self._page(i) for i in range(3, 8)]}
+
+    def get_page_comments(self, *args: object, **kwargs: object) -> dict:
+        return {
+            "results": [
+                {**self._page(i), "type": "comment", "extensions": {"location": loc}}
+                for i, loc in ((10, "inline"), (11, "footer"), (12, "inline"))
+            ]
+        }
+
+    def cql(self, *args: object, **kwargs: object) -> dict:
+        return {
+            "results": [
+                {"content": self._page(i), "excerpt": _mentions_body()}
+                for i in range(20, 25)
+            ],
+            "size": 5,
+            "totalSize": 5,
+        }
+
+    def get_user_details_by_accountid(self, account_id: str, *a: object) -> dict:
+        self.lookups.append(account_id)
+        return {"displayName": f"Name {account_id}"}
+
+    def get_user_details_by_userkey(self, key: str, *a: object) -> dict:
+        self.lookups.append(key)
+        return {}
+
+    def get_user_details_by_username(self, name: str, *a: object) -> dict:
+        self.lookups.append(name)
+        return {}
+
+
+_CONVERTING_TOOLS = [
+    ("search", {"query": "type=page"}),
+    ("get_page", {"page_id": "1"}),
+    ("get_page", {"title": "Page", "space_key": "TEST"}),
+    ("get_page_children", {"parent_id": "1", "include_content": True}),
+    ("get_comments", {"page_id": "1"}),
+    ("get_inline_comments", {"page_id": "1"}),
+    ("get_page_history", {"page_id": "1", "version": 1}),
+    ("get_page_diff", {"page_id": "1", "from_version": 1, "to_version": 2}),
+]
+
+
+@pytest.mark.anyio
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    _CONVERTING_TOOLS,
+    ids=[f"{t}-{'-'.join(a)}" for t, a in _CONVERTING_TOOLS],
+)
+async def test_each_tool_call_has_one_user_lookup_budget(tool, args) -> None:
+    from fastmcp import Client
+    from fastmcp.client import FastMCPTransport
+
+    from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
+    from mcp_atlassian.servers.confluence import confluence_mcp
+
+    fetcher = ConfluenceFetcher(
+        config=ConfluenceConfig(
+            url=_MentionBackend.url, auth_type="pat", personal_token="dummy"
+        )
+    )
+    backend = _MentionBackend()
+    fetcher.confluence = backend
+    with patch(
+        "mcp_atlassian.servers.confluence.get_confluence_fetcher",
+        AsyncMock(return_value=fetcher),
+    ):
+        async with Client(transport=FastMCPTransport(confluence_mcp)) as client:
+            await client.call_tool(tool, args)
+
+    assert 0 < len(backend.lookups) <= 100
+    assert len(backend.lookups) == len(set(backend.lookups))
+
+
+_COMMENT_TOOLS = {
+    "confluence_add_comment": ("add_comment", {"page_id": "123456"}),
+    "confluence_reply_to_comment": ("reply_to_comment", {"comment_id": "999"}),
+    "confluence_add_inline_comment": (
+        "add_inline_comment",
+        {"page_id": "123456", "text_selection": "some text"},
+    ),
+}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("tool_name", sorted(_COMMENT_TOOLS))
+@pytest.mark.parametrize("content_format", [None, "markdown", "storage"])
+async def test_comment_tools_pass_content_format(
+    client, mock_confluence_fetcher, tool_name, content_format
+):
+    """Comment tools default to Markdown and pass the caller's format through."""
+    method_name, args = _COMMENT_TOOLS[tool_name]
+    method = getattr(mock_confluence_fetcher, method_name)
+    method.return_value.to_simplified_dict.return_value = {"id": "1"}
+    arguments = {**args, "body": "<b>bold</b> text"}
+    if content_format is not None:
+        arguments["content_format"] = content_format
+
+    response = await client.call_tool(tool_name, arguments)
+
+    assert json.loads(response.content[0].text)["success"] is True
+    assert method.call_args.kwargs["content"] == "<b>bold</b> text"
+    assert method.call_args.kwargs["content_format"] == (content_format or "markdown")
+
+
+@pytest.mark.anyio
+async def test_comment_tools_declare_content_format():
+    """Each comment tool's schema offers content_format, defaulting to markdown."""
+    from mcp_atlassian.servers.main import main_mcp
+
+    tools = {tool.name: tool for tool in await main_mcp.list_tools()}
+    for tool_name in _COMMENT_TOOLS:
+        schema = tools[tool_name].parameters
+        prop = schema["properties"]["content_format"]
+        assert prop["default"] == "markdown"
+        assert "'storage'" in prop["description"]
+        assert "content_format" not in schema.get("required", [])

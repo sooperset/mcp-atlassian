@@ -646,7 +646,7 @@ class TestGetJiraFetcher:
         assert called_config.no_proxy == "localhost,127.0.0.1"
         assert called_config.socks_proxy is None
         assert called_config.custom_headers is None
-        assert called_config.projects_filter is None
+        assert called_config.projects_filter == ["GLOBAL"]
         assert called_config.proxy_wpad_enable is True
         assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
 
@@ -710,7 +710,7 @@ class TestGetJiraFetcher:
         assert called_config.no_proxy == "localhost,127.0.0.1"
         assert called_config.socks_proxy == "socks5://proxy.example.com:1080"
         assert called_config.custom_headers is None
-        assert called_config.projects_filter is None
+        assert called_config.projects_filter == ["GLOBAL"]
         assert called_config.proxy_wpad_enable is False
         assert called_config.proxy_wpad_url is None
 
@@ -760,6 +760,7 @@ class TestGetJiraFetcher:
                 return None
 
         mock_context.request_context.lifespan_context = {}
+        monkeypatch.setenv("JIRA_PROJECTS_FILTER", "ALLOW")
         monkeypatch.setenv("ATLASSIAN_PROXY_WPAD_ENABLE", "true")
         monkeypatch.setenv(
             "ATLASSIAN_PROXY_WPAD_URL", "http://wpad.example.com/wpad.dat"
@@ -776,6 +777,7 @@ class TestGetJiraFetcher:
         assert called_config.proxy_wpad_enable is True
         assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
         assert called_config.no_proxy is None
+        assert called_config.projects_filter == "ALLOW"
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
@@ -884,6 +886,7 @@ class TestGetJiraFetcher:
             ValueError, match="Invalid header-based Jira token or configuration"
         ):
             await get_jira_fetcher(mock_context)
+        mock_fetcher.close.assert_called_once()
 
     @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
@@ -1124,6 +1127,8 @@ class TestGetJiraFetcher:
             assert_mock_called_with_partial(
                 mock_jira_fetcher_class, config=app_context.full_jira_config
             )
+            if scenario["setup_http"]:
+                assert mock_request.state.jira_fetcher == mock_fetcher
 
             # Reset mocks for next iteration
             mock_jira_fetcher_class.reset_mock()
@@ -1164,6 +1169,173 @@ class TestGetJiraFetcher:
             "X-Static": "keep",
             "X-SSO-User": "global-user",
         }
+
+    async def test_deferred_credentials_resolve_for_stdio(
+        self, mock_context, config_factory
+    ) -> None:
+        """Stdio resolves a command, then builds a fetcher from the result."""
+        app_context = config_factory.create_app_context(
+            full_jira_config=None,
+            has_deferred_jira_auth=True,
+        )
+        _setup_mock_context(mock_context, app_context)
+        config = config_factory.create_jira_config()
+        fetcher = _create_mock_fetcher(JiraFetcher)
+        resolver = MagicMock()
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                side_effect=RuntimeError("No HTTP context"),
+            ),
+            patch(
+                "mcp_atlassian.servers.dependencies.get_resolver",
+                return_value=resolver,
+            ),
+            patch.object(JiraConfig, "from_env", return_value=config),
+            patch(
+                "mcp_atlassian.servers.dependencies.JiraFetcher",
+                return_value=fetcher,
+            ) as fetcher_class,
+        ):
+            result = await get_jira_fetcher(mock_context)
+
+        assert result is fetcher
+        resolver.resolve.assert_called_once_with("jira")
+        fetcher_class.assert_called_once_with(config=config)
+
+    async def test_deferred_credentials_outrank_loaded_global_config(
+        self, mock_context, config_factory
+    ) -> None:
+        """A deferred credential the lifespan judged higher priority wins.
+
+        ``main_lifespan`` only sets the flag when the pending command matches or
+        outranks the eagerly loaded config (Server/DC PAT over Basic), so the
+        deferred branch must run even though a global config is available.
+        """
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(auth_type="basic"),
+            has_deferred_jira_auth=True,
+        )
+        _setup_mock_context(mock_context, app_context)
+        resolved_config = config_factory.create_jira_config(auth_type="pat")
+        fetcher = _create_mock_fetcher(JiraFetcher)
+        resolver = MagicMock()
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                side_effect=RuntimeError("No HTTP context"),
+            ),
+            patch(
+                "mcp_atlassian.servers.dependencies.get_resolver",
+                return_value=resolver,
+            ),
+            patch.object(JiraConfig, "from_env", return_value=resolved_config),
+            patch(
+                "mcp_atlassian.servers.dependencies.JiraFetcher",
+                return_value=fetcher,
+            ) as fetcher_class,
+        ):
+            result = await get_jira_fetcher(mock_context)
+
+        assert result is fetcher
+        resolver.resolve.assert_called_once_with("jira")
+        fetcher_class.assert_called_once_with(config=resolved_config)
+
+    async def test_deferred_failure_falls_back_to_loaded_config(
+        self, mock_context, config_factory
+    ) -> None:
+        """A failing command must not take down working static credentials."""
+        loaded_config = config_factory.create_jira_config(auth_type="basic")
+        app_context = config_factory.create_app_context(
+            jira_config=loaded_config,
+            has_deferred_jira_auth=True,
+        )
+        _setup_mock_context(mock_context, app_context)
+        fetcher = _create_mock_fetcher(JiraFetcher)
+        resolver = MagicMock()
+        resolver.resolve.side_effect = ValueError("secret store locked")
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                side_effect=RuntimeError("No HTTP context"),
+            ),
+            patch(
+                "mcp_atlassian.servers.dependencies.get_resolver",
+                return_value=resolver,
+            ),
+            patch(
+                "mcp_atlassian.servers.dependencies.JiraFetcher",
+                return_value=fetcher,
+            ) as fetcher_class,
+        ):
+            result = await get_jira_fetcher(mock_context)
+
+        assert result is fetcher
+        fetcher_class.assert_called_once_with(config=loaded_config)
+
+    async def test_deferred_failure_raises_without_loaded_config(
+        self, mock_context, config_factory
+    ) -> None:
+        """With nothing to fall back to, the command error reaches the caller."""
+        app_context = config_factory.create_app_context(
+            full_jira_config=None,
+            has_deferred_jira_auth=True,
+        )
+        _setup_mock_context(mock_context, app_context)
+        resolver = MagicMock()
+        resolver.resolve.side_effect = ValueError("secret store locked")
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                side_effect=RuntimeError("No HTTP context"),
+            ),
+            patch(
+                "mcp_atlassian.servers.dependencies.get_resolver",
+                return_value=resolver,
+            ),
+            pytest.raises(ValueError, match="secret store locked"),
+        ):
+            await get_jira_fetcher(mock_context)
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_user_token_auth_works_alongside_deferred_credentials(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+        auth_scenarios,
+    ) -> None:
+        """Per-user HTTP auth still inherits URL/SSL when a command is pending.
+
+        Regression for why the lifespan keeps ``full_jira_config`` instead of
+        discarding it: ``_get_global_config`` raises without it, which would
+        break every authenticated multi-user request.
+        """
+        _setup_mock_request_state(mock_request, auth_scenarios["pat"])
+        mock_get_http_request.return_value = mock_request
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(auth_type="basic"),
+            has_deferred_jira_auth=True,
+        )
+        _setup_mock_context(mock_context, app_context)
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        with patch("mcp_atlassian.servers.dependencies.get_resolver") as get_resolver:
+            result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.personal_token == auth_scenarios["pat"]["token"]
+        # The user's own token is used; the operator's command is never run.
+        get_resolver.assert_not_called()
 
     @pytest.mark.parametrize(
         "error_scenario,expected_error_match",
@@ -1318,7 +1490,7 @@ class TestGetConfluenceFetcher:
         assert called_config.no_proxy == "localhost,127.0.0.1"
         assert called_config.socks_proxy is None
         assert called_config.custom_headers is None
-        assert called_config.spaces_filter is None
+        assert called_config.spaces_filter == ["GLOBAL"]
         assert called_config.proxy_wpad_enable is True
         assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
 
@@ -1334,6 +1506,8 @@ class TestGetConfluenceFetcher:
     ):
         """Header PAT fetchers use proxy environment variables without config."""
         monkeypatch.setenv("CONFLUENCE_SSL_VERIFY", "false")
+        # SSL_VERIFY=false applies to the operator's own instance.
+        monkeypatch.setenv("CONFLUENCE_URL", "https://test.atlassian.net")
         monkeypatch.setenv("HTTP_PROXY", "http://shared-proxy.example")
         monkeypatch.setenv("CONFLUENCE_HTTP_PROXY", "http://confluence-proxy.example")
         monkeypatch.setenv("HTTPS_PROXY", "https://shared-proxy.example")
@@ -1349,6 +1523,7 @@ class TestGetConfluenceFetcher:
             "CONFLUENCE_CUSTOM_HEADERS", "X-Instance-Secret=do-not-forward"
         )
         mock_context.request_context.lifespan_context = {}
+        monkeypatch.setenv("CONFLUENCE_SPACES_FILTER", "ALLOW")
         service_headers = {
             "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
             "X-Atlassian-Confluence-Personal-Token": "test-confluence-pat-token",
@@ -1385,6 +1560,7 @@ class TestGetConfluenceFetcher:
         assert called_config.proxy_wpad_enable is True
         assert called_config.proxy_wpad_url == "http://wpad.example.com/wpad.dat"
         assert called_config.custom_headers is None
+        assert called_config.spaces_filter == "ALLOW"
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
@@ -1398,6 +1574,7 @@ class TestGetConfluenceFetcher:
     ):
         """Header-based Confluence auth can use passthrough without global config."""
         monkeypatch.setenv("CONFLUENCE_PASSTHROUGH_HEADERS", "X-SSO-User, X-Request-ID")
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "atlassian.net")
         mock_context.request_context.lifespan_context = {}
         service_headers = {
             "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
@@ -1429,6 +1606,73 @@ class TestGetConfluenceFetcher:
         assert result == mock_fetcher
         called_config = mock_confluence_fetcher_class.call_args[1]["config"]
         assert called_config.custom_headers == {"X-SSO-User": "header-user"}
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize(
+        ("env", "forwarded"),
+        [
+            ({}, False),
+            ({"MCP_ALLOWED_URL_DOMAINS": "corp.example.com"}, False),
+            ({"MCP_ALLOWED_URL_DOMAINS": "atlassian.net"}, True),
+            ({"CONFLUENCE_URL": "https://test.atlassian.net/wiki"}, True),
+            ({"CONFLUENCE_URL": "https://atlassian.net/wiki"}, False),
+            ({"CONFLUENCE_URL": "http://test.atlassian.net/wiki"}, False),
+            ({"CONFLUENCE_URL": "https://test.atlassian.net:8443/wiki"}, False),
+        ],
+    )
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
+    async def test_header_pat_passthrough_only_to_operator_trusted_host(
+        self,
+        mock_confluence_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        monkeypatch,
+        env,
+        forwarded,
+    ):
+        """Gateway-injected passthrough headers never reach a caller-chosen host.
+
+        The header PAT branch takes its URL from the request, so passthrough
+        headers (which the caller may not know) travel only to a host the
+        operator configured or allowlisted.
+        """
+        for key in ("CONFLUENCE_URL", "JIRA_URL", "MCP_ALLOWED_URL_DOMAINS"):
+            monkeypatch.delenv(key, raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.setenv("CONFLUENCE_PASSTHROUGH_HEADERS", "X-Gateway-Secret")
+        mock_context.request_context.lifespan_context = {}
+        service_headers = {
+            "X-Atlassian-Confluence-Url": "https://test.atlassian.net",
+            "X-Atlassian-Confluence-Personal-Token": "caller-pat",
+        }
+
+        class MockState:
+            def __init__(self):
+                self.confluence_fetcher = None
+                self.user_atlassian_auth_type = "pat"
+                self.user_atlassian_email = None
+                self.atlassian_service_headers = service_headers
+
+            def __getattr__(self, name):
+                if name == "user_atlassian_token":
+                    raise AttributeError(name)
+                return None
+
+        mock_request.state = MockState()
+        mock_request.headers = Headers({"x-gateway-secret": "GATEWAY-SECRET"})
+        mock_get_http_request.return_value = mock_request
+        mock_confluence_fetcher_class.return_value = _create_mock_fetcher(
+            ConfluenceFetcher
+        )
+
+        await get_confluence_fetcher(mock_context)
+
+        called_config = mock_confluence_fetcher_class.call_args[1]["config"]
+        sent = called_config.custom_headers or {}
+        assert ("X-Gateway-Secret" in sent) is forwarded
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
@@ -1483,6 +1727,7 @@ class TestGetConfluenceFetcher:
             ValueError, match="Invalid header-based Confluence token or configuration"
         ):
             await get_confluence_fetcher(mock_context)
+        mock_fetcher.close.assert_called_once()
 
     @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
@@ -1646,6 +1891,8 @@ class TestGetConfluenceFetcher:
             assert_mock_called_with_partial(
                 mock_confluence_fetcher_class, config=app_context.full_confluence_config
             )
+            if scenario["setup_http"]:
+                assert mock_request.state.confluence_fetcher == mock_fetcher
 
             # Reset mocks for next iteration
             mock_confluence_fetcher_class.reset_mock()
@@ -1862,6 +2109,7 @@ class TestValidationCache:
     ):
         """Passthrough identity must isolate shared PAT cache entries."""
         monkeypatch.setenv("CONFLUENCE_PASSTHROUGH_HEADERS", passthrough_header)
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "atlassian.net")
         service_headers = self._confluence_headers("shared-pat-token")
         request1 = self._header_pat_request(service_headers)
         request1.headers = Headers({passthrough_header: "user-a"})
@@ -2168,6 +2416,51 @@ class TestValidationCache:
         await get_confluence_fetcher(mock_context)
 
         succeeding_fetcher.get_current_user_info.assert_called_once()
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize("fetcher_class", [ConfluenceFetcher, JiraFetcher])
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    async def test_cached_validation_keeps_only_bounded_identity(
+        self, mock_get_http_request, mock_context, fetcher_class
+    ):
+        """The shared cache keeps a bounded identity, not the upstream's
+        whole user record, however large the record is."""
+        from cachetools import TTLCache
+
+        big = "x" * 100_000
+        if fetcher_class is ConfluenceFetcher:
+            headers = self._confluence_headers("shared-pat-token")
+            returned: object = {
+                "email": "user@example.com",
+                "displayName": big,
+                "details": {"blob": big},
+            }
+            get_fetcher = get_confluence_fetcher
+        else:
+            headers = {
+                "X-Atlassian-Jira-Url": "https://test.atlassian.net",
+                "X-Atlassian-Jira-Personal-Token": "shared-pat-token",
+            }
+            returned = big
+            get_fetcher = get_jira_fetcher
+        request = self._header_pat_request(headers)
+        fetcher = _create_mock_fetcher(fetcher_class, validation_return=returned)
+        cache: TTLCache = TTLCache(maxsize=10, ttl=300)
+        mock_get_http_request.return_value = request
+
+        with (
+            patch(
+                f"mcp_atlassian.servers.dependencies.{fetcher_class.__name__}",
+                return_value=fetcher,
+            ),
+            patch("mcp_atlassian.servers.dependencies._validation_cache", cache),
+        ):
+            await get_fetcher(mock_context)
+
+        assert len(cache) == 1
+        assert all(len(repr(value)) < 2048 for value in cache.values())
+        if fetcher_class is ConfluenceFetcher:
+            assert request.state.user_atlassian_email == "user@example.com"
 
 
 class TestBasicAuthMultiUser:
@@ -2692,6 +2985,130 @@ class TestUnauthenticatedGlobalFallbackRegression:
             await get_jira_fetcher(mock_context)
 
     @pytest.mark.security_regression
+    async def test_unauthenticated_http_refuses_deferred_jira_credentials(
+        self, mock_context, mock_request, config_factory
+    ) -> None:
+        """HTTP callers can't trigger or use an operator credential command."""
+        _setup_mock_request_state(mock_request)
+        app_context = config_factory.create_app_context(
+            full_jira_config=None,
+            has_deferred_jira_auth=True,
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                return_value=mock_request,
+            ),
+            patch("mcp_atlassian.servers.dependencies.get_resolver") as get_resolver,
+            patch.dict("os.environ", {"ALLOW_GLOBAL_CRED_FALLBACK": ""}),
+            pytest.raises(ValueError, match="operator's global credentials"),
+        ):
+            await get_jira_fetcher(mock_context)
+
+        get_resolver.assert_not_called()
+
+    @pytest.mark.security_regression
+    async def test_external_auth_exemption_does_not_cover_deferred_commands(
+        self, mock_context, mock_request, config_factory
+    ) -> None:
+        """External auth is exempt from the guard; a pending command is not.
+
+        ``auth_type="external"`` holds no operator credentials — the caller
+        supplies them per request — so it may serve unauthenticated HTTP. A
+        configured ``*_COMMAND`` does produce operator credentials, so the
+        exemption must not extend to it.
+        """
+        _setup_mock_request_state(mock_request)
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(auth_type="external"),
+            has_deferred_jira_auth=True,
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                return_value=mock_request,
+            ),
+            patch("mcp_atlassian.servers.dependencies.get_resolver") as get_resolver,
+            patch.dict("os.environ", {"ALLOW_GLOBAL_CRED_FALLBACK": ""}),
+            pytest.raises(ValueError, match="operator's global credentials"),
+        ):
+            await get_jira_fetcher(mock_context)
+
+        get_resolver.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("service", "getter", "fetcher_path"),
+        [
+            (
+                "Jira",
+                get_jira_fetcher,
+                "mcp_atlassian.servers.dependencies.JiraFetcher",
+            ),
+            (
+                "Confluence",
+                get_confluence_fetcher,
+                "mcp_atlassian.servers.dependencies.ConfluenceFetcher",
+            ),
+        ],
+    )
+    async def test_external_auth_full_url_check_pool_says_retry(
+        self,
+        service,
+        getter,
+        fetcher_path,
+        mock_context,
+        mock_request,
+        config_factory,
+        monkeypatch,
+    ) -> None:
+        """A full URL check pool on the external auth path asks for a retry.
+
+        This path runs inside the tool call, where the HTTP status is already
+        sent, so it cannot answer 503 like the middleware. The tool error
+        carries the same text as that 503 body, so the client can tell it is
+        a capacity limit and not a bad URL.
+        """
+        from mcp_atlassian.servers.async_utils import UrlCheckBusy
+
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "corp.example.com")
+        _setup_mock_request_state(mock_request)
+        mock_request.headers = Headers(
+            {f"x-atlassian-{service.lower()}-url": "https://dc.corp.example.com"}
+        )
+        if service == "Jira":
+            config = config_factory.create_jira_config(auth_type="external", url="")
+            app_context = config_factory.create_app_context(jira_config=config)
+        else:
+            config = config_factory.create_confluence_config(
+                auth_type="external", url=""
+            )
+            app_context = config_factory.create_app_context(confluence_config=config)
+        _setup_mock_context(mock_context, app_context)
+
+        async def busy(url: str) -> str | None:
+            raise UrlCheckBusy("busy")
+
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                return_value=mock_request,
+            ),
+            patch("mcp_atlassian.servers.dependencies.run_url_check", busy),
+            patch(fetcher_path) as fetcher_class,
+            pytest.raises(ValueError) as excinfo,
+        ):
+            await getter(mock_context)
+
+        assert str(excinfo.value) == (
+            "Server busy checking request URLs; retry shortly."
+        )
+        fetcher_class.assert_not_called()
+
+    @pytest.mark.security_regression
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
     async def test_unauthenticated_http_request_refuses_global_confluence_fetcher(
@@ -2713,3 +3130,355 @@ class TestUnauthenticatedGlobalFallbackRegression:
 
         with pytest.raises(ValueError):
             await get_confluence_fetcher(mock_context)
+
+
+class _HeaderPatState:
+    """Request state for a header-based PAT request (no user OAuth token)."""
+
+    def __init__(self, service_headers: dict[str, str]) -> None:
+        self.jira_fetcher = None
+        self.confluence_fetcher = None
+        self.user_atlassian_auth_type = "pat"
+        self.user_atlassian_email = None
+        self.atlassian_service_headers = service_headers
+
+    def __getattr__(self, name: str) -> None:
+        if name == "user_atlassian_token":
+            raise AttributeError(name)
+        return None
+
+
+_OPERATOR_URL = "https://jira.operator.example"
+
+
+@pytest.mark.security_regression
+class TestHeaderPatSslVerifyBound:
+    """Operator SSL_VERIFY=false reaches only operator-trusted header URLs."""
+
+    @staticmethod
+    async def _header_config(
+        service: str,
+        header_url: str,
+        mock_context: MagicMock,
+        mock_request: MagicMock,
+        app_context: MainAppContext | None,
+    ) -> object:
+        mock_request.state = _HeaderPatState(
+            {
+                f"X-Atlassian-{service}-Url": header_url,
+                f"X-Atlassian-{service}-Personal-Token": "dummy-pat",
+            }
+        )
+        if app_context is not None:
+            _setup_mock_context(mock_context, app_context)
+        else:
+            mock_context.request_context.lifespan_context = {}
+        fetcher_cls = JiraFetcher if service == "Jira" else ConfluenceFetcher
+        getter = get_jira_fetcher if service == "Jira" else get_confluence_fetcher
+        with (
+            patch(
+                "mcp_atlassian.servers.dependencies.get_http_request",
+                return_value=mock_request,
+            ),
+            patch(
+                f"mcp_atlassian.servers.dependencies.{fetcher_cls.__name__}",
+                return_value=_create_mock_fetcher(fetcher_cls),
+            ) as fetcher_class,
+        ):
+            await getter(mock_context)
+        return fetcher_class.call_args[1]["config"]
+
+    @staticmethod
+    def _app(service: str, config_factory: object) -> MainAppContext:
+        if service == "Jira":
+            config = config_factory.create_jira_config(  # type: ignore[attr-defined]
+                url=_OPERATOR_URL, ssl_verify=False
+            )
+            return config_factory.create_app_context(jira_config=config)  # type: ignore[attr-defined]
+        config = config_factory.create_confluence_config(  # type: ignore[attr-defined]
+            url=_OPERATOR_URL, ssl_verify=False
+        )
+        return config_factory.create_app_context(confluence_config=config)  # type: ignore[attr-defined]
+
+    @pytest.mark.parametrize("service", ["Jira", "Confluence"])
+    async def test_caller_host_keeps_verification(
+        self, service, mock_context, mock_request, config_factory, monkeypatch
+    ):
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        config = await self._header_config(
+            service,
+            "https://victim-dc.example:8443",
+            mock_context,
+            mock_request,
+            self._app(service, config_factory),
+        )
+        assert config.ssl_verify is True
+
+    @pytest.mark.parametrize("service", ["Jira", "Confluence"])
+    @pytest.mark.parametrize(
+        "header_url", [_OPERATOR_URL, "https://dc.corp.example.com"]
+    )
+    async def test_operator_trusted_host_keeps_operator_setting(
+        self,
+        service,
+        header_url,
+        mock_context,
+        mock_request,
+        config_factory,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "corp.example.com")
+        config = await self._header_config(
+            service,
+            header_url,
+            mock_context,
+            mock_request,
+            self._app(service, config_factory),
+        )
+        assert config.ssl_verify is False
+
+    @pytest.mark.parametrize("service", ["Jira", "Confluence"])
+    async def test_env_fallback_caller_host_keeps_verification(
+        self, service, mock_context, mock_request, monkeypatch
+    ):
+        prefix = service.upper()
+        for name in ("JIRA_URL", "CONFLUENCE_URL", "MCP_ALLOWED_URL_DOMAINS"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv(f"{prefix}_SSL_VERIFY", "false")
+        config = await self._header_config(
+            service, "https://victim-dc.example", mock_context, mock_request, None
+        )
+        assert config.ssl_verify is True
+
+    @pytest.mark.parametrize("service", ["Jira", "Confluence"])
+    async def test_other_service_origin_keeps_verification(
+        self, service, mock_context, mock_request, config_factory, monkeypatch
+    ):
+        """SSL_VERIFY=false of one service does not cover the other's origin."""
+        other = "CONFLUENCE" if service == "Jira" else "JIRA"
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        monkeypatch.setenv(f"{other}_URL", "https://other-service.example.test")
+        config = await self._header_config(
+            service,
+            "https://other-service.example.test",
+            mock_context,
+            mock_request,
+            self._app(service, config_factory),
+        )
+        assert config.ssl_verify is True
+
+    @pytest.mark.parametrize("service", ["Jira", "Confluence"])
+    @pytest.mark.parametrize(
+        ("header_url", "expected"),
+        [
+            ("https://own-service.example.test", False),
+            ("https://other-service.example.test", True),
+        ],
+    )
+    async def test_env_fallback_only_own_origin_inherits(
+        self, service, header_url, expected, mock_context, mock_request, monkeypatch
+    ):
+        prefix = service.upper()
+        other = "CONFLUENCE" if service == "Jira" else "JIRA"
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        monkeypatch.setenv(f"{prefix}_URL", "https://own-service.example.test")
+        monkeypatch.setenv(f"{other}_URL", "https://other-service.example.test")
+        monkeypatch.setenv(f"{prefix}_SSL_VERIFY", "false")
+        monkeypatch.setenv(f"{other}_SSL_VERIFY", "true")
+        config = await self._header_config(
+            service, header_url, mock_context, mock_request, None
+        )
+        assert config.ssl_verify is expected
+
+
+class TestHeaderPatMarkupTranslation:
+    """DISABLE_JIRA_MARKUP_TRANSLATION carries into header-based PAT configs."""
+
+    async def test_global_config_setting_is_kept(
+        self, mock_context, mock_request, config_factory
+    ):
+        jira_config = config_factory.create_jira_config(
+            disable_jira_markup_translation=True
+        )
+        config = await TestHeaderPatSslVerifyBound._header_config(
+            "Jira",
+            "https://test.atlassian.net",
+            mock_context,
+            mock_request,
+            config_factory.create_app_context(jira_config=jira_config),
+        )
+        assert config.disable_jira_markup_translation is True
+
+    async def test_env_setting_is_kept_without_global_config(
+        self, mock_context, mock_request, monkeypatch
+    ):
+        monkeypatch.setenv("DISABLE_JIRA_MARKUP_TRANSLATION", "true")
+        config = await TestHeaderPatSslVerifyBound._header_config(
+            "Jira", "https://test.atlassian.net", mock_context, mock_request, None
+        )
+        assert config.disable_jira_markup_translation is True
+
+
+@pytest.mark.security_regression
+async def test_header_pat_add_comment_keeps_internal_only_guard() -> None:
+    """A header-PAT request to the operator's Jira keeps JIRA_INTERNAL_ONLY_PROJECTS."""
+    from contextlib import asynccontextmanager
+
+    from fastmcp import Client
+    from fastmcp.client import FastMCPTransport
+    from fastmcp.exceptions import ToolError
+
+    from mcp_atlassian.jira.comments import CommentsMixin
+    from mcp_atlassian.servers.jira import jira_mcp
+    from mcp_atlassian.servers.main import AtlassianMCP
+
+    operator = JiraConfig(
+        url="https://jira.operator.example",
+        auth_type="pat",
+        personal_token="operator-dummy",
+        internal_only_projects=frozenset({"CC"}),
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: object):  # type: ignore[no-untyped-def]
+        # Same shape as the real server lifespan in servers/main.py.
+        yield {
+            "app_lifespan_context": MainAppContext(
+                full_jira_config=operator, read_only=False
+            )
+        }
+
+    server = AtlassianMCP("T", lifespan=lifespan)
+    server.mount(jira_mcp, namespace="jira")
+    request = MagicMock()
+    request.state = _HeaderPatState(
+        {
+            "X-Atlassian-Jira-Url": "https://jira.operator.example",
+            "X-Atlassian-Jira-Personal-Token": "caller-dummy-pat",
+        }
+    )
+    # Any HTTP request means the comment write was attempted.
+    posted = MagicMock(side_effect=AssertionError("network request attempted"))
+    with (
+        patch(
+            "mcp_atlassian.servers.dependencies.get_http_request",
+            return_value=request,
+        ),
+        patch.object(JiraFetcher, "get_current_user_account_id", return_value="u"),
+        patch.object(CommentsMixin, "_is_servicedesk_request", return_value=True),
+        patch("requests.Session.send", posted),
+    ):
+        async with Client(transport=FastMCPTransport(server)) as client:
+            with pytest.raises(ToolError, match="internal-only"):
+                await client.call_tool(
+                    "jira_add_comment", {"issue_key": "CC-1", "body": "hi"}
+                )
+    posted.assert_not_called()
+
+
+# --- operator policy reaches every per-request config -------------------------
+
+# Settings copied into a header-PAT config by _get_header_pat_network_config
+# (SSL_VERIFY=false only for operator-trusted URLs).
+_HEADER_PAT_NETWORK_FIELDS = frozenset(
+    {
+        "ssl_verify",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "socks_proxy",
+        "proxy_wpad_enable",
+        "proxy_wpad_url",
+    }
+)
+# Fields a header-PAT config deliberately does not take from the operator.
+_HEADER_PAT_NOT_COPIED: dict[str, str] = {
+    "url": "the request header names the instance",
+    "auth_type": "the request carries its own PAT",
+    "username": "caller credential",
+    "api_token": "caller credential",
+    "personal_token": "caller credential, from the request header",
+    "oauth_config": "caller credential",
+    "custom_headers": "instance secrets; never sent to a request-chosen URL",
+    "client_cert": "operator mTLS identity; never sent to a request-chosen URL",
+    "client_key": "operator mTLS identity; never sent to a request-chosen URL",
+    "client_key_password": "operator mTLS identity",
+    "passthrough_headers": "decided per URL by _header_url_passthrough_names",
+    "attachment_download_use_v1": (
+        "endpoint choice for the operator's instance, not a request bound"
+    ),
+}
+# A non-default value for each operator policy field.
+_POLICY_VALUES: dict[str, object] = {
+    "projects_filter": "PFX",
+    "spaces_filter": "SFX",
+    "internal_only_projects": frozenset({"CC"}),
+    "disable_jira_markup_translation": True,
+    "timeout": 12,
+    "sla_config": SimpleNamespace(default_metrics=["cycle_time"]),
+}
+
+
+@pytest.mark.parametrize("config_class", [JiraConfig, ConfluenceConfig])
+def test_every_config_field_is_classified_for_per_request_configs(config_class):
+    """A new config field must be declared operator policy or listed with a reason."""
+    import dataclasses
+
+    names = {f.name for f in dataclasses.fields(config_class)}
+    policy = set(config_class.OPERATOR_POLICY_FIELDS)
+    classified = policy | _HEADER_PAT_NETWORK_FIELDS | set(_HEADER_PAT_NOT_COPIED)
+    assert names - classified == set(), (
+        "Add the new field to OPERATOR_POLICY_FIELDS if it bounds requests, "
+        "or to _HEADER_PAT_NOT_COPIED with the reason it is not copied."
+    )
+    assert not policy & (_HEADER_PAT_NETWORK_FIELDS | set(_HEADER_PAT_NOT_COPIED))
+    assert policy <= names
+
+
+@pytest.mark.parametrize("service", ["Jira", "Confluence"])
+async def test_operator_policy_reaches_header_pat_and_user_configs(
+    service, mock_context, mock_request, config_factory
+):
+    config_class = JiraConfig if service == "Jira" else ConfluenceConfig
+    policy = {
+        name: _POLICY_VALUES[name] for name in config_class.OPERATOR_POLICY_FIELDS
+    }
+    if service == "Jira":
+        base = config_factory.create_jira_config(**policy)
+        app = config_factory.create_app_context(jira_config=base)
+    else:
+        base = config_factory.create_confluence_config(**policy)
+        app = config_factory.create_app_context(confluence_config=base)
+
+    header_config = await TestHeaderPatSslVerifyBound._header_config(
+        service, "https://test.atlassian.net", mock_context, mock_request, app
+    )
+    user_config = _create_user_config_for_fetcher(
+        base_config=base,
+        auth_type="pat",
+        credentials=_create_user_credentials("pat", "user-dummy"),
+    )
+
+    for name, value in policy.items():
+        assert getattr(header_config, name) == value, name
+        assert getattr(user_config, name) == value, name
+
+
+@pytest.mark.parametrize("config_class", [JiraConfig, ConfluenceConfig])
+def test_operator_policy_from_env_matches_from_env(config_class, monkeypatch):
+    """The env fallback for header-only servers reads what from_env reads."""
+    prefix = "JIRA" if config_class is JiraConfig else "CONFLUENCE"
+    monkeypatch.setenv(f"{prefix}_URL", "https://dc.example.test")
+    monkeypatch.setenv(f"{prefix}_PERSONAL_TOKEN", "dummy")
+    monkeypatch.setenv(f"{prefix}_TIMEOUT", "12")
+    monkeypatch.setenv("JIRA_PROJECTS_FILTER", "PFX")
+    monkeypatch.setenv("CONFLUENCE_SPACES_FILTER", "SFX")
+    monkeypatch.setenv("JIRA_INTERNAL_ONLY_PROJECTS", "CC")
+    monkeypatch.setenv("DISABLE_JIRA_MARKUP_TRANSLATION", "true")
+
+    from_env = config_class.from_env()
+    fallback = config_class.operator_policy_from_env()
+
+    assert set(fallback) == set(config_class.OPERATOR_POLICY_FIELDS)
+    for name, value in fallback.items():
+        assert getattr(from_env, name) == value, name

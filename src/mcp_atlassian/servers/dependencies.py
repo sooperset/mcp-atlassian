@@ -5,6 +5,7 @@ Provides get_jira_fetcher and get_confluence_fetcher for use in tool functions.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import logging
@@ -12,6 +13,7 @@ import os
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from cachetools import TTLCache
 from fastmcp import Context
@@ -20,7 +22,14 @@ from starlette.requests import Request
 
 from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
 from mcp_atlassian.jira import JiraConfig, JiraFetcher
+from mcp_atlassian.servers.async_utils import (
+    URL_CHECK_BUSY_MESSAGE,
+    UrlCheckBusy,
+    run_fetcher_call,
+    run_url_check,
+)
 from mcp_atlassian.servers.context import MainAppContext
+from mcp_atlassian.utils.credential_command import get_resolver
 from mcp_atlassian.utils.env import (
     get_header_names,
     is_env_ssl_verify,
@@ -28,6 +37,11 @@ from mcp_atlassian.utils.env import (
 )
 from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.proxy import get_proxy_settings_from_env
+from mcp_atlassian.utils.ssrf_adapter import (
+    is_operator_trusted_url,
+    is_trusted_for_origins,
+    url_origin,
+)
 from mcp_atlassian.utils.urls import validate_url_for_ssrf
 
 if TYPE_CHECKING:
@@ -56,7 +70,6 @@ class _ServiceSpec:
     url_header: str  # X-Atlassian-{Service}-Url
     token_header: str  # X-Atlassian-{Service}-Personal-Token
     passthrough_env_var: str  # {SERVICE}_PASSTHROUGH_HEADERS
-    filter_kwargs: dict[str, Any]  # e.g. {"projects_filter": None}
     get_session: Callable[[Any], Any]  # fetcher → session
     validate_fn: Callable[[Any], Any]  # fetcher → validation data
     on_validated: Callable[
@@ -239,6 +252,42 @@ def _validate_with_cache(
     return validation_data
 
 
+# Validation results are kept in a process-wide cache, so only the identity
+# fields the server uses are kept, each bounded in length. A real account id,
+# email or display name is far shorter.
+_MAX_IDENTITY_CHARS = 256
+
+
+def _bounded_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value[:_MAX_IDENTITY_CHARS]
+
+
+def _jira_identity(fetcher: Any) -> str | None:
+    """Validate a Jira fetcher and return its bounded account id."""
+    return _bounded_text(fetcher.get_current_user_account_id())
+
+
+def _confluence_identity(fetcher: Any) -> dict[str, str]:
+    """Validate a Confluence fetcher and return its bounded email and name.
+
+    An email longer than the limit is dropped rather than cut, so a cut value
+    is never used as the caller's email.
+    """
+    info = fetcher.get_current_user_info()
+    identity: dict[str, str] = {}
+    if not isinstance(info, dict):
+        return identity
+    email = info.get("email")
+    if isinstance(email, str) and len(email) <= _MAX_IDENTITY_CHARS:
+        identity["email"] = email
+    display_name = _bounded_text(info.get("displayName"))
+    if display_name is not None:
+        identity["displayName"] = display_name
+    return identity
+
+
 def _jira_on_validated(
     fn_name: str,
     request: Request,
@@ -323,9 +372,8 @@ def _jira_spec() -> _ServiceSpec:
         url_header="X-Atlassian-Jira-Url",
         token_header="X-Atlassian-Jira-Personal-Token",  # noqa: S106
         passthrough_env_var="JIRA_PASSTHROUGH_HEADERS",
-        filter_kwargs={"projects_filter": None},
         get_session=lambda f: f.jira._session,
-        validate_fn=lambda f: f.get_current_user_account_id(),
+        validate_fn=_jira_identity,
         on_validated=_jira_on_validated,
     )
 
@@ -345,9 +393,8 @@ def _confluence_spec() -> _ServiceSpec:
         url_header="X-Atlassian-Confluence-Url",
         token_header="X-Atlassian-Confluence-Personal-Token",  # noqa: S106
         passthrough_env_var="CONFLUENCE_PASSTHROUGH_HEADERS",
-        filter_kwargs={"spaces_filter": None},
         get_session=lambda f: f.confluence._session,
-        validate_fn=lambda f: f.get_current_user_info(),
+        validate_fn=_confluence_identity,
         on_validated=_confluence_on_validated,
     )
 
@@ -444,35 +491,112 @@ def _with_request_passthrough_headers(
     return dataclasses.replace(config, custom_headers=custom_headers)
 
 
-def _get_header_pat_network_config(ctx: Context, spec: _ServiceSpec) -> dict[str, Any]:
+def _header_url_passthrough_names(url: str, spec: _ServiceSpec) -> list[str]:
+    """Passthrough header names that may travel to a request-supplied URL.
+
+    Passthrough headers are injected by a trusted gateway, so the caller may
+    not know their values. They are forwarded only when the destination is
+    one the operator trusts: the exact origin of the configured service URL,
+    or a host under an ``MCP_ALLOWED_URL_DOMAINS`` entry. Otherwise none are
+    attached.
+
+    Args:
+        url: The service URL taken from the request header.
+        spec: Service specification for Jira or Confluence.
+
+    Returns:
+        Header names to forward, possibly empty.
+    """
+    names = get_header_names(spec.passthrough_env_var)
+    if not names:
+        return names
+    if is_operator_trusted_url(url):
+        return names
+    hostname = (urlparse(url).hostname or "").lower()
+    logger.warning(
+        "Not forwarding %s passthrough headers to %s: the URL is not the "
+        "JIRA_URL/CONFLUENCE_URL origin or in MCP_ALLOWED_URL_DOMAINS.",
+        spec.name,
+        hostname or "<no host>",
+    )
+    return []
+
+
+def _get_header_pat_network_config(
+    ctx: Context, spec: _ServiceSpec, url: str
+) -> dict[str, Any]:
     """Resolve operator-controlled network settings for header PAT requests.
+
+    The operator's ``*_SSL_VERIFY=false`` is meant for the operator's own
+    instance, so it applies only when ``url`` has this service's configured
+    origin (not the other service's) or a host under ``MCP_ALLOWED_URL_DOMAINS``.
+    Any other request-supplied host keeps certificate verification on.
+
+    Args:
+        ctx: FastMCP request context.
+        spec: Service specification for Jira or Confluence.
+        url: The service URL taken from the request header.
+
+    Returns:
+        SSL, proxy and timeout settings from the global config when available,
+        otherwise from service-specific or shared environment variables.
+    """
+    env_prefix = spec.name.upper()
+    try:
+        global_config = _get_global_config(ctx, spec)
+    except ValueError:
+        service_url = os.environ.get(f"{env_prefix}_URL", "")
+        settings: dict[str, Any] = {
+            "ssl_verify": is_env_ssl_verify(f"{env_prefix}_SSL_VERIFY"),
+            **get_proxy_settings_from_env(env_prefix),
+        }
+    else:
+        service_url = global_config.url
+        settings = {
+            "ssl_verify": global_config.ssl_verify,
+            "http_proxy": global_config.http_proxy,
+            "https_proxy": global_config.https_proxy,
+            "no_proxy": global_config.no_proxy,
+            "socks_proxy": global_config.socks_proxy,
+            "proxy_wpad_enable": global_config.proxy_wpad_enable,
+            "proxy_wpad_url": global_config.proxy_wpad_url,
+        }
+    # Only this service's own origin: the other service's SSL_VERIFY may differ.
+    service_origin = url_origin(service_url)
+    own_origins = [service_origin] if service_origin is not None else []
+    if not settings["ssl_verify"] and not is_trusted_for_origins(url, own_origins):
+        logger.warning(
+            "%s SSL verification stays on for %s: SSL_VERIFY=false applies only "
+            "to the configured URL origin or MCP_ALLOWED_URL_DOMAINS.",
+            spec.name,
+            urlparse(url).hostname or "<no host>",
+        )
+        settings["ssl_verify"] = True
+    return settings
+
+
+def _get_operator_policy_kwargs(ctx: Context, spec: _ServiceSpec) -> dict[str, Any]:
+    """Return the operator policy settings for a per-request config.
+
+    Policy settings (the config class's ``OPERATOR_POLICY_FIELDS``: allowlists,
+    internal-only projects, markup translation, timeouts) bound every request,
+    whatever credentials the caller supplied. They come from the global config
+    when available, otherwise from the environment.
 
     Args:
         ctx: FastMCP request context.
         spec: Service specification for Jira or Confluence.
 
     Returns:
-        SSL and proxy settings from the global config when available, otherwise
-        from service-specific or shared environment variables.
+        Keyword arguments for the service config constructor.
     """
     try:
         global_config = _get_global_config(ctx, spec)
     except ValueError:
-        env_prefix = spec.name.upper()
-        proxy_settings = get_proxy_settings_from_env(env_prefix)
-        return {
-            "ssl_verify": is_env_ssl_verify(f"{env_prefix}_SSL_VERIFY"),
-            **proxy_settings,
-        }
-
+        return spec.config_class.operator_policy_from_env()  # type: ignore[attr-defined, no-any-return]
     return {
-        "ssl_verify": global_config.ssl_verify,
-        "http_proxy": global_config.http_proxy,
-        "https_proxy": global_config.https_proxy,
-        "no_proxy": global_config.no_proxy,
-        "socks_proxy": global_config.socks_proxy,
-        "proxy_wpad_enable": global_config.proxy_wpad_enable,
-        "proxy_wpad_url": global_config.proxy_wpad_url,
+        name: getattr(global_config, name)
+        for name in spec.config_class.OPERATOR_POLICY_FIELDS  # type: ignore[attr-defined]
     }
 
 
@@ -507,6 +631,7 @@ def _create_and_validate(
     """
     fn_name = f"get_{spec.name.lower()}_fetcher"
     auth_desc = "header-based" if auth_branch == "header_pat" else "user"
+    fetcher = None
     try:
         request_passthrough_headers = _get_request_passthrough_headers(
             request, spec, config
@@ -556,6 +681,17 @@ def _create_and_validate(
         setattr(request.state, spec.state_key, fetcher)
         return fetcher
     except Exception as e:
+        if fetcher is not None:
+            close = getattr(fetcher, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    logger.debug(
+                        f"{fn_name}: Error closing {spec.name}Fetcher after "
+                        "failed validation",
+                        exc_info=True,
+                    )
         logger.error(
             f"{fn_name}: Failed to create/validate {auth_desc} {spec.name}Fetcher: {e}",
             exc_info=True,
@@ -866,14 +1002,15 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 url=url_header_val,
                 auth_type="pat",
                 personal_token=token_header_val,
-                **_get_header_pat_network_config(ctx, spec),
+                **_get_header_pat_network_config(ctx, spec, url_header_val),
                 # Never forward instance-specific custom headers to a URL
                 # selected per request.
                 custom_headers=None,
-                passthrough_headers=get_header_names(spec.passthrough_env_var),
-                **spec.filter_kwargs,
+                passthrough_headers=_header_url_passthrough_names(url_header_val, spec),
+                **_get_operator_policy_kwargs(ctx, spec),
             )
-            return _create_and_validate(
+            return await run_fetcher_call(
+                _create_and_validate,
                 request,
                 spec,
                 header_config,
@@ -904,7 +1041,8 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 auth_type="basic",
                 credentials=credentials,
             )
-            return _create_and_validate(
+            return await run_fetcher_call(
+                _create_and_validate,
                 request,
                 spec,
                 user_config,
@@ -954,7 +1092,8 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 credentials=credentials,
                 cloud_id=user_cloud_id,
             )
-            return _create_and_validate(
+            return await run_fetcher_call(
+                _create_and_validate,
                 request,
                 spec,
                 user_config,
@@ -982,22 +1121,58 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
     global_config_fallback = (
         getattr(app_ctx, spec.config_attr, None) if app_ctx else None
     )
-    if global_config_fallback:
-        # An HTTP request that reaches here has no per-user identity: serving it
-        # with the operator's global credentials lets any unauthenticated caller
-        # transact as the operator. Refuse unless explicitly opted in. Non-HTTP
-        # (stdio, single-user) is unaffected — the operator is the user there.
-        if (
-            in_http_context
-            and global_config_fallback.auth_type != "external"
-            and not is_env_truthy("ALLOW_GLOBAL_CRED_FALLBACK")
-        ):
-            raise ValueError(
-                f"{spec.name} client (fetcher) not available: refusing to serve an "
-                "unauthenticated request with the operator's global credentials. "
-                "Provide a user token, or set ALLOW_GLOBAL_CRED_FALLBACK=true to "
-                "allow the global-credential fallback (single-user deployments only)."
+    deferred_attr = f"has_deferred_{spec.name.lower()}_auth"
+    has_deferred_fallback = bool(app_ctx and getattr(app_ctx, deferred_attr, False))
+
+    # An HTTP request that reaches here has no per-user identity: serving it
+    # with the operator's global credentials lets any unauthenticated caller
+    # transact as the operator. Refuse unless explicitly opted in. Non-HTTP
+    # (stdio, single-user) is unaffected — the operator is the user there.
+    # External auth mode is exempt: it holds no operator credentials, the caller
+    # supplies them per request. A pending credential command is never exempt —
+    # running it would produce exactly the credentials this guard protects.
+    operator_credentials_at_risk = has_deferred_fallback or (
+        global_config_fallback is not None
+        and global_config_fallback.auth_type != "external"
+    )
+    if (
+        operator_credentials_at_risk
+        and in_http_context
+        and not is_env_truthy("ALLOW_GLOBAL_CRED_FALLBACK")
+    ):
+        raise ValueError(
+            f"{spec.name} client (fetcher) not available: refusing to serve an "
+            "unauthenticated request with the operator's global credentials. "
+            "Provide a user token, or set ALLOW_GLOBAL_CRED_FALLBACK=true to "
+            "allow the global-credential fallback (single-user deployments only)."
+        )
+
+    # Deferred *_COMMAND credentials come first: the flag is only set when they
+    # match or outrank whatever loaded eagerly at startup.
+    if has_deferred_fallback:
+        resolver = get_resolver()
+        try:
+            await asyncio.to_thread(resolver.resolve, spec.name.lower())
+        except ValueError as exc:
+            if global_config_fallback is None:
+                raise
+            logger.warning(
+                "%s credential command failed (%s); falling back to the "
+                "eagerly loaded %s configuration.",
+                spec.name,
+                exc,
+                global_config_fallback.auth_type,
             )
+        else:
+            config = spec.config_class.from_env()  # type: ignore[attr-defined]
+            fetcher = await run_fetcher_call(spec.fetcher_class, config=config)
+            logger.info(
+                "%s credentials resolved from *_COMMAND env vars on first use.",
+                spec.name,
+            )
+            return fetcher
+
+    if global_config_fallback:
         logger.debug(
             f"{fn_name}: Using global {spec.name}Fetcher "
             "from lifespan_context. "
@@ -1020,7 +1195,13 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                             "exfiltration."
                         )
                         raise ValueError(error_msg)
-                    ssrf_error = validate_url_for_ssrf(url_from_header)
+                    try:
+                        ssrf_error = await run_url_check(url_from_header)
+                    except UrlCheckBusy as exc:
+                        # This runs inside the tool call, after the HTTP
+                        # status is sent, so it cannot be the middleware's
+                        # 503; the tool error carries the same retry text.
+                        raise ValueError(URL_CHECK_BUSY_MESSAGE) from exc
                     if ssrf_error:
                         error_msg = f"Forbidden: Invalid {spec.name} URL - {ssrf_error}"
                         raise ValueError(error_msg)
@@ -1041,7 +1222,15 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
             global_config_fallback = _with_request_passthrough_headers(
                 request, spec, global_config_fallback
             )
-        return spec.fetcher_class(config=global_config_fallback)
+        fetcher = await run_fetcher_call(
+            spec.fetcher_class, config=global_config_fallback
+        )
+        if request is not None:
+            # Cache on request.state so UserTokenMiddleware can close it in its
+            # finally block, giving the global-credential fallback the same
+            # request-scoped Session lifetime as the per-user branches above.
+            setattr(request.state, spec.state_key, fetcher)
+        return fetcher
 
     logger.error(f"{spec.name} configuration could not be resolved.")
     raise ValueError(
