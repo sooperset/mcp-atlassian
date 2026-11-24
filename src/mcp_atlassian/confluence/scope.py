@@ -10,6 +10,8 @@ resolve the identifier denies it.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from requests.exceptions import HTTPError
@@ -44,6 +46,19 @@ def _denied(kind: str, value: object) -> ScopeViolationError:
         f"Confluence {kind} '{value}' is outside the configured {_FILTER_NAME} "
         "or could not be verified."
     )
+
+
+@contextmanager
+def _denied_as(kind: str, value: object) -> Iterator[None]:
+    """Report a denial of a resolved parent as a denial of the caller's value.
+
+    The denial text names only what the caller passed, so it reads the same
+    whether the object is missing or resolves outside the allowlist.
+    """
+    try:
+        yield
+    except ScopeViolationError:
+        raise _denied(kind, value) from None
 
 
 def allowed_space_keys(config: object) -> frozenset[str] | None:
@@ -138,7 +153,8 @@ class ScopeMixin(ConfluenceClient):
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Confluence content {content_id!r}: {e}")
             raise _denied("content", content_id) from e
-        self.ensure_space_allowed(space_key)
+        with _denied_as("content", content_id):
+            self.ensure_space_allowed(space_key)
 
     def ensure_space_id_allowed(self, space_id: object) -> None:
         """Resolve a numeric space ID (Cloud v2) and check its key."""
@@ -149,7 +165,8 @@ class ScopeMixin(ConfluenceClient):
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Confluence space {space_id!r}: {e}")
             raise _denied("space", space_id) from e
-        self.ensure_space_allowed(space_key)
+        with _denied_as("space", space_id):
+            self.ensure_space_allowed(space_key)
 
     def ensure_template_allowed(self, template_id: object) -> None:
         """Check a template's space; a template with no space must be global.
@@ -181,7 +198,8 @@ class ScopeMixin(ConfluenceClient):
                 f"Could not resolve Confluence template {template_id!r}: {e}"
             )
             raise _denied("template", template_id) from e
-        self.ensure_space_allowed(space_key)
+        with _denied_as("template", template_id):
+            self.ensure_space_allowed(space_key)
 
     def _is_global_template(self, base: str, template_id: str) -> bool:
         """Return True if ``template_id`` is in the global page template list."""

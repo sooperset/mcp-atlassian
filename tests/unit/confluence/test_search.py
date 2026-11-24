@@ -1,7 +1,7 @@
 """Unit tests for the SearchMixin class."""
 
 import re
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 import requests
@@ -183,7 +183,7 @@ class TestSearchMixin:
         search_mixin.preprocessor.process_html_content.assert_called_once_with(
             "<strong>Space excerpt</strong>",
             space_key="DEV",
-            confluence_client=search_mixin.confluence,
+            confluence_client=ANY,
         )
 
     def test_search_with_multiple_space_results_without_ids(self, search_mixin) -> None:
@@ -219,12 +219,12 @@ class TestSearchMixin:
             call(
                 "Development excerpt",
                 space_key="DEV",
-                confluence_client=search_mixin.confluence,
+                confluence_client=ANY,
             ),
             call(
                 "Operations excerpt",
                 space_key="OPS",
-                confluence_client=search_mixin.confluence,
+                confluence_client=ANY,
             ),
         ]
 

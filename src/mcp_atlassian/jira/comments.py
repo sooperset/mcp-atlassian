@@ -33,6 +33,7 @@ from ..utils import parse_date
 from ..utils.urls import path_segment
 from .client import JiraClient
 from .config import normalize_project_key
+from .scope import allowed_project_keys
 
 logger = logging.getLogger("mcp-jira")
 
@@ -326,6 +327,34 @@ class CommentsMixin(JiraClient):
                 f"on {issue_key} via the ServiceDesk API (required because "
                 f"{issue_key} is in an internal-only project): {e}"
             ) from e
+
+    def _ensure_comment_on_issue(self, issue_key: str, comment_id: str) -> None:
+        """Refuse a comment ID that belongs to another issue.
+
+        The project checks (JIRA_PROJECTS_FILTER, JIRA_INTERNAL_ONLY_PROJECTS)
+        look at ``issue_key``; they hold only if the comment is on that issue.
+        The comment's ``self`` URL names the issue that owns it. The refusal
+        reads the same whether the comment is missing or on another issue.
+        """
+        if not self.config.internal_only_projects and not allowed_project_keys(
+            self.config
+        ):
+            return
+        not_found = ValueError(
+            f"Comment {comment_id} was not found on issue {issue_key}."
+        )
+        try:
+            issue = self.jira.issue(issue_key, fields="project")
+            comment = self.jira.issue_get_comment(
+                path_segment(issue_key), path_segment(comment_id)
+            )
+            owner = re.search(r"/issue/([^/]+)/comment/", str(comment["self"]))
+            issue_refs = {str(issue.get("id")), str(issue.get("key"))}
+        except Exception as e:  # noqa: BLE001 - any failure refuses the edit
+            logger.warning(f"Could not resolve comment {comment_id!r}: {e}")
+            raise not_found from None
+        if owner is None or owner.group(1) not in issue_refs:
+            raise not_found
 
     def _enforce_internal_only_edit(self, issue_key: str, comment_id: str) -> None:
         """Reject edit_comment calls that would modify a public comment on a
@@ -640,6 +669,7 @@ class CommentsMixin(JiraClient):
                 the target comment's visibility cannot be verified for
                 an internal-only project
         """
+        self._ensure_comment_on_issue(issue_key, comment_id)
         self._enforce_internal_only_edit(issue_key, comment_id)
 
         try:

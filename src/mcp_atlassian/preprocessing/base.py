@@ -31,6 +31,27 @@ _RESOURCE_ATTRS = (
 )
 
 
+#: Elements nested deeper than this are converted as their plain text.
+#: markdownify converts nested elements recursively, two Python frames per
+#: level, so deeper HTML raised RecursionError and failed the whole read.
+_MAX_MARKDOWN_DEPTH = 100
+
+
+def _flatten_deep_elements(root: Tag, max_depth: int = _MAX_MARKDOWN_DEPTH) -> None:
+    """Replace the children of each element at ``max_depth`` with their text."""
+    stack: list[tuple[Tag, int]] = [(root, 0)]
+    while stack:
+        tag, depth = stack.pop()
+        if depth < max_depth:
+            stack.extend(
+                (child, depth + 1) for child in tag.contents if isinstance(child, Tag)
+            )
+        elif any(isinstance(child, Tag) for child in tag.contents):
+            text = tag.get_text()
+            tag.clear()
+            tag.append(text)
+
+
 class _MarkdownConverter(MarkdownConverter):
     """markdownify converter whose list and table numbering stays linear.
 
@@ -47,6 +68,10 @@ class _MarkdownConverter(MarkdownConverter):
         super().__init__(**options)
         self._li_positions: dict[int, dict[int, int]] = {}
         self._tr_counts: dict[int, int] = {}
+
+    def convert_soup(self, soup: BeautifulSoup) -> str:
+        _flatten_deep_elements(soup)
+        return str(super().convert_soup(soup))
 
     def _li_position(self, parent: Tag, item: Tag) -> int:
         positions = self._li_positions.get(id(parent))
@@ -237,6 +262,35 @@ def _extract_blocks(
         return placeholder
 
     return re.sub(pattern, _replacer, text, flags=flags)
+
+
+def _extract_fenced_blocks(text: str, storage: list[str], prefix: str) -> str:
+    r"""Store fenced code blocks and replace them with placeholders.
+
+    Same result as ``_extract_blocks`` with the lazy pattern
+    ``"`{3}[^\n]*\n[\s\S]*?\n`{3}"``, in linear time. A block is an opening
+    fence, the rest of its line, and everything up to the next line that
+    starts with a fence. When the first opening fence left has no such
+    closing line, no later one has either, so the scan stops there.
+    """
+    parts: list[str] = []
+    pos = 0
+    while (start := text.find("```", pos)) >= 0:
+        line_end = text.find("\n", start + 3)
+        if line_end < 0:
+            break
+        close = text.find("\n```", line_end + 1)
+        if close < 0:
+            break
+        end = close + 4
+        parts.append(text[pos:start])
+        parts.append(f"\x00{prefix}{len(storage)}\x00")
+        storage.append(text[start:end])
+        pos = end
+    if not parts:
+        return text
+    parts.append(text[pos:])
+    return "".join(parts)
 
 
 def _restore_blocks(text: str, storage: list[str], prefix: str) -> str:
@@ -683,16 +737,18 @@ class ConfluenceClient(Protocol):
         ...
 
 
-MAX_USER_LOOKUPS_PER_DOCUMENT = 50
+MAX_USER_LOOKUPS_PER_CALL = 100
 
 
-class _DocumentUserLookups:
-    """User lookups for one document: one request per distinct user, capped.
+class UserLookups:
+    """User lookups for one tool call: one request per distinct user, capped.
 
-    A page can mention the same user many times, or many users. Each distinct
-    identifier is looked up once; after ``MAX_USER_LOOKUPS_PER_DOCUMENT``
+    Content can mention the same user many times, or many users, and one call
+    can convert many documents (comments, child pages, search results). Each
+    distinct identifier is looked up once; after ``MAX_USER_LOOKUPS_PER_CALL``
     distinct lookups the rest get no display name and fall back to the stored
-    identifier.
+    identifier. Every fetcher call opens one budget (:func:`user_lookup_scope`)
+    that all its ``process_html_content`` calls share.
     """
 
     def __init__(self, client: ConfluenceClient) -> None:
@@ -705,7 +761,7 @@ class _DocumentUserLookups:
         key = (kind, identifier)
         if key in self._results:
             return self._results[key]
-        if len(self._results) >= MAX_USER_LOOKUPS_PER_DOCUMENT:
+        if len(self._results) >= MAX_USER_LOOKUPS_PER_CALL:
             return {}
         try:
             details = fetch(identifier)
@@ -729,6 +785,42 @@ class _DocumentUserLookups:
         return self._lookup(
             "userkey", userkey, self._client.get_user_details_by_userkey
         )
+
+
+# The user lookups of the fetcher call in progress, keyed by client. A tool
+# call runs one fetcher call, so every document it converts (comments, child
+# pages, both sides of a diff) shares one budget and one cache.
+_CALL_USER_LOOKUPS: contextvars.ContextVar[dict[int, UserLookups] | None] = (
+    contextvars.ContextVar("mcp_atlassian_call_user_lookups", default=None)
+)
+
+
+def user_lookup_scope(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Run ``function`` with one user lookup budget; nested calls share it."""
+
+    @functools.wraps(function)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        if _CALL_USER_LOOKUPS.get() is not None:
+            return function(*args, **kwargs)
+        token = _CALL_USER_LOOKUPS.set({})
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _CALL_USER_LOOKUPS.reset(token)
+
+    return wrapper
+
+
+def _user_lookups_for(client: ConfluenceClient) -> UserLookups:
+    if isinstance(client, UserLookups):
+        return client
+    scope = _CALL_USER_LOOKUPS.get()
+    if scope is None:
+        return UserLookups(client)
+    lookups = scope.get(id(client))
+    if lookups is None:
+        lookups = scope[id(client)] = UserLookups(client)
+    return lookups
 
 
 class BasePreprocessor:
@@ -769,10 +861,14 @@ class BasePreprocessor:
         try:
             # Parse the HTML content
             soup = BeautifulSoup(html_content, "html.parser")
+            # Before the passes below: moving an element walks everything
+            # under it, so each pass was quadratic in the nesting depth.
+            _flatten_deep_elements(soup)
 
-            # Process user mentions (one lookup per distinct user, capped)
+            # Process user mentions (one lookup per distinct user, capped).
+            # A shared UserLookups keeps one budget across a call's documents.
             lookups = (
-                _DocumentUserLookups(confluence_client)
+                _user_lookups_for(confluence_client)
                 if confluence_client is not None
                 else None
             )
@@ -1295,13 +1391,7 @@ class BasePreprocessor:
         code_blocks: list[str] = []
         inline_codes: list[str] = []
 
-        text = _extract_blocks(
-            text,
-            r"```[^\n]*\n[\s\S]*?\n```",
-            lambda m: m.group(0),
-            code_blocks,
-            "HTMLCVTBLOCK",
-        )
+        text = _extract_fenced_blocks(text, code_blocks, "HTMLCVTBLOCK")
         text = _extract_blocks(
             text,
             r"`[^`]+`",
