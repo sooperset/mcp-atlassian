@@ -146,6 +146,62 @@ def test_build_auth_provider_uses_dc_endpoints_for_datacenter_url(monkeypatch):
     )
 
 
+def test_build_auth_provider_enables_cloud_token_validation_for_cloud(monkeypatch):
+    from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
+
+    monkeypatch.setenv("JIRA_URL", "https://acme.atlassian.net")
+    _set_required_oauth_env(monkeypatch, redirect_uri="http://localhost:3000/callback")
+
+    provider = _build_auth_provider()
+
+    assert provider is not None
+    verifier = provider._token_validator
+    assert isinstance(verifier, AtlassianOpaqueTokenVerifier)
+    assert verifier._validate_cloud_token is True
+    assert verifier._cloud_site_hostname == "acme.atlassian.net"
+
+
+def test_build_auth_provider_disables_cloud_token_validation_for_dc(monkeypatch):
+    from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
+
+    monkeypatch.setenv("JIRA_URL", "https://jira.example.com")
+    _set_required_oauth_env(monkeypatch, redirect_uri="http://localhost:3000/callback")
+
+    provider = _build_auth_provider()
+
+    assert provider is not None
+    verifier = provider._token_validator
+    assert isinstance(verifier, AtlassianOpaqueTokenVerifier)
+    assert verifier._validate_cloud_token is False
+    assert verifier._cloud_site_hostname is None
+
+
+@pytest.mark.parametrize(
+    "instance_url", ["https://auth.atlassian.com", "https://api.atlassian.com"]
+)
+def test_build_auth_provider_does_not_bind_to_generic_cloud_gateway(
+    monkeypatch, instance_url
+):
+    """ATLASSIAN_OAUTH_INSTANCE_URL set to a generic Atlassian gateway host
+    (a documented, valid value — see _is_cloud_instance) must not become a
+    site-binding hostname: accessible-resources never returns a resource
+    hosted at either gateway, so binding to one would reject every live
+    token. Still enables the liveness check itself, just without binding."""
+    from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
+
+    monkeypatch.setenv("ATLASSIAN_OAUTH_INSTANCE_URL", instance_url)
+    monkeypatch.setenv("JIRA_URL", "https://jira.example.com")
+    _set_required_oauth_env(monkeypatch, redirect_uri="http://localhost:3000/callback")
+
+    provider = _build_auth_provider()
+
+    assert provider is not None
+    verifier = provider._token_validator
+    assert isinstance(verifier, AtlassianOpaqueTokenVerifier)
+    assert verifier._validate_cloud_token is True
+    assert verifier._cloud_site_hostname is None
+
+
 def test_build_auth_provider_infers_base_url_from_redirect_uri(monkeypatch):
     monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
     monkeypatch.delenv("ATLASSIAN_OAUTH_INSTANCE_URL", raising=False)
