@@ -615,6 +615,31 @@ class TestPagesMixin:
                 always_update=True,
             )
 
+    def test_update_page_blogpost_keeps_content_type(self, pages_mixin):
+        """A blog post is updated with type 'blogpost', not 'page' (#668)."""
+        page_id = "311203064"
+        pages_mixin.confluence.get_page_by_id.return_value = {
+            "id": page_id,
+            "type": "blogpost",
+            "title": "Blog",
+        }
+
+        with patch.object(pages_mixin, "get_page_content"):
+            pages_mixin.update_page(page_id, "Blog", "<p>x</p>", is_markdown=False)
+
+        pages_mixin.confluence.get_page_by_id.assert_called_once_with(page_id=page_id)
+        assert pages_mixin.confluence.update_page.call_args.kwargs["type"] == "blogpost"
+
+    def test_update_page_given_content_type_skips_lookup(self, pages_mixin):
+        """A known content type is passed through without fetching the content."""
+        with patch.object(pages_mixin, "get_page_content"):
+            pages_mixin.update_page(
+                "1", "Blog", "<p>x</p>", is_markdown=False, content_type="blogpost"
+            )
+
+        pages_mixin.confluence.get_page_by_id.assert_not_called()
+        assert pages_mixin.confluence.update_page.call_args.kwargs["type"] == "blogpost"
+
     def test_update_page_emoji_removal_failure_is_reported(self, pages_mixin):
         """Test that a failed emoji removal prevents returning stale page data."""
         page_id = "987654321"
@@ -4044,6 +4069,22 @@ class TestUpdatePageSection:
         # Written back as storage format
         assert mock_update.call_args.kwargs["is_markdown"] is False
         assert mock_update.call_args.kwargs["content_representation"] == "storage"
+
+    def test_passes_content_type_of_blogpost(self, pages_mixin):
+        """The content type of the fetched blog post reaches update_page (#668)."""
+        raw_page = self._make_page("1", "Blog", "<h2>A</h2><p>old</p>")
+        raw_page.type = "blogpost"
+        pages_mixin.preprocessor.markdown_to_confluence_storage.return_value = (
+            "<p>new</p>"
+        )
+
+        with (
+            patch.object(pages_mixin, "get_page_content", return_value=raw_page),
+            patch.object(pages_mixin, "update_page") as mock_update,
+        ):
+            pages_mixin.update_page_section("1", "A", "new")
+
+        assert mock_update.call_args.kwargs["content_type"] == "blogpost"
 
     def test_stops_at_same_level_heading(self, pages_mixin):
         """Content replacement stops at the next heading of the same level."""
