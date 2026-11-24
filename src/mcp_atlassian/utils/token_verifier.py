@@ -14,13 +14,25 @@ well-formed. Server/Data Center exposes no single, product-agnostic endpoint
 for this, so a DC token is still accepted on format alone; both
 ``validate_cloud_token`` and ``cloud_site_hostname`` are left unset for DC.
 
+``cloud_site_hostname`` is ignored (treated as unset) when it names one of
+Atlassian's own generic gateway hosts (``auth.atlassian.com``,
+``api.atlassian.com``) rather than a tenant's own site: those are valid,
+documented values for ``ATLASSIAN_OAUTH_INSTANCE_URL`` (see
+``_is_cloud_instance``), but ``accessible-resources`` never returns a
+resource hosted at either — binding to one would reject every live token.
+
 This check is called on every request that reaches ``load_access_token``, not
 just at login, so a successful result is cached for a short time
 (``_CLOUD_VALIDATION_CACHE_TTL_SECONDS``) and the outbound call reuses one
-``requests.Session`` — a bare module-level ``requests.get`` opens a new
-connection, including a fresh TLS handshake, on every call. A failure is
-never cached, so a transient Atlassian-side error does not hold a token
-rejected for the cache window; the next call re-checks live.
+``httpx.AsyncClient`` for real connection pooling — a bare, synchronous
+``requests.get`` opens a new connection, including a fresh TLS handshake, on
+every call, and sharing one ``requests.Session`` across the thread pool
+``asyncio.to_thread`` would need carries its own mutable cookie jar across
+concurrent callers (different users' validation calls), which httpx's
+natively-async client avoids: no thread pool, and its cookie jar is cleared
+after every call here regardless, since this check has no use for cookies at
+all. A failure is never cached, so a transient Atlassian-side error does not
+hold a token rejected for the cache window; the next call re-checks live.
 
 In this server's OAuth-proxy wiring, ``verify_token`` only ever sees a token
 this process itself already fetched from Atlassian's real token endpoint
@@ -43,7 +55,6 @@ name, so one user cannot end or post into another user's session.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import logging
@@ -52,7 +63,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
-import requests
+import httpx
 from cachetools import TTLCache
 from fastmcp.server.auth.auth import AccessToken, TokenVerifier
 
@@ -70,6 +81,12 @@ _CLOUD_VALIDATION_TIMEOUT_SECONDS = 10
 # every single tool invocation.
 _CLOUD_VALIDATION_CACHE_TTL_SECONDS = 60
 _CLOUD_VALIDATION_CACHE_MAX_ENTRIES = 4096
+# Atlassian's own generic OAuth/API gateway hosts. A documented, valid
+# ATLASSIAN_OAUTH_INSTANCE_URL value (see _is_cloud_instance), but never
+# itself a tenant site that accessible-resources would list.
+_GENERIC_CLOUD_GATEWAY_HOSTNAMES = frozenset(
+    {"auth.atlassian.com", "api.atlassian.com"}
+)
 
 
 def principal_subject(material: str) -> str:
@@ -106,7 +123,9 @@ class AtlassianOpaqueTokenVerifier(TokenVerifier):
             also requires one of the token's accessible resources to be this
             exact hostname — binding the check to this deployment's
             configured Atlassian Cloud instance rather than accepting any
-            Atlassian Cloud token.
+            Atlassian Cloud token. Silently ignored if it names one of
+            Atlassian's own generic gateway hosts rather than a tenant site
+            (see module docstring).
     """
 
     def __init__(
@@ -118,10 +137,20 @@ class AtlassianOpaqueTokenVerifier(TokenVerifier):
     ) -> None:
         super().__init__(**kwargs)
         self._validate_cloud_token = validate_cloud_token
-        self._cloud_site_hostname = (
+        normalized_hostname = (
             cloud_site_hostname.lower() if cloud_site_hostname else None
         )
-        self._session = requests.Session()
+        if normalized_hostname in _GENERIC_CLOUD_GATEWAY_HOSTNAMES:
+            logger.info(
+                "cloud_site_hostname=%r is an Atlassian gateway host, not a "
+                "tenant site; ignoring the site binding",
+                normalized_hostname,
+            )
+            normalized_hostname = None
+        self._cloud_site_hostname = normalized_hostname
+        self._client = httpx.AsyncClient(
+            timeout=_CLOUD_VALIDATION_TIMEOUT_SECONDS, follow_redirects=False
+        )
         self._live_token_cache: TTLCache[str, bool] = TTLCache(
             maxsize=_CLOUD_VALIDATION_CACHE_MAX_ENTRIES,
             ttl=_CLOUD_VALIDATION_CACHE_TTL_SECONDS,
@@ -155,25 +184,32 @@ class AtlassianOpaqueTokenVerifier(TokenVerifier):
         configured site (or, with no configured site, any resource at all).
         A successful result is cached briefly; a failure never is.
         """
-        cache_key = hashlib.sha256(token.encode()).hexdigest()
+        # A keyed fingerprint, not a plain hash: consistent with how every
+        # other token-derived value in this module avoids holding something
+        # reversible to the raw secret, even in process memory only.
+        cache_key = principal_subject(f"cache:{token}")
         if self._live_token_cache.get(cache_key):
             return True
 
         try:
-            response = await asyncio.to_thread(
-                self._session.get,
+            response = await self._client.get(
                 CLOUD_ACCESSIBLE_RESOURCES_URL,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Accept": "application/json",
                 },
-                timeout=_CLOUD_VALIDATION_TIMEOUT_SECONDS,
             )
-        except requests.RequestException as exc:
+        except httpx.HTTPError as exc:
             logger.warning("Atlassian Cloud token validation request failed: %s", exc)
             return False
+        finally:
+            # This check has no use for cookies; clearing keeps a stray
+            # Set-Cookie from one caller's validation (this client is shared
+            # across every token this verifier checks) from ever being sent
+            # back on a later, unrelated caller's request.
+            self._client.cookies.clear()
 
-        if not response.ok:
+        if not response.is_success:
             logger.info(
                 "Atlassian Cloud token validation returned status %s",
                 response.status_code,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
-import requests
 from fastmcp.server.auth.auth import AccessToken
 
 from mcp_atlassian.utils.token_verifier import (
@@ -36,18 +36,18 @@ async def test_verify_token_returns_none_for_empty_token() -> None:
 
 
 @pytest.mark.anyio
-async def test_verify_token_without_cloud_validation_never_calls_requests(
+async def test_verify_token_without_cloud_validation_never_calls_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The default (validate_cloud_token=False) path must make no network call."""
     verifier = AtlassianOpaqueTokenVerifier(required_scopes=["read:jira-work"])
 
-    def _must_not_call(*args: Any, **kwargs: Any) -> Any:
+    async def _must_not_call(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError(
-            "session.get must not be called without validate_cloud_token"
+            "client.get must not be called without validate_cloud_token"
         )
 
-    monkeypatch.setattr(verifier._session, "get", _must_not_call)
+    monkeypatch.setattr(verifier._client, "get", _must_not_call)
 
     token = await verifier.verify_token("opaque-token")
 
@@ -59,7 +59,7 @@ class _FakeResponse:
         self, status_code: int, json_body: Any = None, raise_json_error: bool = False
     ) -> None:
         self.status_code = status_code
-        self.ok = 200 <= status_code < 300
+        self.is_success = 200 <= status_code < 300
         self._json_body = json_body
         self._raise_json_error = raise_json_error
 
@@ -75,24 +75,23 @@ def _patch_get(
     response: Any = None,
     exc: Any = None,
 ) -> dict:
-    """Patch the verifier's own session, not the module-level requests.get.
+    """Patch the verifier's own async client, not a module-level function.
 
-    verify_token reuses one requests.Session per verifier instance (to get
-    real connection pooling instead of a fresh connection every call), so
-    that is what must be patched to intercept the outbound request.
+    verify_token reuses one httpx.AsyncClient per verifier instance (real
+    connection pooling, no thread pool), so that is what must be patched to
+    intercept the outbound request.
     """
     calls: dict[str, Any] = {"count": 0}
 
-    def _fake_get(url: str, *, headers: dict[str, str], timeout: float) -> Any:
+    async def _fake_get(url: str, *, headers: dict[str, str]) -> Any:
         calls["count"] += 1
         calls["url"] = url
         calls["headers"] = headers
-        calls["timeout"] = timeout
         if exc is not None:
             raise exc
         return response
 
-    monkeypatch.setattr(verifier._session, "get", _fake_get)
+    monkeypatch.setattr(verifier._client, "get", _fake_get)
     return calls
 
 
@@ -170,7 +169,7 @@ async def test_verify_token_with_cloud_validation_rejects_on_request_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     verifier = AtlassianOpaqueTokenVerifier(validate_cloud_token=True)
-    _patch_get(verifier, monkeypatch, exc=requests.ConnectionError("boom"))
+    _patch_get(verifier, monkeypatch, exc=httpx.ConnectError("boom"))
 
     token = await verifier.verify_token("fabricated-token")
 
@@ -183,10 +182,10 @@ async def test_verify_token_with_cloud_validation_still_rejects_empty_token(
 ) -> None:
     verifier = AtlassianOpaqueTokenVerifier(validate_cloud_token=True)
 
-    def _must_not_call(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("session.get must not be called for an empty token")
+    async def _must_not_call(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("client.get must not be called for an empty token")
 
-    monkeypatch.setattr(verifier._session, "get", _must_not_call)
+    monkeypatch.setattr(verifier._client, "get", _must_not_call)
 
     token = await verifier.verify_token("")
 
@@ -250,6 +249,27 @@ async def test_verify_token_cache_is_per_token(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.anyio
+async def test_verify_token_clears_cookies_after_each_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared client's cookie jar must not carry state between callers.
+
+    One verifier instance's client is reused across every token it checks;
+    a cookie picked up for one caller must never be sent back on a later,
+    unrelated caller's request.
+    """
+    verifier = AtlassianOpaqueTokenVerifier(validate_cloud_token=True)
+    _patch_get(
+        verifier, monkeypatch, response=_FakeResponse(200, [{"id": "cloud-site-1"}])
+    )
+    verifier._client.cookies.set("session", "leftover-from-another-user")
+
+    await verifier.verify_token("live-token")
+
+    assert len(verifier._client.cookies) == 0
+
+
+@pytest.mark.anyio
 async def test_verify_token_binds_to_configured_cloud_site(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -263,7 +283,12 @@ async def test_verify_token_binds_to_configured_cloud_site(
         monkeypatch,
         response=_FakeResponse(
             200,
-            [{"id": "other-site", "url": "https://someone-elses-site.atlassian.net"}],
+            [
+                {
+                    "id": "other-site",
+                    "url": "https://someone-elses-site.atlassian.net",
+                }
+            ],
         ),
     )
 
@@ -314,5 +339,40 @@ async def test_verify_token_without_site_binding_accepts_any_resource(
     )
 
     token = await verifier.verify_token("some-live-token")
+
+    assert token is not None
+
+
+@pytest.mark.parametrize(
+    "gateway_hostname",
+    ["auth.atlassian.com", "api.atlassian.com", "AUTH.ATLASSIAN.COM"],
+)
+def test_generic_cloud_gateway_hostname_is_not_bound(gateway_hostname: str) -> None:
+    """Binding to Atlassian's own gateway host would reject every live token:
+    accessible-resources never returns a resource hosted at either gateway,
+    only at a tenant's own *.atlassian.net site."""
+    verifier = AtlassianOpaqueTokenVerifier(
+        validate_cloud_token=True, cloud_site_hostname=gateway_hostname
+    )
+
+    assert verifier._cloud_site_hostname is None
+
+
+@pytest.mark.anyio
+async def test_verify_token_with_gateway_hostname_still_accepts_any_live_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verifier = AtlassianOpaqueTokenVerifier(
+        validate_cloud_token=True, cloud_site_hostname="auth.atlassian.com"
+    )
+    _patch_get(
+        verifier,
+        monkeypatch,
+        response=_FakeResponse(
+            200, [{"id": "any-site", "url": "https://mycompany.atlassian.net"}]
+        ),
+    )
+
+    token = await verifier.verify_token("live-token")
 
     assert token is not None
