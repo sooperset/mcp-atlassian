@@ -7,10 +7,14 @@ This module provides Pydantic models for Jira issues.
 import logging
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping
+from html import escape
+from html.parser import HTMLParser
 from typing import Any, Literal
+from urllib.parse import unquote, urlsplit
 
 from pydantic import Field
 
+from ...utils.ssrf_adapter import url_origin
 from ..base import ApiModel, TimestampMixin
 from ..constants import (
     EMPTY_STRING,
@@ -52,8 +56,11 @@ EPIC_LINK_PATTERNS = [
 
 # How a changelog item is checked against the allowlist. "issue": its old and
 # new values name issues, each of which must be in the allowlist. "drop": it
-# names a project or sprint that cannot be matched to the allowlist.
-ChangelogFieldKinds = Mapping[str, Literal["issue", "drop"]]
+# names a project or sprint that cannot be matched to the allowlist. "plain":
+# a built-in value type (text, select, number, date, user...) that never holds
+# an issue reference, so a key-shaped value is user data.
+FieldKind = Literal["issue", "drop", "plain"]
+ChangelogFieldKinds = Mapping[str, FieldKind]
 
 # System fields, by fieldId and by the field name Jira writes (Server/DC
 # changelog items carry only the name).
@@ -79,34 +86,81 @@ _CHANGELOG_CUSTOM_TYPES: dict[str, Literal["issue", "drop"]] = {
 _ISSUE_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9_]+)-\d+\b")
 
 
-def changelog_field_kinds(fields: Iterable[Any]) -> dict[str, Literal["issue", "drop"]]:
+# Built-in Jira custom field types whose values are never issue references.
+_PLAIN_CUSTOM_TYPE_PREFIX = "com.atlassian.jira.plugin.system.customfieldtypes:"
+_PLAIN_CUSTOM_TYPES = frozenset(
+    {
+        "textfield",
+        "textarea",
+        "readonlyfield",
+        "select",
+        "multiselect",
+        "radiobuttons",
+        "multicheckboxes",
+        "cascadingselect",
+        "float",
+        "datepicker",
+        "datetime",
+        "userpicker",
+        "multiuserpicker",
+        "grouppicker",
+        "multigrouppicker",
+        "labels",
+        "url",
+        "version",
+        "multiversion",
+        "project",
+    }
+)
+
+
+def _custom_type_is_plain(custom: str) -> bool:
+    if not custom.startswith(_PLAIN_CUSTOM_TYPE_PREFIX):
+        return False
+    return custom[len(_PLAIN_CUSTOM_TYPE_PREFIX) :] in _PLAIN_CUSTOM_TYPES
+
+
+def normalize_field_name(name: str) -> str:
+    """Lower-case a field id or name and collapse its whitespace.
+
+    The field metadata index, the output filters and the JQL check all look
+    names up through this, so "Epic  Link" and "epic link" match everywhere.
+    """
+    return " ".join(name.lower().split())
+
+
+def field_metadata_kinds(fields: Iterable[Any]) -> dict[str, FieldKind]:
     """Map custom field ids and names to their changelog check, from field metadata.
 
     Args:
         fields: Field definitions from ``GET /rest/api/2/field``.
 
     Returns:
-        Lower-cased field id and name to "issue" or "drop", for reference fields.
+        Lower-cased field id and name to "issue", "drop" or "plain"; fields of
+        app types that are not known are left out.
     """
-    kinds: dict[str, Literal["issue", "drop"]] = {}
+    kinds: dict[str, FieldKind] = {}
     for field in fields:
         if not isinstance(field, dict):
             continue
         schema = field.get("schema") or {}
-        kind = _CHANGELOG_CUSTOM_TYPES.get(str(schema.get("custom") or ""))
+        custom = str(schema.get("custom") or "")
+        kind: FieldKind | None = _CHANGELOG_CUSTOM_TYPES.get(custom)
         if kind is None and schema.get("type") == "issuelinks":
             kind = "issue"
+        if kind is None and _custom_type_is_plain(custom):
+            kind = "plain"
         if kind is None:
             continue
         for key in (field.get("id"), field.get("name")):
             if isinstance(key, str) and key.strip():
-                kinds[key.strip().lower()] = kind
+                kinds[normalize_field_name(key)] = kind
     return kinds
 
 
 def _changelog_item_kind(item: Any, kinds: ChangelogFieldKinds) -> str | None:
     for key in (item.field_id, item.field):
-        key = (key or "").strip().lower()
+        key = normalize_field_name(key or "")
         if key and key in kinds:
             return kinds[key]
     for key in (item.field_id, item.field):
@@ -126,6 +180,274 @@ def _changelog_side_allowed(values: tuple[Any, ...], allowed: set[str]) -> bool:
     return bool(projects) and projects <= allowed
 
 
+def _names_other_issue(values: Iterable[Any], allowed: Collection[str]) -> bool:
+    """Guess whether an app field value names an out-of-scope issue.
+
+    Used only for fields whose type the metadata does not describe. App issue
+    pickers write bare keys (``SECRET-8`` or ``[A-1, B-2]``) or a key followed
+    by the summary (``SECRET-8 - summary``). Other text that mentions a key
+    later on is left alone.
+    """
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        text = value.strip().lstrip("[")
+        tokens = [t for t in re.split(r"[\s,\[\]]+", text) if t]
+        matches = [_ISSUE_KEY_RE.fullmatch(t.upper()) for t in tokens]
+        if tokens and all(matches):
+            if any(m.group(1) not in allowed for m in matches if m):
+                return True
+            continue
+        first = _ISSUE_KEY_RE.match(text.upper())
+        if first and first.group(1) not in allowed:
+            return True
+    return False
+
+
+def _value_references_other_issue(value: Any, allowed: Collection[str]) -> bool:
+    """Return True if a custom field value holds an out-of-scope issue key.
+
+    Issue references sit in a ``key`` entry at any depth (Parent Link keeps it
+    under ``data``) or as a bare key string (app issue pickers). Free text
+    that merely mentions a key is not a reference.
+    """
+    if isinstance(value, str):
+        match = _ISSUE_KEY_RE.fullmatch(value.strip())
+        return match is not None and match.group(1) not in allowed
+    if isinstance(value, list):
+        return any(_value_references_other_issue(v, allowed) for v in value)
+    if isinstance(value, dict):
+        key = value.get("key")
+        if isinstance(key, str) and _value_references_other_issue(key, allowed):
+            return True
+        return any(
+            _value_references_other_issue(v, allowed)
+            for k, v in value.items()
+            if k != "key" and isinstance(v, dict | list)
+        )
+    return False
+
+
+def _strings(value: Any) -> list[str]:
+    """Return the strings in a custom field value, at any depth."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    return []
+
+
+_BROWSE_PATH_RE = re.compile(r"/browse/([A-Za-z][A-Za-z0-9_]*-\d+)/?$")
+_ISSUE_LINK_CLASSES = frozenset({"issue-link", "jira-issue-macro-key"})
+
+
+def _decoded(text: str, rounds: int = 4) -> str:
+    for _ in range(rounds):
+        decoded = unquote(text)
+        if decoded == text:
+            break
+        text = decoded
+    return text
+
+
+def _jira_issue_link(
+    attrs: dict[str, str], jira_origin: Any
+) -> tuple[bool, str | None]:
+    """Classify an anchor by its attributes.
+
+    Returns ``(is_issue_link, key)``. An issue link is a ``/browse/<key>`` or
+    ``ViewIssue.jspa?id=`` link on the Jira origin (or relative), or an anchor
+    Jira marked as an issue link. ``key`` is its upper-cased issue key, or
+    None when the link names the issue only by ID. Anything that cannot be
+    parsed is not an issue link.
+    """
+    href = (attrs.get("href") or "").strip()
+    classes = {c.lower() for c in (attrs.get("class") or "").split()}
+    marked = bool(classes & _ISSUE_LINK_CLASSES) or "data-issue-key" in attrs
+    try:
+        parts = urlsplit(href)
+        relative = not parts.scheme and not parts.netloc and href.startswith("/")
+        on_jira = relative or (
+            jira_origin is not None and url_origin(href) == jira_origin
+        )
+    except ValueError:
+        return False, None
+    path = _decoded(parts.path)
+    key = (attrs.get("data-issue-key") or "").strip()
+    match = _BROWSE_PATH_RE.search(path) if on_jira or marked else None
+    if not key and match:
+        key = match.group(1)
+    if key:
+        return True, key.upper()
+    by_id = on_jira and path.lower().endswith("/viewissue.jspa")
+    return marked or by_id, None
+
+
+class _AnchorSpans(HTMLParser):
+    """Find each ``<a>`` in HTML with its exact source span and text.
+
+    A closed anchor spans ``<a ...>...</a>``. An anchor left open, because
+    the document ends or another anchor starts first, spans only its start
+    tag and has no text.
+    """
+
+    def __init__(self, html: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self._html = html
+        self._line_starts = [0]
+        self._line_starts.extend(i + 1 for i, c in enumerate(html) if c == "\n")
+        self.anchors: list[tuple[int, int, dict[str, str], str | None]] = []
+        self._open: tuple[int, int, dict[str, str], list[str]] | None = None
+
+    def _offset(self) -> int:
+        line, column = self.getpos()
+        return self._line_starts[line - 1] + column
+
+    def _close_open_tag(self) -> None:
+        if self._open is not None:
+            start, tag_end, attrs, _ = self._open
+            self.anchors.append((start, tag_end, attrs, None))
+            self._open = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            self._close_open_tag()
+            start = self._offset()
+            tag_end = start + len(self.get_starttag_text() or "")
+            self._open = (start, tag_end, {k: v or "" for k, v in attrs}, [])
+
+    def handle_data(self, data: str) -> None:
+        if self._open is not None:
+            self._open[3].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or self._open is None:
+            return
+        start, tag_end, attrs, text = self._open
+        self._open = None
+        close = self._html.find(">", self._offset())
+        if close == -1:
+            self.anchors.append((start, tag_end, attrs, None))
+        else:
+            self.anchors.append((start, close + 1, attrs, "".join(text)))
+
+    def close(self) -> None:
+        super().close()
+        self._close_open_tag()
+
+
+def _issue_refs_confirmed(value: Any, allowed: Collection[str]) -> bool:
+    """Return True if every issue a reference field value names is in scope.
+
+    A reference must carry an upper-case issue key (as Jira returns it) of an
+    allowed project: a bare key string, or a ``key`` at any depth (Parent Link
+    keeps it under ``data``). A value with only an ID, a lower-case key or a
+    key with text around it cannot be confirmed.
+    """
+    if isinstance(value, list):
+        return all(_issue_refs_confirmed(v, allowed) for v in value)
+    if isinstance(value, str):
+        match = _ISSUE_KEY_RE.fullmatch(value.strip())
+        return match is not None and match.group(1) in allowed
+    if isinstance(value, dict):
+        if "key" in value:
+            return _issue_refs_confirmed(value["key"], allowed) and all(
+                _issue_refs_confirmed(v, allowed)
+                for k, v in value.items()
+                if k == "data" and v is not None
+            )
+        if isinstance(value.get("data"), dict | list):
+            return _issue_refs_confirmed(value["data"], allowed)
+        return False
+    return False
+
+
+def custom_value_allowed(
+    field_id: str,
+    name: str,
+    value: Any,
+    kinds: ChangelogFieldKinds | None,
+    allowed: Collection[str],
+) -> bool:
+    """Decide whether a custom field value may be returned under the allowlist.
+
+    The field metadata decides: built-in value types (text, select, number,
+    date, user...) are kept whatever their value looks like; Sprint fields are
+    dropped (a sprint's board cannot be matched to the allowlist); issue
+    reference fields keep only values confirmed in scope. Only fields of
+    unknown app types are judged by how their value looks.
+    """
+    if value is None:
+        return True
+    known = kinds or {}
+    lowered = normalize_field_name(name)
+    kind = known.get(normalize_field_name(field_id)) or known.get(lowered)
+    if kind == "plain":
+        return True
+    if kind == "drop" or (kind is None and lowered == "sprint"):
+        return False
+    if kind == "issue":
+        # An issue ID (an integer) cannot be matched to a project.
+        return _issue_refs_confirmed(value, allowed)
+    if isinstance(value, int | float | bool):
+        return True
+    return not (
+        _value_references_other_issue(value, allowed)
+        or _names_other_issue(_strings(value), allowed)
+    )
+
+
+def _field_is_plain(
+    field_id: str, name: str, kinds: ChangelogFieldKinds | None
+) -> bool:
+    known = kinds or {}
+    kind = known.get(normalize_field_name(field_id)) or known.get(
+        normalize_field_name(name)
+    )
+    return kind == "plain"
+
+
+def _restrict_rendered_html(
+    html: str, allowed: Collection[str], jira_origin: Any = None
+) -> str:
+    """Replace Jira issue links not confirmed in scope with their text.
+
+    Jira renders a mentioned issue as an anchor whose attributes (title,
+    data-*) carry the linked issue's summary, read with the server's
+    credential. An issue link to another project, or one that names its issue
+    only by ID, becomes the anchor's text with no attributes. In-scope issue
+    links and links to other sites stay as they are. Only the replaced
+    anchors change; the rest of the HTML is kept byte for byte.
+    """
+    if "<a" not in html.lower():
+        return html
+    parser = _AnchorSpans(html)
+    try:
+        parser.feed(html)
+        parser.close()
+    except (ValueError, AssertionError):
+        return html
+    pieces: list[str] = []
+    last = 0
+    for start, end, attrs, text in parser.anchors:
+        is_issue_link, key = _jira_issue_link(attrs, jira_origin)
+        if not is_issue_link:
+            continue
+        if key is not None and _ISSUE_KEY_RE.fullmatch(key):
+            if key.rsplit("-", 1)[0] in allowed:
+                continue
+        pieces.append(html[last:start])
+        # An unclosed anchor loses only its start tag; what follows stays.
+        pieces.append(escape(text, quote=False) if text is not None else "")
+        last = end
+    if not pieces:
+        return html
+    pieces.append(html[last:])
+    return "".join(pieces)
+
+
 def _is_custom_field_item(item: Any) -> bool:
     field_id = (item.field_id or "").strip().lower()
     return field_id.startswith("customfield_") or item.fieldtype == "custom"
@@ -142,8 +464,16 @@ def _changelog_item_allowed(
     kind = _changelog_item_kind(item, kinds or {})
     if kind == "drop":
         return False
+    if kind == "plain":
+        return True
     if kind is None:
-        return kinds is not None or not _is_custom_field_item(item)
+        if not _is_custom_field_item(item):
+            return True
+        # An app field of unknown type: keep it unless a value looks like a
+        # reference to an issue outside the allowlist.
+        return kinds is not None and not _names_other_issue(
+            (item.from_string, item.to_string), allowed
+        )
     old = (item.from_string, item.from_id)
     new = (item.to_string, item.to_id)
     if not any(old) and not any(new):
@@ -201,6 +531,60 @@ def _reference_project(ref: Any) -> str | None:
         if prefix:
             return prefix.upper()
     return None
+
+
+def restrict_raw_issue(
+    raw: dict[str, Any],
+    allowed_projects: Collection[str],
+    field_kinds: ChangelogFieldKinds | None = None,
+) -> dict[str, Any] | None:
+    """Apply the project allowlist to an issue that is returned as raw JSON.
+
+    Returns None for an issue outside ``allowed_projects``. Otherwise returns
+    a copy without the parent, subtasks, issue links and custom reference
+    values that point at issues outside it.
+
+    Args:
+        raw: Issue JSON as Jira returned it.
+        allowed_projects: Upper-cased project keys (JIRA_PROJECTS_FILTER).
+        field_kinds: Field metadata kinds (see ``custom_value_allowed``), or
+            None when unknown.
+    """
+    allowed = {str(k).strip().upper() for k in allowed_projects}
+    if _reference_project(raw) not in allowed:
+        return None
+    fields = raw.get("fields")
+    if not isinstance(fields, dict):
+        return raw
+    names = raw.get("names") if isinstance(raw.get("names"), dict) else {}
+
+    def ok(ref: Any) -> bool:
+        return _reference_project(ref) in allowed
+
+    kept: dict[str, Any] = {}
+    for name, value in fields.items():
+        if name == "parent" and value is not None and not ok(value):
+            continue
+        if name == "subtasks" and isinstance(value, list):
+            value = [st for st in value if ok(st)]
+        elif name == "issuelinks" and isinstance(value, list):
+            value = [
+                link
+                for link in value
+                if isinstance(link, dict)
+                and any(side in link for side in ("inwardIssue", "outwardIssue"))
+                and all(
+                    ok(link[side])
+                    for side in ("inwardIssue", "outwardIssue")
+                    if side in link
+                )
+            ]
+        elif name.startswith("customfield_") and not custom_value_allowed(
+            name, str(names.get(name) or ""), value, field_kinds, allowed
+        ):
+            continue
+        kept[name] = value
+    return {**raw, "fields": kept}
 
 
 class JiraIssue(ApiModel, TimestampMixin):
@@ -716,12 +1100,58 @@ class JiraIssue(ApiModel, TimestampMixin):
             )
             and (link.inward_issue is not None or link.outward_issue is not None)
         ]
-        self._restrict_epic_references(ok)
-        if self.changelogs:
-            kinds = changelog_field_kinds() if changelog_field_kinds else None
-            restrict_changelogs(self.changelogs, allowed, kinds)
+        kinds_cache: list[ChangelogFieldKinds | None] = []
 
-    def _restrict_epic_references(self, ok: Any) -> None:
+        def kinds() -> ChangelogFieldKinds | None:
+            if not kinds_cache:
+                kinds_cache.append(
+                    changelog_field_kinds() if changelog_field_kinds else None
+                )
+            return kinds_cache[0]
+
+        self._restrict_epic_references(ok, kinds)
+        self._restrict_custom_references(allowed, kinds)
+        self._restrict_rendered_references(allowed)
+        if self.changelogs:
+            restrict_changelogs(self.changelogs, allowed, kinds())
+
+    def _restrict_custom_references(
+        self,
+        allowed: set[str],
+        kinds: Callable[[], ChangelogFieldKinds | None],
+    ) -> None:
+        """Drop custom fields whose value is not allowed (see custom_value_allowed)."""
+        for field_id, field in list(self.custom_fields.items()):
+            if not field_id.startswith("customfield_") or not isinstance(field, dict):
+                continue
+            value = field.get("value")
+            name = str(field.get("name") or "")
+            if not custom_value_allowed(field_id, name, value, kinds(), allowed):
+                del self.custom_fields[field_id]
+
+    def _restrict_rendered_references(self, allowed: set[str]) -> None:
+        origin = url_origin(self.browse_url) if self.browse_url else None
+        for field_id, value in list(self.rendered_fields.items()):
+            if isinstance(value, str):
+                self.rendered_fields[field_id] = _restrict_rendered_html(
+                    value, allowed, origin
+                )
+            elif field_id == "comment" and isinstance(value, list):
+                self.rendered_fields[field_id] = [
+                    {
+                        **c,
+                        "body": _restrict_rendered_html(
+                            str(c["body"]), allowed, origin
+                        ),
+                    }
+                    for c in value
+                ]
+
+    def _restrict_epic_references(
+        self,
+        ok: Any,
+        kinds: Callable[[], ChangelogFieldKinds | None] = lambda: None,
+    ) -> None:
         """Drop the epic link, and the epic name copied with it, when out of scope.
 
         The epic link can also sit in a custom field (Epic Link on Server/DC,
@@ -729,6 +1159,8 @@ class JiraIssue(ApiModel, TimestampMixin):
         the allowlist or holds the dropped epic key. When an epic is dropped,
         its name is removed as well: ``epic_name`` and any Epic Name custom
         field. An epic's own Epic Name is kept, since it has no epic link.
+        Fields the metadata types as built-in values (text, select...) are user
+        data and are never removed here.
         """
         dropped_keys: set[str] = set()
         if self.epic_key and not ok({"key": self.epic_key}):
@@ -746,8 +1178,15 @@ class JiraIssue(ApiModel, TimestampMixin):
                 re.search(p, name, re.IGNORECASE) for p in patterns
             )
 
+        def plain(field_id: str, field: dict[str, Any]) -> bool:
+            if not self.custom_fields:
+                return False
+            return _field_is_plain(field_id, str(field.get("name") or ""), kinds())
+
         for field_id, field in list(self.custom_fields.items()):
             if not field_id.startswith("customfield_") or not isinstance(field, dict):
+                continue
+            if plain(field_id, field):
                 continue
             key = referenced_key(field.get("value"))
             if key is None:
@@ -764,6 +1203,8 @@ class JiraIssue(ApiModel, TimestampMixin):
         self.epic_name = None
         for field_id, field in list(self.custom_fields.items()):
             if not field_id.startswith("customfield_") or not isinstance(field, dict):
+                continue
+            if plain(field_id, field):
                 continue
             value = field.get("value")
             if has_name(field, EPIC_NAME_PATTERNS) or (

@@ -11,6 +11,7 @@ from pydantic import Field
 
 from ..base import ApiModel
 from ..constants import EMPTY_STRING
+from .issue import restrict_raw_issue
 
 
 class JiraServiceDesk(ApiModel):
@@ -146,6 +147,11 @@ class JiraServiceDeskQueuesResult(ApiModel):
                 for queue_data in raw_queues
                 if isinstance(queue_data, dict)
             ]
+        if kwargs.get("allowed_projects"):
+            # Totals and JQL can count and name issues outside the allowlist.
+            queues = [
+                q.model_copy(update={"issue_count": None, "jql": None}) for q in queues
+            ]
 
         def _to_int(value: Any, default: int) -> int:
             try:
@@ -209,6 +215,21 @@ class JiraQueueIssuesResult(ApiModel):
         issues: list[dict[str, Any]] = []
         if isinstance(raw_issues, list):
             issues = [issue for issue in raw_issues if isinstance(issue, dict)]
+        allowed_projects = kwargs.get("allowed_projects")
+        queue = kwargs.get("queue")
+        if allowed_projects:
+            # A queue's JQL is set in JSM and can select issues of any project,
+            # so its total count and JQL describe issues the caller cannot see.
+            kinds_fn = kwargs.get("changelog_field_kinds")
+            kinds = kinds_fn() if callable(kinds_fn) and issues else None
+            restricted = (
+                restrict_raw_issue(i, allowed_projects, kinds) for i in issues
+            )
+            issues = [i for i in restricted if i is not None]
+            if isinstance(queue, JiraQueue):
+                queue = queue.model_copy(
+                    update={"issue_count": len(issues), "jql": None}
+                )
 
         def _to_int(value: Any, default: int) -> int:
             try:
@@ -219,10 +240,14 @@ class JiraQueueIssuesResult(ApiModel):
         return cls(
             service_desk_id=str(kwargs.get("service_desk_id", EMPTY_STRING)),
             queue_id=str(kwargs.get("queue_id", EMPTY_STRING)),
-            queue=kwargs.get("queue"),
+            queue=queue,
             start=_to_int(data.get("start"), 0),
             limit=_to_int(data.get("limit"), 50),
-            size=_to_int(data.get("size"), len(issues)),
+            size=(
+                len(issues)
+                if allowed_projects
+                else _to_int(data.get("size"), len(issues))
+            ),
             is_last_page=bool(data.get("isLastPage", True)),
             issues=issues,
             links=data.get("_links") if isinstance(data.get("_links"), dict) else None,

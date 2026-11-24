@@ -119,7 +119,7 @@ def test_scope_checks_name_real_fetcher_methods(
 FORBIDDEN = "SECRET"
 
 
-def _jira_fetcher() -> JiraFetcher:
+def _jira_fetcher(*, missing: bool = False) -> JiraFetcher:
     fetcher = JiraFetcher(
         config=JiraConfig(
             url="https://example.atlassian.net",
@@ -136,8 +136,12 @@ def _jira_fetcher() -> JiraFetcher:
         "key": f"{FORBIDDEN}-1",
         "fields": {"project": {"key": FORBIDDEN}},
     }
+    if missing:
+        backend.issue.side_effect = LookupError("404 Not Found")
 
     def get(path: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if missing:
+            raise LookupError("404 Not Found")
         if path.startswith("rest/agile/1.0/board/"):
             return {"location": {"projectKey": FORBIDDEN}}
         if path.startswith("rest/agile/1.0/sprint/"):
@@ -160,7 +164,7 @@ def _jira_fetcher() -> JiraFetcher:
     return fetcher
 
 
-def _confluence_fetcher() -> ConfluenceFetcher:
+def _confluence_fetcher(*, missing: bool = False) -> ConfluenceFetcher:
     fetcher = ConfluenceFetcher(
         config=ConfluenceConfig(
             url="https://example.atlassian.net/wiki",
@@ -174,6 +178,8 @@ def _confluence_fetcher() -> ConfluenceFetcher:
     backend.url = "https://example.atlassian.net/wiki"
 
     def session_get(url: str, *args: Any, **kwargs: Any) -> Any:
+        if missing:
+            raise LookupError("404 Not Found")
         if "/api/v2/spaces/" in url:
             payload: dict[str, Any] = {"key": FORBIDDEN}
         else:
@@ -300,6 +306,47 @@ async def test_every_confluence_tool_rejects_forbidden_space(tool_name: str) -> 
                 await client.call_tool(tool_name, _arguments(tool, _CONFLUENCE_VALUES))
     called = {call[0] for call in fetcher.confluence.method_calls}
     assert called <= {"_session.get"}, called
+
+
+async def _denial_text(server: Any, getter: str, fetcher: Any, tool_name: str) -> str:
+    tool = await server.get_tool(tool_name)
+    values = _JIRA_VALUES if server is jira_mcp else _CONFLUENCE_VALUES
+    with patch(getter, AsyncMock(return_value=fetcher)):
+        async with Client(transport=FastMCPTransport(server)) as client:
+            with pytest.raises(ToolError, match="outside the configured") as exc:
+                await client.call_tool(tool_name, _arguments(tool, values))
+    return str(exc.value)
+
+
+@pytest.mark.anyio
+@pytest.mark.security_regression
+@pytest.mark.parametrize("tool_name", _scoped_tool_ids(jira_mcp, JIRA_SCOPE_POLICY))
+async def test_jira_denial_reads_the_same_for_missing_targets(tool_name: str) -> None:
+    """A denial never shows whether the target exists or what it belongs to."""
+    getter = "mcp_atlassian.servers.jira.get_jira_fetcher"
+    existing = await _denial_text(jira_mcp, getter, _jira_fetcher(), tool_name)
+    missing = await _denial_text(
+        jira_mcp, getter, _jira_fetcher(missing=True), tool_name
+    )
+    assert existing == missing
+
+
+@pytest.mark.anyio
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    "tool_name", _scoped_tool_ids(confluence_mcp, CONFLUENCE_SCOPE_POLICY)
+)
+async def test_confluence_denial_reads_the_same_for_missing_targets(
+    tool_name: str,
+) -> None:
+    getter = "mcp_atlassian.servers.confluence.get_confluence_fetcher"
+    existing = await _denial_text(
+        confluence_mcp, getter, _confluence_fetcher(), tool_name
+    )
+    missing = await _denial_text(
+        confluence_mcp, getter, _confluence_fetcher(missing=True), tool_name
+    )
+    assert existing == missing
 
 
 # --- guard behaviour ----------------------------------------------------------
