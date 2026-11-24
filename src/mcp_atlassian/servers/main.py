@@ -1189,7 +1189,9 @@ def _build_auth_provider() -> HardenedOAuthProxy | None:
     allowed_client_redirect_uris = _get_allowed_redirect_uris()
     allowed_grant_types = _get_allowed_grant_types()
     require_consent = is_env_truthy("ATLASSIAN_OAUTH_REQUIRE_CONSENT", "true")
-    verifier = AtlassianOpaqueTokenVerifier(required_scopes=scopes)
+    verifier = AtlassianOpaqueTokenVerifier(
+        required_scopes=scopes, validate_cloud_token=is_cloud
+    )
 
     return HardenedOAuthProxy(
         upstream_authorization_endpoint=upstream_authorize,
