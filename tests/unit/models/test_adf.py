@@ -441,7 +441,7 @@ class TestMarkdownToAdf:
         link_mark = next(m for m in link_nodes[0]["marks"] if m["type"] == "link")
         assert link_mark["attrs"]["href"] == "https://example.com"
 
-    def test_link_title(self):
+    def test_link_title(self) -> None:
         """An optional title follows the URL and is not part of it."""
         for markdown, href, title in (
             (
@@ -490,7 +490,7 @@ class TestMarkdownToAdf:
             # The paren form used to leave a stray ")" behind.
             assert len(nodes) == 1, markdown
 
-    def test_link_without_title(self):
+    def test_link_without_title(self) -> None:
         """A URL containing a space still resolves as one href."""
         para = markdown_to_adf("[docs](https://example.com/a b)")["content"][0]
         mark = next(
@@ -503,9 +503,17 @@ class TestMarkdownToAdf:
         assert mark["attrs"]["href"] == "https://example.com/a b"
         assert "title" not in mark["attrs"]
 
-    def test_unclosed_link_does_not_backtrack(self) -> None:
-        """An unclosed link followed by long whitespace converts in linear time."""
-        markdown = "[a](x" + " " * 30000 + "y"
+    @pytest.mark.parametrize(
+        "markdown",
+        [
+            "[a](x" + " " * 30000 + "y",
+            "[a](x" + " " * 30000 + '"y)',
+            "[a](x" + (" " * 300 + "a") * 100 + " ()",
+        ],
+        ids=["unclosed", "unclosed-title", "spaced-href"],
+    )
+    def test_long_link_bodies_convert_quickly(self, markdown: str) -> None:
+        """Long link bodies, closed or not, convert without backtracking."""
         start = time.perf_counter()
         markdown_to_adf(markdown)
         assert time.perf_counter() - start < 1.0
@@ -1244,7 +1252,8 @@ class TestMarkdownToJiraDispatch:
 # --- Linear-time inline scan, explicit stacks -----------------------------
 
 #: The inline regex ``_parse_inline_formatting`` used before its scanner,
-#: with a link's optional title split off its href. A link whose body is not
+#: with the link alternative rewritten alongside the scanner's title support
+#: to split a link's optional title off its href. A link whose body is not
 #: an href and title keeps the whole body as its href (``link_raw``).
 _STOCK_INLINE_RE = re.compile(
     r"\[~accountid:(?P<wiki_mention_id>[^\]]+)\]"

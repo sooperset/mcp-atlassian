@@ -64,6 +64,10 @@ class _InlineScanner:
         \[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)
         (?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)
 
+    The link line is the stock form; a link may also carry a CommonMark
+    title (``[t](href "title")``), split off into ``link_title``, and a
+    quoted or parenthesised title may run past the first ``)``.
+
     Each body ends at the first closer after it, on the same line for
     ``.+?``, so where the next closer is fixes the match. The regex found it
     by scanning on from every opener: a line of unclosed ``[`` was scanned to
