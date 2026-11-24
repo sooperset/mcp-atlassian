@@ -146,6 +146,36 @@ def test_build_auth_provider_uses_dc_endpoints_for_datacenter_url(monkeypatch):
     )
 
 
+def test_build_auth_provider_enables_cloud_token_validation_for_cloud(monkeypatch):
+    from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
+
+    monkeypatch.setenv("JIRA_URL", "https://acme.atlassian.net")
+    _set_required_oauth_env(monkeypatch, redirect_uri="http://localhost:3000/callback")
+
+    provider = _build_auth_provider()
+
+    assert provider is not None
+    verifier = provider._token_validator
+    assert isinstance(verifier, AtlassianOpaqueTokenVerifier)
+    assert verifier._validate_cloud_token is True
+    assert verifier._cloud_site_hostname == "acme.atlassian.net"
+
+
+def test_build_auth_provider_disables_cloud_token_validation_for_dc(monkeypatch):
+    from mcp_atlassian.utils.token_verifier import AtlassianOpaqueTokenVerifier
+
+    monkeypatch.setenv("JIRA_URL", "https://jira.example.com")
+    _set_required_oauth_env(monkeypatch, redirect_uri="http://localhost:3000/callback")
+
+    provider = _build_auth_provider()
+
+    assert provider is not None
+    verifier = provider._token_validator
+    assert isinstance(verifier, AtlassianOpaqueTokenVerifier)
+    assert verifier._validate_cloud_token is False
+    assert verifier._cloud_site_hostname is None
+
+
 def test_build_auth_provider_infers_base_url_from_redirect_uri(monkeypatch):
     monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
     monkeypatch.delenv("ATLASSIAN_OAUTH_INSTANCE_URL", raising=False)
