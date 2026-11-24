@@ -184,14 +184,13 @@ def _invoke_storage_factory(
     # key_value.aio.stores backends, whose constructor takes each setting as
     # its own keyword-only argument rather than one config dict. Spread
     # config as keyword arguments instead of passing it as a single value.
+    # (Only KEYWORD_ONLY is possible here: the positional check just above
+    # already returned for any POSITIONAL_ONLY/POSITIONAL_OR_KEYWORD/
+    # VAR_POSITIONAL parameter, so none remain in `params` at this point.)
     if (
         config is not None
         and set(config).issubset(params)
-        and all(
-            params[name].kind
-            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-            for name in config
-        )
+        and all(params[name].kind == inspect.Parameter.KEYWORD_ONLY for name in config)
     ):
         return factory(**config)
 
