@@ -914,8 +914,9 @@ class JiraPreprocessor(BasePreprocessor):
             output,
         )
 
-        # Inserted text
-        output = re.sub(r"\+([^+]*)\+", r"<ins>\1</ins>", output)
+        # Inserted text. Jira opens +text+ only at a word boundary, so the
+        # plus signs in "Ctrl+F, or Cmd+F" are text, not markup (issue #1894).
+        output = re.sub(r"(?<!\w)\+([^+]*)\+(?!\w)", r"<ins>\1</ins>", output)
 
         # Superscript
         output = re.sub(r"\^([^^]*)\^", r"<sup>\1</sup>", output)
