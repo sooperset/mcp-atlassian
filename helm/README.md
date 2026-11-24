@@ -142,7 +142,7 @@ without changing core chart API:
 oauthClientStorage:
   mode: factory
   factory:
-    importPath: "my_pkg.storage:create_store"
+    importPath: "key_value.aio.stores.redis:RedisStore"
     configJsonSecret:
       name: mcp-atlassian-storage-config
       key: config.json
@@ -156,6 +156,20 @@ This sets:
 
 The factory callable should return an async key/value compatible storage object
 used by FastMCP OAuth proxy client registration storage.
+
+`importPath` is only imported when its module is under the `key_value.*`
+namespace (the storage library this image already depends on, covering
+Redis, PostgreSQL, MongoDB and other backends) or `mcp_atlassian.*`. A factory
+in your own package instead needs `allowArbitrary: true`, which sets
+`ATLASSIAN_OAUTH_CLIENT_STORAGE_ALLOW_ARBITRARY_FACTORY=true`:
+
+```yaml
+oauthClientStorage:
+  mode: factory
+  factory:
+    importPath: "my_pkg.storage:create_store"
+    allowArbitrary: true
+```
 
 ### Health Checks and Readiness Probe
 

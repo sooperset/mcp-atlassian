@@ -196,7 +196,12 @@ oauthProxy:
 oauthClientStorage:
   mode: "default" # default | factory
   factory:
-    importPath: "" # e.g. "my_pkg.storage:create_store"
+    # Importing a factory outside the key_value.* (the storage library this
+    # chart's image already depends on, covering Redis/PostgreSQL/MongoDB/etc.)
+    # or mcp_atlassian.* namespaces requires allowArbitrary: true below.
+    importPath: "" # e.g. "key_value.aio.stores.redis:RedisStore"
+    # Set true only to import a factory module outside those namespaces.
+    allowArbitrary: false
     # Optional JSON object passed to the factory.
     configJson: ""
     # Optionally source JSON from an existing secret key.

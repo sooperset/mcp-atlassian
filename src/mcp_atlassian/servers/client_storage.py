@@ -14,6 +14,8 @@ from collections.abc import Callable
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
+from ..utils.env import is_env_truthy
+
 if TYPE_CHECKING:
     from key_value.aio.protocols import AsyncKeyValue
 else:
@@ -24,6 +26,19 @@ logger = logging.getLogger("mcp-atlassian.server.client_storage")
 CLIENT_STORAGE_MODE_ENV = "ATLASSIAN_OAUTH_CLIENT_STORAGE_MODE"
 CLIENT_STORAGE_FACTORY_ENV = "ATLASSIAN_OAUTH_CLIENT_STORAGE_FACTORY"
 CLIENT_STORAGE_CONFIG_JSON_ENV = "ATLASSIAN_OAUTH_CLIENT_STORAGE_CONFIG_JSON"
+CLIENT_STORAGE_ALLOW_ARBITRARY_ENV = (
+    "ATLASSIAN_OAUTH_CLIENT_STORAGE_ALLOW_ARBITRARY_FACTORY"
+)
+# Module namespaces this feature is documented for: the key/value storage
+# library mcp-atlassian already depends on (which ships Redis, PostgreSQL,
+# MongoDB and other backends), and the package's own code. The factory path
+# is an environment variable, so in a templated deployment (for example a
+# Helm values.yaml that can flow through a less-trusted pipeline than the
+# cluster it configures) it should not by itself be able to import and call
+# an arbitrary module. A factory outside these namespaces requires the
+# operator to also set CLIENT_STORAGE_ALLOW_ARBITRARY_ENV, a separate,
+# explicit acknowledgement that a custom module will be imported.
+_TRUSTED_FACTORY_MODULE_PREFIXES = ("key_value.", "mcp_atlassian.")
 REQUIRED_STORAGE_METHODS = (
     "get",
     "put",
@@ -36,6 +51,33 @@ REQUIRED_STORAGE_METHODS = (
 )
 
 
+def _is_trusted_factory_module(module_path: str) -> bool:
+    return any(
+        module_path == prefix.rstrip(".") or module_path.startswith(prefix)
+        for prefix in _TRUSTED_FACTORY_MODULE_PREFIXES
+    )
+
+
+def _check_factory_module_allowed(module_path: str, import_path: str) -> None:
+    if _is_trusted_factory_module(module_path):
+        return
+    if is_env_truthy(CLIENT_STORAGE_ALLOW_ARBITRARY_ENV):
+        logger.warning(
+            "Importing OAuth client storage factory '%s' outside the trusted "
+            "key_value.*/mcp_atlassian.* namespaces because %s is set.",
+            import_path,
+            CLIENT_STORAGE_ALLOW_ARBITRARY_ENV,
+        )
+        return
+    message = (
+        f"{CLIENT_STORAGE_FACTORY_ENV}='{import_path}' is outside the trusted "
+        "'key_value.*' and 'mcp_atlassian.*' module namespaces, so it will "
+        f"not be imported. Set {CLIENT_STORAGE_ALLOW_ARBITRARY_ENV}=true to "
+        "explicitly allow a custom factory module outside those namespaces."
+    )
+    raise ValueError(message)
+
+
 def _load_storage_factory(import_path: str) -> Callable[..., AsyncKeyValue]:
     module_path, separator, attribute_name = import_path.partition(":")
     if not separator or not module_path or not attribute_name:
@@ -43,6 +85,8 @@ def _load_storage_factory(import_path: str) -> Callable[..., AsyncKeyValue]:
             f"Invalid {CLIENT_STORAGE_FACTORY_ENV}='{import_path}'. "
             "Expected '<module.path>:<callable>'."
         )
+
+    _check_factory_module_allowed(module_path, import_path)
 
     try:
         module = import_module(module_path)
