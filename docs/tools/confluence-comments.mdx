@@ -14,7 +14,8 @@ Add a comment to a Confluence page.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | The ID of the page to add a comment to |
-| `body` | `string` | Yes | The comment content in Markdown format |
+| `body` | `string` | Yes | The comment content. Markdown unless content_format says otherwise |
+| `content_format` | `string` | No | (Optional) Format of body. Options: 'markdown' (default) or 'storage' (raw Confluence storage XML). Use 'storage' to insert macros or elements that markdown cannot express. |
 **Example:**
 
 ```json
@@ -54,7 +55,8 @@ Reply to an existing comment thread on a Confluence page.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `comment_id` | `string` | Yes | The ID of the parent comment to reply to |
-| `body` | `string` | Yes | The reply content in Markdown format |
+| `body` | `string` | Yes | The reply content. Markdown unless content_format says otherwise |
+| `content_format` | `string` | No | (Optional) Format of body. Options: 'markdown' (default) or 'storage' (raw Confluence storage XML). Use 'storage' to insert macros or elements that markdown cannot express. |
 **Example:**
 
 ```json
@@ -94,10 +96,11 @@ Add an inline comment anchored to a text selection on a page.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `page_id` | `string` | Yes | The ID of the page to add the inline comment to |
-| `body` | `string` | Yes | The comment content in Markdown format |
+| `body` | `string` | Yes | The comment content. Markdown unless content_format says otherwise |
 | `text_selection` | `string` | Yes | The exact text on the page to anchor the inline comment to. Must match text that exists in the page content. |
 | `text_selection_match_count` | `integer` | No | Total number of times the selected text appears on the page. Defaults to 1. |
 | `text_selection_match_index` | `integer` | No | Zero-based index of which occurrence of the text to anchor to. Defaults to 0 (first occurrence). |
+| `content_format` | `string` | No | (Optional) Format of body. Options: 'markdown' (default) or 'storage' (raw Confluence storage XML). Use 'storage' to insert macros or elements that markdown cannot express. |
 
 ---
 

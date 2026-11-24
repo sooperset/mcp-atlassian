@@ -674,3 +674,35 @@ class TestNoProxyAdapter:
         default_https_adapter = session.get_adapter("https://example.com")
         configure_proxy_bypass("TestService", "https://example.com", session)
         assert session.get_adapter("https://example.com") is default_https_adapter
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize("service", ["jira", "confluence"])
+def test_pac_session_keeps_dot_segment_refusal(service):
+    """Switching to the PAC session must not drop the dot-segment refusal."""
+    from pypac.parser import PACFile
+
+    from mcp_atlassian.confluence import ConfluenceConfig, ConfluenceFetcher
+    from mcp_atlassian.jira import JiraFetcher
+
+    common = {
+        "auth_type": "basic",
+        "username": "u",
+        "api_token": "t",
+        "proxy_wpad_enable": True,
+        "proxy_wpad_url": "http://wpad.example.test/wpad.dat",
+    }
+    pac = PACFile('function FindProxyForURL(url, host) { return "DIRECT"; }')
+    with patch("mcp_atlassian.utils.proxy._load_pac_file", return_value=pac):
+        if service == "jira":
+            url = "https://site.example.test"
+            session = JiraFetcher(config=JiraConfig(url=url, **common)).jira._session
+        else:
+            url = "https://site.example.test/wiki"
+            session = ConfluenceFetcher(
+                config=ConfluenceConfig(url=url, **common)
+            ).confluence._session
+
+    assert isinstance(session, _NoProxyAwarePACSession)
+    with pytest.raises(ValueError, match="'..' segment"):
+        session.get(f"{url}/rest/api/2/issue/A-1/../../../wiki/rest/api/content/1")

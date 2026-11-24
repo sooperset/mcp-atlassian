@@ -100,7 +100,13 @@ def _jira_router(method: str, path: str) -> Any:
     if path.rstrip("/").endswith("/servicedesk/4"):
         return {"id": "4", "projectKey": "ALLOWED"}
     if "/comment/" in path:
-        return {"id": "10000", "body": "old", "author": {"displayName": "x"}}
+        # Real Jira names the owning issue (by id) in the comment's self URL.
+        return {
+            "id": "10000",
+            "self": "https://example.atlassian.net/rest/api/2/issue/1/comment/10000",
+            "body": "old",
+            "author": {"displayName": "x"},
+        }
     return {"values": [], "isLast": True, "size": 0}
 
 

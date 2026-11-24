@@ -1983,9 +1983,9 @@ def test_repeated_user_mentions_are_looked_up_once():
 
 def test_distinct_user_lookups_per_document_are_capped():
     """Past the cap, mentions keep their stored identifier and cost nothing."""
-    from mcp_atlassian.preprocessing.base import MAX_USER_LOOKUPS_PER_DOCUMENT
+    from mcp_atlassian.preprocessing.base import MAX_USER_LOOKUPS_PER_CALL
 
-    count = MAX_USER_LOOKUPS_PER_DOCUMENT + 25
+    count = MAX_USER_LOOKUPS_PER_CALL + 25
     html = (
         "<p>"
         + "".join(
@@ -2001,7 +2001,7 @@ def test_distinct_user_lookups_per_document_are_capped():
     ).process_html_content(html, confluence_client=client)
 
     assert client.get_user_details_by_accountid.call_count == (
-        MAX_USER_LOOKUPS_PER_DOCUMENT
+        MAX_USER_LOOKUPS_PER_CALL
     )
     assert "@Name acct-0" in markdown
     assert f"@user\\_acct-{count - 1}" in markdown

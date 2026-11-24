@@ -1,6 +1,7 @@
 """Tests for the Jira Comments mixin."""
 
-from unittest.mock import Mock
+from typing import Any
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from requests.exceptions import HTTPError
@@ -10,7 +11,11 @@ from mcp_atlassian.jira.comments import CommentsMixin
 
 def _issue_in_own_project(issue_key: str, fields: str | None = None) -> dict:
     """Answer the internal-only project lookup with the key's own project."""
-    return {"key": issue_key, "fields": {"project": {"key": issue_key.split("-")[0]}}}
+    return {
+        "id": "10",
+        "key": issue_key,
+        "fields": {"project": {"key": issue_key.split("-")[0]}},
+    }
 
 
 class TestCommentsMixin:
@@ -862,6 +867,9 @@ class TestInternalOnlyProjectsGuard:
         mixin = CommentsMixin(config=config)
         mixin.jira = Mock()
         mixin.jira.issue.side_effect = _issue_in_own_project
+        mixin.jira.issue_get_comment.side_effect = lambda key, cid: {
+            "self": f"https://jira.example.test/rest/api/2/issue/10/comment/{cid}"
+        }
         mixin.jira.default_headers = {}
         mixin.preprocessor = Mock()
         mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
@@ -1069,6 +1077,9 @@ class TestInternalOnlyNonRequestIssues:
         mixin = CommentsMixin(config=config)
         mixin.jira = Mock()
         mixin.jira.issue.side_effect = _issue_in_own_project
+        mixin.jira.issue_get_comment.side_effect = lambda key, cid: {
+            "self": f"https://jira.example.test/rest/api/2/issue/10/comment/{cid}"
+        }
         mixin.jira.default_headers = {}
         mixin.preprocessor = Mock()
         mixin.preprocessor.markdown_to_jira = Mock(return_value="formatted")
@@ -1602,3 +1613,59 @@ class TestInternalOnlyKeyAlias:
             "fields": {"project": {"key": "PROJ"}},
         }
         assert mixin._is_internal_only_project("PROJ-1") is False
+
+
+def _comment_binding_fetcher(**config: Any) -> Any:
+    from mcp_atlassian.jira import JiraConfig, JiraFetcher
+
+    fetcher = JiraFetcher(
+        config=JiraConfig(
+            url="https://jira.example.test",
+            auth_type="pat",
+            personal_token="dummy",
+            **config,
+        )
+    )
+    backend = MagicMock(spec_set=["issue", "issue_get_comment", "issue_edit_comment"])
+    backend.issue.side_effect = lambda key, fields=None: {
+        "id": {"A-1": "100", "OTH-1": "300"}.get(key, "999"),
+        "key": key,
+        "fields": {"project": {"key": key.split("-")[0]}},
+    }
+    backend.issue_get_comment.return_value = {
+        "id": "900",
+        "self": "https://jira.example.test/rest/api/2/issue/200/comment/900",
+    }
+    backend.issue_edit_comment.return_value = {"id": "900", "body": "x"}
+    fetcher.jira = backend
+    return fetcher
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    ("config", "issue_key"),
+    [
+        ({"projects_filter": "A"}, "A-1"),
+        ({"internal_only_projects": frozenset({"CC"})}, "OTH-1"),
+    ],
+    ids=["projects-filter", "internal-only"],
+)
+def test_edit_comment_refuses_a_comment_of_another_issue(config, issue_key) -> None:
+    fetcher = _comment_binding_fetcher(**config)
+
+    with pytest.raises(Exception, match="not found on issue"):
+        fetcher.edit_comment(issue_key, "900", "new text")
+
+    fetcher.jira.issue_edit_comment.assert_not_called()
+
+
+def test_edit_comment_on_its_own_issue_still_works() -> None:
+    fetcher = _comment_binding_fetcher(projects_filter="A")
+    fetcher.jira.issue_get_comment.return_value = {
+        "id": "900",
+        "self": "https://jira.example.test/rest/api/2/issue/100/comment/900",
+    }
+
+    fetcher.edit_comment("A-1", "900", "new text")
+
+    fetcher.jira.issue_edit_comment.assert_called_once()

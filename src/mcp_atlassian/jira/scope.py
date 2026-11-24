@@ -9,10 +9,13 @@ A check that cannot resolve the identifier denies it.
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from ..exceptions import ScopeViolationError
-from ..models.jira.issue import changelog_field_kinds
+from ..models.jira.issue import field_metadata_kinds, normalize_field_name
 from ..utils.urls import path_segment
 from .client import JiraClient
 
@@ -35,6 +38,19 @@ def _denied(kind: str, value: object) -> ScopeViolationError:
         f"Jira {kind} '{value}' is outside the configured {_FILTER_NAME} "
         "or could not be verified."
     )
+
+
+@contextmanager
+def _denied_as(kind: str, value: object) -> Iterator[None]:
+    """Report a denial of a resolved parent as a denial of the caller's value.
+
+    The denial text names only what the caller passed, so it reads the same
+    whether the object is missing or resolves outside the allowlist.
+    """
+    try:
+        yield
+    except ScopeViolationError:
+        raise _denied(kind, value) from None
 
 
 def _issue_reference(value: object) -> object:
@@ -117,6 +133,273 @@ def board_in_scope(jira: Any, board: dict[str, Any], allowed: frozenset[str]) ->
     return keys is not None and keys <= allowed
 
 
+# --- JQL references ------------------------------------------------------------
+#
+# The allowlist is ANDed into every query, but Jira still evaluates the
+# caller's predicate: ``issue in linkedIssues("X-1")`` or ``parent = X-1``
+# selects in-scope issues by their relation to an out-of-scope one. Only the
+# places where JQL names an issue are checked: operands of issue fields and the
+# issue arguments of issue functions. Values of other fields (labels, versions,
+# sprints, users, text) are left alone however they look.
+
+_JQL_ISSUE_FIELDS = frozenset({"key", "issuekey", "issue", "id", "parent"})
+# Without field metadata these names are still taken as issue references.
+_JQL_ISSUE_FIELD_NAMES = frozenset({"epic link", "parent link"})
+# Jira system fields whose values are not issues.
+_JQL_STANDARD_FIELDS = frozenset(
+    {
+        "affectedversion", "approvals", "approver", "assignee", "attachments",
+        "category", "comment", "component", "created", "createddate", "creator",
+        "description", "due", "duedate", "environment", "filter",
+        "fixversion", "issuelinktype", "issuetype", "type", "labels",
+        "lastviewed", "level", "organizations", "originalestimate",
+        "timeoriginalestimate", "priority", "project", "projecttype",
+        "remainingestimate", "timeestimate", "reporter", "resolution",
+        "resolutiondate", "resolved", "sprint", "status", "statuscategory",
+        "summary", "text", "timespent", "updated", "updateddate", "voter",
+        "votes", "watcher", "watchers", "worklogauthor", "worklogcomment",
+        "worklogdate", "workratio", "development", "team", "request",
+        "requesttype", "requestchannel", "epic name", "story points",
+    }
+)  # fmt: skip
+# Issue functions and the positions of their issue arguments.
+_JQL_ISSUE_FUNCTIONS: dict[str, tuple[int, ...]] = {
+    "linkedissues": (0,),
+    "parentepic": (0,),
+    "portfoliochildissuesof": (0,),
+    "portfolioparentissuesof": (0,),
+    "childissuesof": (0,),
+}
+# Words that are never function names, so "AND (" is a group, not a call.
+_JQL_RESERVED = frozenset(
+    {"and", "or", "not", "in", "is", "was", "changed", "empty", "null",
+     "order", "by", "asc", "desc", "from", "to", "before", "after", "during",
+     "on"}
+)  # fmt: skip
+_JQL_OPERATOR_CHARS = "=!<>~"
+_ISSUE_KEY_FULL_RE = re.compile(r"([A-Za-z][A-Za-z0-9_]*)-(\d+)")
+_CF_RE = re.compile(r"cf\[(\d+)\]", re.IGNORECASE)
+_JQL_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", " ": " "}
+
+
+def _jql_tokens(jql: str) -> list[tuple[str, str]]:
+    """Split JQL into ("str"|"word"|"op"|"punct", text) tokens, in one pass.
+
+    Quoted strings are unescaped as JQL does (``\\"``, ``\\uXXXX``, ...).
+    """
+    tokens: list[tuple[str, str]] = []
+    i, n = 0, len(jql)
+    while i < n:
+        c = jql[i]
+        if c.isspace():
+            i += 1
+        elif c in "\"'":
+            j = i + 1
+            buf: list[str] = []
+            while j < n and jql[j] != c:
+                if jql[j] == "\\" and j + 1 < n:
+                    nxt = jql[j + 1]
+                    if nxt == "u" and re.fullmatch(
+                        r"[0-9A-Fa-f]{4}", jql[j + 2 : j + 6]
+                    ):
+                        buf.append(chr(int(jql[j + 2 : j + 6], 16)))
+                        j += 6
+                        continue
+                    buf.append(_JQL_ESCAPES.get(nxt, nxt))
+                    j += 2
+                    continue
+                buf.append(jql[j])
+                j += 1
+            tokens.append(("str", "".join(buf)))
+            i = j + 1
+        elif c in "(),":
+            tokens.append(("punct", c))
+            i += 1
+        elif c in _JQL_OPERATOR_CHARS:
+            j = i
+            while j < n and jql[j] in _JQL_OPERATOR_CHARS:
+                j += 1
+            tokens.append(("op", jql[i:j]))
+            i = j
+        else:
+            j = i
+            while (
+                j < n
+                and not jql[j].isspace()
+                and jql[j] not in "(),\"'"
+                and jql[j] not in _JQL_OPERATOR_CHARS
+            ):
+                j += 1
+            tokens.append(("word", jql[i:j]))
+            i = j
+    return tokens
+
+
+def _normalize_field(name: str) -> str:
+    cf = _CF_RE.fullmatch(name.strip())
+    if cf:
+        return f"customfield_{cf.group(1)}"
+    return normalize_field_name(name)
+
+
+def _out_of_scope_issue_value(value: str, allowed: frozenset[str]) -> bool:
+    value = value.strip()
+    if value.isdigit():
+        return True
+    match = _ISSUE_KEY_FULL_RE.fullmatch(value)
+    return bool(match) and match.group(1).upper() not in allowed
+
+
+def refuse_out_of_scope_jql_references(
+    jql: str,
+    allowed: frozenset[str],
+    field_kinds: Callable[[], dict[str, Any] | None] | None = None,
+) -> None:
+    """Refuse JQL whose issue positions name an issue outside the allowlist.
+
+    Issue positions are operands of ``key``, ``issuekey``, ``issue``, ``id``,
+    ``parent`` and of custom fields that the field metadata types as issue
+    references (Epic Link, Parent Link), by name or ``cf[N]``; and the issue
+    arguments of issue functions such as ``linkedIssues``, also inside a list.
+    An issue ID there is refused, since its project is not known without a
+    lookup. Without field metadata, a key-shaped or numeric operand of a
+    custom or unknown field is refused. Saved filters, app functions,
+    ``CHANGED FROM/TO`` operands and nested function arguments are not checked.
+
+    Args:
+        jql: Caller JQL.
+        allowed: Upper-cased JIRA_PROJECTS_FILTER keys.
+        field_kinds: Returns custom reference field kinds, or None when the
+            metadata cannot be read; called at most once.
+
+    Raises:
+        ScopeViolationError: For the first out-of-scope issue position.
+    """
+    tokens = _jql_tokens(jql)
+    n = len(tokens)
+    kinds_cache: list[dict[str, Any] | None] = []
+
+    def kinds() -> dict[str, Any] | None:
+        if not kinds_cache:
+            kinds_cache.append(field_kinds() if field_kinds else None)
+        return kinds_cache[0]
+
+    def field_role(name: str) -> str:
+        """Return "issue", "unverified" or "other" for a field name."""
+        field = _normalize_field(name)
+        if field in _JQL_ISSUE_FIELDS:
+            return "issue"
+        if field in _JQL_STANDARD_FIELDS:
+            return "other"
+        known = kinds()
+        if known is None:
+            return "issue" if field in _JQL_ISSUE_FIELD_NAMES else "unverified"
+        return "issue" if known.get(field) == "issue" else "other"
+
+    def check(value: str, role: str) -> None:
+        if role == "other" or not _out_of_scope_issue_value(value, allowed):
+            return
+        if role == "unverified":
+            raise ScopeViolationError(
+                f"JQL value '{value}' could not be checked against the configured "
+                f"{_FILTER_NAME}: the field metadata is not available."
+            )
+        if value.strip().isdigit():
+            raise ScopeViolationError(
+                f"JQL issue ID '{value}' cannot be checked against the configured "
+                f"{_FILTER_NAME}. Use issue keys while the filter is set."
+            )
+        raise ScopeViolationError(
+            f"JQL references issue '{value}' outside the configured "
+            f"{_FILTER_NAME} or could not be verified."
+        )
+
+    def is_call(i: int) -> bool:
+        return (
+            i + 1 < n
+            and tokens[i][0] == "word"
+            and tokens[i][1].lower() not in _JQL_RESERVED
+            and tokens[i + 1] == ("punct", "(")
+        )
+
+    def skip_call(i: int) -> int:
+        """Check the issue arguments of the call at ``i``; return its end."""
+        positions = _JQL_ISSUE_FUNCTIONS.get(tokens[i][1].lower(), ())
+        depth, arg, j = 0, 0, i + 1
+        while j < n:
+            kind, text = tokens[j]
+            if (kind, text) == ("punct", "("):
+                depth += 1
+            elif (kind, text) == ("punct", ")"):
+                depth -= 1
+                if depth == 0:
+                    return j + 1
+            elif (kind, text) == ("punct", ",") and depth == 1:
+                arg += 1
+            elif depth == 1 and arg in positions and kind in ("str", "word"):
+                check(text, "issue")
+            j += 1
+        return j
+
+    def operator_end(i: int) -> int | None:
+        """Return where the operand starts if an operator begins at ``i``."""
+        kind, text = tokens[i]
+        word = text.lower() if kind == "word" else ""
+        if kind == "op":
+            return i + 1
+        if word in ("in",):
+            return i + 1
+        if word == "not" and i + 1 < n and tokens[i + 1][1].lower() == "in":
+            return i + 2
+        if word in ("is", "was"):
+            j = i + 1
+            while j < n and tokens[j][1].lower() in ("not", "in"):
+                j += 1
+            return j
+        return None
+
+    i = 0
+    field: tuple[str, str] | None = None
+    while i < n:
+        if is_call(i):
+            i = skip_call(i)
+            field = None
+            continue
+        start = operator_end(i)
+        if start is None:
+            kind, text = tokens[i]
+            field = (kind, text) if kind in ("str", "word") else None
+            i += 1
+            continue
+        role = (
+            field_role(field[1])
+            if field is not None and field[1].lower() not in _JQL_RESERVED
+            else "other"
+        )
+        field = None
+        i = start
+        if i >= n:
+            break
+        if is_call(i):
+            i = skip_call(i)
+        elif tokens[i] == ("punct", "("):
+            i += 1
+            while i < n and tokens[i] != ("punct", ")"):
+                if is_call(i):
+                    i = skip_call(i)
+                    continue
+                if tokens[i][0] in ("str", "word"):
+                    check(tokens[i][1], role)
+                i += 1
+            i += 1
+        else:
+            if tokens[i][0] == "str" or (
+                tokens[i][0] == "word" and tokens[i][1].lower() not in _JQL_RESERVED
+            ):
+                check(tokens[i][1], role)
+            i += 1
+
+
 def output_scope_kwargs(fetcher: Any) -> dict[str, Any]:
     """Return the model keyword arguments that apply the allowlist to output.
 
@@ -127,16 +410,23 @@ def output_scope_kwargs(fetcher: Any) -> dict[str, Any]:
         fetcher: A Jira fetcher (``config`` and, when available, ``get_fields``).
     """
 
+    # One answer per call: a failed read is not retried for every issue.
+    memo: list[dict[str, Any] | None] = []
+
     def field_kinds() -> dict[str, Any] | None:
         # None means the metadata could not be read; the filter then drops
         # custom-field changes it cannot classify.
+        if memo:
+            return memo[0]
         get_fields = getattr(fetcher, "get_fields", None)
-        if not callable(get_fields):
-            return None
-        try:
-            return changelog_field_kinds(get_fields(raise_errors=True))
-        except Exception:  # noqa: BLE001 - any failure means "unknown"
-            return None
+        result: dict[str, Any] | None = None
+        if callable(get_fields):
+            try:
+                result = field_metadata_kinds(get_fields(raise_errors=True))
+            except Exception:  # noqa: BLE001 - any failure means "unknown"
+                result = None
+        memo.append(result)
+        return result
 
     return {
         "allowed_projects": allowed_project_keys(fetcher.config),
@@ -180,7 +470,8 @@ class ScopeMixin(JiraClient):
             raise _denied("project", project_id) from e
         if not isinstance(key, str):
             raise _denied("project", project_id)
-        self.ensure_project_allowed(key)
+        with _denied_as("project", project_id):
+            self.ensure_project_allowed(key)
 
     def ensure_issue_allowed(self, issue_key: object) -> None:
         """Resolve an issue key or ID to its current project and check it."""
@@ -291,7 +582,8 @@ class ScopeMixin(JiraClient):
             logger.warning(f"Could not resolve Jira board {board_id!r}: {e}")
             raise _denied("board", board_id) from e
         if isinstance(project_key, str):
-            self.ensure_project_allowed(project_key)
+            with _denied_as("board", board_id):
+                self.ensure_project_allowed(project_key)
             return
         keys = board_project_keys(self.jira, board_id)
         if keys is None or not keys <= allowed:
@@ -309,7 +601,8 @@ class ScopeMixin(JiraClient):
             raise _denied("sprint", sprint_id) from e
         if board_id is None:
             raise _denied("sprint", sprint_id)
-        self.ensure_board_allowed(board_id)
+        with _denied_as("sprint", sprint_id):
+            self.ensure_board_allowed(board_id)
 
     def ensure_version_allowed(self, version_id: object) -> None:
         """Check the project a fix version belongs to."""
@@ -323,7 +616,8 @@ class ScopeMixin(JiraClient):
             raise _denied("version", version_id) from e
         if project_id is None:
             raise _denied("version", version_id)
-        self.ensure_project_id_allowed(project_id)
+        with _denied_as("version", version_id):
+            self.ensure_project_id_allowed(project_id)
 
     def ensure_issue_link_allowed(self, link_id: object) -> None:
         """Check both issues joined by an issue link."""
@@ -338,8 +632,9 @@ class ScopeMixin(JiraClient):
         except Exception as e:  # noqa: BLE001 - any failure denies
             logger.warning(f"Could not resolve Jira issue link {link_id!r}: {e}")
             raise _denied("issue link", link_id) from e
-        for key in keys:
-            self.ensure_issue_allowed(key)
+        with _denied_as("issue link", link_id):
+            for key in keys:
+                self.ensure_issue_allowed(key)
 
     def ensure_service_desk_allowed(self, service_desk_id: object) -> None:
         """Check the project behind a Jira Service Management service desk."""
@@ -355,4 +650,5 @@ class ScopeMixin(JiraClient):
             raise _denied("service desk", service_desk_id) from e
         if not isinstance(project_key, str):
             raise _denied("service desk", service_desk_id)
-        self.ensure_project_allowed(project_key)
+        with _denied_as("service desk", service_desk_id):
+            self.ensure_project_allowed(project_key)

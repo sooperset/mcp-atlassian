@@ -230,22 +230,54 @@ class CommentsMixin(ConfluenceClient):
             logger.debug("Full exception details for comments:", exc_info=True)
             return []
 
-    def add_comment(self, page_id: str, content: str) -> ConfluenceComment | None:
+    def _comment_body_to_storage(self, content: str, content_format: str) -> str:
+        """Return a comment body in storage format.
+
+        The format is what the caller says it is, never inferred from the
+        content: Markdown is always converted, even when it starts with ``<``.
+
+        Args:
+            content: The comment body.
+            content_format: ``'markdown'`` or ``'storage'``.
+
+        Returns:
+            The body in Confluence storage format.
+
+        Raises:
+            ValueError: If ``content_format`` is not ``'markdown'`` or
+                ``'storage'``.
+        """
+        if content_format == "storage":
+            return content
+        if content_format == "markdown":
+            return self.preprocessor.markdown_to_confluence_storage(content)
+        error_msg = (
+            f"Invalid content_format '{content_format}'. Must be "
+            "'markdown' or 'storage'."
+        )
+        raise ValueError(error_msg)
+
+    def add_comment(
+        self, page_id: str, content: str, content_format: str = "markdown"
+    ) -> ConfluenceComment | None:
         """
         Add a comment to a Confluence page.
 
         Args:
             page_id: The ID of the page to add the comment to
-            content: The content of the comment (in Confluence storage format)
+            content: The content of the comment
+            content_format: Format of content, ``'markdown'`` (default,
+                converted to storage format) or ``'storage'`` (sent as is)
 
         Returns:
             ConfluenceComment object if comment was added successfully, None otherwise
-        """
-        try:
-            # Convert markdown to Confluence storage format if needed
-            if not content.strip().startswith("<"):
-                content = self.preprocessor.markdown_to_confluence_storage(content)
 
+        Raises:
+            ValueError: If ``content_format`` is not ``'markdown'`` or
+                ``'storage'``.
+        """
+        content = self._comment_body_to_storage(content, content_format)
+        try:
             # Route through v2 API for OAuth Cloud
             v2_adapter = self._v2_adapter
             if v2_adapter:
@@ -277,23 +309,26 @@ class CommentsMixin(ConfluenceClient):
             return None
 
     def reply_to_comment(
-        self, comment_id: str, content: str
+        self, comment_id: str, content: str, content_format: str = "markdown"
     ) -> ConfluenceComment | None:
         """
         Reply to an existing comment thread.
 
         Args:
             comment_id: The ID of the parent comment to reply to
-            content: The reply content (markdown or HTML/storage format)
+            content: The reply content
+            content_format: Format of content, ``'markdown'`` (default,
+                converted to storage format) or ``'storage'`` (sent as is)
 
         Returns:
             ConfluenceComment object if reply was added successfully, None otherwise
-        """
-        try:
-            # Convert markdown to Confluence storage format if needed
-            if not content.strip().startswith("<"):
-                content = self.preprocessor.markdown_to_confluence_storage(content)
 
+        Raises:
+            ValueError: If ``content_format`` is not ``'markdown'`` or
+                ``'storage'``.
+        """
+        content = self._comment_body_to_storage(content, content_format)
+        try:
             v2_adapter = self._v2_adapter
             if v2_adapter:
                 response = v2_adapter.create_footer_comment(
@@ -470,6 +505,7 @@ class CommentsMixin(ConfluenceClient):
         text_selection: str,
         text_selection_match_count: int = 1,
         text_selection_match_index: int = 0,
+        content_format: str = "markdown",
     ) -> ConfluenceComment | None:
         """Add an inline comment anchored to a text selection on a page.
 
@@ -478,21 +514,24 @@ class CommentsMixin(ConfluenceClient):
 
         Args:
             page_id: The ID of the page to add the inline comment to
-            content: The comment content (Markdown or HTML/storage format)
+            content: The comment content
             text_selection: The text on the page to anchor the comment to
             text_selection_match_count: How many times the text appears
                 on the page
             text_selection_match_index: Zero-based index of which occurrence
                 to anchor to
+            content_format: Format of content, ``'markdown'`` (default,
+                converted to storage format) or ``'storage'`` (sent as is)
 
         Returns:
             ConfluenceComment object if successful, None otherwise
-        """
-        try:
-            # Convert markdown to Confluence storage format if needed
-            if not content.strip().startswith("<"):
-                content = self.preprocessor.markdown_to_confluence_storage(content)
 
+        Raises:
+            ValueError: If ``content_format`` is not ``'markdown'`` or
+                ``'storage'``.
+        """
+        content = self._comment_body_to_storage(content, content_format)
+        try:
             v2_adapter = self._inline_v2_adapter
             if v2_adapter:
                 response = v2_adapter.create_inline_comment(
