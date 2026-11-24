@@ -165,15 +165,26 @@ def _confluence_page_title(url: str) -> str | None:
 
 
 def _extract_inline_code(text: str, storage: list[str]) -> str:
-    r"""``_extract_blocks`` for ``\{\{([^}]+)\}\}`` in linear time."""
-    close = _NextIndex(text, r"\}")
+    r"""``_extract_blocks`` for ``\{\{(.+?\}*)\}\}(?!\})`` in linear time.
+
+    Inline code may contain "}" and may span lines. A span closes at the last
+    two braces of a run, so the braces before them stay in the content:
+    ``{{a}b}}`` is ``a}b`` and ``{{{"a": 1}}}`` is ``{"a": 1}``.
+    """
+    close = _NextIndex(text, r"\}\}")
 
     def convert(start: int, _: int) -> tuple[int, int, str] | None:
-        end = close(start + 2)
-        if end == start + 2 or not text.startswith("}}", end):
+        body = start + 2
+        end = close(body)
+        # Neither an empty span nor a "}}" that another "}" follows closes
+        # the span: the last two braces of the run close it, the earlier
+        # braces of the run and the content before them stay in the span.
+        while end < len(text) and (end == body or text.startswith("}", end + 2)):
+            end = close(end + 1)
+        if end == len(text):
             return None
         placeholder = f"\x00INLINECODE{len(storage)}\x00"
-        storage.append(f"`{text[start + 2 : end]}`")
+        storage.append(f"`{text[body:end]}`")
         return start, end + 2, placeholder
 
     return _scan_sub(text, "{{", convert)
