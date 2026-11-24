@@ -946,6 +946,7 @@ class PagesMixin(ConfluenceClient):
         emoji: str | None = None,
         page_width: str | None = None,
         table_layout: str | None = None,
+        content_type: str | None = None,
     ) -> ConfluencePage:
         """
         Update an existing page in Confluence.
@@ -963,6 +964,9 @@ class PagesMixin(ConfluenceClient):
             emoji: Optional emoji character for the page title icon (keyword-only). Pass empty string to remove emoji.
             page_width: Optional page layout width ('full-width', 'max', or 'default', keyword-only). Pass empty string to reset to default.
             table_layout: Optional table width preset for markdown tables ('full-width', 'wide', 'default', keyword-only)
+            content_type: Content type of the existing content ('page' or 'blogpost', keyword-only).
+                Fetched from Confluence when omitted; the v1 API rejects an update whose
+                type differs from the stored content.
 
         Returns:
             ConfluencePage model containing the updated page's data
@@ -1008,7 +1012,7 @@ class PagesMixin(ConfluenceClient):
                     "page_id": page_id,
                     "title": title,
                     "body": final_body,
-                    "type": "page",
+                    "type": content_type or self._get_content_type(page_id),
                     "representation": representation,
                     "minor_edit": is_minor_edit,
                     "version_comment": version_comment,
@@ -1202,7 +1206,23 @@ class PagesMixin(ConfluenceClient):
             content_representation="storage",
             is_minor_edit=is_minor_edit,
             version_comment=version_comment,
+            content_type=page.type,
         )
+
+    def _get_content_type(self, page_id: str) -> str:
+        """Return the content type of the content with the given ID.
+
+        Args:
+            page_id: The ID of the page or blog post.
+
+        Returns:
+            The content type, e.g. ``'page'`` or ``'blogpost'``; ``'page'`` when
+            the response carries none.
+        """
+        content = self.confluence.get_page_by_id(page_id=page_id)
+        if isinstance(content, dict):
+            return str(content.get("type") or "page")
+        return "page"
 
     def get_page_children(
         self,
