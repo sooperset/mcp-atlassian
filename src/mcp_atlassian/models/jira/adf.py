@@ -38,6 +38,13 @@ class _InlineMatch:
 _LONE_STAR = re.compile(r"(?<!\*)\*(?!\*)")
 _INLINE_START = re.compile(r"[\[@`{*~]")
 _WORD_RUN = re.compile(r"\w+")
+# A link body up to its first ")": the href, in whitespace-separated pieces
+# that cannot start a title, then an optional quoted title.
+_LINK_HREF = r"(?P<href>\S+(?:\s+[^\s\"'(]\S*)*)"
+_LINK_TITLED = re.compile(_LINK_HREF + r"(?:\s+(?P<title>\"[^\"]*\"|'[^']*'))?\s*")
+# A body whose first ")" falls inside a title, which then runs past it.
+_LINK_TITLE_CUT = re.compile(_LINK_HREF + r"\s+(?P<title>\"[^\"]*|'[^']*|\([^)]*)")
+_LINK_TAIL = re.compile(r"\s*\)")
 
 
 class _InlineScanner:
@@ -56,6 +63,10 @@ class _InlineScanner:
         ~~(?P<strike_inner>.+?)~~
         \[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)
         (?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)
+
+    The link line is the stock form; a link may also carry a CommonMark
+    title (``[t](href "title")``), split off into ``link_title``, and a
+    quoted or parenthesised title may run past the first ``)``.
 
     Each body ends at the first closer after it, on the same line for
     ``.+?``, so where the next closer is fixes the match. The regex found it
@@ -141,11 +152,24 @@ class _InlineScanner:
         href = close + 2
         if (end := self._close(")", href)) < 0:
             return None
+        link_href, link_title = text[href:end], None
+        if titled := _LINK_TITLED.fullmatch(link_href):
+            link_href, link_title = titled["href"], titled["title"]
+        elif cut := _LINK_TITLE_CUT.fullmatch(link_href):
+            # The first ")" sits inside a title; the link closes after it.
+            opener = cut["title"][0]
+            title_end = end if opener == "(" else self._next(opener, end)
+            tail = _LINK_TAIL.match(text, title_end + 1) if title_end >= 0 else None
+            if tail:
+                link_href = cut["href"]
+                link_title = text[href + cut.start("title") : title_end + 1]
+                end = tail.end() - 1
         return _InlineMatch(
             start,
             end + 1,
             link_text=text[start + 1 : close],
-            link_href=text[href:end],
+            link_href=link_href,
+            link_title=link_title[1:-1] if link_title else None,
         )
 
     def _display_mention(self, start: int) -> _InlineMatch | None:
@@ -339,16 +363,15 @@ def _parse_inline_formatting(
                 [{"type": "strike"}],
             )
         elif m.groups.get("link_text") is not None:
+            link_attrs: dict[str, Any] = {"href": m.groups.get("link_href")}
+            # An optional Markdown title follows the URL and is not part of it.
+            if title := m.groups.get("link_title"):
+                link_attrs["title"] = title
             nodes.append(
                 {
                     "type": "text",
                     "text": m.groups.get("link_text"),
-                    "marks": [
-                        {
-                            "type": "link",
-                            "attrs": {"href": m.groups.get("link_href")},
-                        }
-                    ],
+                    "marks": [{"type": "link", "attrs": link_attrs}],
                 }
             )
         elif m.groups.get("italic_inner") is not None:

@@ -7,6 +7,7 @@ and the reverse conversion from Markdown to ADF.
 """
 
 import re
+import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -439,6 +440,83 @@ class TestMarkdownToAdf:
         assert link_nodes[0]["text"] == "click here"
         link_mark = next(m for m in link_nodes[0]["marks"] if m["type"] == "link")
         assert link_mark["attrs"]["href"] == "https://example.com"
+
+    def test_link_title(self) -> None:
+        """An optional title follows the URL and is not part of it."""
+        for markdown, href, title in (
+            (
+                '[docs](https://example.com/p "Docs home")',
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p 'Docs home')",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p (Docs home))",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            # CommonMark allows whitespace between the title and the paren.
+            (
+                '[docs](https://example.com/p "Docs home" )',
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p 'Docs home' )",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            (
+                "[docs](https://example.com/p (Docs home) )",
+                "https://example.com/p",
+                "Docs home",
+            ),
+            # A quoted title may hold the paren that would end the link.
+            (
+                '[docs](https://example.com/p "Docs (home)")',
+                "https://example.com/p",
+                "Docs (home)",
+            ),
+        ):
+            para = markdown_to_adf(markdown)["content"][0]
+            nodes = [n for n in para["content"] if n["type"] == "text"]
+            mark = next(m for m in nodes[0]["marks"] if m["type"] == "link")
+            assert mark["attrs"]["href"] == href, markdown
+            assert mark["attrs"]["title"] == title, markdown
+            # The paren form used to leave a stray ")" behind.
+            assert len(nodes) == 1, markdown
+
+    def test_link_without_title(self) -> None:
+        """A URL containing a space still resolves as one href."""
+        para = markdown_to_adf("[docs](https://example.com/a b)")["content"][0]
+        mark = next(
+            m
+            for n in para["content"]
+            if n["type"] == "text"
+            for m in n.get("marks", [])
+            if m["type"] == "link"
+        )
+        assert mark["attrs"]["href"] == "https://example.com/a b"
+        assert "title" not in mark["attrs"]
+
+    @pytest.mark.parametrize(
+        "markdown",
+        [
+            "[a](x" + " " * 30000 + "y",
+            "[a](x" + " " * 30000 + '"y)',
+            "[a](x" + (" " * 300 + "a") * 100 + " ()",
+        ],
+        ids=["unclosed", "unclosed-title", "spaced-href"],
+    )
+    def test_long_link_bodies_convert_quickly(self, markdown: str) -> None:
+        """Long link bodies, closed or not, convert without backtracking."""
+        start = time.perf_counter()
+        markdown_to_adf(markdown)
+        assert time.perf_counter() - start < 1.0
 
     # -- Mentions -----------------------------------------------------------
 
@@ -1173,7 +1251,10 @@ class TestMarkdownToJiraDispatch:
 
 # --- Linear-time inline scan, explicit stacks -----------------------------
 
-#: The inline regex ``_parse_inline_formatting`` used before its scanner.
+#: The inline regex ``_parse_inline_formatting`` used before its scanner,
+#: with the link alternative rewritten alongside the scanner's title support
+#: to split a link's optional title off its href. A link whose body is not
+#: an href and title keeps the whole body as its href (``link_raw``).
 _STOCK_INLINE_RE = re.compile(
     r"\[~accountid:(?P<wiki_mention_id>[^\]]+)\]"
     r"|@\[(?P<display_mention_text>[^\]]+)\]"
@@ -1183,12 +1264,15 @@ _STOCK_INLINE_RE = re.compile(
     r"title=(?P<status_title>[^}]+)\}"
     r"|\*\*(?P<bold_inner>.+?)\*\*"
     r"|~~(?P<strike_inner>.+?)~~"
-    r"|\[(?P<link_text>[^\]]+)\]\((?P<link_href>[^)]+)\)"
+    r"|\[(?P<link_text>[^\]]+)\]\("
+    r"(?:(?P<link_href>[^)\s]+(?:\s+[^)\s\"'(][^)\s]*)*)"
+    r"(?:\s+(?P<link_title>\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)"
+    r"|(?P<link_raw>[^)]+)\))"
     r"|(?<!\*)\*(?!\*)(?P<italic_inner>.+?)(?<!\*)\*(?!\*)"
 )
 
 _INLINE_TOKENS = [
-    *"[]()`{}*~@|\n aé_",
+    *"[]()`{}*~@|\n aé_\"'",
     "[~accountid:",
     "(accountid:",
     "{status:",
@@ -1200,6 +1284,16 @@ _INLINE_TOKENS = [
 ]
 
 
+def _stock_groups(m: re.Match[str]) -> dict[str, str]:
+    """The set groups of a stock match, named as the scanner names them."""
+    groups = {k: v for k, v in m.groupdict().items() if v is not None}
+    if "link_raw" in groups:
+        groups["link_href"] = groups.pop("link_raw")
+    if "link_title" in groups:
+        groups["link_title"] = groups["link_title"][1:-1]
+    return groups
+
+
 def test_inline_matches_like_stock_regex() -> None:
     import random
 
@@ -1208,10 +1302,7 @@ def test_inline_matches_like_stock_regex() -> None:
     rng = random.Random(0)
     for _ in range(30000):
         text = "".join(rng.choice(_INLINE_TOKENS) for _ in range(rng.randint(0, 24)))
-        stock = [
-            (m.span(), {k: v for k, v in m.groupdict().items() if v is not None})
-            for m in _STOCK_INLINE_RE.finditer(text)
-        ]
+        stock = [(m.span(), _stock_groups(m)) for m in _STOCK_INLINE_RE.finditer(text)]
         scanned = [
             ((m.start, m.end), {k: v for k, v in m.groups.items() if v is not None})
             for m in _inline_matches(text)
