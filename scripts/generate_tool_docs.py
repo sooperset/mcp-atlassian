@@ -723,14 +723,6 @@ COUNT_RULES = (
         group=2,
     ),
     CountRule(
-        ".env.example",
-        re.compile(
-            r"If unset, all toolsets are enabled \((\d+)\s+tools?\)",
-            re.IGNORECASE,
-        ),
-        "total_tools",
-    ),
-    CountRule(
         "docs.json",
         re.compile(r"all (\d+)\s+tools? enabled by default", re.IGNORECASE),
         "total_tools",
@@ -783,8 +775,7 @@ COUNT_RULES = (
     CountRule(
         "docs/configuration.mdx",
         re.compile(
-            r"default will change from all toolsets to (\d+)\s+core toolsets?"
-            r"\s+only",
+            r"unset, only (?:the )?(\d+) core toolsets are enabled",
             re.IGNORECASE,
         ),
         "core_toolsets",
