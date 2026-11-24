@@ -973,7 +973,9 @@ class IssuesMixin(
         """
         if "parent" in kwargs:
             parent_key = kwargs.get("parent")
-            if parent_key:
+            if isinstance(parent_key, dict):
+                fields["parent"] = parent_key
+            elif parent_key:
                 fields["parent"] = {"key": parent_key}
             # Remove parent from kwargs to avoid double processing
             kwargs.pop("parent", None)
@@ -2092,6 +2094,9 @@ class IssuesMixin(
                             fields["components"] = [
                                 {"name": comp_name} for comp_name in valid_components
                             ]
+
+                # Parent must be handled here; _process_additional_fields skips it
+                self._prepare_parent_fields(fields, issue_data)
 
                 # Add any remaining custom fields
                 self._process_additional_fields(fields, issue_data)

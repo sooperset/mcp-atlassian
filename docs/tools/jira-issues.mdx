@@ -175,7 +175,7 @@ Create multiple Jira issues in a batch.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `issues` | `string` | Yes | JSON array of issue objects. Each object should contain: - project_key (required): The project key (e.g., 'PROJ') - summary (required): Issue summary/title - issue_type (required): Type of issue (e.g., 'Task', 'Bug') - description (optional): Issue description in Markdown format - assignee (optional): Assignee username or email - components (optional): Array of component names Example: [ `{"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"}`, `{"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]}` ] |
+| `issues` | `string` | Yes | JSON array of issue objects. Each object should contain: - project_key (required): The project key (e.g., 'PROJ') - summary (required): Issue summary/title - issue_type (required): Type of issue (e.g., 'Task', 'Bug') - description (optional): Issue description in Markdown format - assignee (optional): Assignee username or email - components (optional): Array of component names - parent (optional): Parent issue key for subtasks or hierarchy (e.g., 'PROJ-1') - additional_fields (optional): Object or JSON string of extra fields, e.g. `{"parent": "PROJ-1"}` for sub-tasks Example: [ `{"project_key": "PROJ", "summary": "Issue 1", "issue_type": "Task"}`, `{"project_key": "PROJ", "summary": "Issue 2", "issue_type": "Bug", "components": ["Frontend"]}` ] |
 | `validate_only` | `boolean` | No | If true, only validates the issues without creating them |
 
 ---
