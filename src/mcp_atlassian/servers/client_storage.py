@@ -30,15 +30,22 @@ CLIENT_STORAGE_ALLOW_ARBITRARY_ENV = (
     "ATLASSIAN_OAUTH_CLIENT_STORAGE_ALLOW_ARBITRARY_FACTORY"
 )
 # Module namespaces this feature is documented for: the key/value storage
-# library mcp-atlassian already depends on (which ships Redis, PostgreSQL,
-# MongoDB and other backends), and the package's own code. The factory path
-# is an environment variable, so in a templated deployment (for example a
-# Helm values.yaml that can flow through a less-trusted pipeline than the
-# cluster it configures) it should not by itself be able to import and call
-# an arbitrary module. A factory outside these namespaces requires the
-# operator to also set CLIENT_STORAGE_ALLOW_ARBITRARY_ENV, a separate,
-# explicit acknowledgement that a custom module will be imported.
-_TRUSTED_FACTORY_MODULE_PREFIXES = ("key_value.", "mcp_atlassian.")
+# library mcp-atlassian already depends on (its Redis backend is importable
+# without extra install; other backends such as PostgreSQL or MongoDB need
+# their own optional extra, e.g. ``py-key-value-aio[postgresql]``, installed
+# downstream), and a reserved namespace for this package's own first-party
+# factories (nothing ships there yet; a module path is trusted by prefix, not
+# audited per-symbol, so this is deliberately a small, dedicated namespace
+# rather than the whole ``mcp_atlassian`` package — most of that package has
+# nothing to do with storage and has not been audited for safe use as an
+# arbitrary callable). The factory path is an environment variable, so in a
+# templated deployment (for example a Helm values.yaml that can flow through
+# a less-trusted pipeline than the cluster it configures) it should not by
+# itself be able to import and call an arbitrary module. A factory outside
+# these namespaces requires the operator to also set
+# CLIENT_STORAGE_ALLOW_ARBITRARY_ENV, a separate, explicit acknowledgement
+# that a custom module will be imported.
+_TRUSTED_FACTORY_MODULE_PREFIXES = ("key_value.", "mcp_atlassian.storage.")
 REQUIRED_STORAGE_METHODS = (
     "get",
     "put",
@@ -64,16 +71,16 @@ def _check_factory_module_allowed(module_path: str, import_path: str) -> None:
     if is_env_truthy(CLIENT_STORAGE_ALLOW_ARBITRARY_ENV):
         logger.warning(
             "Importing OAuth client storage factory '%s' outside the trusted "
-            "key_value.*/mcp_atlassian.* namespaces because %s is set.",
+            "key_value.*/mcp_atlassian.storage.* namespaces because %s is set.",
             import_path,
             CLIENT_STORAGE_ALLOW_ARBITRARY_ENV,
         )
         return
     message = (
         f"{CLIENT_STORAGE_FACTORY_ENV}='{import_path}' is outside the trusted "
-        "'key_value.*' and 'mcp_atlassian.*' module namespaces, so it will "
-        f"not be imported. Set {CLIENT_STORAGE_ALLOW_ARBITRARY_ENV}=true to "
-        "explicitly allow a custom factory module outside those namespaces."
+        "'key_value.*' and 'mcp_atlassian.storage.*' module namespaces, so it "
+        f"will not be imported. Set {CLIENT_STORAGE_ALLOW_ARBITRARY_ENV}=true "
+        "to explicitly allow a custom factory module outside those namespaces."
     )
     raise ValueError(message)
 
@@ -171,6 +178,22 @@ def _invoke_storage_factory(
         for param in params.values()
     ):
         return factory(config)
+
+    # No single config-shaped parameter, but every config key names a real
+    # keyword parameter of the factory — e.g. a plain class such as
+    # key_value.aio.stores backends, whose constructor takes each setting as
+    # its own keyword-only argument rather than one config dict. Spread
+    # config as keyword arguments instead of passing it as a single value.
+    if (
+        config is not None
+        and set(config).issubset(params)
+        and all(
+            params[name].kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+            for name in config
+        )
+    ):
+        return factory(**config)
 
     factory_module = getattr(factory, "__module__", "<unknown-module>")
     factory_name = getattr(factory, "__name__", factory.__class__.__name__)

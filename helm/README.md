@@ -155,20 +155,31 @@ This sets:
 - `ATLASSIAN_OAUTH_CLIENT_STORAGE_CONFIG_JSON` (optional)
 
 The factory callable should return an async key/value compatible storage object
-used by FastMCP OAuth proxy client registration storage.
+used by FastMCP OAuth proxy client registration storage. If its constructor
+takes individual keyword arguments (as `RedisStore` above does — `host`,
+`port`, `password`, etc., not one `config` dict), the configured JSON object
+is spread as keyword arguments automatically, as long as every key names a
+real parameter.
 
 `importPath` is only imported when its module is under the `key_value.*`
-namespace (the storage library this image already depends on, covering
-Redis, PostgreSQL, MongoDB and other backends) or `mcp_atlassian.*`. A factory
-in your own package instead needs `allowArbitrary: true`, which sets
-`ATLASSIAN_OAUTH_CLIENT_STORAGE_ALLOW_ARBITRARY_FACTORY=true`:
+namespace (the storage library this image already depends on — its Redis
+backend works with no extra install; other backends such as PostgreSQL or
+MongoDB need their own optional extra, e.g. `py-key-value-aio[postgresql]`,
+installed into the image) or `mcp_atlassian.storage.*` (reserved for this
+project's own factories; nothing ships there yet). A factory in your own
+package instead needs `ATLASSIAN_OAUTH_CLIENT_STORAGE_ALLOW_ARBITRARY_FACTORY=true`,
+set through `extraEnv` — deliberately not a value next to `importPath`, so
+enabling it is a separate, visible step:
 
 ```yaml
 oauthClientStorage:
   mode: factory
   factory:
     importPath: "my_pkg.storage:create_store"
-    allowArbitrary: true
+
+extraEnv:
+  - name: ATLASSIAN_OAUTH_CLIENT_STORAGE_ALLOW_ARBITRARY_FACTORY
+    value: "true"
 ```
 
 ### Health Checks and Readiness Probe

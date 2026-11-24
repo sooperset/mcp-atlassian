@@ -229,10 +229,6 @@ spec:
         {{- if eq .Values.oauthClientStorage.mode "factory" }}
         - name: ATLASSIAN_OAUTH_CLIENT_STORAGE_FACTORY
           value: {{ .Values.oauthClientStorage.factory.importPath | quote }}
-        {{- if .Values.oauthClientStorage.factory.allowArbitrary }}
-        - name: ATLASSIAN_OAUTH_CLIENT_STORAGE_ALLOW_ARBITRARY_FACTORY
-          value: "true"
-        {{- end }}
         {{- if .Values.oauthClientStorage.factory.configJsonSecret.name }}
         - name: ATLASSIAN_OAUTH_CLIENT_STORAGE_CONFIG_JSON
           valueFrom:
