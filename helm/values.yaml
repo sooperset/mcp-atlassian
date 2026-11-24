@@ -193,10 +193,20 @@ oauthProxy:
 # OAuth proxy client storage backend for registered clients.
 # "default": use FastMCP default encrypted storage.
 # "factory": load custom storage via import path.
+#
+# importPath is only imported when its module is under key_value.* (the
+# storage library this chart's image already depends on; its Redis backend
+# works with no extra install, other backends such as PostgreSQL or MongoDB
+# need their own optional extra installed into the image) or
+# mcp_atlassian.storage.* (reserved for this project's own factories; nothing
+# ships there yet). A factory outside those namespaces needs
+# ATLASSIAN_OAUTH_CLIENT_STORAGE_ALLOW_ARBITRARY_FACTORY=true, set through
+# extraEnv below — deliberately not a sibling value here, so enabling it is a
+# separate, visible step rather than one more line in this same block.
 oauthClientStorage:
   mode: "default" # default | factory
   factory:
-    importPath: "" # e.g. "my_pkg.storage:create_store"
+    importPath: "" # e.g. "key_value.aio.stores.redis:RedisStore"
     # Optional JSON object passed to the factory.
     configJson: ""
     # Optionally source JSON from an existing secret key.

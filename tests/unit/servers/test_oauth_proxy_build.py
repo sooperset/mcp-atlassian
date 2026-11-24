@@ -258,6 +258,7 @@ def test_build_auth_provider_supports_custom_client_storage_factory(monkeypatch)
     monkeypatch.setenv("JIRA_URL", "https://jira.example.com")
     _set_required_oauth_env(monkeypatch, redirect_uri="http://localhost:3000/callback")
     monkeypatch.setenv("ATLASSIAN_OAUTH_CLIENT_STORAGE_MODE", "factory")
+    monkeypatch.setenv("ATLASSIAN_OAUTH_CLIENT_STORAGE_ALLOW_ARBITRARY_FACTORY", "true")
     monkeypatch.setenv(
         "ATLASSIAN_OAUTH_CLIENT_STORAGE_FACTORY",
         "tests.unit.servers.test_oauth_proxy_build:_dummy_provider_storage_factory",
