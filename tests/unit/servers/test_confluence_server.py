@@ -1455,7 +1455,7 @@ async def test_upload_attachment_failure_message(client, mock_confluence_fetcher
         ),
         pytest.param(
             {
-                "success": True,
+                "success": False,
                 "content_id": "123456",
                 "total": 2,
                 "uploaded": [{"filename": "a.txt", "id": "att1"}],
@@ -1475,13 +1475,18 @@ async def test_upload_attachment_failure_message(client, mock_confluence_fetcher
                     {"filename": "b.txt", "error": "403 Client Error"},
                 ],
             },
-            "Uploaded 0 of 2 attachment(s); 2 failed",
+            "Failed to upload all 2 attachment(s)",
             id="all-failed",
         ),
         pytest.param(
+            {"success": False, "error": "No file paths provided"},
+            "Attachment upload failed: No file paths provided",
+            id="empty-input",
+        ),
+        pytest.param(
             {"success": False, "error": "No content ID provided"},
-            "Attachment upload failed",
-            id="rejected",
+            "Attachment upload failed: No content ID provided",
+            id="missing-content-id",
         ),
     ],
 )

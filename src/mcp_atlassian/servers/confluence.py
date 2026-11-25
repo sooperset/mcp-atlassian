@@ -2201,12 +2201,16 @@ async def upload_attachments(
 
     uploaded = len(results.get("uploaded", []))
     failed = len(results.get("failed", []))
-    if failed:
+    if uploaded and failed:
         message = (
             f"Uploaded {uploaded} of {uploaded + failed} attachment(s); {failed} failed"
         )
+    elif failed:
+        message = f"Failed to upload all {failed} attachment(s)"
     elif results.get("success"):
         message = f"Uploaded {uploaded} attachment(s) successfully"
+    elif error := results.get("error"):
+        message = f"Attachment upload failed: {error}"
     else:
         message = "Attachment upload failed"
     return json.dumps(
