@@ -82,6 +82,7 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_create_remote_issue_link",
         "jira_get_project_versions",
         "jira_get_project_components",
+        "jira_create_project_component",
         "jira_create_version",
         "jira_batch_create_versions",
         "jira_update_version",
