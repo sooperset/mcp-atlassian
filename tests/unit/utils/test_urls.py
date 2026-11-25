@@ -200,6 +200,20 @@ class TestValidateUrlForSsrf:
         assert result is not None
         assert "Empty" in result
 
+    def test_unparseable_url_is_invalid(self) -> None:
+        """A URL that urlparse rejects with ValueError is reported as invalid."""
+        result = validate_url_for_ssrf("http://[::1")
+        assert result is not None
+        assert "Invalid URL" in result
+
+    def test_unexpected_parse_error_propagates(self) -> None:
+        """Only ValueError is treated as an invalid URL; other errors surface."""
+        with patch(
+            "mcp_atlassian.utils.urls.urlparse", side_effect=RuntimeError("boom")
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                validate_url_for_ssrf("https://example.com")
+
     def test_ftp_scheme(self) -> None:
         """FTP scheme is rejected."""
         result = validate_url_for_ssrf("ftp://evil.com")

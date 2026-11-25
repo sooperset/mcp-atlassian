@@ -46,7 +46,7 @@ def _load_storage_factory(import_path: str) -> Callable[..., AsyncKeyValue]:
 
     try:
         module = import_module(module_path)
-    except Exception as exc:
+    except ImportError as exc:
         raise ValueError(
             f"Unable to import module '{module_path}' from "
             f"{CLIENT_STORAGE_FACTORY_ENV}='{import_path}'."
