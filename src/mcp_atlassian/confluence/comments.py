@@ -356,7 +356,6 @@ class CommentsMixin(ConfluenceClient):
                     },
                 }
                 response = self.confluence.post("rest/api/content/", data=data)
-                space_key = ""
 
             if not response:
                 logger.error("Failed to reply to comment: empty response")
