@@ -684,6 +684,22 @@ class TestConfluenceCommentModel:
         comment = ConfluenceComment.from_api_response(data)
         assert comment.parent_comment_id is None
 
+    @pytest.mark.parametrize(
+        "container",
+        [{"type": "comment"}, {"type": "comment", "id": None}],
+        ids=["missing-id", "null-id"],
+    )
+    def test_no_parent_when_comment_container_has_no_id(self, container):
+        """parent_comment_id is None, not '' or 'None', without a container id."""
+        data = {
+            "id": "111222333",
+            "type": "comment",
+            "container": container,
+            "body": {"view": {"value": "<p>Comment</p>"}},
+        }
+        comment = ConfluenceComment.from_api_response(data)
+        assert comment.parent_comment_id is None
+
     def test_parent_from_v2_parent_comment_id(self):
         """T8: Extract parent_comment_id from v2 parentCommentId field."""
         comment = ConfluenceComment.from_api_response(MOCK_COMMENT_REPLY_V2_RESPONSE)
