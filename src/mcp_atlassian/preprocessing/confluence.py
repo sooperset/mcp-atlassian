@@ -932,6 +932,40 @@ def markdown_to_html(content: str) -> str:
     return str(module.markdown_to_html(content))
 
 
+_LIST_ITEM_INDENT = re.compile(r"^(?P<indent> {2,})(?P<marker>(?:[-*+]|\d{1,9}[.)]))\s")
+
+
+def _normalize_nested_list_indent(markdown_content: str) -> str:
+    """Round 2- and 3-space nested list indentation up to 4 spaces.
+
+    Python-Markdown, which md2conf builds the Confluence converter with, uses
+    ``tab_length=4``: a nested list item indented by the 2 spaces CommonMark
+    accepts is treated as lazy continuation text of the parent item, so the
+    nesting is silently lost. Only list-item lines are re-indented, and the
+    contents of fenced code blocks are left untouched, so code that starts
+    with spaces keeps its indentation.
+    """
+    lines = markdown_content.splitlines(keepends=True)
+    fence: str | None = None
+    for index, line in enumerate(lines):
+        stripped = line.lstrip(" ")
+        if fence is not None:
+            if stripped.startswith(fence):
+                fence = None
+            continue
+        if stripped.startswith(("```", "~~~")):
+            fence = stripped[:3]
+            continue
+        match = _LIST_ITEM_INDENT.match(line)
+        if match is None:
+            continue
+        indent = len(match.group("indent"))
+        rounded = (indent + 3) // 4 * 4
+        if rounded != indent:
+            lines[index] = " " * rounded + line[indent:]
+    return "".join(lines)
+
+
 class ConfluencePreprocessor(BasePreprocessor):
     """Handles text preprocessing for Confluence content."""
 
@@ -988,6 +1022,7 @@ class ConfluencePreprocessor(BasePreprocessor):
             Confluence storage format (XHTML) string
         """
         try:
+            markdown_content = _normalize_nested_list_indent(markdown_content)
             # First convert markdown to HTML
             html_content = self._fix_attachment_images(
                 markdown_to_html(markdown_content)
