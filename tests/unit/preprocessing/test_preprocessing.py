@@ -2117,3 +2117,33 @@ def test_markdown_conversion_after_a_failed_conversion_is_unchanged() -> None:
 )
 def test_markdown_to_html_matches_md2conf(markdown: str) -> None:
     assert confluence_markdown_to_html(markdown) == md2conf_markdown_to_html(markdown)
+
+
+def test_markdown_to_confluence_storage_two_space_nested_lists(
+    preprocessor_with_confluence,
+) -> None:
+    """2-space nested list items keep their nesting (issue #1910)."""
+    storage = preprocessor_with_confluence.markdown_to_confluence_storage(
+        "- outer\n  - inner\n"
+    )
+    assert (
+        storage
+        == "<ul><li><p>outer</p><ul><li><p>inner</p></li></ul></li></ul>"
+    )
+
+    ordered = preprocessor_with_confluence.markdown_to_confluence_storage(
+        "- outer bullet\n  1. first\n  2. second\n- next bullet\n"
+    )
+    assert ordered == (
+        '<ul><li><p>outer bullet</p><ol start="1"><li><p>first</p></li>'
+        '<li><p>second</p></li></ol></li><li><p>next bullet</p></li></ul>'
+    )
+
+    four_spaces = preprocessor_with_confluence.markdown_to_confluence_storage(
+        "- outer bullet\n    1. first\n- next bullet\n"
+    )
+    assert four_spaces == (
+        '<ul><li><p>outer bullet</p><ol start="1"><li><p>first</p></li>'
+        '</ol></li><li><p>next bullet</p></li></ul>'
+    )
+
