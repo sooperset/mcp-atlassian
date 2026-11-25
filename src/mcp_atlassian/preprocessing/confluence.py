@@ -965,6 +965,7 @@ def _normalize_nested_list_indent(markdown_content: str) -> str:
             lines[index] = " " * rounded + line[indent:]
     return "".join(lines)
 
+
 class ConfluencePreprocessor(BasePreprocessor):
     """Handles text preprocessing for Confluence content."""
 
