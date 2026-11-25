@@ -137,6 +137,14 @@ class SearchMixin(ConfluenceClient):
                 if get_search_result_identifier(result_item) == page.id:
                     excerpt = result_item.get("excerpt", "")
                     if excerpt:
+                        # Confluence Cloud truncates excerpts at a fixed length,
+                        # which can split an astral code point (e.g. an emoji)
+                        # and leave a lone surrogate. Drop it here, otherwise
+                        # the response fails UTF-8 JSON serialization and the
+                        # tool call never returns.
+                        excerpt = excerpt.encode("utf-8", errors="ignore").decode(
+                            "utf-8"
+                        )
                         # Process the excerpt as HTML content
                         space_key = page.space.key if page.space else ""
                         _, processed_markdown = self.preprocessor.process_html_content(
