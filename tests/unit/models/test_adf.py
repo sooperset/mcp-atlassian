@@ -1116,7 +1116,7 @@ class TestMarkdownToJiraDispatch:
     @pytest.fixture
     def cloud_client(self):
         """Create a mock JiraClient configured for Cloud."""
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             from mcp_atlassian.jira.client import JiraClient
 
             client = MagicMock(spec=JiraClient)
@@ -1132,7 +1132,7 @@ class TestMarkdownToJiraDispatch:
     @pytest.fixture
     def server_client(self):
         """Create a mock JiraClient configured for Server/DC."""
-        with patch("atlassian.Jira"):
+        with patch("mcp_atlassian.jira.client.Jira"):
             from mcp_atlassian.jira.client import JiraClient
 
             client = MagicMock(spec=JiraClient)
