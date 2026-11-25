@@ -99,6 +99,10 @@ CATEGORY_TOOLS: dict[str, list[str]] = {
         "jira_get_request_types",
         "jira_get_request_type_fields",
         "jira_create_customer_request",
+        "jira_get_customer_request",
+        "jira_get_request_approvals",
+        "jira_get_my_pending_approvals",
+        "jira_answer_approval",
     ],
     "jira-forms-metrics": [
         "jira_get_issue_proforma_forms",

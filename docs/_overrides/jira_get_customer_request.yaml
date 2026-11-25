@@ -1,0 +1,4 @@
+example: |
+  {"issue_key": "PROJ-123"}
+tips: |
+  Reads the request through the Service Management portal API, so it works for customers, request participants and approvers who get HTTP 403 from `jira_get_issue` because they lack the Browse Projects permission. Field values are compacted: select options become their value, users their display name, attachments `{id, filename, mime_type, size}`.
