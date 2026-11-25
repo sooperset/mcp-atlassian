@@ -491,6 +491,8 @@ class TestEpicsMixin:
                 "key": "EPIC-456",
                 "fields": {"issuetype": {"name": "Epic"}},
             },
+            # re-read confirms the Epic Link field
+            {"key": "TEST-123", "fields": {"customfield_10014": "EPIC-456"}},
         ]
 
         # Mock get_issue to return a valid JiraIssue
@@ -539,6 +541,8 @@ class TestEpicsMixin:
                 "key": "EPIC-456",
                 "fields": {"issuetype": {"name": "Epic"}},
             },
+            # re-read confirms the parent
+            {"key": "TEST-123", "fields": {"parent": {"key": "EPIC-456"}}},
         ]
 
         # Mock get_issue to return a valid JiraIssue
@@ -594,6 +598,7 @@ class TestEpicsMixin:
                     "issuetype": {"id": "10001", "name": "Эпик"},
                 },
             },
+            {"key": "TEST-123", "fields": {"parent": {"key": "EPIC-456"}}},
         ]
         epics_mixin._find_epic_issue_type_id = MagicMock(return_value="10001")
         epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
@@ -1068,6 +1073,7 @@ class TestEpicsMixin:
         epics_mixin.jira.get_issue.side_effect = [
             {"key": "TEST-1"},
             {"key": "EPIC-1", "fields": {"issuetype": {"name": "Epic"}}},
+            {"key": "TEST-1", "fields": {"customfield_10014": "EPIC-1"}},
         ]
         epics_mixin.get_field_ids_to_epic = MagicMock(return_value={})
         epics_mixin.jira.update_issue.side_effect = [
@@ -1173,6 +1179,7 @@ class TestEpicFieldDynamicDetection:
                 "key": "EPIC-456",
                 "fields": {"issuetype": {"name": "Epic"}},
             },
+            {"key": "TEST-123", "fields": {"customfield_10001": "EPIC-456"}},
         ]
         epics_mixin.jira.get_all_fields.return_value = [
             {
@@ -1210,6 +1217,102 @@ class TestEpicFieldDynamicDetection:
             key="TEST-123",
             id="123456",
         )
+
+
+class TestLinkIssueToEpicVerification:
+    """Regression tests for #1846: confirm the link before reporting success."""
+
+    EPIC_LINK_FIELD = "customfield_10001"
+
+    @pytest.fixture
+    def epics_mixin(self, jira_fetcher: JiraFetcher) -> EpicsMixin:
+        mixin = jira_fetcher
+        # is_cloud is a read-only property on the real config; use a mock.
+        mixin.config = MagicMock()
+        mixin.get_field_ids_to_epic = MagicMock(
+            return_value={"epic_link": self.EPIC_LINK_FIELD}
+        )
+        mixin.get_issue = MagicMock(return_value=JiraIssue(key="TEST-1", id="1"))
+        return mixin
+
+    def _fake_jira(self, epics_mixin: EpicsMixin, honored: set[str]) -> dict:
+        """Simulate an instance that accepts every write but only persists
+        the fields in ``honored``."""
+        stored: dict = {}
+
+        def update_issue(issue_key: str, update: dict) -> None:
+            for field, value in update["fields"].items():
+                if field in honored:
+                    stored[field] = value
+
+        def get_issue(issue_key: str, **kwargs):
+            if issue_key == "EPIC-1":
+                return {"key": "EPIC-1", "fields": {"issuetype": {"name": "Epic"}}}
+            return {"key": issue_key, "fields": dict(stored)}
+
+        epics_mixin.jira.update_issue.side_effect = update_issue
+        epics_mixin.jira.get_issue.side_effect = get_issue
+        return stored
+
+    def test_server_dc_writes_epic_link_when_parent_is_silently_ignored(
+        self, epics_mixin: EpicsMixin
+    ):
+        epics_mixin.config.is_cloud = False
+        stored = self._fake_jira(epics_mixin, honored={self.EPIC_LINK_FIELD})
+
+        result = epics_mixin.link_issue_to_epic("TEST-1", "EPIC-1")
+
+        assert stored == {self.EPIC_LINK_FIELD: "EPIC-1"}
+        assert epics_mixin.jira.update_issue.call_args_list[0] == call(
+            issue_key="TEST-1",
+            update={"fields": {self.EPIC_LINK_FIELD: "EPIC-1"}},
+        )
+        assert result == epics_mixin.get_issue.return_value
+
+    def test_server_dc_falls_back_to_parent_when_epic_link_is_ignored(
+        self, epics_mixin: EpicsMixin
+    ):
+        epics_mixin.config.is_cloud = False
+        stored = self._fake_jira(epics_mixin, honored={"parent"})
+
+        result = epics_mixin.link_issue_to_epic("TEST-1", "EPIC-1")
+
+        assert stored == {"parent": {"key": "EPIC-1"}}
+        assert [
+            c.kwargs["update"]["fields"]
+            for c in (epics_mixin.jira.update_issue.call_args_list)
+        ] == [
+            {self.EPIC_LINK_FIELD: "EPIC-1"},
+            {"parent": {"key": "EPIC-1"}},
+        ]
+        assert result == epics_mixin.get_issue.return_value
+
+    @pytest.mark.parametrize("is_cloud", [True, False])
+    def test_raises_when_no_write_links_the_issue(
+        self, epics_mixin: EpicsMixin, is_cloud: bool
+    ):
+        epics_mixin.config.is_cloud = is_cloud
+        self._fake_jira(epics_mixin, honored=set())
+
+        with pytest.raises(
+            ValueError, match="Could not link issue TEST-1 to epic EPIC-1"
+        ):
+            epics_mixin.link_issue_to_epic("TEST-1", "EPIC-1")
+
+        epics_mixin.get_issue.assert_not_called()
+        epics_mixin.jira.create_issue_link.assert_not_called()
+
+    def test_cloud_uses_parent_first(self, epics_mixin: EpicsMixin):
+        epics_mixin.config.is_cloud = True
+        stored = self._fake_jira(epics_mixin, honored={"parent"})
+
+        result = epics_mixin.link_issue_to_epic("TEST-1", "EPIC-1")
+
+        assert stored == {"parent": {"key": "EPIC-1"}}
+        epics_mixin.jira.update_issue.assert_called_once_with(
+            issue_key="TEST-1", update={"fields": {"parent": {"key": "EPIC-1"}}}
+        )
+        assert result == epics_mixin.get_issue.return_value
 
 
 class TestGetEpicSummary:
