@@ -186,13 +186,17 @@ class TestJiraDCVersionOperations:
             assert str(updated_version["id"]) == str(version["id"])
         finally:
             if version and version.get("id"):
-                requests.post(
-                    f"{dc_instance.jira_url}/rest/api/2/version/"
-                    f"{version['id']}/removeAndSwap",
-                    auth=(dc_instance.admin_username, dc_instance.admin_password),
-                    json={},
-                    timeout=30,
-                ).raise_for_status()
+                # Best-effort cleanup: never replace the real test failure.
+                try:
+                    requests.post(
+                        f"{dc_instance.jira_url}/rest/api/2/version/"
+                        f"{version['id']}/removeAndSwap",
+                        auth=(dc_instance.admin_username, dc_instance.admin_password),
+                        json={},
+                        timeout=30,
+                    ).raise_for_status()
+                except requests.RequestException:
+                    pass
 
 
 class TestJiraDCSubtask:
