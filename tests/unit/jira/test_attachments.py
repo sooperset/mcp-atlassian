@@ -52,6 +52,24 @@ from mcp_atlassian.utils.media import AttachmentTooLargeError
 class TestAttachmentsMixin:
     """Tests for the AttachmentsMixin class."""
 
+    @pytest.mark.security_regression
+    def test_direct_download_rejects_alternate_data_stream(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mcp_atlassian.utils import io as io_mod
+
+        monkeypatch.setattr(io_mod.sys, "platform", "win32")
+        monkeypatch.setenv(io_mod.FILES_DIR_ENV, str(tmp_path))
+        target = tmp_path / "downloads" / "existing.txt:hidden"
+        assert (
+            attachments_mixin.download_attachment("https://test.url/a", str(target))
+            is False
+        )
+        attachments_mixin.jira._session.get.assert_not_called()
+
     @pytest.fixture
     def attachments_mixin(self, jira_fetcher: JiraFetcher) -> AttachmentsMixin:
         """Set up test fixtures before each test method."""
@@ -1596,6 +1614,136 @@ class TestAttachmentsMixin:
         assert result[1].filename == "report.pdf"
         # No download calls should have been made
         attachments_mixin.jira._session.get.assert_not_called()
+
+
+class TestAttachmentFilenameSanitization:
+    """Regression — a colon in an attachment filename must not survive into
+    the on-disk target path.
+
+    On Windows, ``name:stream`` addresses an NTFS alternate data stream on
+    whatever file already has that name, rather than creating a new file —
+    so an attachment named e.g. ``report.pdf:hidden`` would write into a
+    hidden stream of a same-named file already in the confined download
+    directory instead of its own file, invisibly to a normal directory
+    listing. ``Path(filename).name`` alone strips directory components but
+    passes a colon through unchanged.
+    """
+
+    @pytest.fixture
+    def attachments_mixin(self, jira_fetcher: JiraFetcher) -> AttachmentsMixin:
+        mixin = jira_fetcher
+        mixin.jira = MagicMock()
+        mixin.jira._session = MagicMock()
+        mixin.jira.url = "https://test.url"
+        return mixin
+
+    @pytest.mark.security_regression
+    def test_download_issue_attachments_strips_colon_from_filename(
+        self, attachments_mixin: AttachmentsMixin
+    ) -> None:
+        attachments_mixin.jira.issue.return_value = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": "report.pdf:hidden-stream",
+                        "content": "https://test.url/attachment",
+                        "size": 100,
+                    }
+                ]
+            }
+        }
+        mock_attachment = MagicMock()
+        mock_attachment.filename = "report.pdf:hidden-stream"
+        mock_attachment.url = "https://test.url/attachment"
+        mock_attachment.size = 100
+
+        with (
+            patch.object(
+                attachments_mixin, "download_attachment", return_value=True
+            ) as mock_download,
+            patch("pathlib.Path.mkdir"),
+            patch(
+                "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+                return_value=mock_attachment,
+            ),
+            patch("os.getcwd", return_value="/tmp"),
+        ):
+            attachments_mixin.download_issue_attachments("TEST-123", "/tmp/attachments")
+
+        assert mock_download.call_count == 1
+        _, target_path = mock_download.call_args[0]
+        assert ":" not in Path(target_path).name
+        assert Path(target_path).name == "report.pdf_hidden-stream"
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize(
+        "first, second, expected",
+        [
+            ("report:2026.pdf", "report_2026.pdf", "report_2026 (2).pdf"),
+            ("Report:2026.pdf", "report_2026.pdf", "report_2026 (2).pdf"),
+            ("report.", "report", "report (2)"),
+            ("report ", "report", "report (2)"),
+            (".env", ".env", ".env (2)"),
+        ],
+    )
+    def test_download_issue_attachments_disambiguates_sanitized_collision(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        first: str,
+        second: str,
+        expected: str,
+    ) -> None:
+        """Two different attachment names that sanitize to the same safe
+        name must not collide onto the same target path -- the second
+        download would otherwise silently overwrite the first while both
+        are reported as successful."""
+        attachments_mixin.jira.issue.return_value = {
+            "fields": {
+                "attachment": [
+                    {
+                        "filename": first,
+                        "content": "https://test.url/a",
+                        "size": 100,
+                    },
+                    {
+                        "filename": second,
+                        "content": "https://test.url/b",
+                        "size": 100,
+                    },
+                ]
+            }
+        }
+        mock_attachment_a = MagicMock()
+        mock_attachment_a.filename = first
+        mock_attachment_a.url = "https://test.url/a"
+        mock_attachment_a.size = 100
+        mock_attachment_b = MagicMock()
+        mock_attachment_b.filename = second
+        mock_attachment_b.url = "https://test.url/b"
+        mock_attachment_b.size = 100
+
+        with (
+            patch.object(
+                attachments_mixin, "download_attachment", return_value=True
+            ) as mock_download,
+            patch("pathlib.Path.mkdir"),
+            patch(
+                "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
+                side_effect=[mock_attachment_a, mock_attachment_b],
+            ),
+            patch("os.getcwd", return_value="/tmp"),
+        ):
+            attachments_mixin.download_issue_attachments("TEST-123", "/tmp/attachments")
+
+        assert mock_download.call_count == 2
+        target_names = [
+            Path(call.args[1]).name for call in mock_download.call_args_list
+        ]
+        assert len({name.casefold() for name in target_names}) == 2, (
+            f"both attachments wrote to the same path: {target_names}"
+        )
+
+        assert target_names[1] == expected
 
 
 class TestUploadPathTraversalRegression:
