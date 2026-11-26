@@ -48,6 +48,27 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             url, (self.config.url, getattr(self.jira, "url", None))
         )
 
+    def _post_attachment(self, issue_key: str, filename: str, content: Any) -> Any:
+        """Post one file to the attachments endpoint of an issue.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123')
+            filename: Name of the attachment; also determines its MIME type
+            content: The file content as bytes or a binary file object
+
+        Returns:
+            Jira's response to the upload
+        """
+        # Jira stores the Content-Type of the file part as the attachment's
+        # mimeType; without one the attachment has no MIME type at all.
+        mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        base_url = self.jira.resource_url("issue")
+        return self.jira.post(
+            f"{base_url}/{issue_key}/attachments",
+            headers=self.jira.no_check_headers,
+            files={"file": (filename, content, mime_type)},
+        )
+
     def download_attachment(self, url: str, target_path: str) -> bool:
         """
         Download a Jira attachment to the specified path.
@@ -468,7 +489,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             # Upload from the verified descriptor; add_attachment(filename=...)
             # would reopen the path after the check.
             with open_confined(file_path, "rb") as file:
-                attachment = self.jira.add_attachment_object(issue_key, file)
+                attachment = self._post_attachment(issue_key, filename, file)
 
             if attachment:
                 file_size = os.path.getsize(file_path)
@@ -587,12 +608,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 f"to issue {issue_key}"
             )
 
-            base_url = self.jira.resource_url("issue")
-            attachment = self.jira.post(
-                f"{base_url}/{issue_key}/attachments",
-                headers=self.jira.no_check_headers,
-                files={"file": (filename, content)},
-            )
+            attachment = self._post_attachment(issue_key, filename, content)
 
             if attachment:
                 # The REST API answers with a list holding one entry per
