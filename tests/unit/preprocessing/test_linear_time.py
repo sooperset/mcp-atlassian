@@ -616,6 +616,20 @@ def test_magic_link_pattern_matches_like_stock() -> None:
 #: and 128 KiB, or nesting depths, that took seconds or minutes before.
 _GROWTH_CASES = {
     "md_open_brackets": ("conf_write", "'[' * k", 32768),
+    # Unlike md_open_brackets (never closes, so _PairScanner's unmatched-tail
+    # path runs), this closes every bracket, which used to re-scan the whole
+    # span from each opener instead of reusing the one pass's cached pairs.
+    "md_balanced_nested_brackets": (
+        "conf_write",
+        "'[' * k + 'a' * 20 + ']' * k",
+        20000,
+    ),
+    # Disjoint groups leave fresh pairs beyond the trusted suffix boundary.
+    "md_disjoint_nested_brackets": (
+        "conf_write",
+        "'![' * k + 'a' * 20 + ']' * k + ' ' + '[' * k + ']' * k",
+        12000,
+    ),
     "md_open_bracket_before_link": ("conf_write", "'[ [a](b) ' * k", 7000),
     "md_links": ("conf_write", "'[a](b) ' * k", 4500),
     "md_open_link_targets": ("conf_write", "'[a](' * k", 8192),
@@ -803,6 +817,8 @@ def test_storage_conversion_matches_stock(monkeypatch: pytest.MonkeyPatch) -> No
         "- x\n" + " " * 260 + "y",
         # Adjacent delimiter spans, paired again after the first one.
         "x^2^^3^ a~b~~c~ ==a====b== *a**b*",
+        # Disjoint nested groups reuse pairs without extending validity.
+        "![" * 40 + "a" * 20 + "]" * 40 + " " + "[" * 40 + "]" * 40,
     ]
     # Random documents longer than the work floors. Some hold URLs that
     # md2conf rejects, so only the HTML is compared.
@@ -819,6 +835,80 @@ def test_storage_conversion_matches_stock(monkeypatch: pytest.MonkeyPatch) -> No
             )
             stock = preprocessor.markdown_to_confluence_storage(text)
         assert _without_task_uuids(new) == _without_task_uuids(stock), text
+
+
+class TestPairScannerCacheAcrossEdits:
+    """``_PairScanner`` caches bracket pairs by distance from the end of the
+    text so they survive a prefix edit (an earlier inline match getting
+    replaced with a placeholder) as long as the tail is unchanged -- see its
+    docstring. Extending how far that cache is trusted (``valid``) must not
+    outrun what a given scan actually re-verified against the *current*
+    text, or a stale pair computed against an *older* text can get served
+    as if it were fresh.
+    """
+
+    def test_extending_validity_does_not_bridge_a_stale_gap(self) -> None:
+        """Regression: caching three balanced bracket groups, editing a
+        character inside the middle one, then re-querying the last group
+        first (so its *unaffected* tail gets trusted), then the first group
+        (an unrelated scan that used to over-extend `valid` all the way to
+        the end), must not let the untouched, now-stale middle group's
+        cached close win out over a fresh re-scan."""
+        from mcp_atlassian.preprocessing.confluence import _PairScanner
+
+        text = ("[" * 20 + "]" * 20 + "x") * 3
+        scanner = _PairScanner("[", "]")
+        scanner.close(text, 0)
+        scanner.close(text, 41)
+        scanner.close(text, 82)
+
+        # Flip one character inside the middle group's run of openers.
+        edited = text[:42] + "]" + text[43:]
+
+        scanner.close(edited, 82)
+        scanner.close(edited, 0)
+        close_41, _ = scanner.close(edited, 41)
+
+        fresh = _PairScanner("[", "]")
+        expected, _ = fresh.close(edited, 41)
+        assert close_41 == expected == 42
+
+    @pytest.mark.parametrize("disjoint", [False, True])
+    def test_still_resolves_a_long_run_of_closing_brackets_in_one_pass(
+        self,
+        disjoint: bool,
+    ) -> None:
+        """The fix for the stale-gap case above must not reintroduce the
+        O(n^2) behavior the cache exists to avoid: a single nested run that
+        closes before the end of the text (unlike an unclosed run, which
+        took a different, already-fast path) must still resolve in one
+        pass, verified here by counting ``_scan`` calls directly rather
+        than by timing."""
+        from mcp_atlassian.preprocessing import confluence as confluence_mod
+
+        scan_calls = 0
+        original_scan = confluence_mod._PairScanner._scan
+
+        def counting_scan(self: Any, data: str, opener: int) -> None:
+            nonlocal scan_calls
+            scan_calls += 1
+            original_scan(self, data, opener)
+
+        scanner = confluence_mod._PairScanner("[", "]")
+        n = 500
+        text = "[" * n + "a" * 20 + "]" * n
+        scanner._scan = counting_scan.__get__(scanner)  # type: ignore[method-assign]
+        if disjoint:
+            text += " " + "[" * n + "]" * n
+            # Query the later group first, as the image inline pattern does
+            # before the plain link pattern visits the earlier bracket run.
+            scanner.close(text, 2 * n + 21)
+        for index in range(n):
+            scanner.close(text, index)
+
+        assert scan_calls <= 2, (
+            f"expected at most two scans to resolve the nested runs, got {scan_calls}"
+        )
 
 
 @pytest.mark.parametrize(
