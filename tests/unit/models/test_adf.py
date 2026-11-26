@@ -1546,6 +1546,14 @@ def test_deeply_nested_adf_converts_to_text() -> None:
     assert adf_to_text({"type": "doc", "version": 1, "content": [node]}) == "deep"
 
 
+def test_deeply_nested_adf_falls_back_to_text_in_markdown() -> None:
+    node: dict[str, Any] = {"type": "text", "text": "deep"}
+    for _ in range(5000):
+        node = {"type": "blockquote", "content": [node]}
+    doc = {"type": "doc", "version": 1, "content": [node]}
+    assert adf_to_markdown(doc) == "deep"
+
+
 def test_adf_to_text_keeps_little_memory_on_deep_branching_lists() -> None:
     import tracemalloc
 

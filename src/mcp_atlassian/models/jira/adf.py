@@ -1225,14 +1225,18 @@ def adf_to_markdown(adf_content: dict | list | str | None) -> str | None:
         return None
     if isinstance(adf_content, str):
         return adf_content
-    if isinstance(adf_content, list):
-        markdown = _render_blocks(adf_content)
-    elif isinstance(adf_content, dict):
-        if adf_content.get("type") == "doc":
+    if not isinstance(adf_content, list | dict):
+        return None
+    try:
+        if isinstance(adf_content, list):
+            markdown = _render_blocks(adf_content)
+        elif adf_content.get("type") == "doc":
             markdown = _render_blocks(adf_content.get("content") or [])
         else:
             markdown = _render_block(adf_content)
-    else:
-        return None
+    except RecursionError:
+        # The renderers recurse per nesting level; `adf_to_text` walks with an
+        # explicit stack, so deep content still reads, without marks.
+        return adf_to_text(adf_content)
     markdown = markdown.strip("\n")
     return markdown or None
