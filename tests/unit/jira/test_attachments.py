@@ -487,9 +487,7 @@ class TestAttachmentsMixin:
             "filename": "test_file.txt",
             "size": 100,
         }
-        attachments_mixin.jira.add_attachment_object.return_value = (
-            mock_attachment_response
-        )
+        attachments_mixin.jira.post.return_value = mock_attachment_response
 
         # Mock file operations
         with (
@@ -524,9 +522,9 @@ class TestAttachmentsMixin:
             assert result["filename"] == "test_file.txt"
             assert result["size"] == 100
             assert result["id"] == "12345"
-            attachments_mixin.jira.add_attachment_object.assert_called_once()
-            args = attachments_mixin.jira.add_attachment_object.call_args.args
-            assert args[0] == "TEST-123"
+            attachments_mixin.jira.post.assert_called_once()
+            args = attachments_mixin.jira.post.call_args.args
+            assert args[0].endswith("/TEST-123/attachments")
 
     def test_upload_attachment_relative_path(
         self, attachments_mixin: AttachmentsMixin, tmp_path: Path
@@ -537,9 +535,7 @@ class TestAttachmentsMixin:
             "filename": "test_file.txt",
             "size": 100,
         }
-        attachments_mixin.jira.add_attachment_object.return_value = (
-            mock_attachment_response
-        )
+        attachments_mixin.jira.post.return_value = mock_attachment_response
 
         (tmp_path / "test_file.txt").write_bytes(b"test content")
         resolved = str((tmp_path / "test_file.txt").resolve())
@@ -548,12 +544,43 @@ class TestAttachmentsMixin:
             result = attachments_mixin.upload_attachment("TEST-123", "test_file.txt")
 
         assert result["success"] is True
-        attachments_mixin.jira.add_attachment_object.assert_called_once()
-        issue_key, file_obj = (
-            attachments_mixin.jira.add_attachment_object.call_args.args
-        )
-        assert issue_key == "TEST-123"
+        attachments_mixin.jira.post.assert_called_once()
+        url = attachments_mixin.jira.post.call_args.args[0]
+        filename, file_obj, mime_type = attachments_mixin.jira.post.call_args.kwargs[
+            "files"
+        ]["file"]
+        assert url.endswith("/TEST-123/attachments")
+        assert filename == "test_file.txt"
         assert file_obj.name == resolved
+        assert mime_type == "text/plain"
+
+    @pytest.mark.parametrize(
+        ("filename", "mime_type"),
+        [
+            ("search.json", "application/json"),
+            ("notes.txt", "text/plain"),
+            ("screenshot.png", "image/png"),
+            ("data.unknownext", "application/octet-stream"),
+        ],
+    )
+    def test_upload_attachment_sends_mime_type(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        tmp_path: Path,
+        filename: str,
+        mime_type: str,
+    ):
+        """The file part carries a Content-Type, so Jira stores a mimeType."""
+        attachments_mixin.jira.post.return_value = [{"id": "12345"}]
+        (tmp_path / filename).write_bytes(b"content")
+
+        with patch("os.getcwd", return_value=str(tmp_path)):
+            result = attachments_mixin.upload_attachment("TEST-123", filename)
+
+        assert result["success"] is True
+        sent = attachments_mixin.jira.post.call_args.kwargs["files"]["file"]
+        assert sent[0] == filename
+        assert sent[2] == mime_type
 
     def test_upload_attachment_no_issue_key(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no issue key."""
@@ -562,7 +589,7 @@ class TestAttachmentsMixin:
         # Assertions
         assert result["success"] is False
         assert "No issue key provided" in result["error"]
-        attachments_mixin.jira.add_attachment_object.assert_not_called()
+        attachments_mixin.jira.post.assert_not_called()
 
     def test_upload_attachment_no_file_path(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with no file path."""
@@ -571,7 +598,7 @@ class TestAttachmentsMixin:
         # Assertions
         assert result["success"] is False
         assert "No file path provided" in result["error"]
-        attachments_mixin.jira.add_attachment_object.assert_not_called()
+        attachments_mixin.jira.post.assert_not_called()
 
     def test_upload_attachment_file_not_found(
         self, attachments_mixin: AttachmentsMixin
@@ -599,14 +626,12 @@ class TestAttachmentsMixin:
             # Assertions
             assert result["success"] is False
             assert "File not found" in result["error"]
-            attachments_mixin.jira.add_attachment_object.assert_not_called()
+            attachments_mixin.jira.post.assert_not_called()
 
     def test_upload_attachment_api_error(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload with an API error."""
         # Mock the Jira API to raise an exception
-        attachments_mixin.jira.add_attachment_object.side_effect = Exception(
-            "API Error"
-        )
+        attachments_mixin.jira.post.side_effect = Exception("API Error")
 
         # Mock file operations
         with (
@@ -636,7 +661,7 @@ class TestAttachmentsMixin:
     def test_upload_attachment_no_response(self, attachments_mixin: AttachmentsMixin):
         """Test attachment upload when API returns no response."""
         # Mock the Jira API to return None
-        attachments_mixin.jira.add_attachment_object.return_value = None
+        attachments_mixin.jira.post.return_value = None
 
         # Mock file operations
         with (
@@ -691,9 +716,22 @@ class TestAttachmentsMixin:
         attachments_mixin.jira.post.assert_called_once_with(
             "https://test.atlassian.net/rest/api/2/issue/TEST-123/attachments",
             headers={"X-Atlassian-Token": "no-check"},
-            files={"file": ("test_file.txt", b"test content")},
+            files={"file": ("test_file.txt", b"test content", "text/plain")},
         )
         attachments_mixin.jira.add_attachment_object.assert_not_called()
+
+    def test_upload_attachment_from_content_sends_mime_type(
+        self, attachments_mixin: AttachmentsMixin
+    ):
+        """In-memory uploads send the MIME type guessed from the filename."""
+        attachments_mixin.jira.post.return_value = [{"id": "12345"}]
+
+        attachments_mixin.upload_attachment_from_content(
+            "TEST-123", "search.json", b"{}"
+        )
+
+        sent = attachments_mixin.jira.post.call_args.kwargs["files"]["file"]
+        assert sent == ("search.json", b"{}", "application/json")
 
     def test_upload_attachment_from_content_dict_response(
         self, attachments_mixin: AttachmentsMixin
