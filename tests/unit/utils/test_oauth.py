@@ -1315,3 +1315,40 @@ class TestTokenFilePermissionsRegression:
             "OAuth token file must not be group/world-readable (expected 0o600); "
             f"got {oct(mode)}"
         )
+
+
+class TestOAuthConfigReprDoesNotLeakSecrets:
+    """A config object's default repr/str must not surface its secrets --
+    it's a prime candidate to end up in a debug log line, an
+    uncaught-exception traceback, or a test-assertion diff."""
+
+    @pytest.mark.security_regression
+    def test_oauth_config_repr(self):
+        config = OAuthConfig(
+            client_id="cid",
+            client_secret="oauth-client-secret-SECRET",
+            redirect_uri="https://example.com/callback",
+            scope="read:jira-work",
+            refresh_token="oauth-refresh-token-SECRET",
+            access_token="oauth-access-token-SECRET",
+        )
+
+        rendered = repr(config)
+
+        assert "oauth-client-secret-SECRET" not in rendered
+        assert "oauth-refresh-token-SECRET" not in rendered
+        assert "oauth-access-token-SECRET" not in rendered
+        # Non-secret fields must still render normally.
+        assert "cid" in rendered
+
+    @pytest.mark.security_regression
+    def test_byo_access_token_oauth_config_repr(self):
+        config = BYOAccessTokenOAuthConfig(
+            access_token="byo-access-token-SECRET",
+            cloud_id="cloud-id",
+        )
+
+        rendered = repr(config)
+
+        assert "byo-access-token-SECRET" not in rendered
+        assert "cloud-id" in rendered

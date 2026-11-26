@@ -165,8 +165,10 @@ class JiraConfig:
         "basic", "pat", "oauth", "cert", "external"
     ]  # Authentication type
     username: str | None = None  # Email or username (Cloud)
-    api_token: str | None = None  # API token (Cloud)
-    personal_token: str | None = None  # Personal access token (Server/DC)
+    api_token: str | None = field(default=None, repr=False)  # API token (Cloud)
+    personal_token: str | None = field(
+        default=None, repr=False
+    )  # Personal access token (Server/DC)
     oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig | None = None
     ssl_verify: bool = True  # Whether to verify SSL certificates
     projects_filter: str | None = None  # List of project keys to filter searches
@@ -183,7 +185,9 @@ class JiraConfig:
     )
     client_cert: str | None = None  # Client certificate file path (.pem)
     client_key: str | None = None  # Client private key file path (.pem)
-    client_key_password: str | None = None  # Password for encrypted private key
+    client_key_password: str | None = field(
+        default=None, repr=False
+    )  # Password for encrypted private key
     sla_config: SLAConfig | None = None  # Optional SLA configuration
     timeout: int = 75  # Connection timeout in seconds
     internal_only_projects: frozenset[str] = field(

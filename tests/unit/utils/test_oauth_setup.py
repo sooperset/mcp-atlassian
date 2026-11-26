@@ -19,6 +19,27 @@ from tests.utils.base import BaseAuthTest
 from tests.utils.mocks import MockEnvironment, MockOAuthServer
 
 
+def test_oauth_setup_args_repr_does_not_leak_client_secret():
+    """OAuthSetupArgs' client_secret must not appear in its repr/str.
+
+    This dataclass is a prime candidate to end up in a debug log line or an
+    uncaught-exception traceback, either of which would otherwise leak a
+    real OAuth client secret.
+    """
+    args = OAuthSetupArgs(
+        client_id="client-id",
+        client_secret="client-secret-SECRET",
+        redirect_uri="http://localhost:8080/callback",
+        scope="read:jira-work",
+    )
+
+    text = repr(args)
+
+    assert "client-secret-SECRET" not in text
+    assert "client-id" in text
+    assert "read:jira-work" in text
+
+
 class TestCallbackHandlerLogic:
     """Tests for URL parsing logic."""
 
