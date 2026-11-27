@@ -6,7 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
-from mcp_atlassian.utils.io import is_read_only_mode, validate_safe_path
+from mcp_atlassian.utils.io import (
+    deduplicate_filename,
+    is_read_only_mode,
+    sanitize_attachment_filename,
+    validate_safe_path,
+)
 
 
 def test_is_read_only_mode_default():
@@ -463,3 +468,195 @@ class TestOpenConfined:
             if sub.is_symlink():
                 to_dir()
         assert (outside / "in.txt").read_text() == "SECRET"
+
+
+class TestSanitizeAttachmentFilename:
+    """A colon in a server-reported attachment name must not survive into the
+    on-disk path. On Windows, ``name:stream`` addresses an NTFS alternate
+    data stream on whatever file already has that name, rather than
+    creating a new file -- so an attachment named e.g.
+    ``existing-file.txt:evil`` would write into a hidden stream of a
+    same-named file already in the confined download directory instead of
+    its own file, invisibly to a normal directory listing."""
+
+    @pytest.mark.security_regression
+    def test_strips_colon(self):
+        assert sanitize_attachment_filename("report.pdf:hidden") == "report.pdf_hidden"
+
+    @pytest.mark.security_regression
+    def test_strips_directory_components_and_colon_together(self):
+        assert (
+            sanitize_attachment_filename("../../etc/passwd:stream") == "passwd_stream"
+        )
+
+    def test_leaves_an_ordinary_filename_unchanged(self):
+        assert sanitize_attachment_filename("report.pdf") == "report.pdf"
+
+    def test_empty_result_falls_back_to_a_safe_name(self):
+        assert sanitize_attachment_filename("") == "attachment"
+        assert sanitize_attachment_filename("/") == "attachment"
+
+    @pytest.mark.security_regression
+    def test_real_filesystem_write_does_not_create_an_alternate_data_stream(
+        self, tmp_path
+    ):
+        """End-to-end: writing to the sanitized name must produce a normal,
+        visible file, never a hidden stream on a pre-existing same-named
+        file (the actual exploit this guards against)."""
+        existing = tmp_path / "existing-file.txt"
+        existing.write_text("original content")
+
+        safe_name = sanitize_attachment_filename("existing-file.txt:evil")
+        target = tmp_path / safe_name
+        target.write_bytes(b"attacker-controlled content")
+
+        assert existing.read_text() == "original content"
+        assert {p.name for p in tmp_path.iterdir()} == {
+            "existing-file.txt",
+            safe_name,
+        }
+        assert target.read_bytes() == b"attacker-controlled content"
+
+
+class TestDeduplicateFilename:
+    """Two different attachment names can sanitize to the same safe name
+    (e.g. ``report:2026.pdf`` and ``report_2026.pdf`` both become
+    ``report_2026.pdf`` once the colon is replaced) -- writing both to the
+    same path would silently overwrite the first download while still
+    reporting it a success."""
+
+    def test_first_use_of_a_name_is_unchanged(self):
+        seen: set[str] = set()
+        assert deduplicate_filename("report.pdf", seen) == "report.pdf"
+        assert seen == {"report.pdf"}
+
+    @pytest.mark.security_regression
+    def test_colliding_sanitized_names_get_disambiguated(self):
+        seen: set[str] = set()
+        first = deduplicate_filename(
+            sanitize_attachment_filename("report:2026.pdf"), seen
+        )
+        second = deduplicate_filename(
+            sanitize_attachment_filename("report_2026.pdf"), seen
+        )
+
+        assert first != second
+        assert first == "report_2026.pdf"
+        assert second == "report_2026 (2).pdf"
+
+    def test_three_way_collision_keeps_incrementing(self):
+        seen: set[str] = set()
+        results = [deduplicate_filename("a.txt", seen) for _ in range(3)]
+        assert results == ["a.txt", "a (2).txt", "a (3).txt"]
+
+    def test_collision_on_a_name_with_no_extension(self):
+        seen: set[str] = set()
+        results = [deduplicate_filename("README", seen) for _ in range(2)]
+        assert results == ["README", "README (2)"]
+
+
+@pytest.mark.parametrize(
+    "filename, expected",
+    [
+        ("report.", "report"),
+        ("report ", "report"),
+        ("report. . ", "report"),
+        ("..", "attachment"),
+        ("foo/..", "attachment"),
+        (".", "attachment"),
+        ("...  ", "attachment"),
+        (" ", "attachment"),
+        ('a<>"|?*b.txt', "a______b.txt"),
+        ("COM0.txt", "COM0.txt"),
+        ("COM10.txt", "COM10.txt"),
+        ("LPT0", "LPT0"),
+        (".env", ".env"),
+        ("CoN.txt", "_CoN.txt"),
+    ],
+)
+def test_portable_attachment_filename(filename: str, expected: str) -> None:
+    assert sanitize_attachment_filename(filename) == expected
+
+
+@pytest.mark.parametrize("character", [chr(i) for i in range(32)] + [chr(127)])
+def test_attachment_filename_replaces_control_characters(character: str) -> None:
+    assert sanitize_attachment_filename(f"a{character}b.txt") == "a_b.txt"
+
+
+@pytest.mark.parametrize(
+    "device",
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"{prefix}{n}" for prefix in ("COM", "LPT") for n in range(1, 10)],
+)
+@pytest.mark.parametrize("extension", ["", ".txt", ".tar.gz"])
+def test_attachment_filename_escapes_reserved_devices(
+    device: str, extension: str
+) -> None:
+    name = device.lower() + extension
+    assert sanitize_attachment_filename(name) == "_" + name
+
+
+@pytest.mark.parametrize(
+    "names, expected",
+    [
+        (
+            ["Report:2026.pdf", "report_2026.pdf"],
+            ["Report_2026.pdf", "report_2026 (2).pdf"],
+        ),
+        (
+            ["REPORT (2).pdf", "Report.pdf", "report.pdf"],
+            ["REPORT (2).pdf", "Report.pdf", "report (3).pdf"],
+        ),
+        (["Stra\u00dfe.txt", "STRASSE.txt"], ["Stra\u00dfe.txt", "STRASSE (2).txt"]),
+        ([".env", ".ENV"], [".env", ".ENV (2)"]),
+        ([".env.local", ".ENV.local"], [".env.local", ".ENV (2).local"]),
+        (["report.", "report ", "report"], ["report", "report (2)", "report (3)"]),
+    ],
+)
+def test_portable_attachment_collisions(
+    names: list[str], expected: list[str], tmp_path: Path
+) -> None:
+    seen: set[str] = set()
+    results = [
+        deduplicate_filename(sanitize_attachment_filename(n), seen) for n in names
+    ]
+    assert results == expected
+    assert seen == {name.casefold() for name in expected}
+    for index, name in enumerate(results):
+        (tmp_path / name).write_bytes(bytes([index]))
+    assert len(list(tmp_path.iterdir())) == len(names)
+    for index, name in enumerate(results):
+        assert (tmp_path / name).read_bytes() == bytes([index])
+
+
+@pytest.mark.security_regression
+@pytest.mark.parametrize(
+    "path",
+    [
+        "existing.txt:hidden",
+        "sub/existing.txt:hidden",
+        "sub:stream/file.txt",
+        "sub:stream/../file.txt",
+    ],
+)
+def test_windows_validation_rejects_streams(
+    path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp_atlassian.utils import io as io_mod
+
+    monkeypatch.setattr(io_mod.sys, "platform", "win32")
+    with pytest.raises(ValueError, match="Alternate data stream"):
+        validate_safe_path(tmp_path / path, base_dir=tmp_path)
+    for mode in ("rb", "wb"):
+        with pytest.raises(ValueError, match="Alternate data stream"):
+            io_mod.open_confined(tmp_path / path, mode, base_dir=tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_windows_validation_accepts_normal_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp_atlassian.utils import io as io_mod
+
+    monkeypatch.setattr(io_mod.sys, "platform", "win32")
+    assert validate_safe_path(tmp_path / "file.txt", tmp_path) == tmp_path / "file.txt"

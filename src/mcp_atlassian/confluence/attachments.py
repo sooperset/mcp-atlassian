@@ -13,9 +13,11 @@ from requests.exceptions import HTTPError
 
 from ..models.confluence import ConfluenceAttachment
 from ..utils.io import (
+    deduplicate_filename,
     get_file_root,
     is_in_cwd_root,
     open_confined,
+    sanitize_attachment_filename,
     validate_safe_path,
 )
 from ..utils.media import (
@@ -604,6 +606,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         # Download each attachment
         downloaded = []
         failed = []
+        used_filenames: set[str] = set()
 
         for attachment in attachments:
             if not attachment.download_url:
@@ -616,8 +619,13 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 )
                 continue
 
-            # Create a safe filename
-            safe_filename = Path(attachment.title).name
+            # Create a safe filename, disambiguating two different attachment
+            # titles that happen to sanitize to the same one (e.g. a literal
+            # colon vs. an underscore in otherwise-identical names) so the
+            # second download doesn't silently overwrite the first.
+            safe_filename = deduplicate_filename(
+                sanitize_attachment_filename(attachment.title), used_filenames
+            )
             file_path = target_path / safe_filename
 
             # Resolve to an absolute URL (and optionally the v1 endpoint)

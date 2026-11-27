@@ -3,7 +3,9 @@
 import errno
 import logging
 import os
+import re
 import stat
+import sys
 from pathlib import Path
 from typing import IO, Literal
 
@@ -176,6 +178,70 @@ def is_in_cwd_root(path: str | os.PathLike[str]) -> bool:
     return resolved.parent == Path(os.getcwd()).resolve(strict=False)
 
 
+def sanitize_attachment_filename(filename: str) -> str:
+    """Return a single safe path component for a server-reported attachment name.
+
+    Directory components are removed and Windows-forbidden characters are
+    replaced with underscores, including colons that could address NTFS
+    alternate data streams. Trailing dots/spaces are stripped to avoid Windows
+    filename aliases, and reserved device names are prefixed with an underscore.
+    These rules apply on every platform so downloads remain portable.
+
+    Args:
+        filename: The attachment's reported filename or title.
+
+    Returns:
+        A single path component safe to join under a confined directory.
+    """
+    name = Path(filename).name
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', "_", name).rstrip(". ")
+    if name in ("", ".", ".."):
+        return "attachment"
+    # Windows reserves these basenames even when followed by an extension.
+    basename = name.split(".", 1)[0].rstrip(" ").upper()
+    if basename in {"CON", "PRN", "AUX", "NUL"} or re.fullmatch(
+        r"(?:COM|LPT)[1-9]", basename
+    ):
+        name = f"_{name}"
+    return name
+
+
+def deduplicate_filename(name: str, seen: set[str]) -> str:
+    """Return *name*, disambiguated if it is already in *seen*.
+
+    Two distinct attachment names can sanitize to the same safe name (e.g.
+    ``report:2026.pdf`` and ``report_2026.pdf`` both become
+    ``report_2026.pdf`` once :func:`sanitize_attachment_filename` replaces
+    the colon) -- writing both to the same path would silently overwrite
+    the first download while still reporting it a success. Mutates *seen*
+    with the case-folded name returned, so a caller downloading several
+    attachments passes the same set across every call in the batch.
+
+    Args:
+        name: The candidate filename, already run through
+            :func:`sanitize_attachment_filename`.
+        seen: Case-folded names already used in this batch.
+
+    Returns:
+        *name*, or *name* with a counter inserted before its extension.
+    """
+    if name.casefold() not in seen:
+        seen.add(name.casefold())
+        return name
+    if name.rfind(".") > 0:
+        stem, ext = name.rsplit(".", 1)
+        suffix = f".{ext}"
+    else:
+        stem, suffix = name, ""
+    count = 2
+    while True:
+        candidate = f"{stem} ({count}){suffix}"
+        if candidate.casefold() not in seen:
+            seen.add(candidate.casefold())
+            return candidate
+        count += 1
+
+
 def validate_safe_path(
     path: str | os.PathLike[str],
     base_dir: str | os.PathLike[str] | None = None,
@@ -194,7 +260,8 @@ def validate_safe_path(
         The resolved, validated path.
 
     Raises:
-        ValueError: If the resolved path escapes *base_dir*.
+        ValueError: If the resolved path escapes *base_dir* or references a
+            Windows alternate data stream.
     """
     if base_dir is None:
         base_dir = get_file_root()
@@ -204,6 +271,12 @@ def validate_safe_path(
     # Resolve relative paths against base_dir, not cwd
     if not p.is_absolute():
         p = resolved_base / p
+    # Confinement alone allows NTFS alternate data streams. Check before
+    # resolution, which can normalize away components, and allow the drive.
+    if sys.platform == "win32" and any(
+        ":" in part for part in p.parts if part != p.anchor
+    ):
+        raise ValueError(f"Alternate data stream path is not allowed: {path}")
     resolved_path = p.resolve(strict=False)
 
     if not resolved_path.is_relative_to(resolved_base):

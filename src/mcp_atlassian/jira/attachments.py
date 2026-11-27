@@ -8,9 +8,11 @@ from typing import Any
 
 from ..models.jira import JiraAttachment
 from ..utils.io import (
+    deduplicate_filename,
     get_file_root,
     is_in_cwd_root,
     open_confined,
+    sanitize_attachment_filename,
     validate_safe_path,
 )
 from ..utils.media import (
@@ -394,6 +396,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         # Download each attachment
         downloaded = []
         failed = []
+        used_filenames: set[str] = set()
 
         for attachment in attachments:
             if not attachment.url:
@@ -403,8 +406,13 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
                 )
                 continue
 
-            # Create a safe filename
-            safe_filename = Path(attachment.filename).name
+            # Create a safe filename, disambiguating two different attachment
+            # names that happen to sanitize to the same one (e.g. a literal
+            # colon vs. an underscore in otherwise-identical names) so the
+            # second download doesn't silently overwrite the first.
+            safe_filename = deduplicate_filename(
+                sanitize_attachment_filename(attachment.filename), used_filenames
+            )
             file_path = target_path / safe_filename
 
             # Download the attachment

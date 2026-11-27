@@ -72,6 +72,24 @@ from mcp_atlassian.utils.oauth import BYOAccessTokenOAuthConfig
 class TestAttachmentsMixin:
     """Tests for the AttachmentsMixin class."""
 
+    @pytest.mark.security_regression
+    def test_direct_download_rejects_alternate_data_stream(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mcp_atlassian.utils import io as io_mod
+
+        monkeypatch.setattr(io_mod.sys, "platform", "win32")
+        monkeypatch.setenv(io_mod.FILES_DIR_ENV, str(tmp_path))
+        target = tmp_path / "downloads" / "existing.txt:hidden"
+        assert (
+            attachments_mixin.download_attachment("https://test.url/a", str(target))
+            is False
+        )
+        attachments_mixin.confluence._session.get.assert_not_called()
+
     @pytest.fixture
     def attachments_mixin(self, confluence_client) -> AttachmentsMixin:
         """Create an AttachmentsMixin instance for testing."""
@@ -2040,6 +2058,145 @@ class TestDownloadContentAttachmentsServerTool:
         assert summary["downloaded"] == 0
         assert len(summary["failed"]) == 1
         assert "50 MB" in summary["failed"][0]["error"]
+
+
+class TestAttachmentFilenameSanitization:
+    """Regression — a colon in an attachment title must not survive into the
+    on-disk target path.
+
+    On Windows, ``name:stream`` addresses an NTFS alternate data stream on
+    whatever file already has that name, rather than creating a new file —
+    so an attachment titled e.g. ``report.pdf:hidden`` would write into a
+    hidden stream of a same-named file already in the confined download
+    directory instead of its own file, invisibly to a normal directory
+    listing. ``Path(title).name`` alone strips directory components but
+    passes a colon through unchanged.
+    """
+
+    @pytest.fixture
+    def attachments_mixin(self, confluence_client) -> AttachmentsMixin:
+        with patch(
+            "mcp_atlassian.confluence.attachments.ConfluenceClient.__init__"
+        ) as mock_init:
+            mock_init.return_value = None
+            mixin = AttachmentsMixin()
+            mixin.confluence = confluence_client.confluence
+            mixin.config = confluence_client.config
+            mixin.preprocessor = confluence_client.preprocessor
+            return mixin
+
+    @pytest.mark.security_regression
+    def test_download_content_attachments_strips_colon_from_title(
+        self, attachments_mixin: AttachmentsMixin
+    ) -> None:
+        mock_attachments = [
+            {
+                "id": "att1",
+                "title": "report.pdf:hidden-stream",
+                "extensions": {"fileSize": 100},
+                "_links": {"download": "/download/report.pdf"},
+            }
+        ]
+        mock_attachment = MagicMock()
+        mock_attachment.title = "report.pdf:hidden-stream"
+        mock_attachment.download_url = "/download/report.pdf"
+        mock_attachment.file_size = 100
+
+        with (
+            patch.object(
+                attachments_mixin,
+                "get_content_attachments",
+                return_value={"success": True, "attachments": mock_attachments},
+            ),
+            patch.object(
+                attachments_mixin, "download_attachment", return_value=True
+            ) as mock_download,
+            patch("pathlib.Path.mkdir"),
+            patch(
+                "mcp_atlassian.models.confluence.ConfluenceAttachment.from_api_response",
+                return_value=mock_attachment,
+            ),
+            patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
+        ):
+            attachments_mixin.download_content_attachments("123456", "/tmp/attachments")
+
+        assert mock_download.call_count == 1
+        _, target_path = mock_download.call_args[0]
+        assert ":" not in Path(target_path).name
+        assert Path(target_path).name == "report.pdf_hidden-stream"
+
+    @pytest.mark.security_regression
+    @pytest.mark.parametrize(
+        "first, second, expected",
+        [
+            ("report:2026.pdf", "report_2026.pdf", "report_2026 (2).pdf"),
+            ("Report:2026.pdf", "report_2026.pdf", "report_2026 (2).pdf"),
+            ("report.", "report", "report (2)"),
+            ("report ", "report", "report (2)"),
+            (".env", ".env", ".env (2)"),
+        ],
+    )
+    def test_download_content_attachments_disambiguates_sanitized_collision(
+        self,
+        attachments_mixin: AttachmentsMixin,
+        first: str,
+        second: str,
+        expected: str,
+    ) -> None:
+        """Two different attachment titles that sanitize to the same safe
+        name must not collide onto the same target path -- the second
+        download would otherwise silently overwrite the first while both
+        are reported as successful."""
+        mock_attachments = [
+            {
+                "id": "att1",
+                "title": first,
+                "extensions": {"fileSize": 100},
+                "_links": {"download": "/download/a"},
+            },
+            {
+                "id": "att2",
+                "title": second,
+                "extensions": {"fileSize": 100},
+                "_links": {"download": "/download/b"},
+            },
+        ]
+        mock_attachment_a = MagicMock()
+        mock_attachment_a.title = first
+        mock_attachment_a.download_url = "/download/a"
+        mock_attachment_a.file_size = 100
+        mock_attachment_b = MagicMock()
+        mock_attachment_b.title = second
+        mock_attachment_b.download_url = "/download/b"
+        mock_attachment_b.file_size = 100
+
+        with (
+            patch.object(
+                attachments_mixin,
+                "get_content_attachments",
+                return_value={"success": True, "attachments": mock_attachments},
+            ),
+            patch.object(
+                attachments_mixin, "download_attachment", return_value=True
+            ) as mock_download,
+            patch("pathlib.Path.mkdir"),
+            patch(
+                "mcp_atlassian.models.confluence.ConfluenceAttachment.from_api_response",
+                side_effect=[mock_attachment_a, mock_attachment_b],
+            ),
+            patch("mcp_atlassian.confluence.attachments.validate_safe_path"),
+        ):
+            attachments_mixin.download_content_attachments("123456", "/tmp/attachments")
+
+        assert mock_download.call_count == 2
+        target_names = [
+            Path(call.args[1]).name for call in mock_download.call_args_list
+        ]
+        assert len({name.casefold() for name in target_names}) == 2, (
+            f"both attachments wrote to the same path: {target_names}"
+        )
+
+        assert target_names[1] == expected
 
 
 class TestConfluenceAttachmentPathTraversal:
