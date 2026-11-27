@@ -156,9 +156,10 @@ class _PairScanner:
     stored by distance from the end of the text. When the inline processor
     replaces a match with a placeholder, the text after the placeholder is
     unchanged and its pairs stay valid. Pairs further from the end than
-    ``valid`` may be from an older text and are scanned again. Comparing the
-    texts costs a copy of the tail, so a new text is first scanned for a
-    near close the way stock Python-Markdown would.
+    ``valid`` may be from an older text and are scanned again unless their
+    generation matches the current text. Comparing the texts costs a copy
+    of the tail, so a new text is first scanned for a near close the way
+    stock Python-Markdown would.
     """
 
     def __init__(self, opener: str, closer: str, quotes: str = "") -> None:
@@ -166,8 +167,9 @@ class _PairScanner:
         self.quotes = quotes
         self.pattern = re.compile("[" + re.escape(opener + closer + quotes) + "]")
         self.data = ""
-        self.closes: dict[int, tuple[int | None, bool]] = {}
+        self.closes: dict[int, tuple[int | None, bool, int]] = {}
         self.valid = 0
+        self.generation = 0
 
     def _near(self, data: str, opener: int) -> tuple[int, bool] | None:
         depth = 1
@@ -186,14 +188,24 @@ class _PairScanner:
         tail = len(data) - opener
         if self.closes and self.data.endswith(data[opener:]):
             self.valid = min(self.valid, tail)
+            self.generation += 1
         else:
             self.closes, self.valid = {}, 0
+            self.generation = 0
         self.data = data
 
     def _scan(self, data: str, opener: int) -> None:
         end = len(data)
         quotes = 0
         stack = [(opener, 0)]
+        # Whether any entry already in ``self.closes`` could predate this
+        # call's ``data`` (see ``_sync``, which keeps ``closes`` on a
+        # matching-suffix edit rather than clearing it). If so, a later
+        # opener's own close lying outside the *current* ``valid`` boundary
+        # means this scan does not reach that boundary -- extending `valid`
+        # regardless would also validate whatever stale entries fall in
+        # that gap, between this scan's close and the old boundary.
+        had_prior_entries = bool(self.closes)
         for match in self.pattern.finditer(data, opener + 1):
             char, pos = match.group(), match.start()
             if char in self.quotes:
@@ -202,13 +214,24 @@ class _PairScanner:
                 stack.append((pos, quotes))
             else:
                 start, seen = stack.pop()
-                self.closes[end - start] = (end - pos, quotes != seen)
+                self.closes[end - start] = (
+                    end - pos,
+                    quotes != seen,
+                    self.generation,
+                )
                 if not stack:
-                    if end - pos <= self.valid:
+                    # Every opener between `opener` and `pos` was pushed and
+                    # popped during this pass, so every entry just recorded
+                    # for them is fresh against the current self.data. With
+                    # no older entries to connect to, that alone makes them
+                    # trustworthy up through this span; otherwise only if
+                    # this span reaches the existing valid boundary with no
+                    # gap in between.
+                    if not had_prior_entries or end - pos <= self.valid:
                         self.valid = max(self.valid, end - opener)
                     return
         for start, seen in stack:
-            self.closes[end - start] = (None, quotes != seen)
+            self.closes[end - start] = (None, quotes != seen, self.generation)
         self.valid = max(self.valid, end - opener)
 
     def close(self, data: str, opener: int) -> tuple[int, bool]:
@@ -220,9 +243,10 @@ class _PairScanner:
                 return near
             self._sync(data, opener)
         tail = len(data) - opener
-        if tail > self.valid or tail not in self.closes:
+        entry = self.closes.get(tail)
+        if entry is None or (entry[2] != self.generation and tail > self.valid):
             self._scan(data, opener)
-        close, quoted = self.closes[tail]
+        close, quoted, _ = self.closes[tail]
         return (-1 if close is None else len(data) - close), quoted
 
 
