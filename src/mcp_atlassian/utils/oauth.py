@@ -92,13 +92,13 @@ class OAuthConfig:
     """
 
     client_id: str
-    client_secret: str
+    client_secret: str = field(repr=False)
     redirect_uri: str
     scope: str
     cloud_id: str | None = None
     base_url: str | None = None
-    refresh_token: str | None = None
-    access_token: str | None = None
+    refresh_token: str | None = field(default=None, repr=False)
+    access_token: str | None = field(default=None, repr=False)
     expires_at: float | None = None
 
     def __post_init__(self) -> None:
@@ -618,7 +618,7 @@ class BYOAccessTokenOAuthConfig:
     This configuration does not support token refreshing.
     """
 
-    access_token: str
+    access_token: str = field(repr=False)
     cloud_id: str | None = None
     base_url: str | None = None
     refresh_token: None = field(default=None, repr=False)

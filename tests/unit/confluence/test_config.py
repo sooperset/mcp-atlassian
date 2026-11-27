@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
+from mcp_atlassian.utils.oauth import OAuthConfig
 from mcp_atlassian.utils.proxy import DEFAULT_PROXY_WPAD_URL
 
 
@@ -443,3 +444,36 @@ def test_is_auth_configured_cert_missing():
         auth_type="cert",
     )
     assert config.is_auth_configured() is False
+
+
+@pytest.mark.security_regression
+def test_repr_does_not_leak_secrets():
+    """ConfluenceConfig's secret fields -- including a nested OAuthConfig's
+    own secrets -- must not appear in its repr/str. A config object is a
+    prime candidate to end up in a debug log line, an uncaught-exception
+    traceback, or a test-assertion diff."""
+    oauth_config = OAuthConfig(
+        client_id="cid",
+        client_secret="oauth-client-secret-SECRET",
+        redirect_uri="https://example.com/callback",
+        scope="read:confluence-space.summary",
+        refresh_token="oauth-refresh-token-SECRET",
+        access_token="oauth-access-token-SECRET",
+    )
+    config = ConfluenceConfig(
+        url="https://confluence.example.com",
+        auth_type="basic",
+        api_token="confluence-api-token-SECRET",
+        personal_token="confluence-personal-token-SECRET",
+        client_key_password="confluence-key-password-SECRET",
+        oauth_config=oauth_config,
+    )
+
+    rendered = repr(config)
+
+    assert "confluence-api-token-SECRET" not in rendered
+    assert "confluence-personal-token-SECRET" not in rendered
+    assert "confluence-key-password-SECRET" not in rendered
+    assert "oauth-client-secret-SECRET" not in rendered
+    assert "oauth-refresh-token-SECRET" not in rendered
+    assert "oauth-access-token-SECRET" not in rendered

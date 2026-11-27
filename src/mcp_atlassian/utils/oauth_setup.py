@@ -18,7 +18,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html import escape as html_escape
 
 from ..utils.oauth import OAuthConfig
@@ -248,7 +248,7 @@ class OAuthSetupArgs:
     """Arguments for the OAuth setup flow."""
 
     client_id: str
-    client_secret: str
+    client_secret: str = field(repr=False)
     redirect_uri: str
     scope: str
 

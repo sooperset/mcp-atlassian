@@ -2,7 +2,7 @@
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
 from ..utils.env import (
@@ -34,8 +34,12 @@ class ConfluenceConfig:
         "basic", "pat", "oauth", "cert", "external"
     ]  # Authentication type
     username: str | None = None  # Email or username
-    api_token: str | None = None  # API token used as password
-    personal_token: str | None = None  # Personal access token (Server/DC)
+    api_token: str | None = field(
+        default=None, repr=False
+    )  # API token used as password
+    personal_token: str | None = field(
+        default=None, repr=False
+    )  # Personal access token (Server/DC)
     oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig | None = None
     ssl_verify: bool = True  # Whether to verify SSL certificates
     spaces_filter: str | None = None  # List of space keys to filter searches
@@ -49,7 +53,9 @@ class ConfluenceConfig:
     passthrough_headers: list[str] | None = None  # Request headers to pass through
     client_cert: str | None = None  # Client certificate file path (.pem)
     client_key: str | None = None  # Client private key file path (.pem)
-    client_key_password: str | None = None  # Password for encrypted private key
+    client_key_password: str | None = field(
+        default=None, repr=False
+    )  # Password for encrypted private key
     timeout: int = 75  # Connection timeout in seconds
     # Cloud removed the legacy /download/attachments/... endpoint (CHANGE-2735);
     # it now 401s for API-token / scoped-token auth. Controls whether attachment

@@ -600,3 +600,26 @@ def test_is_auth_configured_cert_missing():
         auth_type="cert",
     )
     assert config.is_auth_configured() is False
+
+
+@pytest.mark.security_regression
+def test_repr_does_not_leak_secrets():
+    """JiraConfig's secret fields must not appear in its repr/str.
+
+    A config object is a prime candidate to end up in a debug log line, an
+    uncaught-exception traceback, or a test-assertion diff -- any of which
+    would otherwise leak a real API token, PAT, or private-key password.
+    """
+    config = JiraConfig(
+        url="https://jira.example.com",
+        auth_type="basic",
+        api_token="jira-api-token-SECRET",
+        personal_token="jira-personal-token-SECRET",
+        client_key_password="jira-key-password-SECRET",
+    )
+
+    rendered = repr(config)
+
+    assert "jira-api-token-SECRET" not in rendered
+    assert "jira-personal-token-SECRET" not in rendered
+    assert "jira-key-password-SECRET" not in rendered
