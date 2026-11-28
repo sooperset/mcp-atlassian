@@ -72,15 +72,18 @@ class TestAttachmentsMixin:
         attachments_mixin.jira._session.get.return_value = mock_response
 
         # A subdirectory of CWD (downloads may not land in the CWD root itself).
-        # os.path.isabs() already treats this as absolute (on POSIX always; on
-        # Windows too, since a rooted path with no drive letter still counts),
-        # so download_attachment uses it as-is -- it never resolves it via
-        # get_file_root()/abspath, confirmed empirically. The expected path
-        # must therefore be the literal input, not its abspath-resolved form
-        # (which would add a drive letter on Windows that the real call never
-        # produces).
+        # os.path.isabs() on a rooted-but-no-drive-letter path like this one is
+        # version-dependent on Windows: True on 3.10-3.12 (download_attachment
+        # uses it as-is), False on 3.13+ (it gets resolved via get_file_root(),
+        # which lands on the same value os.path.abspath() would produce here).
+        # Mirror that branch instead of hardcoding either form, so this passes
+        # on every supported Python version.
         download_path = "/tmp/downloads/test_file.txt"
-        expected_path = download_path
+        expected_path = (
+            download_path
+            if os.path.isabs(download_path)
+            else os.path.abspath(download_path)
+        )
 
         # Mock file operations
         with (
