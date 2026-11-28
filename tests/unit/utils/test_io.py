@@ -1,12 +1,19 @@
 """Tests for the I/O utilities module."""
 
 import os
+import re
+import stat
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from mcp_atlassian.utils.io import is_read_only_mode, validate_safe_path
+from mcp_atlassian.utils.io import (
+    is_read_only_mode,
+    restrict_to_owner,
+    validate_safe_path,
+)
 
 
 def test_is_read_only_mode_default():
@@ -463,3 +470,315 @@ class TestOpenConfined:
             if sub.is_symlink():
                 to_dir()
         assert (outside / "in.txt").read_text() == "SECRET"
+
+
+class TestRestrictToOwner:
+    """``restrict_to_owner`` must leave a path readable only by its owner on
+    every platform. ``os.chmod`` alone does not do that on Windows: it only
+    changes the mode bits Python reports back, not the real ACL, so a
+    mode-0600 chmod there silently left persisted OAuth token files (and
+    their directory) readable by every local account -- see the regression
+    history already covered by ``TestTokenFilePermissionsRegression`` in
+    ``test_oauth.py`` (GHSA-g5xv, GHSA-76pr, GHSA-4596), which this extends
+    to cover the Windows-specific gap those POSIX-focused tests could not
+    catch.
+    """
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX chmod semantics")
+    def test_applies_posix_mode(self, tmp_path):
+        target = tmp_path / "secret.json"
+        target.write_text("{}")
+        os.chmod(target, 0o644)
+
+        restrict_to_owner(target, 0o600)
+
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+    def test_windows_file_grant_is_owner_only_and_non_inheritable(
+        self, tmp_path, monkeypatch
+    ):
+        """Simulates the Windows branch regardless of the platform tests run
+        on, so CI exercises the icacls invocation even when it runs on
+        Linux: a single file must be granted to its owner only, with no
+        inheritance flags (meaningless, and refused by icacls, on a file).
+
+        Patches ``_is_windows`` rather than ``os.name`` -- ``Path``'s own
+        concrete class is chosen from ``os.name`` too, and constructing the
+        one that does not match the real, running OS raises
+        ``NotImplementedError`` regardless of what ``os.name`` is patched
+        to, which broke this simulation on every platform but Windows.
+        """
+        from mcp_atlassian.utils import io as io_mod
+
+        target = tmp_path / "secret.json"
+        target.write_text("{}")
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            if args[1:] == [str(target)]:
+                return subprocess.CompletedProcess(args, 0, stdout="")
+            return subprocess.CompletedProcess(args, 0)
+
+        monkeypatch.setattr(io_mod, "_is_windows", lambda: True)
+        monkeypatch.setattr(io_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(io_mod, "_current_user_sid", lambda: "S-1-5-21-TEST")
+
+        restrict_to_owner(target, 0o600)
+
+        assert len(calls) == 2
+        list_args, grant_args = calls
+        assert list_args == [str(io_mod._system_icacls_path()), str(target)]
+        assert grant_args[0] == str(io_mod._system_icacls_path())
+        assert grant_args[1] == str(target)
+        assert "/inheritance:r" in grant_args
+        assert "/reset" not in grant_args
+        assert grant_args[-2:] == ["/grant:r", "*S-1-5-21-TEST:(F)"]
+
+    def test_windows_directory_grant_is_inheritable(self, tmp_path, monkeypatch):
+        """A directory's grant must carry (OI)(CI) so Windows propagates the
+        owner-only entry to files already inside it (e.g. a token file
+        persisted by a pre-fix version of this server) and to files created
+        in it afterwards -- confirmed empirically against both cases; a
+        non-inheritable grant on the directory alone would leave existing
+        and new files unprotected."""
+        from mcp_atlassian.utils import io as io_mod
+
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            if args[1:] == [str(tmp_path)]:
+                return subprocess.CompletedProcess(args, 0, stdout="")
+            return subprocess.CompletedProcess(args, 0)
+
+        monkeypatch.setattr(io_mod, "_is_windows", lambda: True)
+        monkeypatch.setattr(io_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(io_mod, "_current_user_sid", lambda: "S-1-5-21-TEST")
+
+        restrict_to_owner(tmp_path, 0o700)
+
+        assert len(calls) == 2
+        assert calls[0] == [str(io_mod._system_icacls_path()), str(tmp_path)]
+        assert "/reset" not in calls[1]
+        assert calls[1][-2:] == ["/grant:r", "*S-1-5-21-TEST:(OI)(CI)F"]
+
+    def test_icacls_path_is_resolved_from_system_root_not_the_search_path(
+        self, monkeypatch
+    ):
+        """``_system_icacls_path`` must not depend on ``PATH`` or the
+        current working directory at all, unlike the ``shutil.which``-based
+        resolution this replaces: ``shutil.which("icacls")`` checks the
+        current working directory before ``PATH`` for a bare command name on
+        Windows (confirmed empirically), so a malicious ``icacls.cmd`` or
+        ``icacls.exe`` placed there would run instead of the real tool and
+        could silently skip the ACL hardening while reporting success."""
+        from mcp_atlassian.utils import io as io_mod
+
+        monkeypatch.setenv("SystemRoot", r"C:\FakeWindowsRoot")
+        monkeypatch.delenv("WINDIR", raising=False)
+
+        # Built through the same Path(...) joins the implementation uses,
+        # not a single hardcoded backslash string: on a POSIX-path-
+        # constructing runner (CI's Linux lint job, which only checks
+        # import-time/collection-time code like this, not the Windows-only
+        # runtime behavior), a lone string with literal backslashes becomes
+        # one opaque path component, while joining with "/" adds real
+        # component boundaries -- the two are not equal there even though
+        # both print the same on Windows.
+        assert (
+            io_mod._system_icacls_path()
+            == Path(r"C:\FakeWindowsRoot") / "System32" / "icacls.exe"
+        )
+
+    @pytest.mark.security_regression
+    @pytest.mark.skipif(os.name != "nt", reason="exercises the real search path")
+    def test_cwd_icacls_hijack_is_not_executed(self, tmp_path, monkeypatch):
+        """Regression: a malicious ``icacls.cmd`` placed in the process's
+        current working directory must not run in place of the real
+        ``System32\\icacls.exe``."""
+
+        marker = tmp_path / "hijacked.txt"
+        (tmp_path / "icacls.cmd").write_text(
+            f'@echo hijacked > "{marker}"\r\n@exit /b 0\r\n'
+        )
+        target = tmp_path / "secret.json"
+        target.write_text("{}")
+        monkeypatch.chdir(tmp_path)
+
+        restrict_to_owner(target, 0o600)
+
+        assert not marker.exists(), (
+            "the planted icacls.cmd ran instead of the real tool"
+        )
+        after = subprocess.run(
+            ["icacls", str(target)], capture_output=True, text=True, check=True
+        ).stdout
+        assert after.count(":(") == 1
+
+    @pytest.mark.skipif(os.name != "nt", reason="resolves the real process token")
+    def test_current_user_sid_has_the_expected_shape(self):
+        from mcp_atlassian.utils.io import _current_user_sid
+
+        sid = _current_user_sid()
+
+        # A domain/local account SID is "S-1-5-21-<domain>-<domain>-<domain>-
+        # <rid>", but a valid Windows account identity is not always that
+        # shape: an Entra ID/AzureAD account uses "S-1-12-1-...", and service
+        # identities use their own authorities again. Check general SID
+        # syntax (authority "1", one or more numeric sub-authorities) rather
+        # than this one account type's shape, so this test does not fail on
+        # a supported Windows environment that ``_current_user_sid`` itself
+        # resolves correctly.
+        assert re.fullmatch(r"S-1-\d+(-\d+)+", sid), sid
+
+    @pytest.mark.security_regression
+    @pytest.mark.skipif(os.name != "nt", reason="asserts the real Windows ACL")
+    def test_windows_real_acl_fixes_a_preexisting_broad_file(self, tmp_path):
+        """Regression: a file that already has the OS default (broad) ACL --
+        e.g. a token file a pre-fix version of this server already wrote to
+        disk -- must end up owner-only once this touches its directory, not
+        only files created after the fix is deployed."""
+        target_dir = tmp_path / ".mcp-atlassian"
+        target_dir.mkdir()
+        stale = target_dir / "oauth-test.json"
+        stale.write_text('{"old": "broad"}')
+
+        def acl_text(path: Path) -> str:
+            return subprocess.run(
+                ["icacls", str(path)], capture_output=True, text=True, check=True
+            ).stdout
+
+        before = acl_text(stale)
+        assert before.count(":(") > 1, (
+            "expected a realistic multi-principal starting ACL -- if this "
+            "fails, the test environment's default ACL changed and the "
+            "regression this guards against may no longer be reproducible"
+        )
+
+        restrict_to_owner(target_dir, 0o700)
+        restrict_to_owner(stale, 0o600)
+
+        after = acl_text(stale)
+        assert "Administrators" not in after
+        assert "SYSTEM" not in after
+        assert "Authenticated Users" not in after
+        assert "BUILTIN\\Users" not in after
+        assert after.count(":(") == 1
+
+    @pytest.mark.security_regression
+    @pytest.mark.skipif(os.name != "nt", reason="asserts the real Windows ACL")
+    def test_windows_real_acl_removes_an_explicit_grant_for_another_principal(
+        self, tmp_path
+    ):
+        """Regression: `/inheritance:r` only strips *inherited* entries and
+        `/grant:r` only replaces the named user's *own* grant, so an
+        existing explicit grant for some other principal -- however it got
+        there -- survived both calls untouched. `/reset` first drops the
+        path's entire existing ACL before the owner-only grant is applied,
+        regardless of what was on it."""
+
+        def acl_text(path: Path) -> str:
+            return subprocess.run(
+                ["icacls", str(path)], capture_output=True, text=True, check=True
+            ).stdout
+
+        target_dir = tmp_path / ".mcp-atlassian"
+        target_dir.mkdir()
+        stale = target_dir / "oauth-test.json"
+        stale.write_text('{"old": "broad"}')
+        # Grant by the well-known "Everyone" SID rather than that name
+        # literally: the name itself is localized (e.g. "Jeder" on German
+        # Windows), so passing it as text would fail on a non-English
+        # runner, while a SID is universal.
+        subprocess.run(
+            ["icacls", str(stale), "/grant", "*S-1-1-0:(R)"],
+            capture_output=True,
+            check=True,
+        )
+        before = acl_text(stale)
+        assert before.count(":(") > 1, (
+            "expected the explicit grant just added to still be there -- if "
+            "this fails, icacls itself rejected it rather than this code"
+        )
+
+        restrict_to_owner(target_dir, 0o700)
+        restrict_to_owner(stale, 0o600)
+
+        after = acl_text(stale)
+        # Exactly one ACE (the owner-only grant just applied) rather than
+        # checking for the absence of "Everyone" by name: that name is
+        # itself localized, so the count is the locale-independent check.
+        assert after.count(":(") == 1
+
+    def test_windows_grant_never_resets_the_acl_first(self, tmp_path, monkeypatch):
+        """Regression: an earlier version of this function ran `icacls
+        /reset` before re-applying the owner-only grant. `/reset` replaces
+        the path's ACL with whatever its parent currently grants, which can
+        be broad -- confirmed empirically to propagate to files already
+        inside a directory being reset, not just the directory itself -- so
+        every subsequent save of an already-restricted directory (e.g. every
+        OAuth token refresh) would transiently re-expose it and everything
+        already inside it under the parent's wider ACL, and permanently if
+        the second icacls call then failed. No call this function makes may
+        use `/reset`."""
+        from mcp_atlassian.utils import io as io_mod
+
+        target = tmp_path / "secret.json"
+        target.write_text("{}")
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            if args[1:] == [str(target)]:
+                return subprocess.CompletedProcess(args, 0, stdout="")
+            return subprocess.CompletedProcess(args, 0)
+
+        monkeypatch.setattr(io_mod, "_is_windows", lambda: True)
+        monkeypatch.setattr(io_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(io_mod, "_current_user_sid", lambda: "S-1-5-21-TEST")
+
+        restrict_to_owner(target, 0o600)
+
+        assert calls, "expected at least one icacls call"
+        assert all("/reset" not in call for call in calls)
+
+    @pytest.mark.security_regression
+    @pytest.mark.skipif(os.name != "nt", reason="asserts the real Windows ACL")
+    def test_windows_real_acl_resave_does_not_widen_an_already_restricted_file(
+        self, tmp_path
+    ):
+        """Regression: restricting an already owner-only directory again
+        (what every OAuth token refresh does, via `_save_tokens_to_file`)
+        must never widen a file already inside it, even transiently, when
+        the directory's own parent (e.g. the user's home directory) has a
+        broader inheritable grant than owner-only -- the common case, and
+        exactly the scenario `/reset` mishandled."""
+
+        def acl_text(path: Path) -> str:
+            return subprocess.run(
+                ["icacls", str(path)], capture_output=True, text=True, check=True
+            ).stdout
+
+        home = tmp_path / "home"
+        home.mkdir()
+        subprocess.run(
+            ["icacls", str(home), "/grant:r", "*S-1-1-0:(OI)(CI)R"],
+            capture_output=True,
+            check=True,
+        )
+        target_dir = home / ".mcp-atlassian"
+        target_dir.mkdir()
+        existing = target_dir / "oauth-test.json"
+        existing.write_text('{"old": "secret"}')
+
+        restrict_to_owner(target_dir, 0o700)
+        restrict_to_owner(existing, 0o600)
+        assert acl_text(existing).count(":(") == 1
+
+        # The resave every token refresh performs.
+        restrict_to_owner(target_dir, 0o700)
+
+        after = acl_text(existing)
+        assert "Everyone" not in after
+        assert after.count(":(") == 1

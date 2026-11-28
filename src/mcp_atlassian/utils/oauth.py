@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 import time
 import urllib.parse
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from typing import Any, Optional
 import keyring
 import requests
 
+from .io import restrict_to_owner
 from .urls import is_atlassian_cloud_url
 
 # Configure logging
@@ -428,7 +430,7 @@ class OAuthConfig:
             # Create the directory if it doesn't exist (owner-only)
             token_dir = Path.home() / ".mcp-atlassian"
             token_dir.mkdir(exist_ok=True)
-            os.chmod(token_dir, 0o700)
+            restrict_to_owner(token_dir, 0o700)
 
             # Save the tokens to a file
             token_path = token_dir / f"oauth-{self.client_id}.json"
@@ -442,12 +444,30 @@ class OAuthConfig:
                     "base_url": self.base_url,
                 }
 
-            # Persisted tokens are secrets: create/truncate owner-only so they are
-            # never group/world-readable, independent of the process umask.
-            fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
-                json.dump(token_data, f)
-            os.chmod(token_path, 0o600)
+            # Persisted tokens are secrets: write them to a new, owner-only
+            # file inside token_dir (already restricted above, so the new
+            # file inherits that ACL immediately on creation -- confirmed
+            # empirically) and atomically replace token_path with it,
+            # instead of truncating token_path in place. A pre-existing
+            # token_path (e.g. left over from a version of this server
+            # built before restrict_to_owner existed) can still carry
+            # broad permissions; opening it with O_TRUNC would briefly make
+            # the fresh secrets readable under that old, broad ACL before a
+            # later restrict_to_owner call narrowed it. os.replace keeps
+            # the replacement file's own identity -- and therefore its own,
+            # already-owner-only ACL -- not the destination's, confirmed
+            # empirically.
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f"oauth-{self.client_id}.", suffix=".json.tmp", dir=token_dir
+            )
+            tmp_path = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(token_data, f)
+                os.replace(tmp_path, token_path)
+            except BaseException:
+                tmp_path.unlink(missing_ok=True)
+                raise
 
             logger.debug(f"Saved OAuth tokens to file {token_path} (fallback storage)")
         except Exception as e:

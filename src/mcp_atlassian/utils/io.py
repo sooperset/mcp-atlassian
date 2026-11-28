@@ -1,9 +1,11 @@
 """I/O utility functions for MCP Atlassian."""
 
+import ctypes
 import errno
 import logging
 import os
 import stat
+import subprocess
 from pathlib import Path
 from typing import IO, Literal
 
@@ -78,6 +80,219 @@ def get_file_root() -> Path:
     if _remote_transport_active:
         return default_files_dir().resolve(strict=False)
     return Path(os.getcwd()).resolve(strict=False)
+
+
+def _is_windows() -> bool:
+    """Whether to apply the Windows ACL branch of :func:`restrict_to_owner`.
+
+    A thin wrapper around the real check so tests can simulate the Windows
+    branch on any platform without touching ``os.name`` itself: ``Path``'s
+    own concrete class (``WindowsPath``/``PosixPath``) is also chosen from
+    ``os.name``, and instantiating the one that does not match the real,
+    running OS raises ``NotImplementedError`` regardless of what ``os.name``
+    is patched to -- so flipping ``os.name`` directly breaks on every other
+    platform rather than simulating Windows on it.
+    """
+    return os.name == "nt"
+
+
+def _current_user_sid() -> str:
+    """Return the current process token's user SID as a string.
+
+    Resolved directly through the Win32 API (``OpenProcessToken`` +
+    ``GetTokenInformation(TokenUser)`` + ``ConvertSidToStringSidW``) rather
+    than by shelling out to ``whoami /user`` and parsing its output, which is
+    localized and so not a stable thing to parse. A SID, unlike a bare
+    username, is unambiguous even when a local account and a domain/AzureAD
+    account happen to share a display name.
+
+    Returns:
+        The SID in its string form (e.g. ``S-1-5-21-...``).
+
+    Raises:
+        OSError: If a Win32 call in the resolution fails.
+    """
+    import ctypes.wintypes as wintypes
+
+    # ctypes.WinDLL/WinError/get_last_error exist only in the Windows-specific
+    # typeshed stubs, so mypy (run on Linux in CI) does not know them.
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.GetCurrentProcess.argtypes = []
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.OpenProcessToken.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    ]
+    advapi32.GetTokenInformation.restype = wintypes.BOOL
+    advapi32.GetTokenInformation.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+    advapi32.ConvertSidToStringSidW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_wchar_p),
+    ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+
+    token_query = 0x0008
+    token_user = 1
+
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(
+        kernel32.GetCurrentProcess(), token_query, ctypes.byref(token)
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+    try:
+        size = wintypes.DWORD()
+        advapi32.GetTokenInformation(token, token_user, None, 0, ctypes.byref(size))
+        buf = ctypes.create_string_buffer(size.value)
+        if not advapi32.GetTokenInformation(
+            token, token_user, buf, size, ctypes.byref(size)
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+        # TOKEN_USER is { SID_AND_ATTRIBUTES User } and SID_AND_ATTRIBUTES is
+        # { PSID Sid; DWORD Attributes }: the first pointer-sized field.
+        sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
+        str_sid = ctypes.c_wchar_p()
+        if not advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(str_sid)):
+            raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+        try:
+            value = str_sid.value
+            if value is None:
+                raise OSError("ConvertSidToStringSidW returned a null string")
+            return value
+        finally:
+            kernel32.LocalFree(str_sid)
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def _system_icacls_path() -> Path:
+    """Return the real ``System32\\icacls.exe``, not whatever ``icacls``
+    resolves to on the search path.
+
+    ``shutil.which("icacls")`` -- the previous implementation -- checks the
+    current working directory before ``PATH`` for a bare command name on
+    Windows, confirmed empirically: a malicious ``icacls.cmd`` or
+    ``icacls.exe`` placed in the process's working directory runs instead of
+    the real tool and can simply exit 0, silently skipping the ACL hardening
+    below while this function still reports success.
+
+    Returns:
+        The resolved path to the system ``icacls.exe``.
+    """
+    system_root = (
+        os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+    )
+    return Path(system_root) / "System32" / "icacls.exe"
+
+
+def restrict_to_owner(path: str | os.PathLike[str], mode: int = 0o600) -> None:
+    """Restrict *path* so only its owner can read or write it.
+
+    ``os.chmod`` only changes the POSIX mode bits Python reports back; on
+    Windows those bits are a Python-level emulation and do not touch the
+    real access control list, so a mode-0600 chmod there silently leaves the
+    file (or directory) readable by every local account that inherited
+    access from its parent — including, by default, every account on the
+    machine. This additionally resets the Windows ACL to grant only the
+    current user when running on Windows.
+
+    Args:
+        path: The file or directory to restrict.
+        mode: The POSIX mode to apply via :func:`os.chmod`.
+
+    Raises:
+        OSError: If ``os.chmod`` or SID resolution fails.
+        subprocess.CalledProcessError: If an ``icacls`` call exits non-zero.
+        subprocess.TimeoutExpired: If an ``icacls`` call does not finish
+            within its timeout.
+    """
+    path = Path(path)
+    os.chmod(path, mode)
+    if not _is_windows():
+        return
+    sid = _current_user_sid()
+    # A freshly created file under a directory with no inheritable ACE of its
+    # own falls back to a default DACL that, on this machine, included the
+    # file's owner *and* BUILTIN\Administrators and NT AUTHORITY\SYSTEM as
+    # separate explicit (non-inherited) entries -- `/grant:r` only replaces
+    # the named principal's own grant, so it would leave those other,
+    # pre-existing entries in place. Making the grant on a directory
+    # inheritable (`(OI)(CI)`) avoids that fallback entirely: Windows then
+    # propagates the owner-only entry to every file already inside the
+    # directory immediately, and to every file created in it afterwards,
+    # confirmed empirically against both cases.
+    #
+    # Granted by SID (`*S-1-...`, the `*` tells icacls the name is a SID)
+    # rather than by username string: a bare username is ambiguous when a
+    # local account and a domain/AzureAD account happen to share a display
+    # name, and icacls's own name-to-principal lookup can behave
+    # unexpectedly in that case.
+    grant = f"*{sid}:(OI)(CI)F" if path.is_dir() else f"*{sid}:(F)"
+    icacls_path = str(_system_icacls_path())
+    # `/inheritance:r /grant:r` alone only strips *inherited* entries and
+    # only replaces the named user's own grant, so an existing *explicit*
+    # grant for some other principal (e.g. a stray `Everyone:(R)`, however
+    # it got there) survives untouched -- confirmed empirically. An earlier
+    # version of this function ran `/reset` first to clear that, but `/reset`
+    # replaces the path's ACL with whatever its parent currently grants,
+    # which can be broad; for an already-owner-only path, that step alone
+    # instantly re-exposes it (and every file already inside it, for a
+    # directory) under the parent's wider ACL until the second call
+    # restricts it again -- confirmed empirically, and permanently if that
+    # second call fails. List the path's current explicit grantees first
+    # (read-only, no ACL change) and strip exactly those by name in the same
+    # call that applies the owner-only grant, so the ACL only ever goes
+    # from whatever it was straight to owner-only, with no broader
+    # intermediate state.
+    stale_grantees = _explicit_grant_principals(icacls_path, path)
+    args = [icacls_path, str(path), "/inheritance:r", "/grant:r", grant]
+    for principal in stale_grantees:
+        args += ["/remove:g", principal]
+    subprocess.run(  # noqa: S603 -- fixed args, no shell, path resolved directly
+        args,
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+
+def _explicit_grant_principals(icacls_path: str, path: Path) -> list[str]:
+    """Return principals holding an explicit (non-inherited) grant on ``path``.
+
+    Read-only: lists the current ACL without changing it, so the caller can
+    strip exactly these principals in the same ``icacls`` call that applies
+    the owner-only grant, instead of a ``/reset`` that would briefly restore
+    the parent's (possibly broader) ACL first.
+    """
+    result = subprocess.run(  # noqa: S603 -- fixed args, no shell, path resolved directly
+        [icacls_path, str(path)],
+        check=True,
+        capture_output=True,
+        timeout=10,
+        text=True,
+    )
+    path_str = str(path)
+    principals: list[str] = []
+    for raw_line in result.stdout.splitlines():
+        line = (
+            raw_line[len(path_str) :] if raw_line.startswith(path_str) else raw_line
+        ).strip()
+        if not line or ":" not in line:
+            continue
+        principal, _, flags = line.partition(":")
+        if "(I)" not in flags:
+            principals.append(principal.strip())
+    return principals
 
 
 def _home_dir() -> Path | None:

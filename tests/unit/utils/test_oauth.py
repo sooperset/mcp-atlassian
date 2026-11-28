@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import time
 import urllib.parse
 from unittest.mock import MagicMock, patch
@@ -1285,9 +1286,15 @@ class TestTokenFilePermissionsRegression:
     """
 
     @pytest.mark.security_regression
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="POSIX mode bits; see test_saved_token_file_has_owner_only_windows_acl "
+        "for the Windows equivalent (Windows only emulates a read-only/writable "
+        "mode bit, never a real 0o600, so this assertion cannot pass there "
+        "regardless of the real ACL)",
+    )
     def test_saved_token_file_is_not_group_or_world_readable(self, tmp_path) -> None:
         """The persisted OAuth token file must be owner-only (0o600)."""
-        import os
         import stat
 
         config = OAuthConfig(
@@ -1315,3 +1322,40 @@ class TestTokenFilePermissionsRegression:
             "OAuth token file must not be group/world-readable (expected 0o600); "
             f"got {oct(mode)}"
         )
+
+    @pytest.mark.security_regression
+    @pytest.mark.skipif(os.name != "nt", reason="asserts the real Windows ACL")
+    def test_saved_token_file_has_owner_only_windows_acl(self, tmp_path) -> None:
+        """The mode-bit check above is skipped on Windows, and not only
+        because of this bug: ``os.chmod`` there reports back a fixed
+        pattern (``0o666`` for a writable file, confirmed empirically)
+        regardless of the mode requested, so that assertion cannot
+        distinguish owner-only from world-readable either way. The real
+        access control list is the only thing that actually says who can
+        read the file, and a persisted OAuth token file was readable by
+        every local account on the machine despite ``os.chmod(path,
+        0o600)`` having been called on it. Assert the real ACL directly."""
+        import subprocess
+
+        config = OAuthConfig(
+            client_id="acl-test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="https://example.com/callback",
+            scope="read:jira-work",
+            cloud_id="test-cloud-id",
+            refresh_token="secret-refresh-token",
+            access_token="secret-access-token",
+            expires_at=1234567890,
+        )
+
+        with patch("mcp_atlassian.utils.oauth.Path.home", return_value=tmp_path):
+            config._save_tokens_to_file()
+
+        token_path = tmp_path / ".mcp-atlassian" / "oauth-acl-test-client-id.json"
+        acl = subprocess.run(
+            ["icacls", str(token_path)], capture_output=True, text=True, check=True
+        ).stdout
+        assert "Administrators" not in acl
+        assert "SYSTEM" not in acl
+        assert "Authenticated Users" not in acl
+        assert "BUILTIN\\Users" not in acl
