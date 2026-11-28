@@ -877,16 +877,18 @@ class TestGetJiraFetcher:
         )
         _setup_mock_context(mock_context, app_context)
 
+        original_error = Exception("Invalid token")
         mock_fetcher = _create_mock_fetcher(
-            JiraFetcher, validation_error=Exception("Invalid token")
+            JiraFetcher, validation_error=original_error
         )
         mock_jira_fetcher_class.return_value = mock_fetcher
 
         with pytest.raises(
             ValueError, match="Invalid header-based Jira token or configuration"
-        ):
+        ) as exc_info:
             await get_jira_fetcher(mock_context)
         mock_fetcher.close.assert_called_once()
+        assert exc_info.value.__cause__ is original_error
 
     @pytest.mark.parametrize("scenario_key", ["oauth", "pat"])
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
