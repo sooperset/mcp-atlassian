@@ -119,7 +119,7 @@ def validate_url_for_ssrf(url: str) -> str | None:
 
     try:
         parsed = urlparse(url)
-    except Exception:
+    except ValueError:
         return f"Invalid URL: {url}"
 
     # Scheme check
