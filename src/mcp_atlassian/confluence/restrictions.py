@@ -6,6 +6,7 @@ from typing import Any
 from requests.exceptions import HTTPError
 
 from ..utils.decorators import handle_auth_errors
+from ..utils.urls import path_segment
 from .client import ConfluenceClient
 
 logger = logging.getLogger("mcp-atlassian")
@@ -36,7 +37,7 @@ class RestrictionsMixin(ConfluenceClient):
         try:
             data = self.confluence.get(
                 f"{self._v1_rest_base_url()}/rest/api/content/"
-                f"{page_id}/restriction/byOperation",
+                f"{path_segment(page_id)}/restriction/byOperation",
                 absolute=True,
             )
 
@@ -150,7 +151,8 @@ class RestrictionsMixin(ConfluenceClient):
             ]
 
             response = self.confluence._session.put(
-                f"{self._v1_rest_base_url()}/rest/api/content/{page_id}/restriction",
+                f"{self._v1_rest_base_url()}/rest/api/content/"
+                f"{path_segment(page_id)}/restriction",
                 json=payload,
                 headers={
                     "Accept": "application/json",

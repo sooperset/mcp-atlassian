@@ -698,6 +698,38 @@ class TestAttachmentOriginRule:
         for fetcher in self._fetchers():
             fetcher._ensure_same_origin("https://cdn.files.example.test/a.bin")
 
+    def test_own_http_origin_is_still_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The https-only requirement applies to the allowlist match only --
+        an operator whose own instance is configured over plain http (an
+        internal Server/DC deployment) is unaffected, since matching their
+        own configured origin exactly already carries that same risk by the
+        operator's own choice, not a silent downgrade."""
+        from mcp_atlassian.jira import JiraConfig, JiraFetcher
+
+        monkeypatch.delenv("MCP_ALLOWED_URL_DOMAINS", raising=False)
+        jira = JiraFetcher(
+            config=JiraConfig(
+                url="http://jira.internal.test", auth_type="pat", personal_token="d"
+            )
+        )
+        jira._ensure_same_origin("http://jira.internal.test/secure/attachment/1/a.bin")
+
+    def test_allowlisted_host_over_plain_http_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: the allowlist match only ever checked the hostname,
+        not the scheme, so a same-domain ``http://`` URL was accepted and
+        this fetcher's bearer token/session cookie would be sent to it in
+        the clear. Only ``https`` may satisfy the allowlist match; the
+        exact-origin match (``own_urls``) is unaffected since it already
+        requires the operator's own configured scheme."""
+        monkeypatch.setenv("MCP_ALLOWED_URL_DOMAINS", "files.example.test")
+        for fetcher in self._fetchers():
+            with pytest.raises(ValueError, match="http://cdn.files.example.test"):
+                fetcher._ensure_same_origin("http://cdn.files.example.test/a.bin")
+
     def test_refusal_message_has_only_the_origin(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

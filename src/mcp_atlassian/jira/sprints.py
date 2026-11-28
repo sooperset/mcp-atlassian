@@ -8,6 +8,7 @@ import requests
 
 from ..models.jira import JiraSprint
 from ..utils import parse_date
+from ..utils.urls import path_segment
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -144,7 +145,7 @@ class SprintsMixin(JiraClient):
             requests.HTTPError: If the API call fails.
         """
         self.jira.post(
-            f"rest/agile/1.0/sprint/{sprint_id}/issue",
+            f"rest/agile/1.0/sprint/{path_segment(sprint_id)}/issue",
             data={"issues": issue_keys},
         )
         return True

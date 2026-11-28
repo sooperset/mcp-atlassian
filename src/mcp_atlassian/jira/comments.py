@@ -206,7 +206,7 @@ class CommentsMixin(JiraClient):
         """
         try:
             response = self.jira.get(
-                f"rest/servicedeskapi/request/{issue_key}",
+                f"rest/servicedeskapi/request/{path_segment(issue_key)}",
                 headers={
                     **self.jira.default_headers,
                     "X-ExperimentalApi": "opt-in",
@@ -544,7 +544,7 @@ class CommentsMixin(JiraClient):
             Exception: If the issue is not a JSM issue or API fails
         """
         try:
-            url = f"rest/servicedeskapi/request/{issue_key}/comment"
+            url = f"rest/servicedeskapi/request/{path_segment(issue_key)}/comment"
             data = {"body": comment, "public": public}
             headers = {
                 **self.jira.default_headers,

@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from requests.exceptions import HTTPError
 
+from ..utils.urls import path_segment
 from .client import ConfluenceClient
 
 logger = logging.getLogger("mcp-atlassian")
@@ -61,7 +62,7 @@ class PermissionsMixin(ConfluenceClient):
         self._require_cloud_permissions_api()
         url = (
             f"{self._permissions_rest_base_url()}"
-            f"/rest/api/content/{content_id}/permission/check"
+            f"/rest/api/content/{path_segment(content_id)}/permission/check"
         )
         body = {
             "operation": operation,
@@ -112,7 +113,8 @@ class PermissionsMixin(ConfluenceClient):
         """
         self._require_cloud_permissions_api()
         url = (
-            f"{self._permissions_rest_base_url()}/api/v2/spaces/{space_id}/permissions"
+            f"{self._permissions_rest_base_url()}/api/v2/spaces/"
+            f"{path_segment(space_id)}/permissions"
         )
         params: dict[str, Any] = {"limit": limit}
         if cursor is not None:

@@ -6,6 +6,7 @@ from typing import Any
 from requests.exceptions import HTTPError
 
 from ..models.jira import ProFormaForm
+from ..utils.urls import path_segment
 from .client import JiraClient
 from .forms_common import handle_forms_http_error
 
@@ -31,7 +32,7 @@ class FormsMixin(JiraClient):
         try:
             # Get the issue properties to find forms
             response = self.jira.get(
-                f"rest/api/3/issue/{issue_key}/properties/proforma.forms"
+                f"rest/api/3/issue/{path_segment(issue_key)}/properties/proforma.forms"
             )
 
             if not isinstance(response, dict):
@@ -79,7 +80,8 @@ class FormsMixin(JiraClient):
         """
         try:
             response = self.jira.get(
-                f"rest/api/3/issue/{issue_key}/properties/proforma.forms.{form_id}"
+                f"rest/api/3/issue/{path_segment(issue_key)}/properties/"
+                f"proforma.forms.{path_segment(form_id)}"
             )
 
             if not isinstance(response, dict):
@@ -130,7 +132,8 @@ class FormsMixin(JiraClient):
 
             # Make the PUT request to reopen the form
             response = self.jira.put(
-                f"rest/api/3/issue/{issue_key}/properties/proforma.forms.{form_id}",
+                f"rest/api/3/issue/{path_segment(issue_key)}/properties/"
+                f"proforma.forms.{path_segment(form_id)}",
                 data=request_body,
             )
 
@@ -165,7 +168,8 @@ class FormsMixin(JiraClient):
         try:
             # Make the POST request to submit the form
             response = self.jira.post(
-                f"rest/api/3/issue/{issue_key}/properties/proforma.forms.{form_id}/submit"
+                f"rest/api/3/issue/{path_segment(issue_key)}/properties/"
+                f"proforma.forms.{path_segment(form_id)}/submit"
             )
 
             logger.info(f"Successfully submitted form {form_id} for issue {issue_key}")
@@ -208,7 +212,9 @@ class FormsMixin(JiraClient):
             update_data = {"fields": {field_id: field_value}}
 
             # Update the issue with the new field value
-            response = self.jira.put(f"rest/api/3/issue/{issue_key}", data=update_data)
+            response = self.jira.put(
+                f"rest/api/3/issue/{path_segment(issue_key)}", data=update_data
+            )
 
             logger.info(f"Successfully updated field {field_id} for issue {issue_key}")
             return response if isinstance(response, dict) else {}

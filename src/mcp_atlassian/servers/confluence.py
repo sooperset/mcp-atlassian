@@ -37,6 +37,7 @@ from mcp_atlassian.utils.media import (
     is_image_attachment,
 )
 from mcp_atlassian.utils.truncation import is_truncated, more_certainly_exist
+from mcp_atlassian.utils.urls import path_segment
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,7 @@ def _get_attachment_metadata(
     if v2_adapter:
         return v2_adapter.get_attachment_by_id(attachment_id)
     base_url = confluence_fetcher.config.url.rstrip("/")
-    url = f"{base_url}/rest/api/content/{attachment_id}"
+    url = f"{base_url}/rest/api/content/{path_segment(attachment_id)}"
     resp_meta = confluence_fetcher.confluence._session.get(url)
     resp_meta.raise_for_status()
     return resp_meta.json()

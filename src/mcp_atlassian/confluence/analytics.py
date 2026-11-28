@@ -14,6 +14,7 @@ from typing import Any
 from requests.exceptions import HTTPError
 
 from ..models.confluence.analytics import PageViews, PageViewsBatchResponse
+from ..utils.urls import path_segment
 
 logger = logging.getLogger("mcp-atlassian")
 
@@ -130,7 +131,10 @@ class AnalyticsMixin:
         Raises:
             HTTPError: If the API request fails
         """
-        url = f"{self.confluence.url}/rest/api/analytics/content/{page_id}/views"
+        url = (
+            f"{self.confluence.url}/rest/api/analytics/content/"
+            f"{path_segment(page_id)}/views"
+        )
         response = self.confluence._session.get(url)
         response.raise_for_status()
         return response.json()

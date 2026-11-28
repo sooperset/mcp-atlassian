@@ -356,7 +356,7 @@ class CustomerRequestsMixin(JiraClient):
         if issue_key:
             return (
                 f"{self.config.url.rstrip('/')}/servicedesk/customer/portal/"
-                f"{service_desk_id}/{issue_key}"
+                f"{path_segment(service_desk_id)}/{path_segment(issue_key)}"
             )
 
         return ""
@@ -393,7 +393,7 @@ class CustomerRequestsMixin(JiraClient):
             raise ValueError("limit must be >= 1")
 
         response = self.jira.get(
-            f"rest/servicedeskapi/servicedesk/{service_desk_id}/requesttype",
+            f"rest/servicedeskapi/servicedesk/{path_segment(service_desk_id)}/requesttype",
             params={"start": start_at, "limit": limit},
         )
         if not isinstance(response, dict):
@@ -523,7 +523,7 @@ class CustomerRequestsMixin(JiraClient):
         base_url = self.jira.url.rstrip("/")
         url = (
             f"{base_url}/rest/servicedeskapi/servicedesk/"
-            f"{service_desk_id}/attachTemporaryFile"
+            f"{path_segment(service_desk_id)}/attachTemporaryFile"
         )
 
         response = self.jira._session.post(url, headers=headers, files=multipart_files)
@@ -576,7 +576,7 @@ class CustomerRequestsMixin(JiraClient):
             "temporaryAttachmentIds": temporary_attachment_ids,
             "public": public,
         }
-        endpoint = f"rest/servicedeskapi/request/{issue_key}/attachment"
+        endpoint = f"rest/servicedeskapi/request/{path_segment(issue_key)}/attachment"
         response = self.jira.post(endpoint, data=payload, headers=headers)
         if not isinstance(response, dict):
             msg = (

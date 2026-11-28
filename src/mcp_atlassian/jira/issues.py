@@ -16,6 +16,7 @@ from ..models.jira.common import JiraChangelog
 from ..models.jira.issue import restrict_changelogs
 from ..utils import parse_date
 from ..utils.truncation import merge_truncation
+from ..utils.urls import path_segment
 from .constants import DEFAULT_READ_JIRA_FIELDS
 from .protocols import (
     AttachmentsOperationsProto,
@@ -55,7 +56,7 @@ class IssuesMixin(
         """Preserve existing Cloud description media during Markdown rewrites."""
         try:
             issue_data = self.jira.get(
-                f"rest/api/3/issue/{issue_key}",
+                f"rest/api/3/issue/{path_segment(issue_key)}",
                 params={"fields": "description", "updateHistory": "false"},
             )
             if not isinstance(issue_data, dict):

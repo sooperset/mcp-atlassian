@@ -2784,6 +2784,29 @@ async def test_update_issue_additional_fields_non_dict_json(jira_client):
     assert "not a JSON object" in str(excinfo.value)
 
 
+@pytest.mark.parametrize("reserved_key", ["fields", "return_fields", "issue_key"])
+@pytest.mark.anyio
+async def test_update_issue_additional_fields_rejects_reserved_keys(
+    jira_client, reserved_key
+):
+    """Regression: additional_fields/fields forward into
+    JiraFetcher.update_issue as **kwargs, which already binds "issue_key",
+    "fields" and "return_fields" as its own explicit parameters. Unpacking a
+    dict containing one of those names alongside that explicit keyword
+    raises "got multiple values for keyword argument" from deep inside the
+    call -- confirmed empirically -- instead of a clear, catchable error."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "additional_fields": json.dumps({reserved_key: "anything"}),
+            },
+        )
+    assert reserved_key in str(excinfo.value)
+    assert "got multiple values" not in str(excinfo.value)
+
+
 @pytest.mark.parametrize("additional_fields", ["", " \t\n"])
 @pytest.mark.anyio
 async def test_update_issue_additional_fields_blank_string(
