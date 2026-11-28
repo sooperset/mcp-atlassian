@@ -696,7 +696,9 @@ def _create_and_validate(
             f"{fn_name}: Failed to create/validate {auth_desc} {spec.name}Fetcher: {e}",
             exc_info=True,
         )
-        raise ValueError(f"Invalid {auth_desc} {spec.name} token or configuration: {e}")
+        raise ValueError(
+            f"Invalid {auth_desc} {spec.name} token or configuration: {e}"
+        ) from e
 
 
 def _resolve_oauth_access_token(fallback_token: str, service: str) -> str:
