@@ -7,6 +7,7 @@ from requests.exceptions import HTTPError
 
 from ..models.jira import JiraIssueLinkType
 from ..utils.decorators import handle_auth_errors
+from ..utils.urls import path_segment
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -201,9 +202,9 @@ class LinksMixin(JiraClient):
         try:
             # Cloud uses v3 API, Server/DC uses v2 API
             if self.config.is_cloud:
-                endpoint = f"rest/api/3/issue/{issue_key}/remotelink"
+                endpoint = f"rest/api/3/issue/{path_segment(issue_key)}/remotelink"
             else:
-                endpoint = f"rest/api/2/issue/{issue_key}/remotelink"
+                endpoint = f"rest/api/2/issue/{path_segment(issue_key)}/remotelink"
             self.jira.post(endpoint, json=link_data)
 
             return {
@@ -239,9 +240,9 @@ class LinksMixin(JiraClient):
         """
         try:
             if self.config.is_cloud:
-                endpoint = f"rest/api/3/issue/{issue_key}/remotelink"
+                endpoint = f"rest/api/3/issue/{path_segment(issue_key)}/remotelink"
             else:
-                endpoint = f"rest/api/2/issue/{issue_key}/remotelink"
+                endpoint = f"rest/api/2/issue/{path_segment(issue_key)}/remotelink"
             result = self.jira.get(endpoint)
             if isinstance(result, list):
                 return result

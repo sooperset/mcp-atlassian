@@ -24,7 +24,7 @@ from ..utils.media import (
     read_capped,
 )
 from ..utils.ssrf_adapter import ensure_attachment_origin
-from ..utils.urls import resolve_relative_url
+from ..utils.urls import path_segment, resolve_relative_url
 from .client import ConfluenceClient
 from .protocols import AttachmentsOperationsProto
 from .v2_adapter import ConfluenceV2Adapter
@@ -207,8 +207,8 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         # /download/attachments/... paths. See:
         # https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-content---attachments/
         v1_url = (
-            f"{base}/rest/api/content/{content_id}"
-            f"/child/attachment/{attachment_id}/download"
+            f"{base}/rest/api/content/{path_segment(content_id)}"
+            f"/child/attachment/{path_segment(attachment_id)}/download"
         )
         # Keep only the documented ``version`` query param (the endpoint honours
         # it) so a version-specific link still resolves to that version; drop the
@@ -897,7 +897,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         )
 
         base_url = self._rest_base_url()
-        url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
+        url = f"{base_url}/rest/api/content/{path_segment(content_id)}/child/attachment"
 
         # Server/DC requires "no-check" (with hyphen) to bypass XSRF validation.
         headers = {"X-Atlassian-Token": "no-check"}
@@ -931,8 +931,8 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                     file_obj.seek(0)
                 att_id = att_results[0]["id"]
                 update_url = (
-                    f"{base_url}/rest/api/content/{content_id}"
-                    f"/child/attachment/{att_id}/data"
+                    f"{base_url}/rest/api/content/{path_segment(content_id)}"
+                    f"/child/attachment/{path_segment(att_id)}/data"
                 )
                 response = self.confluence._session.post(
                     update_url,
@@ -986,8 +986,8 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         try:
             validate_attachment_id(str(attachment_id))
             response = self.confluence._session.put(
-                f"{self._rest_base_url()}/rest/api/content/{content_id}"
-                f"/child/attachment/{attachment_id}",
+                f"{self._rest_base_url()}/rest/api/content/{path_segment(content_id)}"
+                f"/child/attachment/{path_segment(attachment_id)}",
                 json={
                     "id": attachment_id,
                     "type": "attachment",
@@ -1039,7 +1039,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                 )
                 # Use v1 API endpoint for deletion
                 base_url = self._rest_base_url()
-                url = f"{base_url}/rest/api/content/{attachment_id}"
+                url = f"{base_url}/rest/api/content/{path_segment(attachment_id)}"
                 response = self.confluence._session.delete(url)
                 response.raise_for_status()
 

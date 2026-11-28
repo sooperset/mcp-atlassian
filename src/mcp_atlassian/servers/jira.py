@@ -227,6 +227,13 @@ def _merge_named_create_fields(
     return merged or None
 
 
+# Names JiraFetcher.update_issue already binds as its own explicit
+# parameters; a fields/additional_fields entry using one of these would
+# otherwise collide with it when forwarded as **kwargs (see
+# jira_update_issue's reserved-key check).
+_RESERVED_ISSUE_UPDATE_KEYS = frozenset({"issue_key", "fields", "return_fields"})
+
+
 def _parse_additional_fields(
     additional_fields: dict[str, Any] | str | None,
     param_name: str = "additional_fields",
@@ -2501,6 +2508,21 @@ async def update_issue(
     # competing status changes.
     if transition:
         all_updates.pop("status", None)
+
+    # "fields"/"return_fields"/"issue_key" from `fields`/`additional_fields`
+    # are forwarded as **kwargs straight into JiraFetcher.update_issue, which
+    # already binds those same names as its own explicit parameters --
+    # unpacking a dict containing one of them alongside that explicit keyword
+    # raises "got multiple values for keyword argument", confirmed
+    # empirically. Reject them here with a clear message instead of letting
+    # that TypeError surface from deep inside the call.
+    reserved_update_keys = _RESERVED_ISSUE_UPDATE_KEYS & all_updates.keys()
+    if reserved_update_keys:
+        raise ValueError(
+            "fields/additional_fields cannot set "
+            f"{sorted(reserved_update_keys)}: reserved for this tool's own "
+            "parameters, not Jira field names."
+        )
 
     visibility = _parse_visibility(comment_visibility) if comment else None
     operations_performed: list[str] = []

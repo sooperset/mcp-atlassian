@@ -434,3 +434,12 @@ def test_move_issues_to_backlog_generic_exception(sprints_mixin):
 
     with pytest.raises(Exception, match="Connection error"):
         sprints_mixin.move_issues_to_backlog(["PROJ-1"])
+
+
+def test_add_issues_to_sprint_encodes_sprint_id(sprints_mixin):
+    """Regression: a sprint_id containing path/query metacharacters must not
+    let the request reach a different REST endpoint than intended."""
+    sprints_mixin.add_issues_to_sprint("1/../../issue/PROJ-1", ["PROJ-1"])
+
+    endpoint = sprints_mixin.jira.post.call_args[0][0]
+    assert endpoint == "rest/agile/1.0/sprint/1%2F..%2F..%2Fissue%2FPROJ-1/issue"

@@ -134,10 +134,18 @@ def ensure_attachment_origin(url: str, own_urls: Iterable[object]) -> None:
     """Refuse an attachment URL that is not on the service's own origin.
 
     Allowed: the exact origin (scheme, host, port) of one of ``own_urls`` (the
-    fetcher's configured URL and its client's base URL), or a host under
-    ``MCP_ALLOWED_URL_DOMAINS``. The operator's JIRA_URL/CONFLUENCE_URL is not
-    trusted here, so a fetcher for a request-supplied host cannot be sent to
-    the operator's instance.
+    fetcher's configured URL and its client's base URL), or an ``https`` host
+    under ``MCP_ALLOWED_URL_DOMAINS``. The operator's JIRA_URL/CONFLUENCE_URL
+    is not trusted here, so a fetcher for a request-supplied host cannot be
+    sent to the operator's instance.
+
+    The request carries this fetcher's bearer token or session cookie
+    (``download_attachment`` reuses the authenticated session), so the
+    allowlist match requires ``https``: a bare hostname match alone would
+    accept a same-domain ``http://`` URL and send those credentials in the
+    clear. The exact-origin match has no such gap -- ``own_urls`` already
+    carries whatever scheme the operator configured for their own instance,
+    and only that same scheme can match it.
 
     Args:
         url: The absolute URL about to be fetched.
@@ -151,7 +159,10 @@ def ensure_attachment_origin(url: str, own_urls: Iterable[object]) -> None:
     origin = url_origin(url)
     if origin is not None and (
         origin in allowed
-        or _hostname_matches_allowlist(origin[1], _get_domain_allowlist() or [])
+        or (
+            origin[0] == "https"
+            and _hostname_matches_allowlist(origin[1], _get_domain_allowlist() or [])
+        )
     ):
         return
     shown = f"{origin[0]}://{origin[1]}:{origin[2]}" if origin else "<unparseable URL>"

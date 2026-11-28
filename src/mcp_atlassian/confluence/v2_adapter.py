@@ -228,7 +228,7 @@ class ConfluenceV2Adapter:
             ValueError: If page not found or API error
         """
         try:
-            url = f"{self.base_url}/api/v2/pages/{page_id}"
+            url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}"
             params = {"body-format": "storage"}
 
             response = self.session.get(url, params=params)
@@ -301,7 +301,7 @@ class ConfluenceV2Adapter:
                 data["version"]["message"] = version_comment
 
             # Make the v2 API call
-            url = f"{self.base_url}/api/v2/pages/{page_id}"
+            url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}"
             response = self.session.put(url, json=data)
             response.raise_for_status()
 
@@ -339,7 +339,7 @@ class ConfluenceV2Adapter:
         """
         try:
             # Use v2 spaces endpoint to get space key
-            url = f"{self.base_url}/api/v2/spaces/{space_id}"
+            url = f"{self.base_url}/api/v2/spaces/{path_segment(space_id)}"
 
             response = self.session.get(url)
             response.raise_for_status()
@@ -390,7 +390,7 @@ class ConfluenceV2Adapter:
         """
         try:
             # Make the v2 API call to get the page
-            url = f"{self.base_url}/api/v2/pages/{page_id}"
+            url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}"
 
             # Convert v1 expand parameters to v2 format
             params = {"body-format": "storage"}
@@ -566,7 +566,7 @@ class ConfluenceV2Adapter:
         """
         try:
             space_id = self._get_space_id(space_key)
-            url = f"{self.base_url}/api/v2/spaces/{space_id}/pages"
+            url = f"{self.base_url}/api/v2/spaces/{path_segment(space_id)}/pages"
             pages: list[dict[str, Any]] = []
             cursor: str | None = None
             seen_cursors: set[str] = set()
@@ -654,7 +654,9 @@ class ConfluenceV2Adapter:
             ValueError: If the request fails.
         """
         try:
-            url = f"{self.base_url}/api/v2/pages/{page_id}/direct-children"
+            url = (
+                f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/direct-children"
+            )
             params: dict[str, Any] = {}
 
             if limit is not None:
@@ -738,7 +740,7 @@ class ConfluenceV2Adapter:
         """
         try:
             # Make the v2 API call to delete the page
-            url = f"{self.base_url}/api/v2/pages/{page_id}"
+            url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}"
             response = self.session.delete(url)
             response.raise_for_status()
 
@@ -942,7 +944,9 @@ class ConfluenceV2Adapter:
             ValueError: If the API request fails
         """
         try:
-            url = f"{self.base_url}/api/v2/pages/{page_id}/inline-comments"
+            url = (
+                f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/inline-comments"
+            )
             params: dict[str, Any] = {"body-format": "storage"}
             if status:
                 params["status"] = status
@@ -1043,7 +1047,9 @@ class ConfluenceV2Adapter:
             ValueError: If the API request fails
         """
         try:
-            url = f"{self.base_url}/api/v2/pages/{page_id}/footer-comments"
+            url = (
+                f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/footer-comments"
+            )
             params: dict[str, Any] = {"body-format": "storage"}
 
             if budget is None:
@@ -1227,7 +1233,7 @@ class ConfluenceV2Adapter:
             ValueError: If the request fails.
         """
         try:
-            url = f"{self.base_url}/api/v2/pages/{page_id}/labels"
+            url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/labels"
             raw_labels = self._get_all_cursor_results(url, params={"limit": 250})
             results = [
                 {
@@ -1487,7 +1493,7 @@ class ConfluenceV2Adapter:
         """
         try:
             # Use v2 content properties API
-            url = f"{self.base_url}/api/v2/pages/{page_id}/properties"
+            url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/properties"
 
             response = self.session.get(url)
             response.raise_for_status()
@@ -1530,9 +1536,7 @@ class ConfluenceV2Adapter:
         try:
             if value is None:
                 # Delete the property
-                url = (
-                    f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
-                )
+                url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/properties/{path_segment(property_key)}"
                 response = self.session.delete(url)
                 # 204 No Content or 404 Not Found are both success cases
                 return response.status_code in [200, 204, 404]
@@ -1542,9 +1546,7 @@ class ConfluenceV2Adapter:
 
             if existing_property:
                 # Update existing property
-                url = (
-                    f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
-                )
+                url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/properties/{path_segment(property_key)}"
                 current_version = existing_property.get("version", {}).get("number", 1)
                 data = {
                     "key": property_key,
@@ -1554,7 +1556,7 @@ class ConfluenceV2Adapter:
                 response = self.session.put(url, json=data)
             else:
                 # Create new property
-                url = f"{self.base_url}/api/v2/pages/{page_id}/properties"
+                url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/properties"
                 data = {
                     "key": property_key,
                     "value": value,
@@ -1626,7 +1628,7 @@ class ConfluenceV2Adapter:
             The property data if found, None otherwise
         """
         try:
-            url = f"{self.base_url}/api/v2/pages/{page_id}/properties/{property_key}"
+            url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/properties/{path_segment(property_key)}"
             response = self.session.get(url)
             if response.status_code == 404:
                 return None
@@ -1649,7 +1651,7 @@ class ConfluenceV2Adapter:
         """
         try:
             # Use to versions API endpoint to list all versions
-            url = f"{self.base_url}/api/v2/pages/{page_id}/versions"
+            url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/versions"
 
             response = self.session.get(url)
             response.raise_for_status()
@@ -1697,7 +1699,7 @@ class ConfluenceV2Adapter:
             ValueError: If page retrieval fails or version not found
         """
         try:
-            url = f"{self.base_url}/api/v2/pages/{page_id}"
+            url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}"
             params: dict[str, Any] = {"body-format": "storage", "version": version}
 
             response = self.session.get(url, params=params)
@@ -1789,7 +1791,7 @@ class ConfluenceV2Adapter:
         """
         try:
             # Use the Analytics API endpoint
-            url = f"{self.base_url}/rest/api/analytics/content/{page_id}/views"
+            url = f"{self.base_url}/rest/api/analytics/content/{path_segment(page_id)}/views"
 
             response = self.session.get(url)
             response.raise_for_status()
@@ -1845,7 +1847,7 @@ class ConfluenceV2Adapter:
             ValueError: If page not found or other errors
         """
         try:
-            url = f"{self.base_url}/api/v2/pages/{page_id}/attachments"
+            url = f"{self.base_url}/api/v2/pages/{path_segment(page_id)}/attachments"
             params: dict[str, Any] = {"start": start, "limit": limit}
 
             if filename:

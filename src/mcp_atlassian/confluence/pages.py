@@ -14,6 +14,7 @@ from requests.exceptions import HTTPError
 from ..models.confluence import ConfluencePage
 from ..utils.decorators import handle_auth_errors
 from ..utils.pagination import clamp_limit
+from ..utils.urls import path_segment
 from .client import ConfluenceClient
 from .utils import emoji_to_hex_id, extract_emoji_from_property
 from .v2_adapter import ConfluenceV2Adapter
@@ -1879,7 +1880,7 @@ class PagesMixin(ConfluenceClient):
                 }
                 result = self.confluence.post(
                     f"{self._v1_rest_base_url()}/rest/api/content/"
-                    f"{source_page_id}/copy",
+                    f"{path_segment(source_page_id)}/copy",
                     data=payload,
                     absolute=True,
                 )
