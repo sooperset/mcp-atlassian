@@ -206,6 +206,21 @@ class TestValidateUrlForSsrf:
         assert result is not None
         assert "scheme" in result.lower()
 
+    def test_malformed_url_is_rejected(self) -> None:
+        """A URL urlparse itself rejects is still reported as invalid."""
+        result = validate_url_for_ssrf("http://[::1")
+        assert result is not None
+        assert "Invalid URL" in result
+
+    def test_internal_parse_error_is_not_masked(self) -> None:
+        """Only ValueError from urlparse is treated as an invalid URL."""
+        with patch(
+            "mcp_atlassian.utils.urls.urlparse",
+            side_effect=RuntimeError("boom"),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                validate_url_for_ssrf("https://example.com")
+
     def test_file_scheme(self) -> None:
         """file:// scheme is rejected."""
         result = validate_url_for_ssrf("file:///etc/passwd")

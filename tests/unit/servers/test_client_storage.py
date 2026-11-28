@@ -108,6 +108,32 @@ def test_storage_builder_factory_requires_import_path(
         build_oauth_client_storage_from_env()
 
 
+def test_storage_builder_factory_reports_missing_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    monkeypatch.setenv(
+        CLIENT_STORAGE_FACTORY_ENV,
+        "tests.unit.servers.does_not_exist:factory",
+    )
+
+    with pytest.raises(ValueError, match="Unable to import module"):
+        build_oauth_client_storage_from_env()
+
+
+def test_storage_builder_does_not_mask_internal_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CLIENT_STORAGE_MODE_ENV, "factory")
+    monkeypatch.setenv(
+        CLIENT_STORAGE_FACTORY_ENV,
+        "tests.unit.servers._module_that_fails_to_import:factory",
+    )
+
+    with pytest.raises(ZeroDivisionError, match="boom"):
+        build_oauth_client_storage_from_env()
+
+
 def test_storage_builder_factory_rejects_invalid_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
