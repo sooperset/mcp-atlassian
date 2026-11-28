@@ -1095,7 +1095,11 @@ async def test_create_page_with_content_file(
     """content_file should load the body from disk and be passed to the fetcher."""
     body = "# Heading\n\nFrom a file."
     fp = tmp_path / "page.md"
-    fp.write_text(body, encoding="utf-8")
+    # write_bytes, not write_text: in text mode Windows translates "\n" to
+    # "\r\n" on write, but the server reads content_file in binary mode, so
+    # the body it loads would carry "\r\n" and never match this literal
+    # "\n"-only string.
+    fp.write_bytes(body.encode("utf-8"))
     monkeypatch.chdir(tmp_path)  # content_file is confined to the workspace
 
     await client.call_tool(

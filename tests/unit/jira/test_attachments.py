@@ -65,8 +65,6 @@ class TestAttachmentsMixin:
 
     def test_download_attachment_success(self, attachments_mixin: AttachmentsMixin):
         """Test successful attachment download."""
-        import os
-
         # Mock the response
         mock_response = MagicMock()
         mock_response.iter_content.return_value = [b"test content"]
@@ -74,8 +72,15 @@ class TestAttachmentsMixin:
         attachments_mixin.jira._session.get.return_value = mock_response
 
         # A subdirectory of CWD (downloads may not land in the CWD root itself).
+        # os.path.isabs() already treats this as absolute (on POSIX always; on
+        # Windows too, since a rooted path with no drive letter still counts),
+        # so download_attachment uses it as-is -- it never resolves it via
+        # get_file_root()/abspath, confirmed empirically. The expected path
+        # must therefore be the literal input, not its abspath-resolved form
+        # (which would add a drive letter on Windows that the real call never
+        # produces).
         download_path = "/tmp/downloads/test_file.txt"
-        expected_path = os.path.abspath(download_path)
+        expected_path = download_path
 
         # Mock file operations
         with (
@@ -123,7 +128,15 @@ class TestAttachmentsMixin:
             patch("os.path.exists") as mock_exists,
             patch("os.path.getsize") as mock_getsize,
             patch("os.makedirs") as mock_makedirs,
-            patch("os.getcwd", return_value="/absolute/path"),
+            # get_file_root() calls os.getcwd() but then resolve()s the
+            # result, which re-adds the real drive letter on Windows and
+            # breaks a hardcoded no-drive-letter expectation below -- patch
+            # get_file_root() itself instead, matching how
+            # confluence/test_attachments.py avoids the same trap.
+            patch(
+                "mcp_atlassian.jira.attachments.get_file_root",
+                return_value=Path("/absolute/path"),
+            ),
             patch("mcp_atlassian.jira.attachments.validate_safe_path"),
         ):
             mock_exists.return_value = True
@@ -307,7 +320,13 @@ class TestAttachmentsMixin:
                 "mcp_atlassian.models.jira.JiraAttachment.from_api_response",
                 return_value=mock_attachment,
             ),
-            patch("os.getcwd", return_value="/absolute/path"),
+            # See test_download_attachment_relative_path: patch get_file_root()
+            # itself rather than os.getcwd(), which resolve() would otherwise
+            # re-resolve to the real drive letter on Windows.
+            patch(
+                "mcp_atlassian.jira.attachments.get_file_root",
+                return_value=Path("/absolute/path"),
+            ),
             patch("mcp_atlassian.jira.attachments.validate_safe_path") as mock_validate,
         ):
             result = attachments_mixin.download_issue_attachments(
